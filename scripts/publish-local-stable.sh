@@ -77,7 +77,21 @@ elif [[ "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
     exit 1
 fi
 
-if release_json="$(gh api "repos/$RELEASE_REPOSITORY/releases/tags/$TAG" 2>/dev/null)"; then
+if release_json="$(
+    gh api --paginate "repos/$RELEASE_REPOSITORY/releases?per_page=100" 2>/dev/null \
+        | jq -sce \
+            --arg tag "$TAG" \
+            '
+                [.[] | .[] | select(.tag_name == $tag)]
+                | if length == 1 then
+                    .[0]
+                elif length == 0 then
+                    empty
+                else
+                    error("multiple GitHub Releases use the requested tag")
+                end
+            '
+)"; then
     if ! jq -e \
         --arg tag "$TAG" \
         '.tag_name == $tag and .draft == true and .prerelease == false' \

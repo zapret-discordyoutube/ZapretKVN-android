@@ -54,7 +54,19 @@ for name in "${EXPECTED_NAMES[@]}"; do
 done
 
 release_json() {
-    gh api "repos/$RELEASE_REPOSITORY/releases/tags/$TAG"
+    gh api --paginate "repos/$RELEASE_REPOSITORY/releases?per_page=100" \
+        | jq -sce \
+            --arg tag "$TAG" \
+            '
+                [.[] | .[] | select(.tag_name == $tag)]
+                | if length == 1 then
+                    .[0]
+                elif length == 0 then
+                    empty
+                else
+                    error("multiple GitHub Releases use the requested tag")
+                end
+            '
 }
 
 verify_release_identity() {
