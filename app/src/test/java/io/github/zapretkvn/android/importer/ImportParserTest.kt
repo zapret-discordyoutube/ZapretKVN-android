@@ -312,6 +312,53 @@ class ImportParserTest {
     }
 
     @Test
+    fun `vless xhttp converts legacy xmux lifetime milliseconds to pinned core seconds`() {
+        val rangeExtra = encodeURIComponent(
+            """{"xmux":{"cMaxLifetimeMs":"1800000-3000000"}}""",
+        )
+        val rangeCandidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                "?security=tls&type=xhttp&extra=$rangeExtra#XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val rangeTransport = rangeCandidate.servers.single().outbound["transport"] as JsonObject
+        val rangeXmux = rangeTransport["xmux"] as JsonObject
+
+        assertEquals("1800-3000", rangeXmux.string("h_max_reusable_secs"))
+
+        val numberExtra = encodeURIComponent("""{"xmux":{"cMaxLifetimeMs":3600000}}""")
+        val numberCandidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                "?security=tls&type=xhttp&extra=$numberExtra#XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val numberTransport = numberCandidate.servers.single().outbound["transport"] as JsonObject
+        val numberXmux = numberTransport["xmux"] as JsonObject
+
+        assertEquals(
+            "3600",
+            (numberXmux["h_max_reusable_secs"] as JsonPrimitive).content,
+        )
+    }
+
+    @Test
+    fun `vless xhttp rejects ambiguous or lossy legacy xmux lifetime`() {
+        listOf(
+            """{"xmux":{"cMaxLifetimeMs":1500}}""",
+            """{"xmux":{"cMaxLifetimeMs":3600000,"hMaxReusableSecs":3600}}""",
+        ).forEach { rawExtra ->
+            val extra = encodeURIComponent(rawExtra)
+            assertThrows(ImportException::class.java) {
+                ImportParser.parse(
+                    "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                        "?security=tls&type=xhttp&extra=$extra#XHTTP",
+                    ProfileSource.Clipboard,
+                )
+            }
+        }
+    }
+
+    @Test
     fun `vless xhttp rejects nonstandard Base64 extra instead of misreading XTLS`() {
         val extra = Base64.getUrlEncoder().withoutPadding().encodeToString(
             """{"xPaddingBytes":"100-1000"}""".toByteArray(),

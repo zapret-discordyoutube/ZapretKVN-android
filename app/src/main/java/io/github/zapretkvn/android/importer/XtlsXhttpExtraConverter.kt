@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.importer
 import io.github.zapretkvn.android.config.JsonConfig
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Converts the XTLS VLESS share-link XHTTP `extra` object to the JSON schema used
@@ -34,10 +35,26 @@ internal object XtlsXhttpExtraConverter {
             source[sourceKey]?.let { options[targetKey] = it }
         }
         (source["xmux"] as? JsonObject)?.let { xmuxSource ->
-            rejectUnknownFields(xmuxSource, XMUX_FIELDS.keys, "XHTTP extra.xmux")
+            rejectUnknownFields(
+                xmuxSource,
+                XMUX_FIELDS.keys + LEGACY_C_MAX_LIFETIME_MS,
+                "XHTTP extra.xmux",
+            )
+            if (
+                LEGACY_C_MAX_LIFETIME_MS in xmuxSource &&
+                "hMaxReusableSecs" in xmuxSource
+            ) {
+                throw ImportException(
+                    "XHTTP extra.xmux не может одновременно содержать " +
+                        "cMaxLifetimeMs и hMaxReusableSecs.",
+                )
+            }
             val xmux = linkedMapOf<String, JsonElement>()
             XMUX_FIELDS.forEach { (sourceKey, targetKey) ->
                 xmuxSource[sourceKey]?.let { xmux[targetKey] = it }
+            }
+            xmuxSource[LEGACY_C_MAX_LIFETIME_MS]?.let {
+                xmux["h_max_reusable_secs"] = convertLegacyLifetime(it)
             }
             if (xmux.isNotEmpty()) options["xmux"] = JsonObject(xmux)
         } ?: source["xmux"]?.let {
@@ -58,6 +75,34 @@ internal object XtlsXhttpExtraConverter {
             )
         }
     }
+
+    private fun convertLegacyLifetime(value: JsonElement): JsonElement {
+        val primitive = value as? JsonPrimitive
+            ?: throw invalidLegacyLifetime()
+        val match = LEGACY_LIFETIME_PATTERN.matchEntire(primitive.content)
+            ?: throw invalidLegacyLifetime()
+        val milliseconds = match.groupValues
+            .drop(1)
+            .filter(String::isNotEmpty)
+            .map {
+                it.toLongOrNull()
+                    ?.takeIf { milliseconds -> milliseconds % MILLIS_PER_SECOND == 0L }
+                    ?: throw invalidLegacyLifetime()
+            }
+        val seconds = milliseconds.map { it / MILLIS_PER_SECOND }
+        return if (seconds.size == 2) {
+            JsonPrimitive("${seconds[0]}-${seconds[1]}")
+        } else if (primitive.isString) {
+            JsonPrimitive(seconds.single().toString())
+        } else {
+            JsonPrimitive(seconds.single())
+        }
+    }
+
+    private fun invalidLegacyLifetime() = ImportException(
+        "XHTTP extra.xmux.cMaxLifetimeMs должен быть целым числом миллисекунд " +
+            "или диапазоном с границами, кратными 1000.",
+    )
 
     private val EXTRA_FIELDS = linkedMapOf(
         "headers" to "headers",
@@ -92,4 +137,8 @@ internal object XtlsXhttpExtraConverter {
         "hMaxReusableSecs" to "h_max_reusable_secs",
         "hKeepAlivePeriod" to "h_keep_alive_period",
     )
+
+    private const val LEGACY_C_MAX_LIFETIME_MS = "cMaxLifetimeMs"
+    private const val MILLIS_PER_SECOND = 1_000L
+    private val LEGACY_LIFETIME_PATTERN = Regex("""^(\d+)(?:-(\d+))?$""")
 }
