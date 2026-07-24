@@ -311,11 +311,9 @@ object PopularAppSuggestions {
     )
 
     val packageNames: Set<String> = labelsByPackage.keys
-    const val MIGRATION_REVISION: Int = 2
+    const val MIGRATION_REVISION: Int = 3
     val packagesAddedInCurrentRevision: Set<String> = setOf(
-        "com.google.android.apps.bard",
-        "com.google.android.youtube",
-        "com.google.android.apps.youtube.music",
+        "com.brave.browser",
     )
 
     fun labelFor(packageName: String): String? = labelsByPackage[packageName]

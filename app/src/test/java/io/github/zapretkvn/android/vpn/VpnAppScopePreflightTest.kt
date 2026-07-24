@@ -156,6 +156,7 @@ class VpnAppScopePreflightTest {
         assertTrue("org.chromium.chrome" in packages)
         assertTrue("org.chromium.chrome.dev" in packages)
         assertTrue("org.mozilla.firefox" in packages)
+        assertTrue("com.brave.browser" in packages)
         assertFalse(packages.any { it.contains("tiktok", ignoreCase = true) })
     }
 
@@ -201,14 +202,10 @@ class VpnAppScopePreflightTest {
     }
 
     @Test
-    fun `revision two migrates Gemini YouTube and YouTube Music into existing include scope once`() {
-        val migratedPackages = setOf(
-            "com.google.android.apps.bard",
-            "com.google.android.youtube",
-            "com.google.android.apps.youtube.music",
-        )
+    fun `revision three migrates Brave into existing include scope once`() {
+        val migratedPackages = setOf("com.brave.browser")
 
-        assertEquals(2, PopularAppSuggestions.MIGRATION_REVISION)
+        assertEquals(3, PopularAppSuggestions.MIGRATION_REVISION)
         assertEquals(
             migratedPackages,
             PopularAppSuggestions.packagesAddedInCurrentRevision,
@@ -221,8 +218,8 @@ class VpnAppScopePreflightTest {
                 newlySuggestedPackages = migratedPackages,
                 initialized = true,
                 mode = AppScopeMode.Include,
-                storedSuggestionRevision = 1,
-                suggestionRevision = 2,
+                storedSuggestionRevision = 2,
+                suggestionRevision = 3,
             ),
         )
         assertEquals(
@@ -233,8 +230,8 @@ class VpnAppScopePreflightTest {
                 newlySuggestedPackages = migratedPackages,
                 initialized = true,
                 mode = AppScopeMode.Include,
-                storedSuggestionRevision = 2,
-                suggestionRevision = 2,
+                storedSuggestionRevision = 3,
+                suggestionRevision = 3,
             ),
         )
     }
