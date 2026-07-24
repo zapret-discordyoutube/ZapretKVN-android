@@ -205,11 +205,35 @@ class VpnAppScopePreflightTest {
     @Test
     fun `revision four applies skipped Brave and Twitter migrations once`() {
         val migratedPackages = setOf("com.brave.browser", "com.twitter.android")
+        val allHistoricalPackages = setOf(
+            "com.openai.chatgpt",
+            "com.anthropic.claude",
+            "com.google.android.apps.bard",
+            "ai.perplexity.app.android",
+            "com.microsoft.copilot",
+            "com.deepseek.chat",
+            "ai.x.grok",
+            "com.suno.android",
+            "com.spotify.music",
+            "notion.id",
+            "com.google.android.youtube",
+            "com.google.android.apps.youtube.music",
+            "com.brave.browser",
+            "com.twitter.android",
+        )
 
         assertEquals(4, PopularAppSuggestions.MIGRATION_REVISION)
         assertEquals(
             setOf("com.twitter.android"),
             PopularAppSuggestions.packagesAddedInCurrentRevision,
+        )
+        assertEquals(
+            allHistoricalPackages,
+            pendingSuggestedPackages(
+                suggestedPackageMigrations = PopularAppSuggestions.packagesAddedByRevision,
+                storedSuggestionRevision = 0,
+                suggestionRevision = 4,
+            ),
         )
         assertEquals(
             migratedPackages,
