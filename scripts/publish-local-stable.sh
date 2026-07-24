@@ -10,6 +10,7 @@ SIGNING_STORE="$SIGNING_DIR/zapret-kvn-release.jks"
 SIGNING_FINGERPRINT_FILE="$SIGNING_DIR/certificate-sha256.txt"
 RELEASE_MATRIX_DIR="$PROJECT_ROOT/app/build/outputs/apk/matrix/release"
 OUTPUT_DIR="$PROJECT_ROOT/build/local-release/$TAG"
+STAGING_OUTPUT_DIR="$PROJECT_ROOT/build/local-release/.$TAG.staging"
 RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-youtubediscord/ZapretKVN-android}"
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-approved ]]; then
@@ -17,7 +18,7 @@ if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-appro
     exit 1
 fi
 
-for command in find gh git jq keytool sha256sum stat; do
+for command in gh git jq keytool mv sha256sum stat timeout; do
     command -v "$command" >/dev/null || {
         echo "Missing required command: $command" >&2
         exit 1
@@ -76,9 +77,20 @@ elif [[ "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
     exit 1
 fi
 
-if gh release view "$TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
-    echo "GitHub Release already exists and will not be replaced: $TAG" >&2
-    exit 1
+if release_json="$(gh api "repos/$RELEASE_REPOSITORY/releases/tags/$TAG" 2>/dev/null)"; then
+    if ! jq -e \
+        --arg tag "$TAG" \
+        '.tag_name == $tag and .draft == true and .prerelease == false' \
+        <<<"$release_json" >/dev/null; then
+        echo "GitHub Release already exists and is not a resumable draft: $TAG" >&2
+        exit 1
+    fi
+    if [[ ! -d "$OUTPUT_DIR" ]]; then
+        echo "Stable draft exists, but its original local bundle is unavailable: $OUTPUT_DIR" >&2
+        echo "Refusing to rebuild potentially different assets or alter the draft." >&2
+        exit 1
+    fi
+    echo "Found resumable stable draft: $TAG"
 fi
 
 # This file is owner-only and is the existing canonical local copy of the release
@@ -168,36 +180,32 @@ export ZAPRET_EXPECTED_SIGNER_SHA256="$RELEASE_SIGNER_SHA256"
 export ZAPRET_REQUIRE_SIGNED_RELEASE=1
 export ZAPRET_UPDATE_REPOSITORY="$RELEASE_REPOSITORY"
 
-if [[ -e "$OUTPUT_DIR" ]]; then
-    echo "Local release output already exists; move it aside before retrying: $OUTPUT_DIR" >&2
+if [[ -e "$OUTPUT_DIR" && ! -d "$OUTPUT_DIR" ]]; then
+    echo "Local release output path is not a directory: $OUTPUT_DIR" >&2
     exit 1
 fi
-mkdir -p "$OUTPUT_DIR"
-
-"$PROJECT_ROOT/scripts/ci-build.sh"
-"$PROJECT_ROOT/scripts/create-release-bundle.sh" "$TAG" "$RELEASE_MATRIX_DIR" "$OUTPUT_DIR"
-"$PROJECT_ROOT/scripts/verify-release-bundle.sh" "$TAG" "$OUTPUT_DIR"
-
-mapfile -t assets < <(
-    find "$OUTPUT_DIR" -maxdepth 1 -type f \
-        \( -name '*.apk' -o -name '*.apk.sha256' -o -name 'release-metadata*.json' \) \
-        | sort
-)
-if [[ "${#assets[@]}" -ne 8 ]]; then
-    echo "Expected eight stable release assets, found ${#assets[@]}" >&2
-    exit 1
-fi
-if gh release view "$TAG" --repo "$RELEASE_REPOSITORY" >/dev/null 2>&1; then
-    echo "GitHub Release appeared during the build; refusing to replace it: $TAG" >&2
-    exit 1
+if [[ -d "$OUTPUT_DIR" ]]; then
+    echo "Reusing existing local release bundle after full verification: $OUTPUT_DIR"
+    "$PROJECT_ROOT/scripts/verify-release-bundle.sh" "$TAG" "$OUTPUT_DIR"
+else
+    if [[ -e "$STAGING_OUTPUT_DIR" ]]; then
+        echo "Incomplete staging output exists; move it aside before retrying: $STAGING_OUTPUT_DIR" >&2
+        exit 1
+    fi
+    "$PROJECT_ROOT/scripts/ci-build.sh"
+    "$PROJECT_ROOT/scripts/create-release-bundle.sh" \
+        "$TAG" \
+        "$RELEASE_MATRIX_DIR" \
+        "$STAGING_OUTPUT_DIR"
+    "$PROJECT_ROOT/scripts/verify-release-bundle.sh" "$TAG" "$STAGING_OUTPUT_DIR"
+    mv "$STAGING_OUTPUT_DIR" "$OUTPUT_DIR"
+    echo "Promoted verified release bundle atomically: $OUTPUT_DIR"
 fi
 
-gh release create "$TAG" \
-    "${assets[@]}" \
-    --repo "$RELEASE_REPOSITORY" \
-    --verify-tag \
-    --title "Zapret KVN $ZAPRET_VERSION_NAME" \
-    --notes-file "$OUTPUT_DIR/RELEASE_NOTES.md"
+"$PROJECT_ROOT/scripts/publish-github-stable.sh" \
+    "$TAG" \
+    "$OUTPUT_DIR" \
+    "$RELEASE_REPOSITORY"
 
 if gh workflow run release.yml --repo "$RELEASE_REPOSITORY" --ref main -f "tag=$TAG"; then
     echo "Stable $TAG published; independent GitHub Actions verification was dispatched."

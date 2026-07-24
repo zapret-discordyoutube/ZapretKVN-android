@@ -15,6 +15,8 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -f "$PROJECT_ROOT/audit/rule_set_performance_test.go" ]]
 [[ -f "$PROJECT_ROOT/scripts/core-patchset.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/publish-local-stable.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/publish-github-stable.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-publish-github-stable.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/verify-release-bundle.sh" ]]
 [[ -f "$PROJECT_ROOT/release.properties" ]]
 source "$PROJECT_ROOT/core.properties"
@@ -26,6 +28,10 @@ RELEASE_WORKFLOW="$PROJECT_ROOT/.github/workflows/release.yml"
 grep -Fq 'workflow_dispatch:' "$RELEASE_WORKFLOW"
 grep -Fq 'scripts/verify-gate8-performance.sh' "$RELEASE_WORKFLOW"
 grep -Fq 'scripts/verify-release-bundle.sh' "$RELEASE_WORKFLOW"
+grep -Fq 'Restore Android emulator packages' "$RELEASE_WORKFLOW"
+grep -Fq 'Install or verify Android emulator packages' "$RELEASE_WORKFLOW"
+grep -Fq 'android-emulator-${{ runner.os }}' "$RELEASE_WORKFLOW"
+grep -Fq 'android-emulator-packages.outputs.cache-hit' "$RELEASE_WORKFLOW"
 grep -Fq 'permissions:' "$RELEASE_WORKFLOW"
 grep -Fq 'contents: read' "$RELEASE_WORKFLOW"
 if grep -Fq 'gh release create' "$RELEASE_WORKFLOW" ||
@@ -40,10 +46,18 @@ if grep -Eq '^[[:space:]]+push:' "$RELEASE_WORKFLOW"; then
 fi
 LOCAL_PUBLISHER="$PROJECT_ROOT/scripts/publish-local-stable.sh"
 grep -Fq -- '--final-gate-approved' "$LOCAL_PUBLISHER"
-grep -Fq 'gh release create' "$LOCAL_PUBLISHER"
+grep -Fq 'scripts/publish-github-stable.sh' "$LOCAL_PUBLISHER"
 grep -Fq 'gh workflow run release.yml' "$LOCAL_PUBLISHER"
 grep -Fq 'scripts/ci-build.sh' "$LOCAL_PUBLISHER"
 grep -Fq 'scripts/verify-release-bundle.sh' "$LOCAL_PUBLISHER"
+GITHUB_PUBLISHER="$PROJECT_ROOT/scripts/publish-github-stable.sh"
+grep -Fq 'gh release create' "$GITHUB_PUBLISHER"
+grep -Fq -- '--draft' "$GITHUB_PUBLISHER"
+grep -Fq 'gh release upload' "$GITHUB_PUBLISHER"
+grep -Fq 'timeout --foreground' "$GITHUB_PUBLISHER"
+# shellcheck disable=SC2016
+grep -Fq '.digest == $digest' "$GITHUB_PUBLISHER"
+"$PROJECT_ROOT/scripts/test-publish-github-stable.sh"
 source "$PROJECT_ROOT/release.properties"
 if [[ ! "$RELEASE_SIGNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Invalid public production signing fingerprint" >&2

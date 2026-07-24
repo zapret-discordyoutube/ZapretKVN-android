@@ -42,6 +42,7 @@ jobs:
         run: |
           source core.properties
           echo "go=$GO_VERSION" >> "$GITHUB_OUTPUT"
+          echo "android_compile_sdk=$ANDROID_COMPILE_SDK" >> "$GITHUB_OUTPUT"
           scripts/derive-release-version.sh "$RELEASE_TAG" >> "$GITHUB_ENV"
 
       - name: Set up Go
@@ -125,6 +126,35 @@ jobs:
           sudo apt-get clean
           df -h /
 
+      - name: Resolve Android emulator cache path
+        id: android-emulator
+        shell: bash
+        run: echo "sdk_root=$ANDROID_SDK_ROOT" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Android emulator packages
+        id: android-emulator-packages
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ${{ steps.android-emulator.outputs.sdk_root }}/emulator
+            ${{ steps.android-emulator.outputs.sdk_root }}/system-images/android-${{ steps.versions.outputs.android_compile_sdk }}/google_apis/x86_64
+          key: android-emulator-${{ runner.os }}-${{ runner.arch }}-api${{ steps.versions.outputs.android_compile_sdk }}-google-apis-x86_64-v1
+
+      - name: Install or verify Android emulator packages
+        shell: bash
+        run: |
+          source core.properties
+          if [[ "${{ steps.android-emulator-packages.outputs.cache-hit }}" != true ]]; then
+            sdkmanager \
+              "platform-tools" \
+              "emulator" \
+              "system-images;android-$ANDROID_COMPILE_SDK;google_apis;x86_64"
+          else
+            echo "Using cached Android emulator and API $ANDROID_COMPILE_SDK system image"
+          fi
+          test -x "$ANDROID_SDK_ROOT/emulator/emulator"
+          test -f "$ANDROID_SDK_ROOT/system-images/android-$ANDROID_COMPILE_SDK/google_apis/x86_64/package.xml"
+
       - name: Run Android and no-background-traffic gates
         shell: bash
         env:
@@ -133,10 +163,6 @@ jobs:
           source core.properties
           sudo apt-get update
           sudo apt-get install -y socat
-          sdkmanager \
-            "platform-tools" \
-            "emulator" \
-            "system-images;android-$ANDROID_COMPILE_SDK;google_apis;x86_64"
           export ANDROID_AVD_HOME="$RUNNER_TEMP/android-avd"
           mkdir -p "$ANDROID_AVD_HOME"
           printf 'no\n' | avdmanager create avd \

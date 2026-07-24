@@ -437,9 +437,12 @@ git tag -a vMAJOR.MINOR.PATCH -m "Zapret KVN MAJOR.MINOR.PATCH"
 scripts/publish-local-stable.sh vMAJOR.MINOR.PATCH --final-gate-approved
 ```
 
-Publisher не ждёт GitHub Actions: после создания Release он только запускает независимую
-фоновую проверку. Production key в Actions не передаётся. Полный контракт ключей,
-tag и защиты от повторной публикации описан в [инструкции по подписи](SIGNING.md).
+Publisher не ждёт GitHub Actions: он создаёт приватный draft, последовательно загружает
+и сверяет SHA-256 всех assets, публикует только полный набор и запускает независимую
+фоновую проверку. Прерванная загрузка возобновляется из проверенного локального bundle
+без замены remote assets. Production key в Actions не передаётся; system image
+эмулятора кешируется между verification runs. Полный контракт ключей, tag и защиты от
+повторной публикации описан в [инструкции по подписи](SIGNING.md).
 
 Для debug APK другой архитектуры используйте, например:
 
