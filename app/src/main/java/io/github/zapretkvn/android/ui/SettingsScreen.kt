@@ -597,18 +597,18 @@ private fun VpnHidingSettings(
             )
             HorizontalDivider()
             Text("MTU TUN", fontWeight = FontWeight.Medium)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 TunMtuMode.entries.forEach { mode ->
                     FilterChip(
                         selected = options.tunMtuMode == mode,
                         onClick = { viewModel.setVpnHidingTunMtuMode(mode) },
                         label = { Text(mode.displayName()) },
-                        modifier = Modifier.testTag("vpn-hiding-mtu-${mode.name}"),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("vpn-hiding-mtu-${mode.name}"),
                     )
                 }
             }

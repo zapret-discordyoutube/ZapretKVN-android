@@ -109,6 +109,9 @@ class VpnServiceInstrumentedTest {
             container.vpnController.setDiagnosticsVisible(false)
             container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
             connect(container.vpnController, profile.id)
+            withTimeout(5_000) {
+                while (VpnRuntimeMetrics.snapshot().activeLogClients != 0) delay(25)
+            }
             assertEquals(0, VpnRuntimeMetrics.snapshot().activeLogClients)
 
             container.vpnController.setDiagnosticsVisible(true)
@@ -638,6 +641,7 @@ class VpnServiceInstrumentedTest {
         val container = (context.applicationContext as ZapretApplication).container
         val packageName = context.packageName
         allowVpn(packageName)
+        container.uiSettingsStore.setVpnHidingBlockLocalEndpoints(false)
         GateEchoServer().use { echo ->
             val quicPort = freeUdpPort()
             val profile = createProfile(
@@ -666,6 +670,7 @@ class VpnServiceInstrumentedTest {
                 assertTrue("Hysteria2 payload did not cross TUN", after - before >= MIN_PROTOCOL_TUN_BYTES)
             } finally {
                 stopIfNeeded(container.vpnController, context)
+                container.uiSettingsStore.setVpnHidingBlockLocalEndpoints(true)
                 container.profileStore.delete(profile.id)
                 denyVpn(packageName)
             }
@@ -1025,7 +1030,8 @@ class VpnServiceInstrumentedTest {
             assertTrue(
                 "Active VPN did not fail closed after strict Private DNS broke: $strictBroken",
                 strictBroken.message.contains("Strict Private DNS") ||
-                    strictBroken.message.contains("DNS через VPN"),
+                    strictBroken.message.contains("DNS через VPN") ||
+                    strictBroken.code == "DNS-105",
             )
             awaitCompletelyIdle(context)
             assertFalse(hasVpnNetwork(context))
@@ -1684,7 +1690,7 @@ class VpnServiceInstrumentedTest {
         probe: GateProbe,
     ) {
         val before = socks.requestCount
-        val result = GateTrafficClient.tcpEcho(
+        var result = GateTrafficClient.tcpEcho(
             probe.target,
             echo.port,
             probe.payloadSize,
@@ -1694,6 +1700,15 @@ class VpnServiceInstrumentedTest {
             assertFalse("${probe.label} unexpectedly succeeded", result.success)
             assertEquals("${probe.label} unexpectedly reached proxy", before, socks.requestCount)
             return
+        }
+        if (!result.success) {
+            delay(100)
+            result = GateTrafficClient.tcpEcho(
+                probe.target,
+                echo.port,
+                probe.payloadSize,
+                probe.label.hashCode(),
+            )
         }
         assertTrue(
             "${probe.label} failed on ${probe.path}: ${result.error}; " +

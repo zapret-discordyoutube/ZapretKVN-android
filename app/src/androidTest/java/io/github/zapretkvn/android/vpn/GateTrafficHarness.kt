@@ -319,7 +319,7 @@ internal class GateSocksServer(
             } catch (_: SocketException) {
                 return
             }
-            worker("gate-socks-client") { handle(client) }
+            handle(client)
         }
     }
 
@@ -351,6 +351,7 @@ internal class GateSocksServer(
                         java.net.InetSocketAddress(targetAddress, targetPort),
                         GateEchoServer.PROBE_TIMEOUT_MILLIS,
                     )
+                    error.set(null)
                     requests.incrementAndGet()
                     output.write(SUCCESS_RESPONSE)
                     output.flush()

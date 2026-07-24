@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.profiles
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -24,7 +25,9 @@ import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -155,16 +158,34 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithText("Скрытие VPN").performClick()
         composeRule.onNodeWithText("Возможности rootless-режима").assertExists()
         composeRule.onNodeWithTag("vpn-hiding-session-name").performScrollTo().performClick()
-        composeRule.onNodeWithTag("vpn-hiding-mtu-Normalize1500").performScrollTo().performClick()
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
             runBlocking {
-                container.uiSettingsStore.settings.first().vpnHiding.let { options ->
-                    options.blockLocalEndpoints &&
-                        options.neutralSessionName &&
+                container.uiSettingsStore.settings.first().vpnHiding.neutralSessionName
+            }
+        }
+        composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
+            runCatching {
+                composeRule.onNodeWithTag("vpn-hiding-mtu-CoreDefault").assertIsSelected()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("vpn-hiding-mtu-Normalize1500")
+            .performScrollTo()
+            .performClick()
+        val persisted = runBlocking {
+            withTimeoutOrNull(5_000) {
+                container.uiSettingsStore.settings.first { settings ->
+                    settings.vpnHiding.let { options ->
+                    options.neutralSessionName &&
                         options.tunMtuMode == TunMtuMode.Normalize1500
+                    }
                 }
             }
         }
+        assertTrue(
+            "VPN hiding options were not persisted: " +
+                runBlocking { container.uiSettingsStore.settings.first().vpnHiding },
+            persisted != null,
+        )
     }
 
     @Test

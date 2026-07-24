@@ -941,11 +941,17 @@ class ZapretVpnService : VpnService() {
         val candidate = ConfigAnalyzer.selectServer(stored.json, groupTag, outboundTag)
         withContext(Dispatchers.Default) { Libbox.checkConfig(candidate) }
         container.profileStore.update(session.profileId, candidate)
-        val client = session.client() ?: error("Клиент управления sing-box недоступен.")
+        val client = Libbox.newCommandClient(
+            object : BaseClientHandler() {},
+            CommandClientOptions().apply { addCommand(Libbox.CommandGroup) },
+        )
         try {
+            client.connect()
             client.selectOutbound(groupTag, outboundTag)
         } catch (error: Throwable) {
             throw RuntimeSwitchException(error)
+        } finally {
+            runCatching { client.disconnect() }
         }
         controller.publishSelection(session.generation, groupTag, outboundTag)
     }

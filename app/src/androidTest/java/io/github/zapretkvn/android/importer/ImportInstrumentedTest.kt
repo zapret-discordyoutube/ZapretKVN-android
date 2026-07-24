@@ -80,9 +80,9 @@ class ImportInstrumentedTest {
             testContext.packageName,
         )
         val uri = Uri.parse("android.resource://${testContext.packageName}/$resourceId")
-        val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
             setClass(context, MainActivity::class.java)
-            type = "application/x-wireguard-profile"
+            setDataAndType(uri, "application/x-wireguard-profile")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         var viewModel: ProfilesViewModel? = null
@@ -167,17 +167,31 @@ class ImportInstrumentedTest {
 
     @Test
     fun clipboardReaderCombinesEveryTextItem() {
-        val clipboard = context.getSystemService(ClipboardManager::class.java)
         val clip = ClipData.newPlainText(
             "profiles",
             "vless://11111111-1111-4111-8111-111111111111@one.example:443#One",
         ).apply {
             addItem(ClipData.Item("trojan://secret@two.example:443#Two"))
         }
+        var imported = ""
 
-        clipboard.setPrimaryClip(clip)
-        val imported = AndroidImportReader(context).readClipboardAfterUserAction()
-        clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val focusDeadline = SystemClock.uptimeMillis() + 10_000
+            var hasWindowFocus = false
+            while (!hasWindowFocus && SystemClock.uptimeMillis() < focusDeadline) {
+                scenario.onActivity { activity ->
+                    hasWindowFocus = activity.hasWindowFocus()
+                }
+                if (!hasWindowFocus) SystemClock.sleep(50)
+            }
+            assertTrue("MainActivity never received window focus", hasWindowFocus)
+            scenario.onActivity { activity ->
+                val clipboard = activity.getSystemService(ClipboardManager::class.java)
+                clipboard.setPrimaryClip(clip)
+                imported = AndroidImportReader(activity).readClipboardAfterUserAction()
+                clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
+            }
+        }
         val candidate = ImportParser.parse(imported, ProfileSource.Clipboard) as ImportCandidate.Managed
 
         assertEquals(2, candidate.servers.size)

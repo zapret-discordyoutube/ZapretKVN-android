@@ -15,6 +15,7 @@ import io.github.zapretkvn.android.ui.theme.ZapretTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 
@@ -24,6 +25,13 @@ class UpdateUiInstrumentedTest {
 
     private val container
         get() = (composeRule.activity.application as ZapretApplication).container
+
+    @Before
+    fun resetUpdater() = runBlocking {
+        container.updateController.cancelAndDelete()
+        container.updateController.state.first { it == UpdateState.Idle }
+        container.uiSettingsStore.setUpdateChannel(UpdateChannel.Stable)
+    }
 
     @After
     fun cleanup() = runBlocking {
