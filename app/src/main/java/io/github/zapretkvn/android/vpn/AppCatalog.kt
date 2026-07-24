@@ -242,6 +242,7 @@ object PopularAppSuggestions {
         "notion.id" to "Notion",
         "com.instagram.android" to "Instagram",
         "com.instagram.lite" to "Instagram Lite",
+        "com.twitter.android" to "X (Twitter)",
         "com.google.android.youtube" to "YouTube",
         "com.google.android.apps.youtube.music" to "YouTube Music",
         "app.revanced.android.youtube" to "YouTube ReVanced",
@@ -311,10 +312,18 @@ object PopularAppSuggestions {
     )
 
     val packageNames: Set<String> = labelsByPackage.keys
-    const val MIGRATION_REVISION: Int = 3
-    val packagesAddedInCurrentRevision: Set<String> = setOf(
-        "com.brave.browser",
+    const val MIGRATION_REVISION: Int = 4
+    val packagesAddedByRevision: Map<Int, Set<String>> = mapOf(
+        2 to setOf(
+            "com.google.android.apps.bard",
+            "com.google.android.youtube",
+            "com.google.android.apps.youtube.music",
+        ),
+        3 to setOf("com.brave.browser"),
+        4 to setOf("com.twitter.android"),
     )
+    val packagesAddedInCurrentRevision: Set<String>
+        get() = packagesAddedByRevision[MIGRATION_REVISION].orEmpty()
 
     fun labelFor(packageName: String): String? = labelsByPackage[packageName]
 }

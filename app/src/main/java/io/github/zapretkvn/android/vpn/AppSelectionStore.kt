@@ -53,21 +53,26 @@ class AppSelectionStore(context: Context) {
 
     suspend fun initializeIfNeeded(
         suggestedPackages: Set<String>,
-        newlySuggestedPackages: Set<String> = emptySet(),
+        suggestedPackageMigrations: Map<Int, Set<String>> = emptyMap(),
         suggestionRevision: Int = 0,
     ) {
         dataStore.edit { preferences ->
             val initialized = preferences[INITIALIZED] == true
+            val storedSuggestionRevision = preferences[SUGGESTION_REVISION] ?: 0
             val mode = preferences[SCOPE_MODE]
                 ?.let { stored -> AppScopeMode.entries.firstOrNull { it.name == stored } }
                 ?: AppScopeMode.Include
             preferences[ALLOWED_PACKAGES] = mergeSuggestedPackages(
                 currentPackages = preferences[ALLOWED_PACKAGES].orEmpty(),
                 suggestedPackages = suggestedPackages,
-                newlySuggestedPackages = newlySuggestedPackages,
+                newlySuggestedPackages = pendingSuggestedPackages(
+                    suggestedPackageMigrations = suggestedPackageMigrations,
+                    storedSuggestionRevision = storedSuggestionRevision,
+                    suggestionRevision = suggestionRevision,
+                ),
                 initialized = initialized,
                 mode = mode,
-                storedSuggestionRevision = preferences[SUGGESTION_REVISION] ?: 0,
+                storedSuggestionRevision = storedSuggestionRevision,
                 suggestionRevision = suggestionRevision,
                 ownPackageName = appContext.packageName,
             )
@@ -121,6 +126,18 @@ class AppSelectionStore(context: Context) {
         val SUGGESTION_REVISION = intPreferencesKey("suggestion_revision")
     }
 }
+
+internal fun pendingSuggestedPackages(
+    suggestedPackageMigrations: Map<Int, Set<String>>,
+    storedSuggestionRevision: Int,
+    suggestionRevision: Int,
+): Set<String> = suggestedPackageMigrations
+    .asSequence()
+    .filter { (revision, _) ->
+        revision > storedSuggestionRevision && revision <= suggestionRevision
+    }
+    .flatMap { (_, packages) -> packages.asSequence() }
+    .toSet()
 
 internal fun mergeSuggestedPackages(
     currentPackages: Set<String>,

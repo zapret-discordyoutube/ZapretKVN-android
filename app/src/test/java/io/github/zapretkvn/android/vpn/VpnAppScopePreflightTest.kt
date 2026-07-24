@@ -131,6 +131,7 @@ class VpnAppScopePreflightTest {
         assertTrue("com.spotify.music" in packages)
         assertTrue("notion.id" in packages)
         assertTrue("com.instagram.android" in packages)
+        assertTrue("com.twitter.android" in packages)
         assertTrue("com.google.android.youtube" in packages)
         assertTrue("com.google.android.apps.youtube.music" in packages)
         assertTrue("app.revanced.android.youtube" in packages)
@@ -202,13 +203,21 @@ class VpnAppScopePreflightTest {
     }
 
     @Test
-    fun `revision three migrates Brave into existing include scope once`() {
-        val migratedPackages = setOf("com.brave.browser")
+    fun `revision four applies skipped Brave and Twitter migrations once`() {
+        val migratedPackages = setOf("com.brave.browser", "com.twitter.android")
 
-        assertEquals(3, PopularAppSuggestions.MIGRATION_REVISION)
+        assertEquals(4, PopularAppSuggestions.MIGRATION_REVISION)
+        assertEquals(
+            setOf("com.twitter.android"),
+            PopularAppSuggestions.packagesAddedInCurrentRevision,
+        )
         assertEquals(
             migratedPackages,
-            PopularAppSuggestions.packagesAddedInCurrentRevision,
+            pendingSuggestedPackages(
+                suggestedPackageMigrations = PopularAppSuggestions.packagesAddedByRevision,
+                storedSuggestionRevision = 2,
+                suggestionRevision = 4,
+            ),
         )
         assertEquals(
             sortedSetOf("org.telegram.messenger") + migratedPackages,
@@ -219,7 +228,23 @@ class VpnAppScopePreflightTest {
                 initialized = true,
                 mode = AppScopeMode.Include,
                 storedSuggestionRevision = 2,
-                suggestionRevision = 3,
+                suggestionRevision = 4,
+            ),
+        )
+        assertEquals(
+            setOf("com.twitter.android"),
+            pendingSuggestedPackages(
+                suggestedPackageMigrations = PopularAppSuggestions.packagesAddedByRevision,
+                storedSuggestionRevision = 3,
+                suggestionRevision = 4,
+            ),
+        )
+        assertEquals(
+            emptySet<String>(),
+            pendingSuggestedPackages(
+                suggestedPackageMigrations = PopularAppSuggestions.packagesAddedByRevision,
+                storedSuggestionRevision = 4,
+                suggestionRevision = 4,
             ),
         )
         assertEquals(
@@ -227,11 +252,11 @@ class VpnAppScopePreflightTest {
             mergeSuggestedPackages(
                 currentPackages = setOf("org.telegram.messenger"),
                 suggestedPackages = emptySet(),
-                newlySuggestedPackages = migratedPackages,
+                newlySuggestedPackages = emptySet(),
                 initialized = true,
                 mode = AppScopeMode.Include,
-                storedSuggestionRevision = 3,
-                suggestionRevision = 3,
+                storedSuggestionRevision = 4,
+                suggestionRevision = 4,
             ),
         )
     }

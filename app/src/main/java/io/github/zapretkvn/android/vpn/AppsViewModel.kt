@@ -85,12 +85,13 @@ class AppsViewModel(
                 )
                 if (failed) return@launch
                 val installedSuggestedApps = defaultVpnPackages(snapshot.apps)
-                val newlySuggestedPackages = installedSuggestedApps.intersect(
-                    PopularAppSuggestions.packagesAddedInCurrentRevision,
-                )
+                val installedSuggestionMigrations =
+                    PopularAppSuggestions.packagesAddedByRevision.mapValues { (_, packages) ->
+                        installedSuggestedApps.intersect(packages)
+                    }
                 selectionStore.initializeIfNeeded(
                     suggestedPackages = installedSuggestedApps,
-                    newlySuggestedPackages = newlySuggestedPackages,
+                    suggestedPackageMigrations = installedSuggestionMigrations,
                     suggestionRevision = PopularAppSuggestions.MIGRATION_REVISION,
                 )
             } catch (failure: CancellationException) {
