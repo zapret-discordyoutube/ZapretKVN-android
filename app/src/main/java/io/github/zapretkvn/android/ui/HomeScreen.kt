@@ -65,6 +65,7 @@ internal fun HomeScreen(
     contentPadding: PaddingValues,
     activeProfile: ProfileMetadata?,
     selectedAppCount: Int,
+    blockedAppCount: Int,
     appScopeMode: AppScopeMode,
     onAddProfile: () -> Unit,
     onSelectApps: () -> Unit,
@@ -146,6 +147,7 @@ internal fun HomeScreen(
                 ConnectionAction(
                     activeProfile = activeProfile,
                     selectedAppCount = selectedAppCount,
+                    blockedAppCount = blockedAppCount,
                     appScopeMode = appScopeMode,
                     vpnState = vpnState,
                     onAddProfile = onAddProfile,
@@ -158,9 +160,9 @@ internal fun HomeScreen(
 
         Text(
             if (appScopeMode == AppScopeMode.Include) {
-                "Через VPN: $selectedAppCount приложений"
+                "Через VPN: $selectedAppCount · заблокировано: $blockedAppCount"
             } else {
-                "Напрямую вне VPN: $selectedAppCount приложений"
+                "Напрямую вне VPN: $selectedAppCount · заблокировано: $blockedAppCount"
             },
             modifier = Modifier.padding(horizontal = 4.dp),
             style = MaterialTheme.typography.labelMedium,
@@ -321,6 +323,7 @@ private fun TrafficChart(samples: List<TrafficSample>) {
 private fun ConnectionAction(
     activeProfile: ProfileMetadata?,
     selectedAppCount: Int,
+    blockedAppCount: Int,
     appScopeMode: AppScopeMode,
     vpnState: VpnConnectionState,
     onAddProfile: () -> Unit,
@@ -335,7 +338,9 @@ private fun ConnectionAction(
         ) {
             Text("Добавить профиль")
         }
-        selectedAppCount == 0 -> {
+        selectedAppCount == 0 &&
+            (appScopeMode == AppScopeMode.Exclude || blockedAppCount == 0) &&
+            (vpnState == VpnConnectionState.Stopped || vpnState is VpnConnectionState.Error) -> {
             Text(
                 if (appScopeMode == AppScopeMode.Include) {
                     "Выберите хотя бы одно приложение для VPN."

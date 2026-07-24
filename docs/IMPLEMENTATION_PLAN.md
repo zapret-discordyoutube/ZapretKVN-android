@@ -217,6 +217,9 @@ IPv6 завершалась `missing IPv6 local address`. Test 18 подтвер
 - [x] `I4-09` Реализовать advanced include/exclude mode с явным предупреждением; пустой exclude-list блокирует запуск.
 - [x] `I4-10` Дать GUI-редактор основных domain/IP/rule-set/outbound полей, редкое оставить raw JSON.
 - [x] `I4-11` После каждой GUI-операции показывать effective summary и diff управляемых `zapret-*` объектов.
+- [x] `I4-12` Добавить отдельный пустой по умолчанию blocklist приложений: в include
+  объединять его с Android TUN boundary, в exclude запрещать пересечение с direct,
+  а в runtime-копии ставить первые DNS/route `package_name → reject`.
 
 ### Тесты и Gate 4
 
@@ -553,9 +556,9 @@ production default по AVD-данным не изменён.
 Эти пункты не входят в текущий final gate и не реализуются «на всякий случай». Галочка
 означает не наличие кода, а прохождение указанного ниже отдельного activation gate.
 
-- [ ] `F-01` Whole-app block как третье состояние приложения. Активировать после первого
-  release и явного продуктового запроса; реализовывать как узкое `package_name → reject`
-  внутри TUN, не смешивая с Android include/exclude boundary.
+- [x] `F-01` Whole-app block активирован 24 июля 2026 года по явному запросу пользователя:
+  отдельный пустой по умолчанию список создаёт узкое `package_name → reject` внутри
+  TUN и не превращает Android include/exclude boundary в третий глобальный режим.
 - [ ] `F-02` Clash YAML import. Требуется полный gate из `IMPORT_FORMATS.md`: libbox binding
   либо отдельное обоснованное решение о parser, минимум 10 реальных образцов и доказанное
   отсутствие silent field loss. DNS/routes/groups из Clash автоматически не сливать.
@@ -590,7 +593,9 @@ production default по AVD-данным не изменён.
 - [x] Debug и R8 release APK собраны.
 - [x] Runtime smoke пройден на эмуляторах API 26 и API 36.
 - [x] Повторный аудит I0-08–I0-14: exact origin/tag/SHA, рекурсивные fixtures, arm64 release и pinned CI actions.
-- [x] JVM unit tests: 147/147 во всех модулях; добавлены Auto DNS fallback, app-scoped health route, GitHub updater/signing, security и Always-on/Lockdown policy.
+- [x] JVM unit tests: 165/165 в `:app:testDebugUnitTest`; добавлены Auto DNS fallback,
+  app-scoped health route, GitHub updater/signing, security, Always-on/Lockdown policy
+  и полная блокировка приложений.
 - [x] Android instrumented tests: текущие 67/67 пройдены на API 36; базовые 66/66 — на API 26/29, security delta 3/3 — на API 26.
 - [x] Hard process recreation: `scripts/verify-process-recreation.sh` пройден на API 26/36; после смерти процесса ноль session/core/TUN/callback/client, после нового connect ровно один экземпляр.
 - [x] Packaged `.srs`: exact CLI RU/non-RU domain/IPv4/IPv6, manifest/license/SHA, atomic repair; 50 089 байт, cold install 14 мс на AVD API 36.

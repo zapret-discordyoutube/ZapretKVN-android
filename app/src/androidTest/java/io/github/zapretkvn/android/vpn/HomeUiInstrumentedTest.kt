@@ -32,6 +32,7 @@ class HomeUiInstrumentedTest {
         profileId = profile.id
         container.uiSettingsStore.setActiveProfile(profile.id)
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
+        container.appSelectionStore.replaceBlocklist(emptySet())
         val generation = container.vpnController.nextGeneration()
         container.vpnController.publish(
             generation,
@@ -71,6 +72,7 @@ class HomeUiInstrumentedTest {
         profileId?.let { container.profileStore.delete(it) }
         container.uiSettingsStore.setActiveProfile(null)
         container.appSelectionStore.replaceAllowlist(emptySet())
+        container.appSelectionStore.replaceBlocklist(emptySet())
     }
 
     @Test
@@ -137,6 +139,8 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("Добавить профиль").assertExists()
 
         runBlocking {
+            val generation = container.vpnController.nextGeneration()
+            container.vpnController.publish(generation, VpnConnectionState.Stopped)
             container.uiSettingsStore.setActiveProfile(profileId)
             container.appSelectionStore.replaceAllowlist(emptySet())
         }
@@ -145,6 +149,18 @@ class HomeUiInstrumentedTest {
         }
         composeRule.onNodeWithText("Выберите хотя бы одно приложение для VPN.").assertExists()
         composeRule.onNodeWithText("Выбрать приложения").assertExists()
+    }
+
+    @Test
+    fun connectedSessionCanStillBeStoppedAfterItsOnlyAppIsRemoved() {
+        runBlocking {
+            container.appSelectionStore.replaceAllowlist(emptySet())
+            container.appSelectionStore.replaceBlocklist(emptySet())
+        }
+
+        composeRule.onNodeWithText("VPN подключён").assertExists()
+        composeRule.onNodeWithText("Отключить").assertExists()
+        composeRule.onNodeWithText("Выбрать приложения").assertDoesNotExist()
     }
 
     private companion object {

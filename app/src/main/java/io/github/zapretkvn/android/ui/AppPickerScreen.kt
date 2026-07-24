@@ -47,11 +47,17 @@ import io.github.zapretkvn.android.vpn.AppsViewModel
 import io.github.zapretkvn.android.vpn.AppScopeMode
 import io.github.zapretkvn.android.vpn.InstalledApp
 
+enum class AppPickerMode {
+    VpnScope,
+    Blocked,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppPickerScreen(
     state: AppsUiState,
     viewModel: AppsViewModel,
+    mode: AppPickerMode,
     onBack: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -63,11 +69,22 @@ fun AppPickerScreen(
             app.label.contains(query, ignoreCase = true) ||
             app.packageName.contains(query, ignoreCase = true)
     }
-    val suggestedApps = matchingApps.filter { it.suggestion != null }
+    val selectedPackages = when (mode) {
+        AppPickerMode.VpnScope -> state.allowedPackages
+        AppPickerMode.Blocked -> state.blockedPackages
+    }
+    val missingPackages = when (mode) {
+        AppPickerMode.VpnScope -> state.missingAllowedPackages
+        AppPickerMode.Blocked -> state.missingBlockedPackages
+    }
+    val suggestedApps = if (mode == AppPickerMode.VpnScope) {
+        matchingApps.filter { it.suggestion != null }
+    } else {
+        emptyList()
+    }
     val regularApps = matchingApps.filter { app ->
-        app.suggestion == null && (
-            !app.system || showSystem || app.packageName in state.allowedPackages
-        )
+        (mode == AppPickerMode.Blocked || app.suggestion == null) &&
+            (!app.system || showSystem || app.packageName in selectedPackages)
     }
 
     Scaffold(
@@ -75,10 +92,15 @@ fun AppPickerScreen(
             CenterAlignedTopAppBar(
                 title = {
                     Text(
-                        if (state.scopeMode == AppScopeMode.Include) {
-                            "Приложения для VPN"
-                        } else {
-                            "Приложения напрямую"
+                        when (mode) {
+                            AppPickerMode.Blocked -> "Блокировка приложений"
+                            AppPickerMode.VpnScope -> {
+                                if (state.scopeMode == AppScopeMode.Include) {
+                                    "Приложения для VPN"
+                                } else {
+                                    "Приложения напрямую"
+                                }
+                            }
                         },
                     )
                 },
@@ -134,14 +156,26 @@ fun AppPickerScreen(
                         )
                     }
                     Text(
-                        if (state.scopeMode == AppScopeMode.Include) {
-                            "В VPN: ${state.allowedPackages.size}"
-                        } else {
-                            "Напрямую вне VPN: ${state.allowedPackages.size}"
+                        when (mode) {
+                            AppPickerMode.Blocked -> "Заблокировано: ${state.blockedPackages.size}"
+                            AppPickerMode.VpnScope -> {
+                                if (state.scopeMode == AppScopeMode.Include) {
+                                    "В VPN: ${state.allowedPackages.size}"
+                                } else {
+                                    "Напрямую вне VPN: ${state.allowedPackages.size}"
+                                }
+                            }
                         },
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    if (state.scopeMode == AppScopeMode.Exclude) {
+                    if (mode == AppPickerMode.Blocked) {
+                        Text(
+                            "Отмеченные приложения не смогут использовать Wi‑Fi или мобильную сеть, " +
+                                "пока подключён Zapret KVN. Изменения применятся при следующем подключении.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    } else if (state.scopeMode == AppScopeMode.Exclude) {
                         Text(
                             "Отмеченные приложения используют обычную сеть Android вне VPN и TUN; " +
                                 "все остальные идут через VPN. Глобальный tun0 при этом может оставаться видимым. " +
@@ -195,14 +229,21 @@ fun AppPickerScreen(
                 }
             }
 
-            if (state.missingPackages.isNotEmpty()) {
+            if (missingPackages.isNotEmpty()) {
                 item(key = "missing-header") {
                     SectionHeader("Недоступные")
                 }
-                items(state.missingPackages.toList(), key = { "missing-$it" }) { packageName ->
+                items(missingPackages.toList(), key = { "missing-$it" }) { packageName ->
                     MissingAppRow(
                         packageName = packageName,
-                        onRemove = { viewModel.setAllowed(packageName, false) },
+                        blocked = mode == AppPickerMode.Blocked,
+                        onRemove = {
+                            if (mode == AppPickerMode.Blocked) {
+                                viewModel.setBlocked(packageName, false)
+                            } else {
+                                viewModel.setAllowed(packageName, false)
+                            }
+                        },
                     )
                 }
             }
@@ -214,9 +255,13 @@ fun AppPickerScreen(
                 items(suggestedApps, key = { "suggested-${it.packageName}" }) { app ->
                     AppRow(
                         app = app,
-                        selected = app.packageName in state.allowedPackages,
+                        selected = app.packageName in selectedPackages,
                         onSelectedChange = { selected ->
-                            viewModel.setAllowed(app.packageName, selected)
+                            if (mode == AppPickerMode.Blocked) {
+                                viewModel.setBlocked(app.packageName, selected)
+                            } else {
+                                viewModel.setAllowed(app.packageName, selected)
+                            }
                         },
                     )
                 }
@@ -229,9 +274,13 @@ fun AppPickerScreen(
                 items(regularApps, key = InstalledApp::packageName) { app ->
                     AppRow(
                         app = app,
-                        selected = app.packageName in state.allowedPackages,
+                        selected = app.packageName in selectedPackages,
                         onSelectedChange = { selected ->
-                            viewModel.setAllowed(app.packageName, selected)
+                            if (mode == AppPickerMode.Blocked) {
+                                viewModel.setBlocked(app.packageName, selected)
+                            } else {
+                                viewModel.setAllowed(app.packageName, selected)
+                            }
                         },
                     )
                 }
@@ -239,7 +288,7 @@ fun AppPickerScreen(
 
             if (!state.loading && state.error == null &&
                 suggestedApps.isEmpty() && regularApps.isEmpty() &&
-                state.missingPackages.isEmpty()
+                missingPackages.isEmpty()
             ) {
                 item(key = "empty") {
                     Text(
@@ -250,10 +299,16 @@ fun AppPickerScreen(
                 }
             }
 
-            if (state.missingPackages.isNotEmpty()) {
+            if (missingPackages.isNotEmpty()) {
                 item(key = "remove-missing") {
                     TextButton(
-                        onClick = viewModel::removeMissingPackages,
+                        onClick = {
+                            if (mode == AppPickerMode.Blocked) {
+                                viewModel.removeMissingBlockedPackages()
+                            } else {
+                                viewModel.removeMissingAllowedPackages()
+                            }
+                        },
                         modifier = Modifier.padding(horizontal = 8.dp),
                     ) {
                         Text("Удалить все недоступные")
@@ -328,6 +383,7 @@ internal fun AppRow(
 @Composable
 private fun MissingAppRow(
     packageName: String,
+    blocked: Boolean,
     onRemove: () -> Unit,
 ) {
     Row(
@@ -341,7 +397,11 @@ private fun MissingAppRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(packageName, fontWeight = FontWeight.Medium)
             Text(
-                "Пакет удалён или недоступен. VPN не запустится.",
+                if (blocked) {
+                    "Пакет удалён или недоступен. Правило блокировки будет пропущено."
+                } else {
+                    "Пакет удалён или недоступен и будет пропущен при подключении."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )

@@ -26,15 +26,18 @@ class RuntimeConfigNativeInstrumentedTest {
         """.trimIndent()
         DnsMode.entries.forEach { mode ->
             listOf(null, "io.github.zapretkvn.android").forEach { updaterPackage ->
-                val runtime = RuntimeConfigBuilder.build(
-                    raw,
-                    options = RuntimeConfigOptions(
-                        dnsMode = mode,
-                        healthCheckPackageName = "io.github.zapretkvn.android",
-                        updaterPackageName = updaterPackage,
-                    ),
-                ) as RuntimeConfigResult.Ready
-                Libbox.checkConfig(runtime.json)
+                listOf(emptySet(), setOf("com.example.blocked")).forEach { blockedPackages ->
+                    val runtime = RuntimeConfigBuilder.build(
+                        raw,
+                        options = RuntimeConfigOptions(
+                            dnsMode = mode,
+                            healthCheckPackageName = "io.github.zapretkvn.android",
+                            updaterPackageName = updaterPackage,
+                            blockedPackages = blockedPackages,
+                        ),
+                    ) as RuntimeConfigResult.Ready
+                    Libbox.checkConfig(runtime.json)
+                }
             }
         }
     }

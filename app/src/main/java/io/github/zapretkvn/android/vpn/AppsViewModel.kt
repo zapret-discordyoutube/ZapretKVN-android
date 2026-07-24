@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 data class AppsUiState(
     val apps: List<InstalledApp> = emptyList(),
     val allowedPackages: Set<String> = emptySet(),
+    val blockedPackages: Set<String> = emptySet(),
     val scopeMode: AppScopeMode = AppScopeMode.Include,
     val initialized: Boolean = false,
     val catalogLoaded: Boolean = false,
@@ -21,11 +22,21 @@ data class AppsUiState(
     val warning: String? = null,
 ) {
     val needsAppSelection: Boolean
-        get() = initialized && allowedPackages.isEmpty()
+        get() = initialized && when (scopeMode) {
+            AppScopeMode.Include -> allowedPackages.isEmpty() && blockedPackages.isEmpty()
+            AppScopeMode.Exclude -> allowedPackages.isEmpty()
+        }
 
-    val missingPackages: Set<String>
+    val missingAllowedPackages: Set<String>
         get() = if (catalogLoaded) {
             allowedPackages - apps.asSequence().map(InstalledApp::packageName).toSet()
+        } else {
+            emptySet()
+        }
+
+    val missingBlockedPackages: Set<String>
+        get() = if (catalogLoaded) {
+            blockedPackages - apps.asSequence().map(InstalledApp::packageName).toSet()
         } else {
             emptySet()
         }
@@ -56,6 +67,7 @@ class AppsViewModel(
         AppsUiState(
             apps = catalogState.apps,
             allowedPackages = selection.allowedPackages,
+            blockedPackages = selection.blockedPackages,
             scopeMode = selection.mode,
             initialized = selection.initialized,
             catalogLoaded = catalogState.loaded,
@@ -108,10 +120,23 @@ class AppsViewModel(
         viewModelScope.launch { selectionStore.setMode(mode) }
     }
 
-    fun removeMissingPackages() {
+    fun setBlocked(packageName: String, blocked: Boolean) {
+        viewModelScope.launch {
+            selectionStore.setBlocked(packageName, blocked)
+        }
+    }
+
+    fun removeMissingAllowedPackages() {
         val available = catalog.value.apps.asSequence().map(InstalledApp::packageName).toSet()
         viewModelScope.launch {
             selectionStore.replaceAllowlist(state.value.allowedPackages.intersect(available))
+        }
+    }
+
+    fun removeMissingBlockedPackages() {
+        val available = catalog.value.apps.asSequence().map(InstalledApp::packageName).toSet()
+        viewModelScope.launch {
+            selectionStore.replaceBlocklist(state.value.blockedPackages.intersect(available))
         }
     }
 

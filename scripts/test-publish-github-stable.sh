@@ -75,6 +75,10 @@ case "${1:-} ${2:-}" in
     "api repos/"*)
         release_json
         ;;
+    "api --paginate")
+        [[ "${3:-}" == repos/* ]]
+        release_json | jq -s '.'
+        ;;
     "release create")
         [[ ! -e "$STATE_FILE" ]]
         printf 'draft\n' > "$STATE_FILE"

@@ -56,6 +56,7 @@ fun RoutingScreen(
     routingState: RoutingUiState,
     routingViewModel: RoutingViewModel,
     onOpenPicker: () -> Unit,
+    onOpenBlockPicker: () -> Unit,
     onOpenAdvancedJson: () -> Unit,
 ) {
     var presetDialog by remember { mutableStateOf(false) }
@@ -93,12 +94,23 @@ fun RoutingScreen(
                             label = { Text("Приложения напрямую") },
                         )
                     }
+                    val scopeReady = when (appsState.scopeMode) {
+                        AppScopeMode.Include -> {
+                            appsState.allowedPackages.isNotEmpty() ||
+                                appsState.blockedPackages.isNotEmpty()
+                        }
+                        AppScopeMode.Exclude -> appsState.allowedPackages.isNotEmpty()
+                    }
                     Text(
                         when (appsState.scopeMode) {
                             AppScopeMode.Include -> if (appsState.allowedPackages.isEmpty()) {
-                                "Приложения не выбраны"
+                                if (appsState.blockedPackages.isEmpty()) {
+                                    "Приложения не выбраны"
+                                } else {
+                                    "TUN используется только для блокировки"
+                                }
                             } else {
-                                "В Android TUN: ${appsState.allowedPackages.size}"
+                                "Через VPN: ${appsState.allowedPackages.size}"
                             }
                             AppScopeMode.Exclude -> if (appsState.allowedPackages.isEmpty()) {
                                 "Приложения напрямую не выбраны: запуск заблокирован"
@@ -107,15 +119,16 @@ fun RoutingScreen(
                             }
                         },
                         modifier = Modifier.testTag("selected-app-count"),
-                        color = if (appsState.allowedPackages.isEmpty()) {
-                            MaterialTheme.colorScheme.error
-                        } else {
+                        color = if (scopeReady) {
                             MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
                         },
                     )
                     Text(
                         if (appsState.scopeMode == AppScopeMode.Include) {
-                            "Android отсекает остальные приложения до TUN: они не создают per-packet работу Zapret KVN."
+                            "Android отсекает остальные приложения до TUN; отдельно заблокированные " +
+                                "приложения допускаются в TUN только до reject-правила."
                         } else {
                             "Режим «Приложения напрямую»: отмеченные приложения остаются вне TUN; " +
                                 "все остальные попадут в VPN."
@@ -126,9 +139,12 @@ fun RoutingScreen(
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
-                    if (appsState.missingPackages.isNotEmpty()) {
+                    val missingPackageCount = (
+                        appsState.missingAllowedPackages + appsState.missingBlockedPackages
+                    ).size
+                    if (missingPackageCount > 0) {
                         Text(
-                            "Недоступных пакетов: ${appsState.missingPackages.size}. Они будут пропущены при подключении.",
+                            "Недоступных пакетов: $missingPackageCount. Они будут пропущены при подключении.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -150,6 +166,27 @@ fun RoutingScreen(
                                 "Выбрать приложения напрямую"
                             },
                         )
+                    }
+                    Text(
+                        if (appsState.blockedPackages.isEmpty()) {
+                            "Блокировка приложений: список пуст"
+                        } else {
+                            "Заблокировано приложений: ${appsState.blockedPackages.size}"
+                        },
+                        color = if (appsState.blockedPackages.isEmpty()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                    OutlinedButton(
+                        onClick = onOpenBlockPicker,
+                        enabled = !appsState.loading,
+                        modifier = Modifier.semantics {
+                            contentDescription = "Открыть выбор заблокированных приложений"
+                        },
+                    ) {
+                        Text("Блокировать приложения")
                     }
                 }
             }
@@ -201,7 +238,11 @@ fun RoutingScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            "Порядок: reject → direct → VPN → final. Package route rules не создаются.",
+                            if (appsState.blockedPackages.isEmpty()) {
+                                "Порядок: reject → direct → VPN → final. Package route rules не создаются."
+                            } else {
+                                "Порядок: блокировка package → reject → direct → VPN → final."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                         )

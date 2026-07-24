@@ -294,6 +294,40 @@ class VpnServiceInstrumentedTest {
     }
 
     @Test
+    fun blockedAppCanBeTheOnlyIncludePackageAndGetsNetworkReject() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val blockedPackage = instrumentation.context.packageName
+        val container = (context.applicationContext as ZapretApplication).container
+        val packageName = context.packageName
+        allowVpn(packageName)
+        val profile = createProfile(container, "Whole-app block", TWO_SERVER_DIRECT_CONFIG)
+        try {
+            container.appSelectionStore.setMode(AppScopeMode.Include)
+            container.appSelectionStore.replaceAllowlist(emptySet())
+            container.appSelectionStore.replaceBlocklist(setOf(blockedPackage))
+            connect(container.vpnController, profile.id)
+            waitForVpnInterface(context)
+            awaitActiveResources()
+
+            val blocked = controlCall(context, ControlTrafficProvider.METHOD_TCP)
+            assertFalse(
+                "Blocked package unexpectedly reached the network",
+                blocked.getBoolean(ControlTrafficProvider.RESULT_SUCCESS),
+            )
+            val selection = container.appSelectionStore.selection.first()
+            assertTrue(selection.allowedPackages.isEmpty())
+            assertEquals(setOf(blockedPackage), selection.blockedPackages)
+        } finally {
+            stopIfNeeded(container.vpnController, context)
+            container.profileStore.delete(profile.id)
+            container.appSelectionStore.replaceBlocklist(emptySet())
+            container.appSelectionStore.setMode(AppScopeMode.Include)
+            denyVpn(packageName)
+        }
+    }
+
+    @Test
     fun routeRejectBlocksSelectedIpv4WhileIpv6ControlStillUsesDirectRule() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

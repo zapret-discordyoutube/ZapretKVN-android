@@ -23,6 +23,7 @@ class AppScopeInstrumentedTest {
     @After
     fun clearSelection() = runBlocking {
         container.appSelectionStore.replaceAllowlist(emptySet())
+        container.appSelectionStore.replaceBlocklist(emptySet())
         container.appSelectionStore.setMode(AppScopeMode.Include)
     }
 
@@ -90,6 +91,23 @@ class AppScopeInstrumentedTest {
         assertEquals(AppScopeMode.Exclude, stored.mode)
         assertEquals(VpnAppScopeResult.Ready(AppScopeMode.Exclude, excluded), result)
         assertEquals(listOf(SETTINGS_PACKAGE), excluded)
+    }
+
+    @Test
+    fun blocklistCannotOverlapVpnScope() = runBlocking {
+        container.appSelectionStore.replaceAllowlist(emptySet(), initialized = false)
+        container.appSelectionStore.replaceBlocklist(emptySet())
+
+        container.appSelectionStore.setAllowed(SETTINGS_PACKAGE, allowed = true)
+        container.appSelectionStore.setBlocked(SETTINGS_PACKAGE, blocked = true)
+        val blocked = container.appSelectionStore.selection.first()
+        assertTrue(blocked.allowedPackages.isEmpty())
+        assertEquals(setOf(SETTINGS_PACKAGE), blocked.blockedPackages)
+
+        container.appSelectionStore.setAllowed(SETTINGS_PACKAGE, allowed = true)
+        val allowed = container.appSelectionStore.selection.first()
+        assertEquals(setOf(SETTINGS_PACKAGE), allowed.allowedPackages)
+        assertTrue(allowed.blockedPackages.isEmpty())
     }
 
     private companion object {

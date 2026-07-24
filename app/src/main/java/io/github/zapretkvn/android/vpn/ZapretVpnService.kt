@@ -283,7 +283,7 @@ class ZapretVpnService : VpnService() {
             ConfigAnalyzer.dnsWarnings(profile.json).forEach(controller::publishDiagnosticWarning)
         }
         val appSelection = container.appSelectionStore.selection.first()
-        val selectedPackages = appSelection.allowedPackages
+        val selectedPackages = appSelection.selectedPackagesForTunBoundary()
         val preflight = container.vpnAppScopePreflight.apply(
             selectedPackages = selectedPackages,
             mode = appSelection.mode,
@@ -373,6 +373,7 @@ class ZapretVpnService : VpnService() {
                         vpnHiding = vpnHiding,
                         healthCheckPackageName = packageName,
                         updaterPackageName = packageName.takeIf { updaterRouting },
+                        blockedPackages = appSelection.blockedPackages,
                     ),
                 )
             ) {

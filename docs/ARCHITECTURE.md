@@ -210,6 +210,7 @@ TCP/HTTPS URL-test. Один пакет отправляется при подк
 ```text
 Область VPN
 Только выбранные приложения · YouTube, Discord · 7 >
+Блокировать приложения · 0 >
 
 Правило трафика
 Россия напрямую · остальное через VPN >
@@ -217,7 +218,8 @@ TCP/HTTPS URL-test. Один пакет отправляется при подк
 Итог
 выбранные: RU → напрямую, остальное → VPN
 остальные приложения: напрямую, вне VPN
-блокировка: только для выбранных приложений
+destination-блокировка: только для выбранных приложений
+полная блокировка приложений: отдельный пустой по умолчанию список
 ```
 
 Список приложений открывается отдельным полноэкранным picker с поиском. Список правил остаётся на том же экране в «Расширенных настройках».
@@ -353,6 +355,11 @@ Advanced exclude-mode поддерживается, потому что он б�
 - Пользовательские inline/local/remote rule-set разрешены только как явный JSON-сценарий.
 
 Domain block создаёт DNS `reject` и route `reject`. IP block создаёт только route `reject`. Глобальный sniff ради блокировки не включается. Встроенный DoH приложения может скрыть domain-only блокировку; полноценный firewall/ad blocker не обещается.
+
+Полная блокировка приложения — отдельная политика DataStore, а не правило профиля.
+В include-режиме её пакеты добавляются к Android TUN boundary, в exclude-режиме не
+могут одновременно быть direct-исключениями. Runtime-копия ставит для них первые
+DNS/route `package_name → reject`; сохранённый JSON не изменяется.
 
 ## DNS
 
@@ -625,7 +632,8 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
   фиксирует Android WireGuard endpoint, health-route и раздельные TUN/endpoint MTU;
 - `go test ./dns/... ./route/rule ./experimental/libbox` проходит; наш воспроизводимый audit test дополнительно проверяет exact pinned fallback success/error/hang/RCODE внутри исходного Go package;
 - Gradle-проект с направленными library-модулями собирает одно-ABI debug и R8 release-матрицу; каждый APK содержит ровно один ABI, один process и один `VpnService`;
-- 147/147 JVM unit-тестов проходят, включая DNS/routing/import/updater/signing и Always-on policy;
+- 165/165 JVM unit-тестов проходят, включая DNS/routing/import/updater/signing,
+  Always-on policy и полную блокировку приложений;
 - полный текущий набор 67/67 Android instrumented-тестов проходит на AVD API 36; API 26
   прошёл предыдущую матрицу 66/66 и security delta 3/3, API 29 — 66/66; API 29/36
   дополнительно прошли 100 connect/stop и 50 Wi-Fi/cellular transitions;

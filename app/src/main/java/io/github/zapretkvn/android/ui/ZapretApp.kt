@@ -132,10 +132,10 @@ fun ZapretApp(
     onInstallUpdate: () -> Unit,
     onCancelUpdate: () -> Unit,
 ) {
-    var appPickerOpen by rememberSaveable { mutableStateOf(false) }
+    var appPickerMode by rememberSaveable { mutableStateOf<AppPickerMode?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.Home) }
     var dismissedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
-    val homeSelected = state.editor == null && !appPickerOpen && selectedTab == AppTab.Home
+    val homeSelected = state.editor == null && appPickerMode == null && selectedTab == AppTab.Home
     DisposableEffect(homeSelected) {
         onHomeSelected(homeSelected)
         onDispose { if (homeSelected) onHomeSelected(false) }
@@ -144,11 +144,12 @@ fun ZapretApp(
         RawEditorScreen(profilesViewModel, editor, state.settings.rawEditorLineWrap, state.busy)
         return
     }
-    if (appPickerOpen) {
+    appPickerMode?.let { pickerMode ->
         AppPickerScreen(
             state = appsState,
             viewModel = appsViewModel,
-            onBack = { appPickerOpen = false },
+            mode = pickerMode,
+            onBack = { appPickerMode = null },
         )
         return
     }
@@ -235,11 +236,12 @@ fun ZapretApp(
                     it.id == state.settings.activeProfileId
                 },
                 selectedAppCount = appsState.allowedPackages.size,
+                blockedAppCount = appsState.blockedPackages.size,
                 appScopeMode = appsState.scopeMode,
                 onAddProfile = { selectedTab = AppTab.Profiles },
                 onSelectApps = {
                     appsViewModel.refresh()
-                    appPickerOpen = true
+                    appPickerMode = AppPickerMode.VpnScope
                 },
                 vpnState = vpnState,
                 selectorGroups = selectorGroups,
@@ -257,7 +259,7 @@ fun ZapretApp(
                 showAppSelectionAfterImport = appsState.needsAppSelection,
                 onOpenAppPicker = {
                     appsViewModel.refresh()
-                    appPickerOpen = true
+                    appPickerMode = AppPickerMode.VpnScope
                 },
             )
             AppTab.Routing -> RoutingScreen(
@@ -268,7 +270,11 @@ fun ZapretApp(
                 routingViewModel = routingViewModel,
                 onOpenPicker = {
                     appsViewModel.refresh()
-                    appPickerOpen = true
+                    appPickerMode = AppPickerMode.VpnScope
+                },
+                onOpenBlockPicker = {
+                    appsViewModel.refresh()
+                    appPickerMode = AppPickerMode.Blocked
                 },
                 onOpenAdvancedJson = {
                     routingState.activeProfileId?.let(profilesViewModel::openEditor)

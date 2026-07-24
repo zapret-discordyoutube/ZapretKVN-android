@@ -8,6 +8,12 @@ import org.junit.Test
 
 class VpnAppScopePreflightTest {
     @Test
+    fun `whole-app blocklist is empty by default`() {
+        assertTrue(AppSelection().blockedPackages.isEmpty())
+        assertTrue(AppsUiState().blockedPackages.isEmpty())
+    }
+
+    @Test
     fun `empty user allowlist never touches builder`() {
         val added = mutableListOf<String>()
         val result = preflight(available = setOf(OWN_PACKAGE)).apply(
@@ -114,6 +120,25 @@ class VpnAppScopePreflightTest {
         )
 
         assertEquals(VpnAppScopeResult.EmptyAllowlist, result)
+    }
+
+    @Test
+    fun `blocked apps join include boundary but never Android exclude list`() {
+        val include = AppSelection(
+            allowedPackages = setOf("com.example.vpn"),
+            blockedPackages = setOf("com.example.blocked"),
+            mode = AppScopeMode.Include,
+        )
+        val exclude = include.copy(mode = AppScopeMode.Exclude)
+
+        assertEquals(
+            setOf("com.example.vpn", "com.example.blocked"),
+            include.selectedPackagesForTunBoundary(),
+        )
+        assertEquals(
+            setOf("com.example.vpn"),
+            exclude.selectedPackagesForTunBoundary(),
+        )
     }
 
     @Test
@@ -284,6 +309,19 @@ class VpnAppScopePreflightTest {
             AppsUiState(
                 initialized = true,
                 allowedPackages = setOf("com.example.browser"),
+            ).needsAppSelection,
+        )
+        assertFalse(
+            AppsUiState(
+                initialized = true,
+                blockedPackages = setOf("com.example.blocked"),
+            ).needsAppSelection,
+        )
+        assertTrue(
+            AppsUiState(
+                initialized = true,
+                blockedPackages = setOf("com.example.blocked"),
+                scopeMode = AppScopeMode.Exclude,
             ).needsAppSelection,
         )
     }

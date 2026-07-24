@@ -32,12 +32,14 @@ class AppPickerUiInstrumentedTest {
     @Before
     fun clearSelection() = runBlocking {
         container.appSelectionStore.replaceAllowlist(emptySet())
+        container.appSelectionStore.replaceBlocklist(emptySet())
         container.appSelectionStore.setMode(AppScopeMode.Include)
     }
 
     @After
     fun cleanSelection() = runBlocking {
         container.appSelectionStore.replaceAllowlist(emptySet())
+        container.appSelectionStore.replaceBlocklist(emptySet())
         container.appSelectionStore.setMode(AppScopeMode.Include)
     }
 
@@ -62,11 +64,11 @@ class AppPickerUiInstrumentedTest {
             }
         }
         composeRule.onNodeWithContentDescription("Назад").performClick()
-        composeRule.onNodeWithText("В Android TUN: 1").assertExists()
+        composeRule.onNodeWithText("Через VPN: 1").assertExists()
 
         composeRule.activityRule.scenario.recreate()
         composeRule.waitForIdle()
-        composeRule.onNodeWithText("В Android TUN: 1").assertExists()
+        composeRule.onNodeWithText("Через VPN: 1").assertExists()
     }
 
     @Test
@@ -93,6 +95,35 @@ class AppPickerUiInstrumentedTest {
             .performClick()
 
         assertTrue(selected.get())
+    }
+
+    @Test
+    fun blocklistStartsEmptyAndSelectedAppSurvivesRecreation() {
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            runBlocking { container.appSelectionStore.selection.first().initialized }
+        }
+        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNodeWithText("Блокировка приложений: список пуст").assertExists()
+        composeRule.onNodeWithText("Блокировать приложения").performClick()
+        composeRule.onNodeWithTag("show-system-apps").performClick()
+        composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag("app-row-$SETTINGS_PACKAGE")
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeRule.onNodeWithTag("app-row-$SETTINGS_PACKAGE").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            runBlocking {
+                SETTINGS_PACKAGE in container.appSelectionStore.selection.first().blockedPackages
+            }
+        }
+        composeRule.onNodeWithContentDescription("Назад").performClick()
+        composeRule.onNodeWithText("Заблокировано приложений: 1").assertExists()
+
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Заблокировано приложений: 1").assertExists()
     }
 
     private companion object {

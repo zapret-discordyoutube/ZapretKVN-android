@@ -55,6 +55,7 @@ data class RuntimeConfigOptions(
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
     val healthCheckPackageName: String? = null,
     val updaterPackageName: String? = null,
+    val blockedPackages: Set<String> = emptySet(),
 )
 
 sealed interface RuntimeConfigResult {
@@ -154,6 +155,10 @@ object RuntimeConfigBuilder {
         ) {
             return invalid("Некорректный Android package health-check.")
         }
+        val blockedPackages = options.blockedPackages.toSortedSet()
+        if (blockedPackages.any { !ANDROID_PACKAGE.matches(it) }) {
+            return invalid("Список заблокированных приложений содержит некорректный Android package.")
+        }
         if (options.dnsMode in MANAGED_DNS_MODES && hasFakeIp(root)) {
             return invalid("FakeIP найден в JSON. Для него выберите режим «Из JSON».")
         }
@@ -198,6 +203,7 @@ object RuntimeConfigBuilder {
             selectedProxyTag = selectedProxyTag,
             bootstrapHost = options.bootstrapHost,
             healthCheckPackageName = options.healthCheckPackageName,
+            blockedPackages = blockedPackages,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         val runtime = (dnsOverlay as RuntimeConfigResult.Ready).json
@@ -266,6 +272,7 @@ object RuntimeConfigBuilder {
         selectedProxyTag: String?,
         bootstrapHost: BootstrapHostOverlay?,
         healthCheckPackageName: String?,
+        blockedPackages: Set<String>,
     ): RuntimeConfigResult {
         val next = root.toMutableMap()
         var dns = (root["dns"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
@@ -319,7 +326,13 @@ object RuntimeConfigBuilder {
                 DnsMode.FromJson -> emptyList()
             }
             val overrideRules = listOfNotNull(normalizedOverride?.let(::dnsOverrideRule))
-            dns["rules"] = JsonArray(rejectRules + overrideRules + generated + otherRules)
+            dns["rules"] = JsonArray(
+                packageRejectRules(blockedPackages) +
+                    rejectRules +
+                    overrideRules +
+                    generated +
+                    otherRules,
+            )
             dns["final"] = JsonPrimitive(
                 when (mode) {
                     DnsMode.Android -> ANDROID_DNS_TAG
@@ -333,6 +346,10 @@ object RuntimeConfigBuilder {
             // with no DNS section has nothing to use, so fall back only then to Android DNS.
             servers = servers + androidDnsServer()
             dns["final"] = JsonPrimitive(ANDROID_DNS_TAG)
+        }
+        if (mode !in MANAGED_DNS_MODES && blockedPackages.isNotEmpty()) {
+            val existingRules = (dns["rules"] as? JsonArray)?.toList().orEmpty()
+            dns["rules"] = JsonArray(packageRejectRules(blockedPackages) + existingRules)
         }
 
         bootstrapHost?.let { overlay ->
@@ -350,12 +367,22 @@ object RuntimeConfigBuilder {
                 )
             }
         }
-        if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback || bootstrapHost != null) {
+        if (
+            mode in MANAGED_DNS_MODES ||
+            fromJsonNeedsAndroidFallback ||
+            bootstrapHost != null ||
+            blockedPackages.isNotEmpty()
+        ) {
             dns["servers"] = JsonArray(servers)
             next["dns"] = JsonObject(dns)
         }
 
-        if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback || selectedProxyTag != null) {
+        if (
+            mode in MANAGED_DNS_MODES ||
+            fromJsonNeedsAndroidFallback ||
+            selectedProxyTag != null ||
+            blockedPackages.isNotEmpty()
+        ) {
             val route = (root["route"] as? JsonObject)?.toMutableMap()
                 ?: return invalid("В конфигурации отсутствует route.")
             val existingRules = (route["rules"] as? JsonArray)?.toList().orEmpty()
@@ -365,6 +392,7 @@ object RuntimeConfigBuilder {
                 existingRules
             }
             val generatedRouteRules = buildList {
+                addAll(packageRejectRules(blockedPackages))
                 if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) add(hijackDnsRule())
                 selectedProxyTag?.let { proxyTag ->
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
@@ -379,6 +407,18 @@ object RuntimeConfigBuilder {
         }
         return RuntimeConfigResult.Ready(JsonConfig.format(JsonObject(next)))
     }
+
+    private fun packageRejectRules(packages: Set<String>): List<JsonObject> =
+        if (packages.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(
+                buildJsonObject {
+                    put("package_name", JsonArray(packages.map(::JsonPrimitive)))
+                    put("action", "reject")
+                },
+            )
+        }
 
     private fun androidDnsServer(): JsonObject = buildJsonObject {
         put("type", "local")

@@ -20,6 +20,43 @@ import io.github.zapretkvn.android.routing.RoutingRuleAction
 
 class RuntimeConfigBuilderTest {
     @Test
+    fun `blocked packages get first DNS and route reject rules without changing stored JSON`() {
+        val stored = validConfig()
+        val result = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(
+                dnsMode = DnsMode.FromJson,
+                blockedPackages = setOf("com.example.beta", "com.example.alpha"),
+            ),
+        ) as RuntimeConfigResult.Ready
+        val root = JsonConfig.parse(result.json) as JsonObject
+        val dnsRule = ((root["dns"] as JsonObject)["rules"] as JsonArray)
+            .first() as JsonObject
+        val routeRule = ((root["route"] as JsonObject)["rules"] as JsonArray)
+            .first() as JsonObject
+        val expectedPackages = """["com.example.alpha","com.example.beta"]"""
+
+        assertEquals("reject", dnsRule.string("action"))
+        assertEquals(expectedPackages, dnsRule["package_name"].toString())
+        assertEquals("reject", routeRule.string("action"))
+        assertEquals(expectedPackages, routeRule["package_name"].toString())
+        assertFalse("package_name" in stored)
+    }
+
+    @Test
+    fun `invalid blocked package fails before runtime creation`() {
+        val result = RuntimeConfigBuilder.build(
+            validConfig(),
+            options = RuntimeConfigOptions(
+                blockedPackages = setOf("not a package"),
+            ),
+        )
+
+        assertTrue(result is RuntimeConfigResult.Invalid)
+        assertTrue((result as RuntimeConfigResult.Invalid).message.contains("заблокированных"))
+    }
+
+    @Test
     fun `rootless hardening protects raw profiles and can be explicitly disabled`() {
         val raw = validConfig(
             rootExtra = """
