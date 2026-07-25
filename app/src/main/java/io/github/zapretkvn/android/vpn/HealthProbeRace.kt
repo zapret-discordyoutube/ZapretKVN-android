@@ -4,13 +4,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Параллельная гонка проб: все кандидаты стартуют одновременно, первый успех
- * отменяет остальных, fatal-ошибка немедленно пробрасывается. Полный провал
- * возвращает ошибки в исходном порядке кандидатов, чтобы диагностическая
- * строка оставалась детерминированной.
+ * Параллельная гонка проб: кандидаты стартуют со ступенчатой задержкой
+ * (staggerMillis между стартами — «happy eyeballs», чтобы не создавать
+ * залповую нагрузку на медленный туннель), первый успех отменяет остальных,
+ * fatal-ошибка немедленно пробрасывается. Полный провал возвращает ошибки в
+ * исходном порядке кандидатов, чтобы диагностическая строка оставалась
+ * детерминированной.
  */
 internal object HealthProbeRace {
     sealed interface Outcome<out T, out R> {
@@ -20,6 +23,7 @@ internal object HealthProbeRace {
 
     suspend fun <T, R> firstSuccess(
         candidates: List<T>,
+        staggerMillis: Long = 0,
         isFatal: (Throwable) -> Boolean = { false },
         attempt: suspend (T) -> R,
     ): Outcome<T, R> {
@@ -29,6 +33,7 @@ internal object HealthProbeRace {
             val jobs = candidates.mapIndexed { index, candidate ->
                 launch {
                     val outcome = try {
+                        if (index > 0 && staggerMillis > 0) delay(index * staggerMillis)
                         Result.success(attempt(candidate))
                     } catch (cancelled: CancellationException) {
                         throw cancelled

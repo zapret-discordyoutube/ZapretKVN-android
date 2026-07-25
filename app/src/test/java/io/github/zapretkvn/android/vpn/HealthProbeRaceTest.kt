@@ -75,4 +75,21 @@ class HealthProbeRaceTest {
         val outcome = HealthProbeRace.firstSuccess(listOf("only")) { 42 }
         assertEquals(HealthProbeRace.Outcome.Success("only", 42), outcome)
     }
+
+    @Test
+    fun `stagger prevents later candidates from starting after early success`() = runBlocking {
+        val laterStarted = AtomicBoolean(false)
+
+        val outcome = HealthProbeRace.firstSuccess(
+            candidates = listOf("first", "second"),
+            staggerMillis = 30_000,
+        ) { candidate ->
+            if (candidate == "second") laterStarted.set(true)
+            delay(10)
+            204
+        }
+
+        assertEquals(HealthProbeRace.Outcome.Success("first", 204), outcome)
+        assertTrue("Второй кандидат не должен стартовать до истечения задержки.", !laterStarted.get())
+    }
 }

@@ -184,6 +184,11 @@ class VpnHealthPipeline(
     // DNS каждый лишний тайм-аут задерживает fallback на следующий DNS-режим.
     private val resolver = BootstrapResolver(HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS)
 
+    // Спасательная проба медленного туннеля: полезный трафик может ходить, не
+    // укладываясь в короткие таймауты основной гонки. Резолв ограничен 5 с,
+    // сокет 8 с, чтобы худший провал уложился в общий 20-секундный deadline.
+    private val rescueResolver = BootstrapResolver(HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS)
+
     suspend fun verify(
         mode: DnsMode,
         internalDnsServer: String,
@@ -279,9 +284,10 @@ class VpnHealthPipeline(
                 val result = httpsProbe(vpnNetwork, proxyIpFamily)
                 onStageFinished(
                     VpnHealthStage.HttpsProbe,
-                    VpnHealthStageOutcome.Success,
+                    if (result.rescued) VpnHealthStageOutcome.Recovered else VpnHealthStageOutcome.Success,
                     "endpoint=${result.endpoint.code} status=${result.status} " +
-                        "family=${result.addressFamily.diagnosticName}",
+                        "family=${result.addressFamily.diagnosticName}" +
+                        if (result.rescued) " recovered=slow_tunnel" else "",
                 )
             } catch (error: Throwable) {
                 onStageFinished(
@@ -419,6 +425,7 @@ class VpnHealthPipeline(
     ): HttpsProbeResult {
         val outcome = HealthProbeRace.firstSuccess(
             candidates = ManagedHealthProbe.endpoints,
+            staggerMillis = HTTPS_PROBE_STAGGER_MILLIS,
             isFatal = { it is VpnHealthAddressFamilyException },
         ) { endpoint ->
             httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily)
@@ -429,30 +436,70 @@ class VpnHealthPipeline(
                 status = outcome.value,
                 addressFamily = proxyIpFamily,
             )
-            is HealthProbeRace.Outcome.AllFailed -> {
-                val detail = outcome.failures
-                    .joinToString("; ") { (endpoint, error) ->
-                        "${endpoint.code}:${httpsFailureReason(error)}"
-                    }
-                    .take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
-                throw HttpsProbeFailure(
-                    diagnosticDetail = detail,
-                    message = "HTTPS-проверка через VPN не прошла: $detail. " +
-                        "Причиной может быть недоступный или заблокированный сервер, " +
-                        "отключённый ключ либо неверные параметры транспорта.",
-                    cause = outcome.failures.lastOrNull()?.second,
-                )
-            }
+            is HealthProbeRace.Outcome.AllFailed -> rescueSlowTunnel(
+                vpnNetwork = vpnNetwork,
+                proxyIpFamily = proxyIpFamily,
+                failures = outcome.failures,
+            )
         }
+    }
+
+    /**
+     * Живой, но медленный туннель проваливает основную гонку по коротким
+     * таймаутам, хотя полезный трафик через него ходит. Одна последовательная
+     * повторная проба с удвоенными таймаутами отделяет «медленно» от «мертво».
+     */
+    private suspend fun rescueSlowTunnel(
+        vpnNetwork: Network,
+        proxyIpFamily: ProxyIpFamily,
+        failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
+    ): HttpsProbeResult {
+        val rescueEndpoint = ManagedHealthProbe.endpoints.first()
+        val rescueError = try {
+            return HttpsProbeResult(
+                endpoint = rescueEndpoint,
+                status = httpsProbeOne(
+                    vpnNetwork = vpnNetwork,
+                    endpoint = rescueEndpoint,
+                    proxyIpFamily = proxyIpFamily,
+                    hostResolver = rescueResolver,
+                    timeoutMillis = HTTPS_RESCUE_TIMEOUT_MILLIS,
+                ),
+                addressFamily = proxyIpFamily,
+                rescued = true,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: VpnHealthAddressFamilyException) {
+            throw error
+        } catch (error: Throwable) {
+            error
+        }
+        val detail = (
+            failures.map { (endpoint, error) ->
+                "${endpoint.code}:${httpsFailureReason(error, HTTPS_ENDPOINT_TIMEOUT_MILLIS)}"
+            } + "rescue-${rescueEndpoint.code}:${httpsFailureReason(rescueError, HTTPS_RESCUE_TIMEOUT_MILLIS)}"
+            )
+            .joinToString("; ")
+            .take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
+        throw HttpsProbeFailure(
+            diagnosticDetail = detail,
+            message = "HTTPS-проверка через VPN не прошла: $detail. " +
+                "Причиной может быть недоступный или заблокированный сервер, " +
+                "отключённый ключ либо неверные параметры транспорта.",
+            cause = rescueError,
+        )
     }
 
     private suspend fun httpsProbeOne(
         vpnNetwork: Network,
         endpoint: ManagedHealthEndpoint,
         proxyIpFamily: ProxyIpFamily,
+        hostResolver: BootstrapResolver = resolver,
+        timeoutMillis: Int = HTTPS_ENDPOINT_TIMEOUT_MILLIS,
     ): Int {
         if (proxyIpFamily == ProxyIpFamily.Ipv4Only || proxyIpFamily == ProxyIpFamily.Ipv6Only) {
-            val addresses = resolver.resolve(vpnNetwork, endpoint.host)
+            val addresses = hostResolver.resolve(vpnNetwork, endpoint.host)
             val address = selectHealthAddress(addresses, proxyIpFamily)
                 ?: throw VpnHealthAddressFamilyException(
                     requiredFamily = proxyIpFamily,
@@ -460,11 +507,11 @@ class VpnHealthPipeline(
                     answerCount = addresses.size,
                 )
             return withProbeSockets { register ->
-                httpsProbeOnePinned(vpnNetwork, endpoint, address, register)
+                httpsProbeOnePinned(vpnNetwork, endpoint, address, timeoutMillis, register)
             }
         }
         return withProbeSockets { register ->
-            httpsProbeOneDefault(vpnNetwork, endpoint, register)
+            httpsProbeOneDefault(vpnNetwork, endpoint, timeoutMillis, register)
         }
     }
 
@@ -507,13 +554,14 @@ class VpnHealthPipeline(
     private fun httpsProbeOneDefault(
         vpnNetwork: Network,
         endpoint: ManagedHealthEndpoint,
+        timeoutMillis: Int,
         register: (AutoCloseable) -> Unit,
     ): Int {
         val connection = vpnNetwork.openConnection(URL(endpoint.url)) as HttpsURLConnection
         register(AutoCloseable { connection.disconnect() })
         try {
-            connection.connectTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
-            connection.readTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
+            connection.connectTimeout = timeoutMillis
+            connection.readTimeout = timeoutMillis
             connection.instanceFollowRedirects = false
             connection.useCaches = false
             connection.setRequestProperty("Connection", "close")
@@ -534,6 +582,7 @@ class VpnHealthPipeline(
         vpnNetwork: Network,
         endpoint: ManagedHealthEndpoint,
         address: InetAddress,
+        timeoutMillis: Int,
         register: (AutoCloseable) -> Unit,
     ): Int {
         val url = URL(endpoint.url)
@@ -541,13 +590,13 @@ class VpnHealthPipeline(
         val plain = vpnNetwork.socketFactory.createSocket()
         register(plain)
         try {
-            plain.soTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
-            plain.connect(InetSocketAddress(address, port), HTTPS_ENDPOINT_TIMEOUT_MILLIS)
+            plain.soTimeout = timeoutMillis
+            plain.connect(InetSocketAddress(address, port), timeoutMillis)
             val tls = HttpsURLConnection.getDefaultSSLSocketFactory()
                 .createSocket(plain, endpoint.host, port, true) as SSLSocket
             register(tls)
             tls.use {
-                it.soTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
+                it.soTimeout = timeoutMillis
                 it.sslParameters = it.sslParameters.apply {
                     endpointIdentificationAlgorithm = "HTTPS"
                     serverNames = listOf(SNIHostName(endpoint.host))
@@ -600,14 +649,17 @@ class VpnHealthPipeline(
         return bytes.toByteArray().toString(StandardCharsets.US_ASCII)
     }
 
-    private fun httpsFailureReason(error: Throwable): String {
+    private fun httpsFailureReason(
+        error: Throwable,
+        timeoutMillis: Int = HTTPS_ENDPOINT_TIMEOUT_MILLIS,
+    ): String {
         val chain = generateSequence(error) { it.cause }.toList()
         chain.filterIsInstance<CodedFailure>().firstOrNull()?.let { coded ->
             return "DNS через VPN (${coded.failureCode})"
         }
         return when (val cause = chain.last()) {
             is UnexpectedHttpsStatus -> "тестовый узел вернул некорректный HTTP ${cause.status}"
-            is SocketTimeoutException -> "истёк тайм-аут ${HTTPS_ENDPOINT_TIMEOUT_MILLIS} мс"
+            is SocketTimeoutException -> "истёк тайм-аут $timeoutMillis мс"
             is UnknownHostException -> "Android не разрешил имя тестового узла"
             is ConnectException -> "TCP-соединение с тестовым узлом не установлено"
             is SSLException -> "ошибка TLS (${cause.javaClass.simpleName})"
@@ -629,6 +681,7 @@ class VpnHealthPipeline(
         val endpoint: ManagedHealthEndpoint,
         val status: Int,
         val addressFamily: ProxyIpFamily,
+        val rescued: Boolean = false,
     )
 
     /**
@@ -700,6 +753,9 @@ class VpnHealthPipeline(
         const val HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS = 3_000L
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
+        const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L
+        const val HTTPS_RESCUE_TIMEOUT_MILLIS = 8_000
+        const val HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS = 5_000L
         const val MAX_HTTPS_FAILURE_DETAIL_CHARS = 240
         const val MAX_HTTP_STATUS_LINE_BYTES = 512
         const val MAX_DNS_PACKET = 65_535
