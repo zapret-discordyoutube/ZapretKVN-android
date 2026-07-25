@@ -60,16 +60,67 @@ class WireGuardDataPlaneClassifierTest {
     }
 
     @Test
-    fun `vpn dns failure with handshake response also becomes VPN-210`() {
+    fun `vpn dns failure with dead data plane also becomes VPN-210`() {
         val failure = VpnConnectionState.Error(
             message = "DNS через VPN не отвечает: DNS-101.",
             code = "DNS-200",
         )
         val logs = listOf(
             coreLog("DEBUG[0000] endpoint/wireguard[wireguard-out]: peer(LhqK…mEAw) - received handshake response"),
+            coreLog("ERROR[0014] [124022618 10.0s] dns: exchange failed for example.com. IN A: context deadline exceeded"),
         )
 
         assertEquals("VPN-210", WireGuardDataPlaneClassifier.refine(failure, logs).code)
+    }
+
+    /**
+     * Полевой false-positive (июль 2026): strict Private DNS ломает DnsResolver
+     * (DoT :853 refused), но туннель жив — DNS успешно обменивается через
+     * wireguard-out. Такой провал не должен помечаться блокировкой протокола.
+     */
+    @Test
+    fun `alive tunnel dns keeps original failure despite handshake response`() {
+        val failure = VpnConnectionState.Error(
+            message = "DNS через VPN не отвечает: DNS-105.",
+            code = "DNS-200",
+        )
+        val logs = listOf(
+            coreLog("DEBUG[0000] endpoint/wireguard[wireguard-out]: peer(N46Q…3FQ4) - received handshake response"),
+            coreLog("DEBUG[0000] [3153642710 818ms] dns: exchanged NOERROR 600"),
+            coreLog(
+                "ERROR[0001] [973632740 108ms] connection: open connection to [2001:db8::1]:853 " +
+                    "using outbound/direct[direct]: dial tcp: connect: connection refused",
+            ),
+        )
+
+        assertEquals(failure, WireGuardDataPlaneClassifier.refine(failure, logs))
+    }
+
+    @Test
+    fun `handshake response without stall or dns evidence keeps generic failure`() {
+        val logs = listOf(
+            coreLog("DEBUG[0000] endpoint/wireguard[wireguard-out]: peer(LhqK…mEAw) - received handshake response"),
+        )
+
+        assertEquals(trafficFailure, WireGuardDataPlaneClassifier.refine(trafficFailure, logs))
+    }
+
+    @Test
+    fun `received handshake never downgrades to VPN-211 even with stall retries`() {
+        val failure = VpnConnectionState.Error(
+            message = "DNS через VPN не отвечает: DNS-105.",
+            code = "DNS-200",
+        )
+        val logs = listOf(
+            coreLog("DEBUG[0000] endpoint/wireguard[wireguard-out]: peer(N46Q…3FQ4) - received handshake response"),
+            coreLog("DEBUG[0000] [3153642710 818ms] dns: exchanged NOERROR 600"),
+            coreLog(
+                "DEBUG[0015] endpoint/wireguard[wireguard-out]: peer(N46Q…3FQ4) - " +
+                    "retrying handshake because we stopped hearing back after 15 seconds",
+            ),
+        )
+
+        assertEquals(failure, WireGuardDataPlaneClassifier.refine(failure, logs))
     }
 
     @Test

@@ -9,6 +9,17 @@ import io.github.zapretkvn.android.diagnostics.SecretRedactor
  * «рукопожатие без ответа» (VPN-211). Блокировку DPI от сломанного NAT на
  * сервере с клиента отличить нельзя, поэтому оба остаются в VPN-210, а сырые
  * строки-доказательства из лога ядра сохраняются в technicalDetail.
+ *
+ * Паттерн VPN-210 подтверждён полевыми отчётами (июль 2026): у пользователя в РФ
+ * handshake того же WG-профиля проходил на Wi-Fi и mobile, но данные молчали
+ * («stopped hearing back», dns deadline exceeded), при этом тот же профиль
+ * работал из другой сети и с AmneziaWG-обфускацией — то есть DPI режет именно
+ * чистый WireGuard после рукопожатия.
+ *
+ * VPN-210 требует доказательств мёртвого data-plane (stall или dns deadline),
+ * а успешный «dns: exchanged» через туннель является контрдоказательством:
+ * без этого DNS-провал из-за strict Private DNS (DoT :853 refused при живом
+ * туннеле) ложно помечался блокировкой протокола.
  */
 internal object WireGuardDataPlaneClassifier {
     private const val DATA_PLANE_CODE = "VPN-210"
@@ -23,6 +34,7 @@ internal object WireGuardDataPlaneClassifier {
         "retrying handshake because we stopped hearing back",
     )
     private const val DNS_EXCHANGE_FAILED = "dns: exchange failed"
+    private const val DNS_EXCHANGE_SUCCEEDED = "dns: exchanged"
 
     private const val DATA_PLANE_MESSAGE =
         "WireGuard: рукопожатие с сервером проходит, но данные через туннель " +
@@ -48,13 +60,15 @@ internal object WireGuardDataPlaneClassifier {
             stallMarkers.any { line.contains(it, ignoreCase = true) }
         }
         val dnsFailed = messages.firstOrNull { it.contains(DNS_EXCHANGE_FAILED, ignoreCase = true) }
+        val dnsAlive = messages.any { it.contains(DNS_EXCHANGE_SUCCEEDED, ignoreCase = true) }
         return when {
-            received != null -> VpnConnectionState.Error(
-                message = DATA_PLANE_MESSAGE,
-                code = DATA_PLANE_CODE,
-                technicalDetail = rawEvidence(failure.code, received, stalled, dnsFailed),
-            )
-            sent && stalled != null -> VpnConnectionState.Error(
+            received != null && !dnsAlive && (stalled != null || dnsFailed != null) ->
+                VpnConnectionState.Error(
+                    message = DATA_PLANE_MESSAGE,
+                    code = DATA_PLANE_CODE,
+                    technicalDetail = rawEvidence(failure.code, received, stalled, dnsFailed),
+                )
+            received == null && sent && stalled != null -> VpnConnectionState.Error(
                 message = HANDSHAKE_MESSAGE,
                 code = HANDSHAKE_CODE,
                 technicalDetail = rawEvidence(failure.code, stalled),
