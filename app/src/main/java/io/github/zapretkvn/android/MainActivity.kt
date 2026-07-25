@@ -29,6 +29,7 @@ import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.ZapretApp
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.theme.ZapretTheme
+import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.android.vpn.AppsViewModel
 import io.github.zapretkvn.android.vpn.VpnController
 
@@ -100,6 +101,13 @@ class MainActivity : ComponentActivity() {
             val systemDark = isSystemInDarkTheme()
             LaunchedEffect(state.initialized) {
                 if (state.initialized) updateController.checkOnce(state.settings.updateChannel)
+            }
+            LaunchedEffect(updateState) {
+                if (updateState is UpdateState.Ready &&
+                    updateController.consumeAutomaticInstallRequest()
+                ) {
+                    requestUpdateInstall()
+                }
             }
             val darkTheme = when (state.settings.themeMode) {
                 ThemeMode.System -> systemDark

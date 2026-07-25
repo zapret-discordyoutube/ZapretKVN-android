@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- GitHub-distributed builds launch the system installer only after explicit download/install confirmation. -->
+    <!-- A verified user-requested download opens Android's installer; Android still requires final confirmation. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Requested only after the user opens the QR scanner. -->
     <uses-permission android:name="android.permission.CAMERA" />

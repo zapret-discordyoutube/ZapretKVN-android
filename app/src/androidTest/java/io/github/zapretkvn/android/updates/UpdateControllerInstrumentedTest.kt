@@ -104,6 +104,8 @@ class UpdateControllerInstrumentedTest {
         withTimeout(5_000) { controller.state.first { it is UpdateState.Ready } }
 
         assertTrue(verified)
+        assertTrue(controller.consumeAutomaticInstallRequest())
+        assertFalse(controller.consumeAutomaticInstallRequest())
         val intent = controller.createInstallIntent()
         assertEquals(Intent.ACTION_INSTALL_PACKAGE, intent.action)
         assertEquals("content", intent.data?.scheme)

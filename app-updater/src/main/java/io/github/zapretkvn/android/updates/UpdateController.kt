@@ -42,6 +42,7 @@ class UpdateController(
     private var operation: Job? = null
     private var readyFile: File? = null
     private val automaticCheckStarted = AtomicBoolean(false)
+    private val automaticInstallPending = AtomicBoolean(false)
 
     init {
         cleanupStaleFiles()
@@ -120,6 +121,7 @@ class UpdateController(
                 verifier.verify(complete, candidate.metadata)
                 coroutineContext.ensureActive()
                 readyFile = complete
+                automaticInstallPending.set(true)
                 mutableState.value = UpdateState.Ready(candidate)
             } catch (cancelled: CancellationException) {
                 cleanupFiles()
@@ -151,6 +153,11 @@ class UpdateController(
             ?: throw UpdateException("Проверенный APK больше недоступен.")
         return installIntentFactory.create(file)
     }
+
+    /** Returns true once for each newly downloaded and verified APK. */
+    fun consumeAutomaticInstallRequest(): Boolean =
+        mutableState.value is UpdateState.Ready &&
+            automaticInstallPending.compareAndSet(true, false)
 
     fun onInstallerFinished(installed: Boolean) {
         val candidate = (mutableState.value as? UpdateState.Ready)?.candidate
@@ -217,6 +224,7 @@ class UpdateController(
     }
 
     private fun cleanupFiles() {
+        automaticInstallPending.set(false)
         readyFile = null
         root.listFiles()?.forEach { file ->
             if (file.isFile) file.delete()
