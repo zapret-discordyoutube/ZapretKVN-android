@@ -5,7 +5,7 @@
 | Поле | Значение |
 |---|---|
 | Статус | Этапы 0–7 и automated Gate 8 реализованы; внешний signing/release и физические release-gates открыты |
-| Последний аудит | 22 июля 2026 года |
+| Последний аудит | 25 июля 2026 года |
 | Минимальная ОС | Android 8.0, API 26 |
 | Устройства MVP | Только телефоны |
 | Ядро | `sing-box-extended` tag `v1.13.14-extended-2.5.2` |
@@ -24,7 +24,10 @@
 6. Поведение ядра определяется зафиксированным исходным commit и проверяемым patchset,
    SHA-256 которого входит в build/release/diagnostic metadata.
 
-Нельзя молча придумывать второй формат конфигурации, скрытые правила или исправлять профиль без отражения в effective JSON. Обнаруженное расхождение сначала фиксируется в соответствующей ADR и тесте.
+Нельзя молча придумывать второй исполняемый формат конфигурации, скрытые правила или
+исправлять профиль без отражения в effective JSON. Ограниченные глобальные
+runtime-intent допустимы только после явной фиксации в ADR, с видимым состоянием в UI,
+тестом и отражением результата в effective diagnostic JSON.
 
 ## Цель MVP
 
@@ -50,7 +53,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 | DI | Один ручной `AppContainer`, без Hilt/Koin |
 | Процесс | Один Android process; `VpnService`, UI и libbox без отдельного `android:process` |
 | VPN | Один foreground `VpnService`, один Android TUN, один libbox instance |
-| Конфигурация | Настоящий sing-box JSON — единственная сетевая политика профиля |
+| Конфигурация | Настоящий sing-box JSON — база транспорта профиля; общие destination-rules хранятся как ограниченный UI intent и компилируются в единственный effective sing-box JSON |
 | Импорт | Вход сразу преобразуется в JSON; Clash YAML и неподтверждённые URI не входят в MVP |
 | Настройки | DataStore только для глобальных/UI-настроек |
 | Профили | JSON-файлы через `AtomicFile`, одна резервная копия |
@@ -214,6 +217,7 @@ TCP/HTTPS URL-test. Один пакет отправляется при подк
 
 Правило трафика
 Россия напрямую · остальное через VPN >
+Общая политика · для всех профилей
 
 Итог
 выбранные: RU → напрямую, остальное → VPN
@@ -222,7 +226,10 @@ destination-блокировка: только для выбранных при�
 полная блокировка приложений: отдельный пустой по умолчанию список
 ```
 
-Список приложений открывается отдельным полноэкранным picker с поиском. Список правил остаётся на том же экране в «Расширенных настройках».
+Список приложений открывается отдельным полноэкранным picker с поиском. Общие
+destination-rules остаются на том же экране; raw-редактор меняет только базовый JSON
+активного профиля. При запуске общая политика накладывается в памяти до
+`Libbox.CheckConfig()`, а сохранённый профиль не переписывается.
 
 Редактор правила имеет ровно три обычных действия:
 
@@ -247,7 +254,8 @@ Whole-app block не входит в основной MVP: он потребов
 DataStore
 ├─ тема / канал обновлений / bounded DNS runtime-настройки
 ├─ активный профиль
-└─ глобальная per-app allowlist и include/exclude mode
+├─ глобальная per-app allowlist и include/exclude mode
+└─ routing_policy: preset + bounded destination-rules без credentials
 
 files/profiles/
 ├─ index.json       — только id, название, source и created/updated timestamps
@@ -262,7 +270,9 @@ cache/
 └─ временный APK и диагностический экспорт
 ```
 
-`index.json` содержит только UI/import metadata и не дублирует DNS, outbound или route rules. Поэтому он не является вторым сетевым форматом.
+`index.json` содержит только UI/import metadata и не дублирует DNS, outbound или route
+rules. `routing_policy` содержит явный GUI-intent, но не копию профиля или исполняемый
+JSON; единственной конфигурацией ядра остаётся собранный effective sing-box JSON.
 
 Профиль и index записываются атомарно. Для профиля `AtomicFile` сначала формирует отдельный `<id>.json.atomic`, затем два rename оставляют либо прежний читаемый `<id>.json`, либо новый `<id>.json` и ровно один `<id>.json.bak`. Отдельный staging нужен потому, что служебный suffix `.bak` самого platform `AtomicFile` конфликтовал бы с постоянным пользовательским backup. При запуске незавершённый staging удаляется, а отсутствующий основной файл восстанавливается из backup.
 
@@ -274,13 +284,18 @@ cache/
 
 JSON редактируется через `kotlinx.serialization.json` как дерево. Неизвестные поля сохраняются. После GUI-изменения могут исчезнуть комментарии и исходные отступы; raw editor показывает это заранее.
 
-Managed presets атомарно изменяют настоящий JSON. Runtime overlay не сохраняет произвольные пользовательские правила и всегда доступен в redacted-диагностике.
+Managed presets и основные destination-rules атомарно сохраняются как общая bounded
+policy и компилируются в runtime-копию активного JSON. Raw/неизвестные route-поля
+остаются только в профиле. Итоговый overlay всегда доступен в redacted-диагностике.
 
 Подписки обновляются только вручную. Нет WorkManager, таймеров или скрытого сетевого refresh.
 
 ## Профили, серверы и переключение
 
-Один профиль — один настоящий sing-box JSON. Proxy-серверы находятся в его массиве `outbounds`; WireGuard/AmneziaWG 2.0 использует нативный массив sing-box `endpoints`. Отдельной таблицы серверов, INI runtime-слоя и связанного набора полноразмерных JSON-шаблонов нет.
+Один профиль — один настоящий sing-box base JSON. Proxy-серверы находятся в его
+массиве `outbounds`; WireGuard/AmneziaWG 2.0 использует нативный массив sing-box
+`endpoints`. Отдельной таблицы серверов, INI runtime-слоя и связанного набора
+полноразмерных JSON-шаблонов нет.
 
 Профиль, созданный из одиночной ссылки, всё равно получает managed `selector` с одним сервером. Следующую одиночную ссылку можно сохранить новым профилем либо явно добавить сервером в существующий managed-профиль. Одна подписка создаёт один профиль-группу: несколько server outbounds и один основной selector. У создаваемого приложением selector стабильный tag `zapret-proxy`; managed route и DoH ссылаются на него.
 
@@ -319,11 +334,27 @@ Managed presets атомарно изменяют настоящий JSON. Runti
 
 GUI получает список групп и текущий выбор из libbox. При работающем VPN переключение вызывает `CommandClient.SelectOutbound("zapret-proxy", serverTag)` без пересоздания TUN/core. `interrupt_exist_connections: true` закрывает только соединения из внутренней `interruptGroup` этого selector. Отдельный route в outbound `direct` в эту группу не входит, а невыбранные UID вообще отсутствуют в TUN; поэтому оба пути не затрагиваются. Это подтверждено [реализацией exact selector](https://github.com/shtorm-7/sing-box-extended/blob/ff11f007ec798136a5de258f947a4f34011a37ea/protocol/group/selector.go#L145-L202) и Android integration-тестом switch без смены TUN.
 
-Выбор сохраняется атомарным изменением `selector.default` в самом JSON после `CheckConfig()`. `experimental.cache_file` и DataStore для выбранного сервера не используются. Если runtime-переключение не удалось, выполняется один контролируемый restart уже с проверенным JSON. Переключение целого профиля всегда делает restart, потому что у профиля могут отличаться DNS, routes и TUN-настройки.
+Выбор сохраняется атомарным изменением `selector.default` в самом JSON после
+`CheckConfig()`. `experimental.cache_file` и DataStore для выбранного сервера не
+используются. Если runtime-переключение не удалось, выполняется один контролируемый
+restart уже с проверенным JSON. Переключение целого профиля всегда делает restart,
+потому что у профиля могут отличаться transport, DNS, расширенные raw-routes и
+TUN-настройки; общая GUI-policy при этом сохраняется.
 
-Raw JSON не нормализуется скрыто. В режиме «Из JSON» GUI показывает существующие selector-группы как есть. Для включения managed DNS/routing пользователь явно выбирает существующий основной selector либо разрешает создать `zapret-proxy`. Единственное отдельное исключение — явно описанный глобальный rootless overlay из [VPN Hiding ADR](VPN_HIDING_ARCHITECTURE.md): при включённой защите локальные control endpoints удаляются из runtime-копии, а non-TUN inbound блокирует запуск. Сохранённый JSON не меняется, effective-результат отражается в диагностике.
+Raw JSON не нормализуется скрыто. В режиме «Из JSON» GUI показывает существующие
+selector-группы как есть. Общая routing-policy и rootless overlay из
+[VPN Hiding ADR](VPN_HIDING_ARCHITECTURE.md) являются явно показанными
+runtime-исключениями: policy компилирует destination-rules, а hardening удаляет
+локальные control endpoints и блокирует non-TUN inbound. Сохранённый JSON не меняется,
+effective-результат отражается в диагностике.
 
-Полные JSON-шаблоны не являются долгоживущими данными. `ManagedProfileFactory` только один раз собирает начальный JSON из маленького base builder, protocol outbound builder и selector builder; после сохранения источником истины становится получившийся JSON. При ручном обновлении подписки выбранный server tag сохраняется, если он всё ещё существует; иначе выбирается первый доступный сервер и показывается уведомление.
+Полные JSON-шаблоны не являются долгоживущими данными. `ManagedProfileFactory` только
+один раз собирает начальный JSON из маленького base builder, protocol outbound builder
+и selector builder; после сохранения он становится источником истины для transport,
+outbounds и расширенных raw-полей, а общая destination-policy остаётся отдельным
+bounded intent. При ручном обновлении подписки выбранный server tag сохраняется, если
+он всё ещё существует; иначе выбирается первый доступный сервер и показывается
+уведомление.
 
 Профили с credentials находятся только в app-private storage; Android Auto Backup для них выключен. Экспорт диагностики всегда redacted.
 
@@ -351,7 +382,8 @@ Advanced exclude-mode поддерживается, потому что он б�
 - Встроенные presets зависят только от локальных `.srs`, входящих в APK.
 - Нет managed remote rule-set, отдельного updater или `experimental.cache_file`.
 - `.srs` обновляются только вместе с APK и проверяются SHA-256.
-- Rule-set содержит совпадения, но не выбирает outbound: действие и порядок остаются в JSON.
+- Rule-set содержит совпадения, но не выбирает outbound: действие и порядок
+  компилируются в effective JSON из общей политики.
 - Пользовательские inline/local/remote rule-set разрешены только как явный JSON-сценарий.
 
 Domain block создаёт DNS `reject` и route `reject`. IP block создаёт только route `reject`. Глобальный sniff ради блокировки не включается. Встроенный DoH приложения может скрыть domain-only блокировку; полноценный firewall/ad blocker не обещается.

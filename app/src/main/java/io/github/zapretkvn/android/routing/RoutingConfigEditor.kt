@@ -59,7 +59,7 @@ data class RoutingEditResult(
     val diff: String,
 )
 
-/** Edits route/dns fields in the profile itself. No second routing format is persisted. */
+/** Pure route/dns compiler. Callers choose whether the result is stored or used as a runtime overlay. */
 object RoutingConfigEditor {
     fun inspect(raw: String): RoutingInspection {
         val root = root(raw)

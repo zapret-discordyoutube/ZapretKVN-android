@@ -28,6 +28,7 @@ import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.config.RuntimeConfigResult
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
+import io.github.zapretkvn.android.routing.GlobalRoutingPolicy
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.networkbootstrap.CodedFailure
 import io.nekohasekai.libbox.CommandClient
@@ -281,6 +282,25 @@ class ZapretVpnService : VpnService() {
                 profile = container.profileStore.read(profileId)
             }
         }
+        val storedRouting = withContext(Dispatchers.Default) {
+            RoutingConfigEditor.inspect(profile.json)
+        }
+        val policy = container.routingPolicyStore.getOrInitialize(
+            GlobalRoutingPolicy(
+                preset = storedRouting.preset,
+                rules = storedRouting.rules,
+            ),
+        )
+        val installed = container.ruleSetAssetManager.ensureInstalled()
+        val effectiveRouting = withContext(Dispatchers.Default) {
+            RoutingConfigEditor.apply(
+                profile.json,
+                policy.preset,
+                policy.rules,
+                installed,
+            ).json
+        }
+        profile = profile.copy(json = effectiveRouting)
         val uiSettings = container.uiSettingsStore.settings.first()
         val configuredDnsMode = uiSettings.dnsMode
         val dnsMode = runtimeDnsMode ?: configuredDnsMode
@@ -1032,7 +1052,7 @@ class ZapretVpnService : VpnService() {
             stopIntent(this),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_vpn_notification)
             .setContentTitle("Zapret KVN")
             .setContentText(state.text)
@@ -1041,6 +1061,22 @@ class ZapretVpnService : VpnService() {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .addAction(0, "Открыть", openIntent)
+        if (state == ForegroundNotificationState.Connected) {
+            (controller.state.value as? VpnConnectionState.Connected)?.let { connected ->
+                val restartIntent = PendingIntent.getService(
+                    this,
+                    3,
+                    restartIntent(
+                        this,
+                        connected.profileId,
+                        "Перезапуск из уведомления",
+                    ),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                builder.addAction(0, "Перезапустить", restartIntent)
+            }
+        }
+        val notification = builder
             .addAction(0, "Остановить", stopIntent)
             .build()
         val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

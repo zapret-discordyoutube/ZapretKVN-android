@@ -75,6 +75,7 @@ internal fun HomeScreen(
     sessionStats: VpnSessionStats,
     onStart: (String) -> Unit,
     onStop: () -> Unit,
+    onRestart: () -> Unit,
     onSelectOutbound: (String, String, String) -> Unit,
     onMeasurePing: () -> Unit,
     onMeasureGroup: (String) -> Unit,
@@ -155,6 +156,7 @@ internal fun HomeScreen(
                     onSelectApps = onSelectApps,
                     onStart = onStart,
                     onStop = onStop,
+                    onRestart = onRestart,
                 )
             }
         }
@@ -339,6 +341,7 @@ private fun ConnectionAction(
     onSelectApps: () -> Unit,
     onStart: (String) -> Unit,
     onStop: () -> Unit,
+    onRestart: () -> Unit,
 ) {
     when {
         activeProfile == null -> Button(
@@ -390,11 +393,22 @@ private fun ConnectionAction(
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                 ) { Text("Остановить") }
             }
-            is VpnConnectionState.Connected -> Button(
-                onClick = onStop,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            is VpnConnectionState.Connected -> Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Отключить")
+                OutlinedButton(
+                    onClick = onRestart,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) {
+                    Text("Перезапустить")
+                }
+                Button(
+                    onClick = onStop,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) {
+                    Text("Отключить")
+                }
             }
         }
     }

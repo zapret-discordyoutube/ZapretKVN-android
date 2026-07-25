@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,21 +31,46 @@ class RoutingViewModel(
     private val profileStore: ProfileStore,
     private val settingsStore: UiSettingsStore,
     private val ruleSetAssets: RuleSetAssetManager,
+    private val policyStore: RoutingPolicyStore,
     private val vpnController: VpnController,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(RoutingUiState())
     val state: StateFlow<RoutingUiState> = mutableState.asStateFlow()
+    private var globalPolicy: GlobalRoutingPolicy? = null
 
     init {
         viewModelScope.launch {
             profileStore.initialize()
-            combine(profileStore.profiles, settingsStore.settings) { profiles, settings ->
-                profiles.firstOrNull { it.id == settings.activeProfileId }
+            combine(
+                profileStore.profiles,
+                settingsStore.settings,
+                policyStore.policy,
+            ) { profiles, settings, policy ->
+                val active = profiles.firstOrNull { it.id == settings.activeProfileId }
+                Triple(active?.id, active?.name, policy)
             }
-                .map { it?.id to it?.name }
                 .distinctUntilChanged()
-                .collect { (id, name) ->
-                    mutableState.update { it.copy(activeProfileId = id, activeProfileName = name) }
+                .collect { (id, name, policy) ->
+                    if (policy == null && id != null) {
+                        val profile = profileStore.read(id)
+                        val inspection = withContext(Dispatchers.Default) {
+                            RoutingConfigEditor.inspect(profile.json)
+                        }
+                        policyStore.getOrInitialize(
+                            GlobalRoutingPolicy(
+                                preset = inspection.preset,
+                                rules = inspection.rules,
+                            ),
+                        )
+                        return@collect
+                    }
+                    globalPolicy = policy
+                    mutableState.update {
+                        it.copy(
+                            activeProfileId = id,
+                            activeProfileName = name,
+                        )
+                    }
                     refresh()
                 }
         }
@@ -61,8 +85,21 @@ class RoutingViewModel(
             mutableState.update { it.copy(loading = true) }
             try {
                 val profile = profileStore.read(id)
-                val inspection = withContext(Dispatchers.Default) {
-                    RoutingConfigEditor.inspect(profile.json)
+                val policy = globalPolicy
+                val inspection = if (policy == null) {
+                    withContext(Dispatchers.Default) {
+                        RoutingConfigEditor.inspect(profile.json)
+                    }
+                } else {
+                    val installed = ruleSetAssets.ensureInstalled()
+                    withContext(Dispatchers.Default) {
+                        RoutingConfigEditor.apply(
+                            profile.json,
+                            policy.preset,
+                            policy.rules,
+                            installed,
+                        ).inspection
+                    }
                 }
                 mutableState.update { it.copy(inspection = inspection, loading = false) }
             } catch (error: CancellationException) {
@@ -112,18 +149,20 @@ class RoutingViewModel(
             try {
                 val installed = ruleSetAssets.ensureInstalled()
                 val profile = profileStore.read(id)
-                val current = RoutingConfigEditor.inspect(profile.json)
+                val current = mutableState.value.inspection
+                    ?: RoutingConfigEditor.inspect(profile.json)
                 val (preset, rules) = transform(current)
                 val result = withContext(Dispatchers.Default) {
                     RoutingConfigEditor.apply(profile.json, preset, rules, installed)
                 }
-                profileStore.update(id, result.json)
+                policyStore.set(GlobalRoutingPolicy(preset, rules))
+                globalPolicy = GlobalRoutingPolicy(preset, rules)
                 mutableState.update {
                     it.copy(
                         inspection = result.inspection,
                         loading = false,
                         managedDiff = result.diff,
-                        message = "Маршрутизация сохранена в JSON профиля.",
+                        message = "Общие правила сохранены для всех профилей.",
                     )
                 }
                 vpnController.restartIfConnected("Изменение маршрутизации")
@@ -145,12 +184,19 @@ class RoutingViewModel(
         private val profileStore: ProfileStore,
         private val settingsStore: UiSettingsStore,
         private val ruleSetAssets: RuleSetAssetManager,
+        private val policyStore: RoutingPolicyStore,
         private val vpnController: VpnController,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass.isAssignableFrom(RoutingViewModel::class.java))
-            return RoutingViewModel(profileStore, settingsStore, ruleSetAssets, vpnController) as T
+            return RoutingViewModel(
+                profileStore,
+                settingsStore,
+                ruleSetAssets,
+                policyStore,
+                vpnController,
+            ) as T
         }
     }
 }

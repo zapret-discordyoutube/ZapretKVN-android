@@ -12,6 +12,7 @@ import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.profiles.ProfileStore
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.routing.RuleSetAssetManager
+import io.github.zapretkvn.android.routing.RoutingPolicyStore
 import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.UiSettingsStore
 import io.github.zapretkvn.android.updates.UpdateController
@@ -71,6 +72,7 @@ class AppContainer(
     )
     val bootstrapCache = BootstrapCache(File(appContext.noBackupFilesDir, "network"))
     val ruleSetAssetManager = RuleSetAssetManager(appContext)
+    val routingPolicyStore = RoutingPolicyStore(appContext)
     val proxyBootstrapper = ProxyBootstrapper(BootstrapResolver(), bootstrapCache)
     private val vpnNetworkProvider = VpnNetworkProvider(appContext)
     val vpnHealthPipeline = VpnHealthPipeline(vpnNetworkProvider)
@@ -98,6 +100,7 @@ class AppContainer(
             profileStore,
             uiSettingsStore,
             ruleSetAssetManager,
+            routingPolicyStore,
             vpnController,
         )
 }

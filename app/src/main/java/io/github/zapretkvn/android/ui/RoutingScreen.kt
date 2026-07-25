@@ -203,6 +203,11 @@ fun RoutingScreen(
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.semantics { heading() },
                     )
+                    Text(
+                        "Общая политика: применяется поверх JSON любого выбранного профиля.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                     if (routingState.activeProfileId == null) {
                         Text("Сначала выберите активный профиль.", color = MaterialTheme.colorScheme.error)
                     } else if (inspection == null || routingState.loading) {
@@ -211,7 +216,7 @@ fun RoutingScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             CircularProgressIndicator()
-                            Text("Чтение настоящего JSON…")
+                            Text("Подготовка общих правил…")
                         }
                     } else {
                         Text(inspection.preset.title, fontWeight = FontWeight.Bold)
@@ -254,7 +259,7 @@ fun RoutingScreen(
                             contentDescription = "Открыть расширенный редактор JSON активного профиля"
                         },
                     ) {
-                        Text("Расширенный JSON")
+                        Text("JSON активного профиля")
                     }
                 }
             }
@@ -274,7 +279,7 @@ fun RoutingScreen(
                             modifier = Modifier.semantics { heading() },
                         )
                         Text(
-                            "Домены, IP/CIDR и rule-set",
+                            "Домены, IP/CIDR и rule-set · для всех профилей",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

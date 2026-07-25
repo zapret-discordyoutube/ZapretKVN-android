@@ -88,14 +88,17 @@ portal и физической энергии не блокирует стату
 
 - [x] `I1-01` Создать пакеты `profiles/`, `config/`, `importer/` внутри `app`, без отдельных Gradle-модулей.
 - [x] `I1-02` Реализовать `ProfileStore`: `files/profiles/index.json`, `<id>.json`, одна `<id>.json.bak` через `AtomicFile`.
-- [x] `I1-03` Хранить в index только UI metadata; DNS, routes и outbounds остаются исключительно в JSON профиля.
+- [x] `I1-03` Хранить в index только UI metadata; transport, credentials, DNS и
+  outbounds остаются в JSON профиля, а общая destination-policy — в отдельном
+  ограниченном DataStore без копии профиля.
 - [x] `I1-04` Реализовать атомарные create/read/update/delete/restore операции и очистку orphan temp-файлов.
 - [x] `I1-05` Реализовать импорт raw JSON из системного file picker и буфера после явного нажатия.
 - [x] `I1-06` Вызывать libbox `CheckConfig()` до сохранения изменённого профиля и показывать понятную ошибку.
 - [x] `I1-07` Реализовать JSON-tree editor на `kotlinx.serialization.json`, сохраняющий неизвестные поля.
 - [x] `I1-08` Сделать простой raw editor: моноширинный текст, поиск, format, validate, отмена несохранённых изменений.
 - [x] `I1-09` Добавить список профилей, выбор активного профиля, переименование, удаление с подтверждением и восстановление backup.
-- [x] `I1-10` Хранить тему, активный профиль и UI-настройки в DataStore; не копировать туда сетевую конфигурацию.
+- [x] `I1-10` Хранить тему, активный профиль, UI-настройки и ограниченный общий
+  routing intent в DataStore; не копировать туда transport JSON или credentials.
 - [x] `I1-11` Реализовать `ManagedProfileFactory`: маленькие base/protocol/selector builders вместо набора полноразмерных JSON-шаблонов.
 - [x] `I1-12` Для одиночной ссылки создавать один server outbound и selector `zapret-proxy`; для subscription — несколько server outbounds в том же selector.
 - [x] `I1-13` Генерировать уникальные стабильные server tags без credentials; при совпадении имён добавлять детерминированный suffix.
@@ -204,7 +207,8 @@ IPv6 завершалась `missing IPv6 local address`. Test 18 подтвер
 
 ## Этап 4 — маршрутизация и rule-set
 
-Цель: один понятный UI управляет destination routing внутри настоящего JSON.
+Цель: один понятный UI управляет общей destination-policy, компилируемой в настоящий
+effective JSON выбранного профиля.
 
 - [x] `I4-01` Реализовать экран из карточек «Область VPN», «Правило трафика» и читаемый «Итог».
 - [x] `I4-02` Реализовать presets: Всё через VPN, Обход LAN, Только выбранные сайты, Россия напрямую, Россия через VPN, Пользовательский.
@@ -220,6 +224,9 @@ IPv6 завершалась `missing IPv6 local address`. Test 18 подтвер
 - [x] `I4-12` Добавить отдельный пустой по умолчанию blocklist приложений: в include
   объединять его с Android TUN boundary, в exclude запрещать пересечение с direct,
   а в runtime-копии ставить первые DNS/route `package_name → reject`.
+- [x] `I4-13` Сделать GUI destination-policy общей для всех профилей: однократно
+  инициализировать её из активного профиля, хранить отдельно от credentials и
+  компилировать поверх выбранного base JSON до `CheckConfig()`, не переписывая профили.
 
 ### Тесты и Gate 4
 
@@ -321,9 +328,10 @@ connect health-check и затем только при видимой диагн
 
 Остальные экраны завершены 22 июля 2026 года без нового слоя навигации, DI или
 зависимостей. Профили группируются только по UI metadata и показывают источник и
-`updated_at`; сетевой JSON остаётся единственным источником истины. Маршрутизация
-имеет две главные карточки: Android per-app scope и destination routing, а кнопка
-«Расширенный JSON» открывает активный настоящий профиль. Stable/Beta хранится как
+`updated_at`; base JSON остаётся источником transport/outbounds, а общая
+destination-policy хранится как bounded DataStore intent. Маршрутизация имеет две
+главные карточки: Android per-app scope и destination routing, а кнопка
+«JSON активного профиля» открывает настоящий base-профиль. Stable/Beta хранится как
 UI-настройка и не запускает фоновые обновления; updater остаётся этапом 7.
 
 Три Telegram URL присутствуют в production-коде только внутри экрана

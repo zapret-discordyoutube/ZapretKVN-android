@@ -4,6 +4,7 @@
 |---|---|
 | Статус | Реализовано; автоматизированный Gate 4 пройден, выпуск после физической test matrix |
 | Дата решения | 22 июля 2026 года |
+| Последнее изменение | 25 июля 2026 года — общая destination-policy для всех профилей |
 | Платформа | Android 8.0+ (API 26+) |
 | Проверенный исходник | tag `v1.13.14-extended-2.5.2`, commit `ff11f007ec798136a5de258f947a4f34011a37ea` |
 | Область | per-app capture, маршруты, domain/IP rule-set, пресеты |
@@ -37,13 +38,17 @@
 Объединяем только управление: экран «Маршрутизация» показывает обе координаты рядом, а `VpnController` перед каждым запуском создаёт один неизменяемый `EffectiveRoutingSnapshot`:
 
 ```text
-DataStore app allowlist/blocklist ─┐
-                                   ├─ EffectiveRoutingSnapshot
-active profile sing-box JSON ──────┘   ├─ packages → VpnService.Builder
-managed rule-set manifest ─────────────└─ network policy → runtime JSON/libbox
+DataStore app allowlist/blocklist ─────┐
+DataStore global routing intent ───────┼─ EffectiveRoutingSnapshot
+active profile sing-box base JSON ─────┘   ├─ packages → VpnService.Builder
+managed rule-set manifest ─────────────────└─ network policy → runtime JSON/libbox
 ```
 
-Snapshot не является новым сохраняемым форматом и не исполняет правила. Это диагностируемый результат одной сборки перед `CheckConfig()` и `establish()`.
+`GlobalRoutingPolicy` хранит только выбранный preset и список редактируемых
+`match/action/outboundTag`, без transport, credentials, DNS-серверов или произвольного
+sing-box JSON. Он не является вторым исполняемым конфигом: перед каждым запуском
+компилируется вместе с базовым профилем в один диагностируемый effective sing-box JSON
+до `CheckConfig()` и `establish()`. Snapshot сам правила не исполняет.
 
 Технически sing-box умеет совместить `package_name` и `rule_set` в одном route-правиле.
 Обычная VPN-allowlist этим не дублируется. Единственное штатное исключение — явно
@@ -85,10 +90,15 @@ TUN и немедленно получает `reject`.
 |---|---|---|
 | какие приложения входят в VPN | глобальная allowlist в DataStore | Android `VpnService.Builder` |
 | какие приложения полностью заблокированы | глобальный пустой по умолчанию blocklist в DataStore | Android boundary + runtime DNS/route `reject` |
-| domain/IP, LAN, `direct`, proxy, `final` | активный sing-box JSON | sing-box route engine |
+| общие domain/IP, LAN, `direct`, proxy, `final` | `routing_policy` DataStore | runtime compiler → sing-box route engine |
+| transport, outbounds и расширенные route/DNS-поля профиля | активный sing-box base JSON | runtime compiler → sing-box |
 | встроенные GEO/domain-данные | versioned `.srs` + manifest внутри APK | sing-box `rule_set` |
 
-Это намеренно не один физический файл, потому что allowlist глобальна для приложения, а маршруты принадлежат профилю. Дублирующих представлений одного решения нет. Перенос package-policy в каждый профиль либо создание собственного wrapper-формата нарушили бы эти требования и усложнили импорт.
+Это намеренно не один физический файл: область приложений и destination-policy
+глобальны, а transport/outbounds и расширенные поля принадлежат профилю. Общая политика
+не копируется в JSON профилей, поэтому обновление подписки или переключение профиля её
+не теряет. Исполняется только итоговый sing-box JSON; параллельного route engine и
+дублирующих сохранённых route-объектов нет.
 
 Поля `include_package`/`exclude_package` исходного JSON сохраняются для round-trip,
 но runtime-копия очищает их и применяет глобальную область приложений. Route-пресеты
@@ -135,8 +145,13 @@ Domain и IP остаются отдельными файлами только �
 
 ## Управляемые режимы
 
-Режим применяется только к выбранным Android-приложениям.
-Новый managed-профиль получает пресет «Россия напрямую, остальное через VPN». Уже сохранённый профиль и импортированный raw JSON не мигрируются: их явная маршрутизация остаётся источником истины.
+Режим применяется только к выбранным Android-приложениям и является общим для всех
+VPN-профилей. При первом запуске версии с общей политикой UI-intent однократно
+инициализируется из режима и редактируемых правил активного профиля; ни один профиль
+при этом не переписывается. После этого импорт, обновление подписки и смена активного
+профиля используют ту же политику поверх своей базовой конфигурации. Явный
+`outboundTag` обязан существовать в выбранном профиле; пустой tag каждый раз разрешается
+в выбранный proxy/selector этого профиля.
 
 | Режим | Правило rule-set | `route.final` | DNS по умолчанию |
 |---|---|---|---|
@@ -201,7 +216,10 @@ IP/CIDR block добавляется только в `route.rules`. Route reject
 - IP set не выбирает DNS до ответа и используется только на route-этапе;
 - пользовательский DNS в режиме «Из JSON» не переписывается.
 
-Это две необходимые ссылки на один tag в одном JSON, а не две независимо редактируемые политики. GUI не разрешает сохранить только половину managed-пресета: JSON изменяется одной операцией через `AtomicFile`, затем проходит `CheckConfig()`.
+Это две необходимые ссылки на один tag в одном effective JSON, а не две независимо
+редактируемые политики. GUI сохраняет intent одной транзакцией DataStore и проверяет
+его компиляцию на активном профиле. При каждом подключении полный effective JSON заново
+собирается для выбранного профиля и проходит `CheckConfig()` до создания TUN.
 
 ## Доставка rule-set без новой подсистемы
 
@@ -265,7 +283,13 @@ IP/CIDR block добавляется только в `route.rules`. Route reject
 
 Реализация от 22 июля 2026 года включает два packaged binary-набора: `zapret-ru-domains.srs` (53 байта, SHA-256 `a39faeb4a4c894a2ce665b8919322cee626f61dd12c63a63736fcf8b0a433053`) и `zapret-ru-ip.srs` (50 036 байт, SHA-256 `1f4cccc9bb9510bb29d8a4b7d326b869bff94e9911d555acc0570545dabfaa7b`). [Manifest](../app/src/main/assets/rule-sets/manifest.json) закрепляет exact core/source revision/license; [проверочный скрипт](../scripts/verify-rule-sets.sh) воспроизводит domain-набор и проверяет RU/non-RU domain/IPv4/IPv6 exact CLI.
 
-Автоматизированная проверка: 47/47 JVM tests и 46/46 instrumented tests на API 26 и 36. Все шесть presets проходят реальный Android TUN → local SOCKS5/direct/reject путь для RU/non-RU domain и IPv4/IPv6; UI summary, сохранённый JSON и фактический outbound совпадают. Отдельно доказаны selected/unselected UID, стандартный DNS reject, embedded HTTPS DoH→numeric limitation, offline install/repair и native `CheckConfig()`.
+Исходный Gate 4: 47/47 JVM tests и 46/46 instrumented tests на API 26 и 36. Все шесть
+presets прошли реальный Android TUN → local SOCKS5/direct/reject путь для RU/non-RU
+domain и IPv4/IPv6; UI summary, тогда сохранявшийся JSON и фактический outbound
+совпадали. Общий runtime-intent дополнительно закреплён codec/unit-тестом и тем же
+чистым `RoutingConfigEditor`; итог по-прежнему проходит native `CheckConfig()` перед
+TUN. Физическое переключение нескольких профилей относится к пострелизному device
+gate и не подменяется JVM-тестом.
 
 Exact core benchmark production assets: load 1 114 мкс, 758 624 allocation bytes; lookup 329 нс/op, 1 104 B/op, 2 allocs/op. Размер двух `.srs` — 50 089 байт. Полный debug-прогон API 36 дал extraction 2 мс, cold connect 41 мс, 100 мс CPU на 40 flows и +356 КиБ PSS; API 26 — 5 мс, 63 мс, 300 мс CPU и нулевой положительный PSS growth. Это закрывает автоматизированный Gate 4, но не физический release-gate энергии/OEM ниже.
 

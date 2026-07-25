@@ -145,6 +145,9 @@ class MainActivity : ComponentActivity() {
                     onVpnMessageConsumed = vpnController::consumeMessage,
                     onVpnStart = ::requestVpnStart,
                     onVpnStop = vpnController::stop,
+                    onVpnRestart = {
+                        vpnController.restartIfConnected("Перезапуск пользователем")
+                    },
                     onSelectOutbound = vpnController::selectOutbound,
                     onMeasurePing = vpnController::measurePing,
                     onMeasureGroup = vpnController::measureGroup,
