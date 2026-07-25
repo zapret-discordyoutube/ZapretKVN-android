@@ -552,11 +552,11 @@ class ZapretVpnService : VpnService() {
             AutomaticDnsFallbackPolicy.run(
                 candidates = candidates,
                 onFallback = { previous, candidate, failure ->
-                    val failureType = generateSequence<Throwable>(failure) { it.cause }
-                        .last()
-                        .javaClass
-                        .simpleName
-                        .take(80)
+                    val failureChain = generateSequence<Throwable>(failure) { it.cause }.toList()
+                    val failureType = (
+                        failureChain.filterIsInstance<CodedFailure>().firstOrNull()?.failureCode
+                            ?: failureChain.last().javaClass.simpleName
+                        ).take(80)
                     val detail = "Автоматический DNS: ${AutomaticDnsFallbackPolicy.label(previous)} " +
                         "не отвечает ($failureType); пробуем ${AutomaticDnsFallbackPolicy.label(candidate)}."
                     controller.publishDiagnosticWarning(detail)

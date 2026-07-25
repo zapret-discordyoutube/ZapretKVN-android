@@ -41,10 +41,18 @@ data class HealthCheckResult(
     val externalIpProbeAllowed: Boolean,
 )
 
+/**
+ * CodedFailure с DNS-200: проба идёт через VPN-сеть, поэтому коды системного
+ * bootstrap-DNS (DNS-1xx) из cause-цепочки не должны попадать в итоговую ошибку.
+ */
 internal class VpnDnsHealthException(
     message: String,
     cause: Throwable? = null,
-) : IllegalStateException(message, cause)
+) : IllegalStateException(message, cause), CodedFailure {
+    override val failureCode = "DNS-200"
+    override val userMessage = message
+    override val technicalDetail = (cause as? CodedFailure)?.technicalDetail
+}
 
 enum class VpnHealthStage(
     val diagnosticKey: String,
@@ -352,8 +360,9 @@ class VpnHealthPipeline(
 
     private fun dnsFailure(error: Throwable): VpnDnsHealthException {
         if (error is VpnDnsHealthException) return error
-        val detail = error.message?.trim()?.trimEnd('.')
-            ?.takeIf(String::isNotBlank)
+        val detail = (error as? CodedFailure)?.failureCode
+            ?: error.message?.trim()?.trimEnd('.')
+                ?.takeIf(String::isNotBlank)
             ?: error.javaClass.simpleName
         return VpnDnsHealthException("DNS через VPN не отвечает: $detail.", error)
     }
@@ -536,8 +545,11 @@ class VpnHealthPipeline(
     }
 
     private fun httpsFailureReason(error: Throwable): String {
-        val cause = generateSequence(error) { it.cause }.last()
-        return when (cause) {
+        val chain = generateSequence(error) { it.cause }.toList()
+        chain.filterIsInstance<CodedFailure>().firstOrNull()?.let { coded ->
+            return "DNS через VPN (${coded.failureCode})"
+        }
+        return when (val cause = chain.last()) {
             is UnexpectedHttpsStatus -> "тестовый узел вернул некорректный HTTP ${cause.status}"
             is SocketTimeoutException -> "истёк тайм-аут ${HTTPS_ENDPOINT_TIMEOUT_MILLIS} мс"
             is UnknownHostException -> "Android не разрешил имя тестового узла"
@@ -548,12 +560,14 @@ class VpnHealthPipeline(
         }
     }
 
-    private fun rootCauseName(error: Throwable): String =
-        generateSequence(error) { it.cause }
-            .last()
-            .javaClass
-            .simpleName
-            .take(80)
+    /** Стабильный код вместо obfuscated-имени класса в release-сборке. */
+    private fun rootCauseName(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.toList()
+        return (
+            chain.filterIsInstance<CodedFailure>().firstOrNull()?.failureCode
+                ?: chain.last().javaClass.simpleName
+            ).take(80)
+    }
 
     private data class HttpsProbeResult(
         val endpoint: ManagedHealthEndpoint,
@@ -561,11 +575,20 @@ class VpnHealthPipeline(
         val addressFamily: ProxyIpFamily,
     )
 
+    /**
+     * CodedFailure с VPN-200: без этого safeError достаёт из cause-цепочки
+     * BootstrapFailureException резолва внутри туннеля и сообщает DNS-101
+     * «Системный DNS», хотя системный DNS не участвовал.
+     */
     private class HttpsProbeFailure(
         val diagnosticDetail: String,
         message: String,
         cause: Throwable?,
-    ) : IOException(message, cause)
+    ) : IOException(message, cause), CodedFailure {
+        override val failureCode = "VPN-200"
+        override val userMessage = message
+        override val technicalDetail = diagnosticDetail
+    }
 
     private class UnexpectedHttpsStatus(val status: Int) : IOException()
 
