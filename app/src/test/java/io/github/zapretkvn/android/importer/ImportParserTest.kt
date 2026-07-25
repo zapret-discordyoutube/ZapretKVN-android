@@ -299,6 +299,60 @@ class ImportParserTest {
     }
 
     @Test
+    fun `vless xhttp imports the complete xhttp object instead of individual fields`() {
+        val extra = encodeURIComponent(
+            """
+                {
+                  "type":"xhttp",
+                  "mode":"packet-up",
+                  "host":"download.example",
+                  "path":"/complete",
+                  "extra":{
+                    "headers":{"User-Agent":"Zapret/XHTTP"},
+                    "domainStrategy":"prefer_ipv4",
+                    "sessionIDTable":"0123456789abcdef",
+                    "sessionIDLength":"12-16",
+                    "trustedXForwardedFor":["192.0.2.0/24"],
+                    "congestionController":"bbr2",
+                    "cwnd":64,
+                    "xmux":{
+                      "maxConcurrency":"8-16",
+                      "cMaxReuseTimes":"32-64",
+                      "hMaxReusableSecs":"1800-3000"
+                    }
+                  }
+                }
+            """.trimIndent(),
+        )
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                "?security=tls&type=xhttp&extra=$extra#Complete+XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val transport = candidate.servers.single().outbound["transport"] as JsonObject
+        val headers = transport["headers"] as JsonObject
+        val xmux = transport["xmux"] as JsonObject
+
+        assertEquals("xhttp", transport.string("type"))
+        assertEquals("packet-up", transport.string("mode"))
+        assertEquals("download.example", transport.string("host"))
+        assertEquals("/complete", transport.string("path"))
+        assertEquals("Zapret/XHTTP", headers.string("User-Agent"))
+        assertEquals("prefer_ipv4", transport.string("domain_strategy"))
+        assertEquals("0123456789abcdef", transport.string("session_id_table"))
+        assertEquals("12-16", transport.string("session_id_length"))
+        assertEquals("bbr2", transport.string("congestion_controller"))
+        assertEquals("64", (transport["cwnd"] as JsonPrimitive).content)
+        assertEquals("8-16", xmux.string("max_concurrency"))
+        assertEquals("32-64", xmux.string("c_max_reuse_times"))
+        assertEquals("1800-3000", xmux.string("h_max_reusable_secs"))
+        assertEquals(
+            "192.0.2.0/24",
+            ((transport["trusted_x_forwarded_for"] as JsonArray).single() as JsonPrimitive).content,
+        )
+    }
+
+    @Test
     fun `vless xhttp without extra uses required core padding default`() {
         val candidate = ImportParser.parse(
             "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
@@ -375,20 +429,16 @@ class ImportParserTest {
     }
 
     @Test
-    fun `vless xhttp rejects fields absent from pinned core instead of dropping them`() {
+    fun `vless xhttp preserves new fields for validation by the pinned core`() {
         val extra = encodeURIComponent("""{"futureOption":true}""")
-        val error = assertThrows(ImportException::class.java) {
-            ImportParser.parse(
-                "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
-                    "?security=tls&type=xhttp&extra=$extra#XHTTP",
-                ProfileSource.Clipboard,
-            )
-        }
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                "?security=tls&type=xhttp&extra=$extra#XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val transport = candidate.servers.single().outbound["transport"] as JsonObject
 
-        assertEquals(
-            "XHTTP extra содержит неподдерживаемые поля: futureOption.",
-            error.message,
-        )
+        assertEquals("true", (transport["future_option"] as JsonPrimitive).content)
     }
 
     @Test

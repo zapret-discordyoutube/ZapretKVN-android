@@ -318,6 +318,39 @@ class ImportInstrumentedTest {
     }
 
     @Test
+    fun completeXhttpObjectPassesPinnedLibboxCheck() {
+        val completeXhttp = Uri.encode(
+            """
+                {
+                  "mode":"packet-up",
+                  "host":"download.example",
+                  "path":"/complete",
+                  "extra":{
+                    "headers":{"User-Agent":"Zapret/XHTTP"},
+                    "domainStrategy":"prefer_ipv4",
+                    "sessionIDTable":"0123456789abcdef",
+                    "sessionIDLength":"12-16",
+                    "congestionController":"bbr2",
+                    "cwnd":64,
+                    "xmux":{
+                      "maxConcurrency":"8-16",
+                      "cMaxReuseTimes":"32-64",
+                      "hMaxReusableSecs":"1800-3000"
+                    }
+                  }
+                }
+            """.trimIndent(),
+        )
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@xhttp.example:443" +
+                "?security=tls&type=xhttp&extra=$completeXhttp#Complete+XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+
+        Libbox.checkConfig(candidate.buildJson())
+    }
+
+    @Test
     fun wireguardAndAmneziaWg2ConfigsPassPinnedLibboxCheck() {
         val wireGuard = ImportParser.parse(WIREGUARD_CONF, ProfileSource.File) as ImportCandidate.WireGuard
         val amnezia = ImportParser.parse(AWG2_CONF, ProfileSource.File) as ImportCandidate.WireGuard

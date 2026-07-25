@@ -49,11 +49,13 @@
 - выход соответствует `V2RayXHTTPOptions` закреплённого sing-box-extended:
   camelCase-поля XTLS явно преобразуются в snake_case-поля transport JSON.
 
-Поддерживаются `headers`, padding/session/sequence/uplink options,
-`noGRPCHeader`, `noSSEHeader`, packet/stream limits и все поля `xmux`, которые
-есть в закреплённой схеме core. Типы JSON не превращаются в строки: ranges могут
-остаться строками, а числа и bool — числами и bool. Неизвестное поле завершает
-импорт явной ошибкой вместо silent drop.
+Импортёр принимает как стандартный объект `extra`, так и полный объект
+`xhttpSettings`: `host`, `path`, `mode`, вложенный `extra` и все остальные поля
+переносятся целиком. Имена параметров системно преобразуются из Xray camelCase в
+sing-box snake_case, включая будущие поля; имена HTTP-заголовков и типы JSON
+остаются без изменений. Поле не отбрасывается по локальному allow-list:
+окончательную совместимость всего результата проверяет закреплённое ядро через
+`Libbox.CheckConfig()`.
 
 Устаревшее Xray-поле `xmux.cMaxLifetimeMs` совместимо преобразуется в актуальное
 `h_max_reusable_secs`: одиночное значение или обе границы диапазона делятся на
