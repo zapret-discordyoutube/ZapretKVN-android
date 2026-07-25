@@ -113,6 +113,7 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.System -> systemDark
                 ThemeMode.Light -> false
                 ThemeMode.Dark -> true
+                ThemeMode.Amoled -> true
             }
             SideEffect {
                 val systemBarStyle = if (darkTheme) {
@@ -125,7 +126,10 @@ class MainActivity : ComponentActivity() {
                     navigationBarStyle = systemBarStyle,
                 )
             }
-            ZapretTheme(darkTheme = darkTheme) {
+            ZapretTheme(
+                darkTheme = darkTheme,
+                amoledTheme = state.settings.themeMode == ThemeMode.Amoled,
+            ) {
                 ZapretApp(
                     profilesViewModel = profilesViewModel,
                     state = state,

@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -37,18 +38,40 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF44474F),
 )
 
+internal fun amoledColorScheme(base: ColorScheme): ColorScheme = base.copy(
+    background = Color.Black,
+    surface = Color.Black,
+    surfaceDim = Color.Black,
+    surfaceBright = Color(0xFF202124),
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF08090A),
+    surfaceContainer = Color(0xFF0D0E10),
+    surfaceContainerHigh = Color(0xFF15171A),
+    surfaceContainerHighest = Color(0xFF1D1F23),
+    surfaceVariant = Color(0xFF1D1F23),
+    inverseSurface = Color(0xFFE3E2E6),
+    inverseOnSurface = Color(0xFF303034),
+    outline = Color(0xFF8E9099),
+    outlineVariant = Color(0xFF44474F),
+    scrim = Color.Black,
+)
+
 @Composable
 fun ZapretTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    amoledTheme: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val colors = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme -> dynamicDarkColorScheme(context)
+    val useDarkColors = darkTheme || amoledTheme
+    val baseColors = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && useDarkColors ->
+            dynamicDarkColorScheme(context)
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
-        darkTheme -> DarkColors
+        useDarkColors -> DarkColors
         else -> LightColors
     }
+    val colors = if (amoledTheme) amoledColorScheme(baseColors) else baseColors
 
     MaterialTheme(
         colorScheme = colors,

@@ -23,6 +23,7 @@ enum class ThemeMode {
     System,
     Light,
     Dark,
+    Amoled,
 }
 
 data class UiSettings(

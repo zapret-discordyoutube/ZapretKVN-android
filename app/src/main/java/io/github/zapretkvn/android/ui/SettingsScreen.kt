@@ -190,7 +190,8 @@ private fun SettingsMain(
                     }
                 }
                 Text(
-                    "Системная тема следует Android; Dynamic Color используется на Android 12+.",
+                    "Системная тема следует Android; Dynamic Color используется на Android 12+. " +
+                        "AMOLED сохраняет системный акцент, но делает фон полностью чёрным.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1335,6 +1336,7 @@ private fun ThemeMode.displayName(): String = when (this) {
     ThemeMode.System -> "Системная"
     ThemeMode.Light -> "Светлая"
     ThemeMode.Dark -> "Тёмная"
+    ThemeMode.Amoled -> "AMOLED"
 }
 
 private fun UpdateChannel.displayName(): String = when (this) {

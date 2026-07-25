@@ -65,8 +65,8 @@ class Gate6UiSmokeInstrumentedTest {
     }
 
     @Test
-    fun lightAndDarkThemesKeepNavigationLabeledAndTouchTargetsLarge() {
-        listOf(ThemeMode.Light, ThemeMode.Dark).forEach { mode ->
+    fun lightDarkAndAmoledThemesKeepNavigationLabeledAndTouchTargetsLarge() {
+        listOf(ThemeMode.Light, ThemeMode.Dark, ThemeMode.Amoled).forEach { mode ->
             runBlocking { container.uiSettingsStore.setThemeMode(mode) }
             composeRule.waitUntil(10_000) {
                 runBlocking { container.uiSettingsStore.settings.first().themeMode == mode }
