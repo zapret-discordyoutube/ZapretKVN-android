@@ -372,7 +372,7 @@ DNS/route `package_name → reject`; сохранённый JSON не измен
 
 FakeIP выключен. Системные настройки Android приложение не меняет и Private DNS не обходит.
 
-Auto/Secure не запускаются при strict Private DNS, потому что системный DoT может обойти port-53 hijack и reverse mapping. Явные режимы не получают скрытого fallback. Полная политика, bootstrap cache и fail-close описаны в DNS ADR.
+При strict Private DNS Auto не падает, а сужает цепочку кандидатов до «DNS Android» с предупреждением в логе — системный DoT уважается, пользователь ничего не настраивает. Secure при strict не запускается (`DNS-110`): он явно обещает DoH, а системный DoT обошёл бы port-53 hijack и reverse mapping. Явные режимы не получают скрытого fallback. Полная политика, bootstrap cache и fail-close описаны в DNS ADR.
 
 ## Проверка простоты и скорости
 

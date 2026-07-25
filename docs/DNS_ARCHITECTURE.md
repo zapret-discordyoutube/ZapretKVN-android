@@ -212,7 +212,7 @@ Private DNS нельзя считать только свойством bootstra
 Политика MVP:
 
 - на API 28+ strict-режим определяем по непустому `LinkProperties.privateDnsServerName`, даже если `isPrivateDnsActive` временно `false` из-за неудачной валидации;
-- если выбран «Автоматически» или «Защищённый через VPN», strict Private DNS является блокирующей preflight-ошибкой до `establish()`. Предлагаем выбрать «DNS Android» либо вручную изменить системную настройку; приложение само её не меняет;
+- если выбран «Автоматически», strict Private DNS не блокирует запуск: цепочка кандидатов сужается до «DNS Android» (единственный кандидат, уважающий системный DoT) с явным предупреждением в логе; кандидаты «DNS профиля» и managed DoH при strict пропускаются, потому что подменяли бы выбранный пользователем резолвер. Для «Защищённого через VPN» strict остаётся блокирующей preflight-ошибкой (`DNS-110`) до `establish()`: этот режим явно обещает DoH и не может одновременно уважать strict. Приложение системную настройку само не меняет;
 - в режиме «DNS Android» работающий strict Private DNS разрешён и остаётся системным источником истины. До TUN требуются `isPrivateDnsActive=true` и `NET_CAPABILITY_VALIDATED`; иначе подключение блокируется без plaintext fallback. На Android 9 при несуществующем strict hostname active может остаться `true`, но сеть теряет `VALIDATED`, поэтому проверять только один флаг нельзя. GUI предупреждает, что доменные правила, которым требуется `reverse_mapping`, могут быть неполными;
 - в режиме «Из JSON» существующую DNS-секцию не переписываем, а при её отсутствии добавляем только в runtime минимальный local DNS Android; показываем обнаруженный strict Private DNS и оставляем ответственность за явно заданную схему пользователю;
 - opportunistic Private DNS разрешён: Android может проверить DoT, а для внутреннего адреса без DoT вернуться к обычному DNS. Это поведение обязательно проверяется на API 28, 29 и современной версии Android;
@@ -569,7 +569,7 @@ IP-only rule-set не вставляется в DNS-правила: адрес �
 
 - Быстрое правило MVP перехватывает DNS только по TCP/UDP 53. Оно не ловит plaintext DNS на нестандартном порту, DoT/853 и встроенный DoH; такой трафик следует обычным route-правилам.
 - DNS-переопределение действует только на перехваченный стандартный DNS. Встроенный DoH/DoT приложения может вернуть другой ответ или отсутствие записи; приложение честно показывает это ограничение и не пытается MITM/блокировать защищённый resolver.
-- Android strict Private DNS применяется и к VPN network на поддерживаемых версиях ОС. Его DoT/853 обходит `hijack-dns` и `reverse_mapping`, поэтому managed Auto/Secure не запускаются, пока strict настроен.
+- Android strict Private DNS применяется и к VPN network на поддерживаемых версиях ОС. Его DoT/853 обходит `hijack-dns` и `reverse_mapping`, поэтому при strict Auto автоматически сужается до кандидата «DNS Android», а Secure не запускается, пока strict настроен.
 - mDNS использует multicast/5353 и не обслуживается правилом `port: 53 → hijack-dns`. Наличие `.local` в DNS-правилах помогает только тем запросам, которые приложение отправило обычному Android resolver; полноценная LAN/mDNS-совместимость проверяется отдельно.
 - На Android ниже 10 platform DNS-интерфейс sing-box поддерживает только A/AAAA.
 - DNS-выбор можно синхронизировать с доменными/rule-set правилами, но не с IP-CIDR до получения ответа.
@@ -627,7 +627,7 @@ Source-аудит отдельно подтвердил, что libbox package o
 Это детализация пунктов P1, P4, P5, P6, P8, P9 и P15 из единого раздела [«Потом проверить»](ARCHITECTURE.md#потом-проверить--открытые-вопросы). Она задаёт тесты, но не добавляет новых архитектурных решений.
 
 - Android 8, 9, 10 и современная версия Android;
-- Private DNS: off, automatic, strict working, strict broken; Auto/Secure при strict обязаны остановиться до `establish()`, Android DNS — сохранить системное поведение;
+- Private DNS: off, automatic, strict working, strict broken; Auto при strict working сужается до «DNS Android» и подключается, Secure и любой режим при strict broken обязаны остановиться до `establish()`, Android DNS — сохранить системное поведение;
 - Wi‑Fi, cellular, Wi‑Fi ↔ cellular, IPv6/NAT64;
 - captive portal;
 - заблокирован системный DNS, есть/нет last-known-good;

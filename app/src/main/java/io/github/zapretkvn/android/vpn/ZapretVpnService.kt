@@ -97,16 +97,25 @@ internal object NetworkRestartPolicy {
 }
 
 internal object AutomaticDnsFallbackPolicy {
-    fun candidates(configuredMode: DnsMode, hasProfileDns: Boolean): List<DnsMode> =
-        if (configuredMode == DnsMode.Automatic) {
-            buildList {
-                if (hasProfileDns) add(DnsMode.FromJson)
-                add(DnsMode.Android)
-                add(DnsMode.Secure)
-            }
-        } else {
-            listOf(configuredMode)
+    /**
+     * При strict Private DNS автоматический режим сужается до «DNS Android»:
+     * это единственный кандидат, уважающий системный DoT. Профильный DNS и
+     * managed DoH подменяли бы выбранный пользователем резолвер, а fail-close
+     * заставлял пользователя чинить настройки вручную.
+     */
+    fun candidates(
+        configuredMode: DnsMode,
+        hasProfileDns: Boolean,
+        strictPrivateDns: Boolean = false,
+    ): List<DnsMode> = when {
+        configuredMode != DnsMode.Automatic -> listOf(configuredMode)
+        strictPrivateDns -> listOf(DnsMode.Android)
+        else -> buildList {
+            if (hasProfileDns) add(DnsMode.FromJson)
+            add(DnsMode.Android)
+            add(DnsMode.Secure)
         }
+    }
 
     fun label(mode: DnsMode): String = when (mode) {
         DnsMode.FromJson -> "DNS профиля"
@@ -335,15 +344,22 @@ class ZapretVpnService : VpnService() {
                     error("Интернет требует авторизации в Wi-Fi.")
                 }
                 if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
-                    (configuredDnsMode == DnsMode.Automatic || configuredDnsMode == DnsMode.Secure)
+                    (configuredDnsMode == DnsMode.Secure ||
+                        (configuredDnsMode == DnsMode.Automatic && dnsMode != DnsMode.Android))
                 ) {
-                    error("Strict Private DNS несовместим с этим режимом. Выберите «DNS Android» или «Из JSON».")
+                    throw StrictPrivateDnsException(
+                        "Strict Private DNS несовместим с этим режимом. " +
+                            "Выберите «DNS Android» или «Из JSON».",
+                    )
                 }
                 if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
                     dnsMode == DnsMode.Android &&
                     (!underlying.privateDnsActive || !underlying.validated)
                 ) {
-                    error("Strict Private DNS не отвечает. Исправьте системную настройку или выберите «Из JSON».")
+                    throw StrictPrivateDnsException(
+                        "Strict Private DNS не отвечает. " +
+                            "Исправьте системную настройку или выберите «Из JSON».",
+                    )
                 }
                 container.proxyBootstrapper.prepare(
                     profileId = profileId,
@@ -548,7 +564,14 @@ class ZapretVpnService : VpnService() {
             container.profileStore.initialize()
             val hasProfileDns = configuredMode == DnsMode.Automatic &&
                 ConfigAnalyzer.hasProfileDns(container.profileStore.read(profileId).json)
-            val candidates = AutomaticDnsFallbackPolicy.candidates(configuredMode, hasProfileDns)
+            val strictPrivateDns = configuredMode == DnsMode.Automatic && snapshotStrictPrivateDns()
+            if (strictPrivateDns) {
+                controller.publishDiagnosticWarning(
+                    "Strict Private DNS активен: автоматический режим использует DNS Android.",
+                )
+            }
+            val candidates =
+                AutomaticDnsFallbackPolicy.candidates(configuredMode, hasProfileDns, strictPrivateDns)
             AutomaticDnsFallbackPolicy.run(
                 candidates = candidates,
                 onFallback = { previous, candidate, failure ->
@@ -583,6 +606,24 @@ class ZapretVpnService : VpnService() {
             )
         } == true
         if (!completed) throw ConnectionStartupTimeoutException()
+    }
+
+    /**
+     * Быстрый снапшот системного Private DNS до выбора DNS-кандидатов; ошибка
+     * определения не должна блокировать запуск — вернём false и пойдём обычной
+     * цепочкой, где строгие гейты внутри startLocked остаются страховкой.
+     */
+    private suspend fun snapshotStrictPrivateDns(): Boolean {
+        val monitor = DefaultNetworkMonitor(this).also(DefaultNetworkMonitor::start)
+        return try {
+            monitor.runOnStableNetwork { it.privateDnsMode == PrivateDnsMode.Strict }.value
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        } finally {
+            monitor.close()
+        }
     }
 
     private fun requestRestart(
@@ -1413,6 +1454,12 @@ class ZapretVpnService : VpnService() {
     }
 
     private class RuntimeSwitchException(cause: Throwable) : Exception(cause)
+
+    private class StrictPrivateDnsException(message: String) : IllegalStateException(message), CodedFailure {
+        override val failureCode = "DNS-110"
+        override val userMessage = message
+        override val technicalDetail = "private_dns=strict"
+    }
 
     private class ConnectionStartupTimeoutException : Exception(
         "Подключение не завершилось за ${CONNECTION_START_TIMEOUT_MILLIS / 1_000} секунд. " +

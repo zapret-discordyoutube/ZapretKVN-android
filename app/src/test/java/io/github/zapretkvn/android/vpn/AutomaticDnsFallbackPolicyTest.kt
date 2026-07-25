@@ -30,6 +30,32 @@ class AutomaticDnsFallbackPolicyTest {
     }
 
     @Test
+    fun `strict private dns narrows automatic to android candidate`() {
+        assertEquals(
+            listOf(DnsMode.Android),
+            AutomaticDnsFallbackPolicy.candidates(
+                DnsMode.Automatic,
+                hasProfileDns = true,
+                strictPrivateDns = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `strict private dns does not change explicit modes`() {
+        listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure).forEach { mode ->
+            assertEquals(
+                listOf(mode),
+                AutomaticDnsFallbackPolicy.candidates(
+                    mode,
+                    hasProfileDns = true,
+                    strictPrivateDns = true,
+                ),
+            )
+        }
+    }
+
+    @Test
     fun `runner advances only after DNS failure and remains bounded`() = runBlocking {
         val attempts = mutableListOf<DnsMode>()
         val transitions = mutableListOf<Pair<DnsMode, DnsMode>>()
