@@ -198,7 +198,7 @@ object ShareLinkParser {
             uuid = uuid,
             flow = query["flow"],
             tls = tls(query, host),
-            transport = transport(query, allowXhttp = true),
+            transport = transport(query),
         )
     }
 
@@ -234,6 +234,15 @@ object ShareLinkParser {
                 host = data.text("host"),
             )
             "grpc" -> TransportSettings(type = network, serviceName = data.text("path"))
+            "xhttp" -> TransportSettings(
+                type = network,
+                path = data.text("path"),
+                host = data.text("host"),
+                mode = data.text("type")?.takeIf { it in XHTTP_MODES },
+                xhttpOptions = XtlsXhttpExtraConverter.convert(
+                    data.text("extra") ?: (data["extra"] as? JsonObject)?.toString(),
+                ),
+            )
             else -> throw ImportException("VMess transport '$network' пока не поддерживается.")
         }
         val tlsEnabled = data.text("tls")?.lowercase() in setOf("tls", "reality")
@@ -249,6 +258,10 @@ object ShareLinkParser {
                 serverName = data.text("sni") ?: host,
                 insecure = data.text("allowInsecure") == "1",
                 utlsFingerprint = data.text("fp"),
+                alpn = data.text("alpn").orEmpty()
+                    .split(',')
+                    .map(String::trim)
+                    .filter(String::isNotBlank),
             ),
             transport = transport,
         )
@@ -375,7 +388,6 @@ object ShareLinkParser {
 
     private fun transport(
         query: Map<String, String>,
-        allowXhttp: Boolean = false,
     ): TransportSettings? = when (
         val type = query["type"]?.lowercase().orEmpty()
     ) {
@@ -389,17 +401,13 @@ object ShareLinkParser {
             type = type,
             serviceName = query["serviceName"] ?: query["service_name"],
         )
-        "xhttp" -> if (allowXhttp) {
-            TransportSettings(
-                type = type,
-                path = query["path"],
-                host = query["host"],
-                mode = query["mode"],
-                xhttpOptions = XtlsXhttpExtraConverter.convert(query["extra"]),
-            )
-        } else {
-            throw ImportException("Transport '$type' пока не поддерживается.")
-        }
+        "xhttp" -> TransportSettings(
+            type = type,
+            path = query["path"],
+            host = query["host"],
+            mode = query["mode"],
+            xhttpOptions = XtlsXhttpExtraConverter.convert(query["extra"]),
+        )
         else -> throw ImportException("Transport '$type' пока не поддерживается.")
     }
 
@@ -438,6 +446,8 @@ object ShareLinkParser {
         val primitive = this[key] as? JsonPrimitive ?: return null
         return primitive.intOrNull ?: primitive.contentOrNull?.toIntOrNull()
     }
+
+    private val XHTTP_MODES = setOf("auto", "packet-up", "stream-up", "stream-one")
 
 }
 

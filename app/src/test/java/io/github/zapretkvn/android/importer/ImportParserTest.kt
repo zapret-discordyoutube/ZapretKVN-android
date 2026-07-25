@@ -391,6 +391,78 @@ class ImportParserTest {
         )
     }
 
+    @Test
+    fun `trojan xhttp with reality maps transport and tls to pinned sing box schema`() {
+        val candidate = ImportParser.parse(
+            "trojan://5c8e7f8b-14b3-4ed4-a512-df54bf37c223@77-246-97-234.sslip.io:39529" +
+                "?security=reality&type=xhttp&sni=www.intel.com" +
+                "&pbk=nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4" +
+                "&fp=edge&sid=82bdd80edf4aaf7c&spx=%2F#Trojan+XHTTP",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val outbound = candidate.servers.single().outbound
+        val transport = outbound["transport"] as JsonObject
+        val tls = outbound["tls"] as JsonObject
+        val reality = tls["reality"] as JsonObject
+
+        assertEquals("trojan", outbound.string("type"))
+        assertEquals("xhttp", transport.string("type"))
+        assertEquals("100-1000", transport.string("x_padding_bytes"))
+        assertEquals("www.intel.com", tls.string("server_name"))
+        assertEquals("edge", (tls["utls"] as JsonObject).string("fingerprint"))
+        assertEquals("nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4", reality.string("public_key"))
+        assertEquals("82bdd80edf4aaf7c", reality.string("short_id"))
+    }
+
+    @Test
+    fun `vmess xhttp maps payload network tls and alpn to pinned sing box schema`() {
+        val payload = Base64.getEncoder().encodeToString(
+            """
+                {"v":"2","ps":"VMess XHTTP","add":"beeline.example","port":"33096",
+                "id":"040d2805-e9f5-43c5-b8e6-017ed169e6cc","aid":"0","scy":"auto",
+                "net":"xhttp","type":"none","tls":"tls","sni":"beeline.example",
+                "alpn":"http/1.1","fp":"edge","path":"/"}
+            """.trimIndent().toByteArray(),
+        )
+        val candidate = ImportParser.parse(
+            "vmess://$payload",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val outbound = candidate.servers.single().outbound
+        val transport = outbound["transport"] as JsonObject
+        val tls = outbound["tls"] as JsonObject
+
+        assertEquals("vmess", outbound.string("type"))
+        assertEquals("xhttp", transport.string("type"))
+        assertEquals("/", transport.string("path"))
+        assertEquals(null, transport.string("mode"))
+        assertEquals("100-1000", transport.string("x_padding_bytes"))
+        assertEquals("beeline.example", tls.string("server_name"))
+        assertEquals("edge", (tls["utls"] as JsonObject).string("fingerprint"))
+        assertEquals(
+            listOf("http/1.1"),
+            (tls["alpn"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+    }
+
+    @Test
+    fun `vmess xhttp keeps valid mode from type field`() {
+        val payload = Base64.getEncoder().encodeToString(
+            """
+                {"v":"2","ps":"VMess XHTTP","add":"xhttp.example","port":"443",
+                "id":"040d2805-e9f5-43c5-b8e6-017ed169e6cc","net":"xhttp",
+                "type":"packet-up","tls":"tls","path":"/api"}
+            """.trimIndent().toByteArray(),
+        )
+        val candidate = ImportParser.parse(
+            "vmess://$payload",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+        val transport = candidate.servers.single().outbound["transport"] as JsonObject
+
+        assertEquals("packet-up", transport.string("mode"))
+    }
+
     @Test(timeout = 5_000L)
     fun `parser rejects arbitrary bounded input without non-domain failures`() {
         val random = Random(0x5A17)
