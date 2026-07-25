@@ -42,30 +42,43 @@ class RoutingUiInstrumentedTest {
         container.profileStore.profiles.value.forEach { container.profileStore.delete(it.id) }
         val profile = container.profileStore.create("Routing UI", profile(), ProfileSource.RawJson)
         container.uiSettingsStore.setActiveProfile(profile.id)
+        container.routingPolicyStore.set(
+            GlobalRoutingPolicy(RoutingPreset.AllThroughVpn, emptyList()),
+        )
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
         container.appSelectionStore.setMode(AppScopeMode.Include)
     }
 
     @After
     fun restoreScope() = runBlocking {
+        container.routingPolicyStore.set(
+            GlobalRoutingPolicy(RoutingPreset.AllThroughVpn, emptyList()),
+        )
         container.appSelectionStore.setMode(AppScopeMode.Include)
         container.appSelectionStore.replaceAllowlist(emptySet())
     }
 
     @Test
-    fun presetSummaryManagedDiffAndDomainBlockMatchStoredJson() {
+    fun presetSummaryAndDomainBlockMatchTheGlobalEffectivePolicy() {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode()
             }.isSuccess
         }
-        composeRule.onNodeWithText("Изменить режим").performClick()
+        composeRule.onNodeWithTag("routing-change-preset")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitUntil(10_000) {
+            runCatching {
+                composeRule.onNodeWithTag("routing-preset-options").fetchSemanticsNode()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("routing-preset-options")
+            .performScrollToNode(hasText("Россия напрямую"))
         composeRule.onNodeWithText("Россия напрямую").performClick()
         composeRule.waitUntil(20_000) {
             runBlocking {
-                val id = container.uiSettingsStore.settings.first().activeProfileId ?: return@runBlocking false
-                container.profileStore.read(id).json.contains("zapret-ru-domains")
+                container.routingPolicyStore.policy.first()?.preset == RoutingPreset.RussiaDirect
             }
         }
         composeRule.onNodeWithText("Россия и LAN → напрямую, остальное → VPN").assertExists()
@@ -78,20 +91,30 @@ class RoutingUiInstrumentedTest {
         composeRule.onNodeWithTag("routing-rule-values").performTextInput("blocked.example")
         composeRule.onNodeWithText("Блокировать").performClick()
         composeRule.onNodeWithText("Сохранить").performClick()
-        var stored = ""
-        for (attempt in 0 until 100) {
-            stored = runBlocking {
-                val id = requireNotNull(container.uiSettingsStore.settings.first().activeProfileId)
-                container.profileStore.read(id).json
+        composeRule.waitUntil(20_000) {
+            runBlocking {
+                container.routingPolicyStore.policy.first()?.rules?.any { rule ->
+                    rule.values == listOf("blocked.example") &&
+                        rule.action == RoutingRuleAction.Block
+                } == true
             }
-            if (stored.contains("blocked.example") && stored.contains("\"action\": \"reject\"")) {
-                break
-            }
-            Thread.sleep(100)
         }
-        assertFalse(stored, stored.contains("package_name"))
-        assertTrue(stored, stored.contains("blocked.example"))
-        assertTrue(stored, stored.contains("\"action\": \"reject\""))
+        val base = runBlocking {
+            val id = requireNotNull(container.uiSettingsStore.settings.first().activeProfileId)
+            container.profileStore.read(id).json
+        }
+        val policy = runBlocking { requireNotNull(container.routingPolicyStore.policy.first()) }
+        val installed = runBlocking { container.ruleSetAssetManager.ensureInstalled() }
+        val effective = RoutingConfigEditor.apply(
+            base,
+            policy.preset,
+            policy.rules,
+            installed,
+        ).json
+        assertFalse(base, base.contains("blocked.example"))
+        assertFalse(effective, effective.contains("package_name"))
+        assertTrue(effective, effective.contains("blocked.example"))
+        assertTrue(effective, effective.contains("\"action\": \"reject\""))
     }
 
     @Test
@@ -115,6 +138,17 @@ class RoutingUiInstrumentedTest {
     }
 
     @Test
+    fun routingExplainsThatProfileJsonDoesNotStoreGlobalRules() {
+        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNodeWithTag("routing-list")
+            .performScrollToNode(hasText("Исходный JSON профиля"))
+        composeRule.onNodeWithText("Исходный JSON профиля").assertExists()
+        composeRule.onNodeWithText(
+            "Общие правила накладываются на исходный JSON при запуске VPN и в нём не сохраняются.",
+        ).assertExists()
+    }
+
+    @Test
     fun excludeModeShowsWarningAndPersistsAdvancedScope() {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.onNodeWithText("Приложения напрямую").performClick()
@@ -130,15 +164,15 @@ class RoutingUiInstrumentedTest {
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNode(
-                    hasText("Расширенный JSON") and hasClickAction() and isEnabled(),
+                    hasText("Исходный JSON профиля") and hasClickAction() and isEnabled(),
                 )
                     .fetchSemanticsNode()
             }.isSuccess
         }
         composeRule.onNodeWithTag("routing-list")
-            .performScrollToNode(hasText("Расширенный JSON"))
+            .performScrollToNode(hasText("Исходный JSON профиля"))
         composeRule.onNode(
-            hasText("Расширенный JSON") and hasClickAction() and isEnabled(),
+            hasText("Исходный JSON профиля") and hasClickAction() and isEnabled(),
         ).performClick()
         composeRule.waitUntil(20_000) {
             runCatching {
@@ -151,7 +185,7 @@ class RoutingUiInstrumentedTest {
     }
 
     @Test
-    fun everyPresetSummaryMatchesStoredEffectiveJson() {
+    fun everyPresetSummaryMatchesCompiledEffectiveJson() {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.waitUntil(20_000) {
             runCatching { composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode() }.isSuccess
@@ -188,19 +222,27 @@ class RoutingUiInstrumentedTest {
             }
             composeRule.waitUntil(20_000) {
                 runBlocking {
-                    val id = container.uiSettingsStore.settings.first().activeProfileId
-                        ?: return@runBlocking false
-                    RoutingConfigEditor.inspect(container.profileStore.read(id).json).preset == preset
+                    container.routingPolicyStore.policy.first()?.preset == preset
                 }
             }
             composeRule.onNodeWithText(preset.detail).assertExists()
-            val stored = runBlocking {
+            val base = runBlocking {
                 val id = requireNotNull(container.uiSettingsStore.settings.first().activeProfileId)
                 container.profileStore.read(id).json
             }
-            val inspection = RoutingConfigEditor.inspect(stored)
+            val policy = runBlocking {
+                requireNotNull(container.routingPolicyStore.policy.first())
+            }
+            val installed = runBlocking { container.ruleSetAssetManager.ensureInstalled() }
+            val effective = RoutingConfigEditor.apply(
+                base,
+                policy.preset,
+                policy.rules,
+                installed,
+            ).json
+            val inspection = RoutingConfigEditor.inspect(effective)
             assertTrue(inspection.summary.startsWith(preset.detail))
-            assertFalse(stored.contains("package_name"))
+            assertFalse(effective.contains("package_name"))
         }
     }
 

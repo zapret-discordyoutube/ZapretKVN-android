@@ -331,7 +331,9 @@ connect health-check и затем только при видимой диагн
 `updated_at`; base JSON остаётся источником transport/outbounds, а общая
 destination-policy хранится как bounded DataStore intent. Маршрутизация имеет две
 главные карточки: Android per-app scope и destination routing, а кнопка
-«JSON активного профиля» открывает настоящий base-профиль. Stable/Beta хранится как
+«Исходный JSON профиля» открывает настоящий base-профиль и поясняет, что общая
+destination-policy накладывается только при запуске. Выбор другого профиля при
+подключённом VPN сразу заменяет работающую сессию выбранным профилем. Stable/Beta хранится как
 UI-настройка и не запускает фоновые обновления; updater остаётся этапом 7.
 
 Три Telegram URL присутствуют в production-коде только внутри экрана

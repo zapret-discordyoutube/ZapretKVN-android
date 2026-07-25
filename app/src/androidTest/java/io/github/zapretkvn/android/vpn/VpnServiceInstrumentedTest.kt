@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Debug
 import android.os.Process
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zapretkvn.android.ZapretApplication
@@ -23,6 +24,7 @@ import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import io.github.zapretkvn.android.profiles.ProfileMetadata
 import io.github.zapretkvn.android.profiles.ProfileSource
 import io.github.zapretkvn.android.routing.InstalledRuleSets
+import io.github.zapretkvn.android.routing.GlobalRoutingPolicy
 import io.github.zapretkvn.android.routing.ManagedRoutingRule
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.routing.RoutingMatchType
@@ -397,6 +399,7 @@ class VpnServiceInstrumentedTest {
                         val ruDomain = "gate-$index.ru"
                         val nonRuDomain = "gate-$index.example"
                         val rules = gateRules(preset, ruDomain, nonRuDomain)
+                        container.routingPolicyStore.set(GlobalRoutingPolicy(preset, rules))
                         val edited = RoutingConfigEditor.apply(
                             raw = GateProfiles.routingMatrix(
                                 echo.reachableAddress,
@@ -411,22 +414,34 @@ class VpnServiceInstrumentedTest {
                         assertEquals(preset, edited.inspection.preset)
                         assertTrue(edited.inspection.summary.startsWith(preset.detail))
                         assertFalse(edited.json.contains("package_name"))
-                        val configured = GateProfiles.withDestinationOverrides(
-                            edited.json,
-                            echo.reachableAddress,
-                            echo.port,
+                        val profile = createProfile(
+                            container,
+                            "Gate ${preset.name}",
+                            GateProfiles.routingMatrix(
+                                echo.reachableAddress,
+                                socks.port,
+                                ruDomain,
+                                nonRuDomain,
+                            ),
                         )
-                        val profile = createProfile(container, "Gate ${preset.name}", configured)
                         try {
+                            VpnTestHooks.setEffectiveRoutingTransform { effective ->
+                                GateProfiles.withDestinationOverrides(
+                                    effective,
+                                    echo.reachableAddress,
+                                    echo.port,
+                                )
+                            }
                             connect(container.vpnController, profile.id)
                             awaitActiveResources()
                             waitForVpnNetwork(context)
-                            delay(100)
+                            awaitSocksQuiescence(socks)
                             gateProbes(preset, ruDomain, nonRuDomain).forEach { probe ->
                                 assertGatePath(echo, socks, probe)
                             }
                         } finally {
                             stopIfNeeded(container.vpnController, context)
+                            VpnTestHooks.reset()
                             container.profileStore.delete(profile.id)
                         }
                     }
@@ -1213,6 +1228,47 @@ class VpnServiceInstrumentedTest {
     }
 
     @Test
+    fun selectingAnotherProfileSwitchesTheConnectedVpnSession() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        val packageName = context.packageName
+        allowVpn(packageName)
+        container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
+        val first = createProfile(container, "Profile switch A", TWO_SERVER_DIRECT_CONFIG)
+        val second = createProfile(container, "Profile switch B", TWO_SERVER_DIRECT_CONFIG)
+        try {
+            connect(container.vpnController, first.id)
+            val connectedBefore = container.vpnController.state.value as VpnConnectionState.Connected
+            val createdBefore = VpnRuntimeMetrics.libboxCreationCount()
+
+            assertFalse(container.vpnController.switchProfileIfConnected(first.id))
+            assertEquals(createdBefore, VpnRuntimeMetrics.libboxCreationCount())
+
+            VpnTestHooks.succeedNextHealthCheck()
+            assertTrue(container.vpnController.switchProfileIfConnected(second.id))
+            val connectedAfter = withTimeout(20_000) {
+                container.vpnController.state.first { state ->
+                    state is VpnConnectionState.Connected &&
+                        state.profileId == second.id &&
+                        state.connectedAtEpochMillis != connectedBefore.connectedAtEpochMillis
+                }
+            } as VpnConnectionState.Connected
+
+            assertEquals(second.id, connectedAfter.profileId)
+            assertEquals(createdBefore + 1, VpnRuntimeMetrics.libboxCreationCount())
+            assertEquals(1, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
+            assertEquals(1, VpnRuntimeMetrics.snapshot().activeLibboxInstances)
+        } finally {
+            VpnTestHooks.reset()
+            stopIfNeeded(container.vpnController, context)
+            container.profileStore.delete(first.id)
+            container.profileStore.delete(second.id)
+            denyVpn(packageName)
+        }
+    }
+
+    @Test
     fun realAndroidRevokeClosesOriginalVpnExactlyOnce() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -1756,6 +1812,21 @@ class VpnServiceInstrumentedTest {
         } else {
             delay(100)
             assertEquals("${probe.label} unexpectedly reached proxy", before, socks.requestCount)
+        }
+    }
+
+    private suspend fun awaitSocksQuiescence(socks: GateSocksServer) {
+        var previous = socks.requestCount
+        var stableSince = SystemClock.elapsedRealtime()
+        withTimeout(5_000) {
+            while (SystemClock.elapsedRealtime() - stableSince < 1_000) {
+                delay(50)
+                val current = socks.requestCount
+                if (current != previous) {
+                    previous = current
+                    stableSince = SystemClock.elapsedRealtime()
+                }
+            }
         }
     }
 

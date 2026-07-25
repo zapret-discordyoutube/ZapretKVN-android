@@ -300,7 +300,7 @@ class ZapretVpnService : VpnService() {
                 installed,
             ).json
         }
-        profile = profile.copy(json = effectiveRouting)
+        profile = profile.copy(json = VpnTestHooks.transformEffectiveRouting(effectiveRouting))
         val uiSettings = container.uiSettingsStore.settings.first()
         val configuredDnsMode = uiSettings.dnsMode
         val dnsMode = runtimeDnsMode ?: configuredDnsMode

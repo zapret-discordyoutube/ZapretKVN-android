@@ -296,7 +296,14 @@ class ProfilesViewModel(
     fun selectProfile(id: String) = operation {
         require(mutableState.value.profiles.any { it.id == id }) { "Профиль не найден." }
         settingsStore.setActiveProfile(id)
-        showMessage("Активный профиль выбран.")
+        val switching = vpnController.switchProfileIfConnected(id)
+        showMessage(
+            if (switching) {
+                "Активный профиль выбран; VPN переключается."
+            } else {
+                "Активный профиль выбран."
+            },
+        )
     }
 
     fun renameProfile(id: String, name: String) = operation {

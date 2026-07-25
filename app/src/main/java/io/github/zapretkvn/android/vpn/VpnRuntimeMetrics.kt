@@ -101,6 +101,7 @@ internal object VpnTestHooks {
     private val nextHttpsProbeFailure = AtomicBoolean(false)
     private val nextCaptivePortal = AtomicBoolean(false)
     private val nextVpnSystemPolicy = AtomicReference<VpnSystemPolicy?>(null)
+    private val effectiveRoutingTransform = AtomicReference<((String) -> String)?>(null)
 
     fun failNextProtect() {
         check(BuildConfig.DEBUG)
@@ -147,6 +148,11 @@ internal object VpnTestHooks {
         nextVpnSystemPolicy.set(VpnSystemPolicy(true, alwaysOn, lockdown))
     }
 
+    fun setEffectiveRoutingTransform(transform: (String) -> String) {
+        check(BuildConfig.DEBUG)
+        effectiveRoutingTransform.set(transform)
+    }
+
     fun reset() {
         failProtect.set(false)
         failAfterEstablish.set(false)
@@ -157,7 +163,11 @@ internal object VpnTestHooks {
         nextHttpsProbeFailure.set(false)
         nextCaptivePortal.set(false)
         nextVpnSystemPolicy.set(null)
+        effectiveRoutingTransform.set(null)
     }
+
+    fun transformEffectiveRouting(raw: String): String =
+        if (BuildConfig.DEBUG) effectiveRoutingTransform.get()?.invoke(raw) ?: raw else raw
 
     fun protect(service: VpnService, fd: Int): Boolean =
         if (BuildConfig.DEBUG && failProtect.compareAndSet(true, false)) false else service.protect(fd)

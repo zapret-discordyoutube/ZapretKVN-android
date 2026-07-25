@@ -256,11 +256,16 @@ fun RoutingScreen(
                         onClick = onOpenAdvancedJson,
                         enabled = routingState.activeProfileId != null && !routingState.loading,
                         modifier = Modifier.semantics {
-                            contentDescription = "Открыть расширенный редактор JSON активного профиля"
+                            contentDescription = "Открыть редактор исходного JSON активного профиля"
                         },
                     ) {
-                        Text("JSON активного профиля")
+                        Text("Исходный JSON профиля")
                     }
+                    Text(
+                        "Общие правила накладываются на исходный JSON при запуске VPN и в нём не сохраняются.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

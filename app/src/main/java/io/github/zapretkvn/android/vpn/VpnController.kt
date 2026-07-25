@@ -82,6 +82,14 @@ class VpnController(
         )
     }
 
+    fun switchProfileIfConnected(profileId: String): Boolean {
+        require(profileId.isNotBlank()) { "Профиль не выбран." }
+        val connected = mutableState.value as? VpnConnectionState.Connected ?: return false
+        if (connected.profileId == profileId) return false
+        start(profileId)
+        return true
+    }
+
     fun startForUpdater(profileId: String) {
         require(profileId.isNotBlank()) { "Профиль не выбран." }
         ContextCompat.startForegroundService(
