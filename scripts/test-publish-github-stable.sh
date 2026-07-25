@@ -77,6 +77,14 @@ case "${1:-} ${2:-}" in
         ;;
     "api --paginate")
         [[ "${3:-}" == repos/* ]]
+        if [[ -f "$STATE_DIR/list-lag" ]]; then
+            lag="$(<"$STATE_DIR/list-lag")"
+            if (( lag > 0 )); then
+                printf '%s\n' "$((lag - 1))" > "$STATE_DIR/list-lag"
+                printf '[]\n'
+                exit 0
+            fi
+        fi
         release_json | jq -s '.'
         ;;
     "release create")
@@ -123,6 +131,13 @@ export MOCK_GH_STATE="$MOCK_STATE"
 export MOCK_GH_TAG="$TAG"
 export ZAPRET_RELEASE_UPLOAD_TIMEOUT_SECONDS=5
 export ZAPRET_RELEASE_UPLOAD_ATTEMPTS=1
+export ZAPRET_RELEASE_LIST_ATTEMPTS=3
+export ZAPRET_RELEASE_LIST_RETRY_SECONDS=1
+
+# The releases listing lags behind the freshly created draft: the resume
+# probe and the first post-create read both see an empty listing, so the
+# publisher must retry instead of dying on the eventual-consistency gap.
+printf '2\n' > "$MOCK_STATE/list-lag"
 
 export MOCK_GH_FAIL_ASSET="Zapret-KVN-$TAG-armeabi-v7a.apk"
 if "$PUBLISHER" "$TAG" "$BUNDLE_DIR" "$REPOSITORY" >/dev/null 2>&1; then
@@ -132,6 +147,8 @@ fi
 [[ "$(<"$MOCK_STATE/release-state")" == draft ]]
 [[ "$(grep -c '^CREATE$' "$MOCK_STATE/calls.log")" -eq 1 ]]
 [[ "$(grep -c '^EDIT$' "$MOCK_STATE/calls.log" || true)" -eq 0 ]]
+[[ "$(grep -c $'^UPLOAD\t' "$MOCK_STATE/calls.log")" -eq 3 ]]
+[[ "$(<"$MOCK_STATE/list-lag")" -eq 0 ]]
 
 unset MOCK_GH_FAIL_ASSET
 "$PUBLISHER" "$TAG" "$BUNDLE_DIR" "$REPOSITORY" >/dev/null

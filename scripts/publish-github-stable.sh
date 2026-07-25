@@ -6,6 +6,8 @@ BUNDLE_DIR="${2:-}"
 RELEASE_REPOSITORY="${3:-${ZAPRET_UPDATE_REPOSITORY:-youtubediscord/ZapretKVN-android}}"
 UPLOAD_TIMEOUT_SECONDS="${ZAPRET_RELEASE_UPLOAD_TIMEOUT_SECONDS:-120}"
 UPLOAD_ATTEMPTS="${ZAPRET_RELEASE_UPLOAD_ATTEMPTS:-3}"
+LIST_ATTEMPTS="${ZAPRET_RELEASE_LIST_ATTEMPTS:-5}"
+LIST_RETRY_SECONDS="${ZAPRET_RELEASE_LIST_RETRY_SECONDS:-4}"
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! -d "$BUNDLE_DIR" ]]; then
     echo "Usage: $0 vMAJOR.MINOR.PATCH BUNDLE_DIRECTORY [OWNER/REPOSITORY]" >&2
@@ -16,8 +18,10 @@ if [[ ! "$RELEASE_REPOSITORY" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]]; then
     exit 1
 fi
 if [[ ! "$UPLOAD_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ||
-    ! "$UPLOAD_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "Upload timeout and attempt count must be positive integers" >&2
+    ! "$UPLOAD_ATTEMPTS" =~ ^[1-9][0-9]*$ ||
+    ! "$LIST_ATTEMPTS" =~ ^[1-9][0-9]*$ ||
+    ! "$LIST_RETRY_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Upload and listing timeouts and attempt counts must be positive integers" >&2
     exit 1
 fi
 for command in gh jq sha256sum stat timeout; do
@@ -67,6 +71,27 @@ release_json() {
                     error("multiple GitHub Releases use the requested tag")
                 end
             '
+}
+
+# The releases listing is eventually consistent: a draft created moments ago
+# may be missing from the first paginated read, so bounded retries are
+# required before treating an empty listing as a fatal error.
+release_json_with_retry() {
+    local attempt status json
+    for ((attempt = 1; attempt <= LIST_ATTEMPTS; attempt++)); do
+        status=0
+        json="$(release_json)" || status=$?
+        if [[ "$status" -eq 0 ]]; then
+            printf '%s\n' "$json"
+            return 0
+        fi
+        if (( attempt < LIST_ATTEMPTS )); then
+            echo "GitHub Release $TAG is not listed yet (attempt $attempt/$LIST_ATTEMPTS); retrying in ${LIST_RETRY_SECONDS}s" >&2
+            sleep "$LIST_RETRY_SECONDS"
+        fi
+    done
+    echo "GitHub Release $TAG never appeared in the releases listing" >&2
+    return "$status"
 }
 
 verify_release_identity() {
@@ -135,7 +160,7 @@ upload_one_asset() {
         timeout --foreground "${UPLOAD_TIMEOUT_SECONDS}s" \
             gh release upload "$TAG" "$file" --repo "$RELEASE_REPOSITORY" || status=$?
 
-        if ! json="$(release_json)"; then
+        if ! json="$(release_json_with_retry)"; then
             echo "Could not read draft state after uploading $name" >&2
             exit 1
         fi
@@ -165,14 +190,14 @@ else
         --draft \
         --title "Zapret KVN $VERSION_NAME" \
         --notes-file "$NOTES_FILE"
-    json="$(release_json)"
+    json="$(release_json_with_retry)"
     verify_release_identity "$json"
     echo "Created stable draft: $TAG"
 fi
 
 for name in "${EXPECTED_NAMES[@]}"; do
     file="$BUNDLE_DIR/$name"
-    json="$(release_json)"
+    json="$(release_json_with_retry)"
     verify_release_identity "$json"
     if assert_remote_asset_safe "$json" "$file"; then
         echo "Reusing verified remote asset: $name"
@@ -181,7 +206,7 @@ for name in "${EXPECTED_NAMES[@]}"; do
     fi
 done
 
-json="$(release_json)"
+json="$(release_json_with_retry)"
 verify_release_identity "$json"
 mapfile -t REMOTE_NAMES < <(jq -r '.assets[].name' <<<"$json" | sort)
 if [[ "${REMOTE_NAMES[*]}" != "${EXPECTED_NAMES[*]}" ]]; then
@@ -201,7 +226,7 @@ gh release edit "$TAG" \
     --title "Zapret KVN $VERSION_NAME" \
     --notes-file "$NOTES_FILE"
 
-json="$(release_json)"
+json="$(release_json_with_retry)"
 jq -e \
     --arg tag "$TAG" \
     '
