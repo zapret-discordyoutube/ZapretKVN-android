@@ -959,12 +959,13 @@ class ZapretVpnService : VpnService() {
 
     private suspend fun failLocked(token: Long, error: Throwable, startId: Int) {
         cancelScheduledNetworkRestart()
-        val failure = VpnAccessFailureClassifier.refine(
-            failure = safeError(error),
-            startupCoreLogs = controller.diagnostics.value.connectionAttempt
-                ?.takeIf { it.generation == token }
-                ?.startupCoreLogs
-                .orEmpty(),
+        val startupCoreLogs = controller.diagnostics.value.connectionAttempt
+            ?.takeIf { it.generation == token }
+            ?.startupCoreLogs
+            .orEmpty()
+        val failure = WireGuardDataPlaneClassifier.refine(
+            failure = VpnAccessFailureClassifier.refine(safeError(error), startupCoreLogs),
+            startupCoreLogs = startupCoreLogs,
         )
         detachSessions().forEach(ActiveSession::close)
         terminalError = true

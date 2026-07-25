@@ -30,7 +30,8 @@ object DiagnosticFailureClassifier {
             "разрешение" in value && "vpn" in value -> DiagnosticErrorType.Permission
             "https-провер" in value ||
                 "https probe" in value ||
-                ("wireguard" in value && ("tcp" in value || "data-plane" in value)) ||
+                ("wireguard" in value &&
+                    ("tcp" in value || "data-plane" in value || "данные" in value)) ||
                 "health-check" in value -> DiagnosticErrorType.VpnTraffic
             ("dns" in value && "vpn" in value) ||
                 "внутренний dns" in value ||
