@@ -269,10 +269,10 @@ fun RoutingScreen(
             item(key = "rules-title") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             "Правила",
                             style = MaterialTheme.typography.titleLarge,
@@ -293,6 +293,7 @@ fun RoutingScreen(
                             )
                         },
                         enabled = !routingState.loading,
+                        modifier = Modifier.testTag("routing-add-rule"),
                     ) { Text("Добавить") }
                 }
             }

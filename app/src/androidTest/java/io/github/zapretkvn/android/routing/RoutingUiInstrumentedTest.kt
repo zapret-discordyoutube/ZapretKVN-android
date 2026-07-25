@@ -95,6 +95,26 @@ class RoutingUiInstrumentedTest {
     }
 
     @Test
+    fun addRuleButtonKeepsItsLabelHorizontal() {
+        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.waitUntil(20_000) {
+            runCatching {
+                composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("routing-list")
+            .performScrollToNode(hasText("Добавить"))
+
+        val buttonBounds = composeRule.onNodeWithTag("routing-add-rule")
+            .fetchSemanticsNode()
+            .boundsInRoot
+        assertTrue(
+            "Кнопка «Добавить» не должна сжиматься до вертикального текста: $buttonBounds",
+            buttonBounds.width > buttonBounds.height,
+        )
+    }
+
+    @Test
     fun excludeModeShowsWarningAndPersistsAdvancedScope() {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.onNodeWithText("Приложения напрямую").performClick()
