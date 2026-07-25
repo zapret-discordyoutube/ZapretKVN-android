@@ -261,6 +261,35 @@ class ImportParserTest {
     }
 
     @Test
+    fun `vless xray udp443 flow alias maps to sing box vision`() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +
+                "?security=reality&flow=xtls-rprx-vision-udp443" +
+                "&sni=cdn.example&fp=chrome" +
+                "&pbk=nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4&sid=abcd#Vision",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+
+        assertEquals(
+            "xtls-rprx-vision",
+            candidate.servers.single().outbound.string("flow"),
+        )
+    }
+
+    @Test
+    fun `vless unknown flow fails before core validation`() {
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +
+                    "?security=tls&flow=unknown-flow",
+                ProfileSource.Clipboard,
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("VLESS flow 'unknown-flow'"))
+    }
+
+    @Test
     fun `vless xhttp maps XTLS URL encoded extra to pinned sing box transport`() {
         val extra = encodeURIComponent(
             """{"headers":{"Referer":"https://cdn.example/a+b"},"xmux":{"maxConcurrency":"16-32","hKeepAlivePeriod":10},"noGRPCHeader":true,"noSSEHeader":true,"xPaddingBytes":"100-1000","scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":"20-40","scMaxBufferedPosts":30,"xPaddingPlacement":"header","uplinkHTTPMethod":"POST"}""",

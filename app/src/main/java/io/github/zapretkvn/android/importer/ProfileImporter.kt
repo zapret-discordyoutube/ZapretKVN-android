@@ -196,10 +196,20 @@ object ShareLinkParser {
             server = host,
             serverPort = requirePort(uri),
             uuid = uuid,
-            flow = query["flow"],
+            flow = normalizeVlessFlow(query["flow"]),
             tls = tls(query, host),
             transport = transport(query),
         )
+    }
+
+    private fun normalizeVlessFlow(flow: String?): String? = when (
+        val normalized = flow?.trim()?.lowercase().orEmpty()
+    ) {
+        "" -> null
+        "xtls-rprx-vision",
+        "xtls-rprx-vision-udp443",
+        -> "xtls-rprx-vision"
+        else -> throw ImportException("VLESS flow '$normalized' пока не поддерживается.")
     }
 
     private fun parseTrojan(link: String, index: Int): ManagedServer {

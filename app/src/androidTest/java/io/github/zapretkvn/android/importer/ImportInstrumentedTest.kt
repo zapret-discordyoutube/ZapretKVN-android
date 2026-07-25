@@ -318,6 +318,19 @@ class ImportInstrumentedTest {
     }
 
     @Test
+    fun xrayUdp443FlowAliasPassesPinnedLibboxCheck() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +
+                "?security=reality&flow=xtls-rprx-vision-udp443" +
+                "&sni=cdn.example&fp=chrome" +
+                "&pbk=nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4&sid=abcd#Vision",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+
+        Libbox.checkConfig(candidate.buildJson())
+    }
+
+    @Test
     fun completeXhttpObjectPassesPinnedLibboxCheck() {
         val completeXhttp = Uri.encode(
             """
