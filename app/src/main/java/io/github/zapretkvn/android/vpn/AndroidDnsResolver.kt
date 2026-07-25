@@ -21,8 +21,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
 
-class BootstrapResolver {
-    private val delegate = AndroidBootstrapDnsResolver()
+class BootstrapResolver(
+    timeoutMillis: Long = AndroidBootstrapDnsResolver.DEFAULT_TIMEOUT_MILLIS,
+) {
+    private val delegate = AndroidBootstrapDnsResolver(timeoutMillis)
 
     suspend fun resolve(
         network: Network,

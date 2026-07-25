@@ -26,7 +26,9 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLException
@@ -34,6 +36,9 @@ import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -175,7 +180,9 @@ class ProxyBootstrapper(
 class VpnHealthPipeline(
     private val vpnNetworks: VpnNetworkProvider,
 ) {
-    private val resolver = BootstrapResolver()
+    // Резолв внутри туннеля должен падать быстрее bootstrap (8 с): при мёртвом
+    // DNS каждый лишний тайм-аут задерживает fallback на следующий DNS-режим.
+    private val resolver = BootstrapResolver(HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS)
 
     suspend fun verify(
         mode: DnsMode,
@@ -409,33 +416,34 @@ class VpnHealthPipeline(
     private suspend fun httpsProbe(
         vpnNetwork: Network,
         proxyIpFamily: ProxyIpFamily,
-    ): HttpsProbeResult = withContext(Dispatchers.IO) {
-        val failures = mutableListOf<String>()
-        var lastError: Throwable? = null
-        for (endpoint in ManagedHealthProbe.endpoints) {
-            try {
-                return@withContext HttpsProbeResult(
-                    endpoint = endpoint,
-                    status = httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily),
-                    addressFamily = proxyIpFamily,
+    ): HttpsProbeResult {
+        val outcome = HealthProbeRace.firstSuccess(
+            candidates = ManagedHealthProbe.endpoints,
+            isFatal = { it is VpnHealthAddressFamilyException },
+        ) { endpoint ->
+            httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily)
+        }
+        return when (outcome) {
+            is HealthProbeRace.Outcome.Success -> HttpsProbeResult(
+                endpoint = outcome.candidate,
+                status = outcome.value,
+                addressFamily = proxyIpFamily,
+            )
+            is HealthProbeRace.Outcome.AllFailed -> {
+                val detail = outcome.failures
+                    .joinToString("; ") { (endpoint, error) ->
+                        "${endpoint.code}:${httpsFailureReason(error)}"
+                    }
+                    .take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
+                throw HttpsProbeFailure(
+                    diagnosticDetail = detail,
+                    message = "HTTPS-проверка через VPN не прошла: $detail. " +
+                        "Причиной может быть недоступный или заблокированный сервер, " +
+                        "отключённый ключ либо неверные параметры транспорта.",
+                    cause = outcome.failures.lastOrNull()?.second,
                 )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: VpnHealthAddressFamilyException) {
-                throw error
-            } catch (error: Throwable) {
-                lastError = error
-                failures += "${endpoint.code}:${httpsFailureReason(error)}"
             }
         }
-        val detail = failures.joinToString("; ").take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
-        throw HttpsProbeFailure(
-            diagnosticDetail = detail,
-            message = "HTTPS-проверка через VPN не прошла: $detail. " +
-                "Причиной может быть недоступный или заблокированный сервер, " +
-                "отключённый ключ либо неверные параметры транспорта.",
-            cause = lastError,
-        )
     }
 
     private suspend fun httpsProbeOne(
@@ -451,13 +459,58 @@ class VpnHealthPipeline(
                     endpointCode = endpoint.code,
                     answerCount = addresses.size,
                 )
-            return httpsProbeOnePinned(vpnNetwork, endpoint, address)
+            return withProbeSockets { register ->
+                httpsProbeOnePinned(vpnNetwork, endpoint, address, register)
+            }
         }
-        return httpsProbeOneDefault(vpnNetwork, endpoint)
+        return withProbeSockets { register ->
+            httpsProbeOneDefault(vpnNetwork, endpoint, register)
+        }
     }
 
-    private fun httpsProbeOneDefault(vpnNetwork: Network, endpoint: ManagedHealthEndpoint): Int {
+    /**
+     * Выполняет блокирующую пробу на Dispatchers.IO так, что отмена корутины
+     * немедленно закрывает её сокеты: проигравшие участники параллельной гонки
+     * освобождают поток сразу, а не по своему тайм-ауту.
+     */
+    private suspend fun <T> withProbeSockets(block: (register: (AutoCloseable) -> Unit) -> T): T {
+        val resources = ConcurrentLinkedQueue<AutoCloseable>()
+        val closed = AtomicBoolean(false)
+        fun closeAll() {
+            closed.set(true)
+            while (true) {
+                val resource = resources.poll() ?: return
+                runCatching(resource::close)
+            }
+        }
+        return coroutineScope {
+            val watcher = launch {
+                try {
+                    awaitCancellation()
+                } finally {
+                    closeAll()
+                }
+            }
+            try {
+                withContext(Dispatchers.IO) {
+                    block { resource ->
+                        resources += resource
+                        if (closed.get()) runCatching(resource::close)
+                    }
+                }
+            } finally {
+                watcher.cancel()
+            }
+        }
+    }
+
+    private fun httpsProbeOneDefault(
+        vpnNetwork: Network,
+        endpoint: ManagedHealthEndpoint,
+        register: (AutoCloseable) -> Unit,
+    ): Int {
         val connection = vpnNetwork.openConnection(URL(endpoint.url)) as HttpsURLConnection
+        register(AutoCloseable { connection.disconnect() })
         try {
             connection.connectTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
             connection.readTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
@@ -481,15 +534,18 @@ class VpnHealthPipeline(
         vpnNetwork: Network,
         endpoint: ManagedHealthEndpoint,
         address: InetAddress,
+        register: (AutoCloseable) -> Unit,
     ): Int {
         val url = URL(endpoint.url)
         val port = url.port.takeIf { it >= 0 } ?: 443
         val plain = vpnNetwork.socketFactory.createSocket()
+        register(plain)
         try {
             plain.soTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
             plain.connect(InetSocketAddress(address, port), HTTPS_ENDPOINT_TIMEOUT_MILLIS)
             val tls = HttpsURLConnection.getDefaultSSLSocketFactory()
                 .createSocket(plain, endpoint.host, port, true) as SSLSocket
+            register(tls)
             tls.use {
                 it.soTimeout = HTTPS_ENDPOINT_TIMEOUT_MILLIS
                 it.sslParameters = it.sslParameters.apply {
@@ -641,6 +697,7 @@ class VpnHealthPipeline(
 
     private companion object {
         const val HEALTH_TIMEOUT_MILLIS = 20_000L
+        const val HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS = 3_000L
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
         const val MAX_HTTPS_FAILURE_DETAIL_CHARS = 240
