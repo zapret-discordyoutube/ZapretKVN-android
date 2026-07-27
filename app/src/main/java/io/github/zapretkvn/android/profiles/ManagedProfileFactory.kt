@@ -344,10 +344,14 @@ object ManagedProfileFactory {
         return JsonObject(result)
     }
 
+    /**
+     * Тег виден пользователю в списке серверов, поэтому буквы любого алфавита
+     * сохраняются; sing-box принимает произвольные UTF-8 теги.
+     */
     private fun slug(name: String): String {
         val value = SecretRedactor.redactInline(name)
             .lowercase()
-            .map { if (it.isLetterOrDigit() && it.code < 128) it else '-' }
+            .map { if (it.isLetterOrDigit()) it else '-' }
             .joinToString("")
             .replace(Regex("-+"), "-")
             .trim('-')

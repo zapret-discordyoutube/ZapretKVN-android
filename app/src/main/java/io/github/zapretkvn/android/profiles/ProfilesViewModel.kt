@@ -76,13 +76,27 @@ data class ProfilesUiState(
     val importPreview: ImportPreviewState? = null,
     val importCompletion: ImportCompletion? = null,
     val refreshableProfileIds: Set<String> = emptySet(),
+    val serverSummaries: Map<String, ProfileServerSummary> = emptyMap(),
+    val serverPicker: ProfileServerPickerState? = null,
     val initialized: Boolean = false,
 )
+
+data class ProfileServerPickerState(
+    val profileId: String,
+    val profileName: String,
+    val groups: List<ProfileServerGroup>,
+    val liveSwitch: Boolean,
+) {
+    val serverCount: Int get() = groups.sumOf { it.options.size }
+}
 
 data class ImportCompletion(
     val profileId: String,
     val profileName: String,
 )
+
+/** Верхняя граница разложения подписки: дальше список профилей перестаёт быть управляемым. */
+internal const val MAX_SPLIT_PROFILES = 200
 
 data class ImportPreviewState(
     val suggestedName: String,
@@ -102,6 +116,14 @@ data class ImportPreviewState(
     val isSingleManaged: Boolean
         get() = candidate is ImportCandidate.Managed && candidate.servers.size == 1
     val isRefresh: Boolean get() = refreshProfileId != null
+
+    /** Сколько отдельных профилей получится, если разложить подписку по серверам. */
+    val splittableServerCount: Int
+        get() = (candidate as? ImportCandidate.Managed)?.servers?.size?.takeIf { it > 1 } ?: 0
+
+    val splitSupported: Boolean get() = splittableServerCount in 2..MAX_SPLIT_PROFILES
+
+    val hasSubscriptionUrl: Boolean get() = sourceUrl != null
 }
 
 class ProfilesViewModel(
@@ -116,6 +138,7 @@ class ProfilesViewModel(
     private val ruleSetAssets: RuleSetAssetManager,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ProfilesUiState())
+    private var serverSummaryKey: List<Pair<String, Long>>? = null
     val state: StateFlow<ProfilesUiState> = mutableState.asStateFlow()
 
     init {
@@ -132,6 +155,7 @@ class ProfilesViewModel(
                     mutableState.update {
                         it.copy(profiles = profiles, settings = settings, initialized = true)
                     }
+                    refreshServerSummaries(profiles)
                     if (settings.activeProfileId != null && profiles.none { it.id == settings.activeProfileId }) {
                         settingsStore.setActiveProfile(null)
                     }
@@ -245,6 +269,60 @@ class ProfilesViewModel(
         showMessage("Профиль сохранён. Подключение не запускалось.")
     }
 
+    /**
+     * Раскладывает подписку по одному профилю на сервер. Ни один профиль не создаётся,
+     * пока ядро не приняло все получившиеся JSON.
+     */
+    fun confirmImportPerServer(baseName: String) = operation {
+        val pending = mutableState.value.importPreview
+            ?.takeUnless { it.isRefresh }
+            ?: throw ImportException("Предпросмотр импорта уже закрыт.")
+        val servers = (pending.candidate as? ImportCandidate.Managed)?.servers
+            ?.takeIf { it.size > 1 }
+            ?: throw ImportException("Разделять можно только подписку с несколькими серверами.")
+        if (servers.size > MAX_SPLIT_PROFILES) {
+            throw ImportException(
+                "Разделение доступно максимум для $MAX_SPLIT_PROFILES серверов; " +
+                    "для больших подписок используйте выбор сервера внутри профиля.",
+            )
+        }
+        val installed = withContext(Dispatchers.IO) { ruleSetAssets.ensureInstalled() }
+        val prepared = withContext(Dispatchers.Default) {
+            servers.map { server ->
+                RoutingConfigEditor.apply(
+                    ManagedProfileFactory.single(server),
+                    RoutingPreset.RussiaDirect,
+                    emptyList(),
+                    installed,
+                ).json
+            }
+        }
+        val names = SplitProfileNaming.names(servers.map(ManagedServer::displayName), baseName)
+        // ProfileStore.create сам проверяет JSON ядром; второй проход удвоил бы ожидание
+        // на больших подписках, поэтому частичный импорт откатывается вручную.
+        val created = mutableListOf<ProfileMetadata>()
+        try {
+            prepared.forEachIndexed { index, json ->
+                created += store.create(names[index], json, ProfileSource.Link)
+            }
+        } catch (error: Throwable) {
+            created.forEach { profile -> runCatching { store.delete(profile.id) } }
+            throw error
+        }
+        val first = created.first()
+        if (mutableState.value.settings.activeProfileId == null) {
+            settingsStore.setActiveProfile(first.id)
+            settingsStore.setDnsMode(DnsMode.Automatic)
+        }
+        mutableState.update {
+            it.copy(
+                importPreview = null,
+                importCompletion = ImportCompletion(first.id, first.name),
+            )
+        }
+        showMessage("Создано профилей: ${created.size}. Подключение не запускалось.")
+    }
+
     fun confirmAppend(targetProfileId: String) = operation {
         val pending = mutableState.value.importPreview
             ?.takeUnless { it.isRefresh }
@@ -306,6 +384,67 @@ class ProfilesViewModel(
         )
     }
 
+    fun openServerPicker(profileId: String) = operation {
+        val stored = store.read(profileId)
+        val summary = withContext(Dispatchers.Default) {
+            ProfileServerCatalog.summarize(stored.json)
+        }
+        if (summary.groups.isEmpty()) {
+            throw ImportException("В профиле нет группы серверов sing-box (selector).")
+        }
+        mutableState.update {
+            it.copy(
+                serverPicker = ProfileServerPickerState(
+                    profileId = profileId,
+                    profileName = stored.metadata.name,
+                    groups = summary.groups,
+                    liveSwitch = isConnectedTo(profileId),
+                ),
+                serverSummaries = it.serverSummaries + (profileId to summary),
+                message = null,
+            )
+        }
+    }
+
+    fun dismissServerPicker() {
+        mutableState.update { it.copy(serverPicker = null) }
+    }
+
+    fun selectProfileServer(groupTag: String, serverTag: String) = operation {
+        val picker = mutableState.value.serverPicker ?: return@operation
+        val profileId = picker.profileId
+        val live = isConnectedTo(profileId)
+        if (live) {
+            // Ядро само проверит, сохранит профиль и переключит outbound без разрыва туннеля.
+            vpnController.selectOutbound(profileId, groupTag, serverTag)
+        } else {
+            val stored = store.read(profileId)
+            val updated = withContext(Dispatchers.Default) {
+                ConfigAnalyzer.selectServer(stored.json, groupTag, serverTag)
+            }
+            store.update(profileId, updated)
+        }
+        mutableState.update { state ->
+            val current = state.serverPicker?.takeIf { it.profileId == profileId }
+                ?: return@update state
+            val groups = current.groups.map { group ->
+                if (group.tag == groupTag) group.copy(selected = serverTag) else group
+            }
+            state.copy(
+                serverPicker = current.copy(groups = groups, liveSwitch = live),
+                serverSummaries = state.serverSummaries + (profileId to ProfileServerSummary(groups)),
+            )
+        }
+        val label = SecretRedactor.redactInline(serverTag)
+        showMessage(
+            if (live) {
+                "Сервер $label переключается без перезапуска VPN."
+            } else {
+                "Сервер $label выбран. VPN не запускался."
+            },
+        )
+    }
+
     fun renameProfile(id: String, name: String) = operation {
         store.rename(id, name)
         mutableState.update { state ->
@@ -322,7 +461,13 @@ class ProfilesViewModel(
         store.delete(id)
         bootstrapCache.removeProfile(id)
         subscriptionSourceStore.remove(id)
-        mutableState.update { it.copy(refreshableProfileIds = it.refreshableProfileIds - id) }
+        mutableState.update { state ->
+            state.copy(
+                refreshableProfileIds = state.refreshableProfileIds - id,
+                serverSummaries = state.serverSummaries - id,
+                serverPicker = state.serverPicker?.takeUnless { it.profileId == id },
+            )
+        }
         if (wasActive) settingsStore.setActiveProfile(store.profiles.value.firstOrNull()?.id)
         if (mutableState.value.editor?.profileId == id) closeEditor(force = true)
         showMessage("Профиль удалён.")
@@ -516,6 +661,29 @@ class ProfilesViewModel(
                 ),
                 message = null,
             )
+        }
+    }
+
+    private fun isConnectedTo(profileId: String): Boolean =
+        (vpnController.state.value as? VpnConnectionState.Connected)?.profileId == profileId
+
+    /**
+     * Список серверов каждого профиля нужен на карточке профиля и на главной,
+     * поэтому он пересчитывается при любом изменении содержимого профилей.
+     */
+    private fun refreshServerSummaries(profiles: List<ProfileMetadata>) {
+        val key = profiles.map { it.id to it.updatedAtEpochMillis }
+        if (key == serverSummaryKey) return
+        serverSummaryKey = key
+        viewModelScope.launch {
+            val summaries = mutableMapOf<String, ProfileServerSummary>()
+            for (profile in profiles) {
+                val json = runCatching { store.read(profile.id).json }.getOrNull() ?: continue
+                val summary = withContext(Dispatchers.Default) { ProfileServerCatalog.summarize(json) }
+                if (summary.groups.isNotEmpty()) summaries[profile.id] = summary
+            }
+            if (serverSummaryKey != key) return@launch
+            mutableState.update { it.copy(serverSummaries = summaries) }
         }
     }
 

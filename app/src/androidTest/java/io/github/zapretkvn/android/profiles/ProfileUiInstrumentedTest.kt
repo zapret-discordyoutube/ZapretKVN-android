@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.hardening.TunMtuMode
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -120,6 +122,82 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
         composeRule.onNodeWithText("JSON").performClick()
         composeRule.onAllNodes(hasSetTextAction())[1].assertTextContains(UPDATED_DIRECT)
+    }
+
+    @Test
+    fun userSwitchesServerInsideSubscriptionProfileWithoutEditingJson() {
+        composeRule.runOnUiThread {
+            val clipboard = composeRule.activity.getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("subscription", SUBSCRIPTION_LINKS))
+        }
+
+        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNodeWithText("Буфер").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runCatching {
+                composeRule.onNodeWithText("Предпросмотр импорта").fetchSemanticsNode()
+            }.isSuccess
+        }
+        composeRule.onNodeWithText("Один профиль-группа").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            container.profileStore.profiles.value.isNotEmpty()
+        }
+        val profileId = container.profileStore.profiles.value.single().id
+
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runCatching { composeRule.onNodeWithText("Серверы").fetchSemanticsNode() }.isSuccess
+        }
+        composeRule.onNodeWithText("Серверов: 2", substring = true).assertExists()
+        composeRule.onNodeWithText("Серверы").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runCatching {
+                composeRule.onNodeWithTag("profile-servers-sheet").fetchSemanticsNode()
+            }.isSuccess
+        }
+        composeRule.onNodeWithText("second").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runBlocking {
+                ConfigAnalyzer.selectorGroups(container.profileStore.read(profileId).json)
+                    .single()
+                    .default == "second"
+            }
+        }
+    }
+
+    @Test
+    fun userSplitsSubscriptionIntoOneProfilePerServer() {
+        composeRule.runOnUiThread {
+            val clipboard = composeRule.activity.getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("subscription", SUBSCRIPTION_LINKS))
+        }
+
+        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNodeWithText("Буфер").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runCatching {
+                composeRule.onNodeWithText("Предпросмотр импорта").fetchSemanticsNode()
+            }.isSuccess
+        }
+        composeRule.onNodeWithTag("import-split-profiles").performClick()
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            container.profileStore.profiles.value.size == 2
+        }
+
+        assertEquals(
+            listOf("first", "second"),
+            container.profileStore.profiles.value.map(ProfileMetadata::name),
+        )
+        val singleServerProfiles = runBlocking {
+            container.profileStore.profiles.value.all { profile ->
+                ConfigAnalyzer.selectorGroups(container.profileStore.read(profile.id).json)
+                    .single()
+                    .outbounds
+                    .size == 1
+            }
+        }
+        assertTrue("Каждый профиль должен содержать ровно один сервер", singleServerProfiles)
+        composeRule.onNodeWithText("first").assertExists()
+        composeRule.onNodeWithText("second").assertExists()
     }
 
     @Test
@@ -279,5 +357,11 @@ class ProfileUiInstrumentedTest {
             """{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct"}}"""
         const val UPDATED_DIRECT =
             """{"outbounds":[{"type":"direct","tag":"edited"}],"route":{"final":"edited"}}"""
+        val SUBSCRIPTION_LINKS = listOf(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?security=tls&sni=one.example#first",
+            "vless://22222222-2222-4222-8222-222222222222@two.example:8443" +
+                "?security=tls&sni=two.example#second",
+        ).joinToString("\n")
     }
 }

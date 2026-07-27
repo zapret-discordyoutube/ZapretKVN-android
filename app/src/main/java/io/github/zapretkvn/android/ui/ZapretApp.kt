@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,10 +41,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -67,14 +70,18 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import io.github.zapretkvn.android.importer.qrImportScanOptions
 import io.github.zapretkvn.android.diagnostics.DiagnosticState
 import io.github.zapretkvn.android.profiles.ImportPreviewState
+import io.github.zapretkvn.android.profiles.MAX_SPLIT_PROFILES
 import io.github.zapretkvn.android.profiles.ProfileEditorState
 import io.github.zapretkvn.android.profiles.ProfileMetadata
+import io.github.zapretkvn.android.profiles.ProfileServerPickerState
+import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.profiles.ProfileSource
 import io.github.zapretkvn.android.profiles.ProfilesUiState
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
@@ -230,11 +237,14 @@ fun ZapretApp(
             }
         },
     ) { contentPadding ->
+        val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
         when (selectedTab) {
             AppTab.Home -> HomeScreen(
                 contentPadding = contentPadding,
-                activeProfile = state.profiles.firstOrNull {
-                    it.id == state.settings.activeProfileId
+                activeProfile = activeProfile,
+                activeProfileServers = activeProfile?.let { state.serverSummaries[it.id] },
+                onOpenServers = {
+                    activeProfile?.id?.let(profilesViewModel::openServerPicker)
                 },
                 selectedAppCount = appsState.allowedPackages.size,
                 blockedAppCount = appsState.blockedPackages.size,
@@ -299,7 +309,129 @@ fun ZapretApp(
             )
         }
     }
+
+    state.serverPicker?.let { picker ->
+        ModalBottomSheet(onDismissRequest = profilesViewModel::dismissServerPicker) {
+            ProfileServerPickerSheet(
+                picker = picker,
+                busy = state.busy,
+                onSelect = profilesViewModel::selectProfileServer,
+            )
+        }
+    }
 }
+
+@Composable
+private fun ProfileServerPickerSheet(
+    picker: ProfileServerPickerState,
+    busy: Boolean,
+    onSelect: (String, String) -> Unit,
+) {
+    var filter by remember(picker.profileId) { mutableStateOf("") }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("profile-servers-sheet"),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        item(key = "picker-header") {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Серверы профиля",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.semantics { heading() },
+                )
+                Text(
+                    "${picker.profileName} · ${picker.serverCount}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    if (picker.liveSwitch) {
+                        "VPN подключён: выбор применяется сразу, без перезапуска туннеля."
+                    } else {
+                        "Выбор сохраняется в профиле и применится при подключении."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (picker.serverCount > SERVER_FILTER_THRESHOLD) {
+                    OutlinedTextField(
+                        value = filter,
+                        onValueChange = { filter = it.take(80) },
+                        label = { Text("Фильтр по имени или адресу") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("profile-servers-filter"),
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+        picker.groups.forEach { group ->
+            val options = group.options.filter { option ->
+                filter.isBlank() ||
+                    option.tag.contains(filter, ignoreCase = true) ||
+                    option.endpoint?.contains(filter, ignoreCase = true) == true
+            }
+            item(key = "group-${group.tag}") {
+                Text(
+                    "${group.tag} · ${group.options.size}",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            if (options.isEmpty()) {
+                item(key = "empty-${group.tag}") {
+                    Text(
+                        "Под фильтр не подходит ни один сервер.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            items(options, key = { "${group.tag}-${it.tag}" }) { option ->
+                val selected = group.selected == option.tag
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !busy) { onSelect(group.tag, option.tag) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = selected,
+                        enabled = !busy,
+                        onClick = { onSelect(group.tag, option.tag) },
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            option.tag,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (option.subtitle.isNotBlank()) {
+                            Text(
+                                option.subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+            item(key = "divider-${group.tag}") { HorizontalDivider() }
+        }
+    }
+}
+
+private const val SERVER_FILTER_THRESHOLD = 8
 
 @Composable
 internal fun UpdateAvailableDialog(
@@ -495,6 +627,8 @@ private fun ProfilesScreen(
                         onDelete = { deleteTarget = profile },
                         onRefresh = { viewModel.refreshSubscription(profile.id) },
                         refreshable = profile.id in state.refreshableProfileIds,
+                        servers = state.serverSummaries[profile.id],
+                        onOpenServers = { viewModel.openServerPicker(profile.id) },
                     )
                 }
             }
@@ -558,6 +692,7 @@ private fun ProfilesScreen(
             busy = state.busy,
             onDismiss = viewModel::dismissImportPreview,
             onCreate = viewModel::confirmImport,
+            onSplit = viewModel::confirmImportPerServer,
             onAppend = viewModel::confirmAppend,
             onRefresh = viewModel::confirmRefresh,
         )
@@ -621,6 +756,7 @@ private fun ImportPreviewDialog(
     busy: Boolean,
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit,
+    onSplit: (String) -> Unit,
     onAppend: (String) -> Unit,
     onRefresh: (Boolean) -> Unit,
 ) {
@@ -667,6 +803,26 @@ private fun ImportPreviewDialog(
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
+                if (!preview.isRefresh && preview.splittableServerCount > 1) {
+                    HorizontalDivider()
+                    Text(
+                        if (preview.splitSupported) {
+                            "Один профиль-группа даёт переключение сервера прямо в приложении. " +
+                                "Отдельные профили удобны, когда у серверов разные маршруты и настройки" +
+                                if (preview.hasSubscriptionUrl) {
+                                    "; обновляться по ссылке подписки они не будут."
+                                } else {
+                                    "."
+                                }
+                        } else {
+                            "Серверов больше $MAX_SPLIT_PROFILES: разложить их по отдельным " +
+                                "профилям нельзя. Сохраните профиль-группу и переключайте сервер " +
+                                "в приложении."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (!preview.isRefresh && preview.isSingleManaged && preview.appendTargets.isNotEmpty()) {
                     HorizontalDivider()
                     Text("Или добавить сервер в managed-группу:")
@@ -691,8 +847,25 @@ private fun ImportPreviewDialog(
                     }
                 }
             } else {
-                TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank() && !busy) {
-                    Text("Новый профиль")
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = { onCreate(name) }, enabled = name.isNotBlank() && !busy) {
+                        Text(
+                            if (preview.splittableServerCount > 1) {
+                                "Один профиль-группа"
+                            } else {
+                                "Новый профиль"
+                            },
+                        )
+                    }
+                    if (preview.splitSupported) {
+                        TextButton(
+                            onClick = { onSplit(name) },
+                            enabled = name.isNotBlank() && !busy,
+                            modifier = Modifier.testTag("import-split-profiles"),
+                        ) {
+                            Text("Отдельные профили: ${preview.splittableServerCount}")
+                        }
+                    }
                 }
             }
         },
@@ -711,6 +884,8 @@ private fun ProfileCard(
     onDelete: () -> Unit,
     onRefresh: () -> Unit,
     refreshable: Boolean,
+    servers: ProfileServerSummary?,
+    onOpenServers: () -> Unit,
 ) {
     val updatedAt = remember(profile.updatedAtEpochMillis) {
         DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
@@ -754,7 +929,22 @@ private fun ProfileCard(
                 }
                 if (active) Text("Активен", color = MaterialTheme.colorScheme.primary)
             }
+            if (servers != null && servers.serverCount > 0) {
+                Text(
+                    buildString {
+                        append("Серверов: ${servers.serverCount}")
+                        servers.selectedLabel?.let { append(" · выбран: $it") }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (servers?.switchable == true) {
+                    TextButton(onClick = onOpenServers, enabled = enabled) { Text("Серверы") }
+                }
                 TextButton(onClick = onOpen, enabled = enabled) { Text("JSON") }
                 if (!active) {
                     TextButton(onClick = onSelect, enabled = enabled) { Text("Выбрать") }

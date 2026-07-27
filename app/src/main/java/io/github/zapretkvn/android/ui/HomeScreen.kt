@@ -43,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.profiles.ProfileMetadata
+import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.vpn.AppScopeMode
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
@@ -65,6 +67,8 @@ import kotlin.math.max
 internal fun HomeScreen(
     contentPadding: PaddingValues,
     activeProfile: ProfileMetadata?,
+    activeProfileServers: ProfileServerSummary?,
+    onOpenServers: () -> Unit,
     selectedAppCount: Int,
     blockedAppCount: Int,
     appScopeMode: AppScopeMode,
@@ -108,6 +112,15 @@ internal fun HomeScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
 
+                if (connected == null && activeProfile != null && activeProfileServers != null &&
+                    activeProfileServers.serverCount > 0
+                ) {
+                    OfflineServerSummary(
+                        summary = activeProfileServers,
+                        onClick = onOpenServers.takeIf { activeProfileServers.switchable },
+                    )
+                }
+
                 if (connected != null) {
                     if (currentServer != null) {
                         ServerSummary(
@@ -142,6 +155,21 @@ internal fun HomeScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(vpnState.message, color = MaterialTheme.colorScheme.error)
+                    }
+                    is VpnConnectionState.Reconnecting -> Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "${vpnState.message} · попытка ${vpnState.attempt} из ${vpnState.maxAttempts}",
+                            color = MaterialTheme.colorScheme.tertiary,
+                        )
+                        if (vpnState.code.isNotBlank()) {
+                            Text(
+                                "Причина: ${vpnState.code}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     else -> Unit
                 }
@@ -201,6 +229,7 @@ private fun ConnectionHeader(state: VpnConnectionState) {
         is VpnConnectionState.Connected -> MaterialTheme.colorScheme.primary
         is VpnConnectionState.Error -> MaterialTheme.colorScheme.error
         is VpnConnectionState.Starting,
+        is VpnConnectionState.Reconnecting,
         is VpnConnectionState.Stopping,
         -> MaterialTheme.colorScheme.tertiary
         VpnConnectionState.Stopped -> MaterialTheme.colorScheme.outline
@@ -244,6 +273,46 @@ private fun ServerSummary(server: RuntimeOutboundItem, pingMillis: Long?, onClic
             }
             Text(formatPing(pingMillis ?: server.pingMillis?.toLong()), style = MaterialTheme.typography.labelLarge)
             Text("  ›", style = MaterialTheme.typography.titleLarge)
+        }
+    }
+}
+
+/** Выбор сервера до подключения: тот же профиль, но данные берутся из сохранённого JSON. */
+@Composable
+private fun OfflineServerSummary(summary: ProfileServerSummary, onClick: (() -> Unit)?) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .testTag("home-offline-servers"),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    summary.selectedLabel ?: "Сервер не выбран",
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (summary.switchable) {
+                        "Серверов в профиле: ${summary.serverCount} · нажмите, чтобы сменить"
+                    } else {
+                        "В профиле один сервер"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (onClick != null) Text("  ›", style = MaterialTheme.typography.titleLarge)
         }
     }
 }
@@ -385,6 +454,7 @@ private fun ConnectionAction(
                 Text("Подключить")
             }
             is VpnConnectionState.Starting,
+            is VpnConnectionState.Reconnecting,
             is VpnConnectionState.Stopping,
             -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
@@ -485,6 +555,7 @@ private fun VpnConnectionState.title(): String = when (this) {
     is VpnConnectionState.Starting -> "Подключение"
     is VpnConnectionState.Connected -> "VPN подключён"
     is VpnConnectionState.Stopping -> "Отключение"
+    is VpnConnectionState.Reconnecting -> "Переподключение"
     is VpnConnectionState.Error -> "Ошибка VPN"
 }
 

@@ -79,6 +79,15 @@ class ManagedProfileFactoryTest {
     }
 
     @Test
+    fun `non-latin display names stay readable in server tags`() {
+        val tags = ManagedProfileFactory.stableTags(
+            listOf(vless("🇳🇱 Нидерланды #1", "nl.example"), vless("Германия", "de.example")),
+        )
+
+        assertEquals(listOf("нидерланды-1", "германия"), tags)
+    }
+
+    @Test
     fun `adding managed selector is always explicit`() {
         val raw = """{"outbounds":[{"type":"direct","tag":"server-a"}],"unknown":42}"""
         assertTrue(ConfigAnalyzer.selectorGroups(raw).isEmpty())
