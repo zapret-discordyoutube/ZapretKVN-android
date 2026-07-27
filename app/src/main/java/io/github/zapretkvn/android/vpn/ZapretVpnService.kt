@@ -551,6 +551,8 @@ class ZapretVpnService : VpnService() {
             resources.attachClient(groupClient)
             groupClient.connect()
             check(token == controller.currentGeneration()) { "Запуск отменён." }
+            reconcileSelectorSelection(groupClient, runtimeJson)
+            check(token == controller.currentGeneration()) { "Запуск отменён." }
             controller.publish(
                 token,
                 VpnConnectionState.Starting(profileId, "Проверка DNS и HTTPS", updaterRouting),
@@ -1066,6 +1068,39 @@ class ZapretVpnService : VpnService() {
         val network = requireNotNull(underlying.network) { "Основная сеть Android недоступна." }
         container.icmpPingProbe.measure(network, target)
     }.value
+
+    /**
+     * Навязывает ядру сервер из сохранённого профиля сразу после старта.
+     *
+     * Без этого `cache.db` переопределял `selector.default`, поэтому сервер,
+     * выбранный при остановленном ядре, молча игнорировался, а health-check и
+     * весь трафик уходили через застрявший в кэше outbound. Шаг выполняется до
+     * проверки DNS/HTTPS, иначе проверялся бы не тот сервер.
+     *
+     * Отказ команды не прерывает подключение: конфигурация уже принята ядром, а
+     * фактический сервер виден в диагностике и на главном экране.
+     */
+    private suspend fun reconcileSelectorSelection(client: CommandClient, runtimeJson: String) {
+        val selections = withContext(Dispatchers.Default) {
+            SelectorCacheReconciliation.selections(ConfigAnalyzer.selectorGroups(runtimeJson))
+        }
+        selections.forEach { selection ->
+            try {
+                withContext(Dispatchers.IO) {
+                    client.selectOutbound(selection.groupTag, selection.outboundTag)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                controller.publishDiagnosticWarning(
+                    "Не удалось применить сервер " +
+                        "${SecretRedactor.redactInline(selection.outboundTag)} " +
+                        "группы ${SecretRedactor.redactInline(selection.groupTag)}: " +
+                        SecretRedactor.redactInline(error.message.orEmpty()),
+                )
+            }
+        }
+    }
 
     private suspend fun selectLocked(
         session: ActiveSession,
