@@ -37,16 +37,26 @@ class DefaultNetworkMonitor(context: Context) : AutoCloseable {
 
     fun observe(observer: (UnderlyingNetworkState) -> Unit): AutoCloseable = delegate.observe(observer)
 
-    suspend fun awaitUnderlying(timeoutMillis: Long = 8_000): UnderlyingNetworkState =
-        delegate.awaitUnderlying(timeoutMillis)
+    suspend fun awaitUnderlying(
+        timeoutMillis: Long = 8_000,
+        accept: (UnderlyingNetworkState) -> Boolean = { true },
+    ): UnderlyingNetworkState = delegate.awaitUnderlying(timeoutMillis, accept)
 
     suspend fun awaitStableUnderlying(timeoutMillis: Long = 8_000): UnderlyingNetworkState =
         delegate.awaitStableUnderlying(timeoutMillis)
 
     suspend fun <T> runOnStableNetwork(
+        maxNetworkChanges: Int = UnderlyingNetworkMonitor.DEFAULT_MAX_NETWORK_CHANGES,
+        timeoutMillis: Long = UnderlyingNetworkMonitor.DEFAULT_NETWORK_TIMEOUT_MILLIS,
+        accept: (UnderlyingNetworkState) -> Boolean = { true },
         operation: suspend (UnderlyingNetworkState) -> T,
     ): io.github.zapretkvn.networkbootstrap.StableNetworkResult<T> =
-        delegate.runOnStableNetwork(operation = operation)
+        delegate.runOnStableNetwork(
+            maxNetworkChanges = maxNetworkChanges,
+            timeoutMillis = timeoutMillis,
+            accept = accept,
+            operation = operation,
+        )
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

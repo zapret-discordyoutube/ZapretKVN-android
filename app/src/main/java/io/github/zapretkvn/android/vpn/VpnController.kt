@@ -203,6 +203,7 @@ class VpnController(
                 is VpnConnectionState.Starting,
                 is VpnConnectionState.Stopped,
                 is VpnConnectionState.Error,
+                is VpnConnectionState.Reconnecting,
                 is VpnConnectionState.Stopping,
                 -> mutableSessionStats.value = trafficAccumulator.stop()
             }
@@ -210,10 +211,33 @@ class VpnController(
         if (
             safeState is VpnConnectionState.Starting ||
             safeState is VpnConnectionState.Stopped ||
-            safeState is VpnConnectionState.Error
+            safeState is VpnConnectionState.Error ||
+            safeState is VpnConnectionState.Reconnecting
         ) {
             mutableGroups.value = emptyList()
         }
+    }
+
+    /**
+     * Провал попытки, после которого сервис остаётся жив и переподключается сам.
+     * Диагностика обязана зафиксировать отказ, а состоянием VPN станет
+     * [VpnConnectionState.Reconnecting], а не терминальная ошибка.
+     */
+    internal fun publishRecoverableFailure(generation: Long, failure: VpnConnectionState.Error) {
+        if (generation < currentGeneration()) return
+        val message = sanitizeDiagnosticText(failure.message, 360)
+        recordConnectionFailure(
+            generation,
+            failure.copy(
+                message = message,
+                code = sanitizeSupportCode(failure.code).ifBlank {
+                    DiagnosticFailureClassifier.classify(message).supportCode
+                },
+                technicalDetail = failure.technicalDetail
+                    ?.let { sanitizeDiagnosticText(it, 240) }
+                    ?.takeIf(String::isNotBlank),
+            ),
+        )
     }
 
     internal fun nextGeneration(): Long = latestGeneration.incrementAndGet()
@@ -690,51 +714,8 @@ class VpnController(
                     current
                 }
             }
-            is VpnConnectionState.Error -> {
-                finishConnectionDiagnostic(
-                    generation = generation,
-                    outcome = DiagnosticAttemptOutcome.Failed,
-                    stageStatus = DiagnosticStageStatus.Failed,
-                )
-                val safe = sanitizeDiagnosticText(state.message, 360)
-                val now = System.currentTimeMillis()
-                val failure = DiagnosticFailure(
-                    type = DiagnosticFailureClassifier.classify(safe),
-                    supportCode = state.code,
-                    message = safe,
-                    technicalDetail = state.technicalDetail,
-                    occurredAtEpochMillis = now,
-                )
-                val line = DiagnosticLogLine(
-                    level = 2,
-                    message = safe,
-                    receivedAtEpochMillis = now,
-                    source = DiagnosticLogSource.Application,
-                    category = DiagnosticLogCategory.Lifecycle,
-                    priority = true,
-                )
-                mutableDiagnostics.update {
-                    val attempt = it.connectionAttempt
-                    val failedAttempt = if (attempt?.generation == generation) {
-                        attempt.copy(failure = failure)
-                    } else {
-                        attempt
-                    }
-                    val application = it.applicationLogs.appendPrioritizedBounded(
-                        line,
-                        it.applicationLogStats,
-                        MAX_DIAGNOSTIC_LOG_LINES,
-                    )
-                    it.copy(
-                        generation = generation,
-                        lastFailure = failure,
-                        applicationLogs = application.lines,
-                        applicationLogStats = application.stats,
-                        logStreamActive = false,
-                        connectionAttempt = failedAttempt,
-                    )
-                }
-            }
+            is VpnConnectionState.Error -> recordConnectionFailure(generation, state)
+            is VpnConnectionState.Reconnecting -> publishDiagnosticLogStream(generation, false)
             VpnConnectionState.Stopped,
             is VpnConnectionState.Stopping,
             -> publishDiagnosticLogStream(generation, false)
@@ -742,6 +723,52 @@ class VpnController(
                 generation = generation,
                 outcome = DiagnosticAttemptOutcome.Connected,
                 stageStatus = DiagnosticStageStatus.Success,
+            )
+        }
+    }
+
+    private fun recordConnectionFailure(generation: Long, state: VpnConnectionState.Error) {
+        finishConnectionDiagnostic(
+            generation = generation,
+            outcome = DiagnosticAttemptOutcome.Failed,
+            stageStatus = DiagnosticStageStatus.Failed,
+        )
+        val safe = sanitizeDiagnosticText(state.message, 360)
+        val now = System.currentTimeMillis()
+        val failure = DiagnosticFailure(
+            type = DiagnosticFailureClassifier.classify(safe),
+            supportCode = state.code,
+            message = safe,
+            technicalDetail = state.technicalDetail,
+            occurredAtEpochMillis = now,
+        )
+        val line = DiagnosticLogLine(
+            level = 2,
+            message = safe,
+            receivedAtEpochMillis = now,
+            source = DiagnosticLogSource.Application,
+            category = DiagnosticLogCategory.Lifecycle,
+            priority = true,
+        )
+        mutableDiagnostics.update {
+            val attempt = it.connectionAttempt
+            val failedAttempt = if (attempt?.generation == generation) {
+                attempt.copy(failure = failure)
+            } else {
+                attempt
+            }
+            val application = it.applicationLogs.appendPrioritizedBounded(
+                line,
+                it.applicationLogStats,
+                MAX_DIAGNOSTIC_LOG_LINES,
+            )
+            it.copy(
+                generation = generation,
+                lastFailure = failure,
+                applicationLogs = application.lines,
+                applicationLogStats = application.stats,
+                logStreamActive = false,
+                connectionAttempt = failedAttempt,
             )
         }
     }

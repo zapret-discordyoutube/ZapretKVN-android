@@ -32,4 +32,15 @@ class QuickSettingsTilePresentationTest {
             assertEquals(subtitle, presentation.subtitle)
         }
     }
+
+    @Test
+    fun `automatic reconnect keeps the tile active`() {
+        // Сервис жив и сам поднимет VPN: гасить тайл значило бы звать пользователя
+        // нажимать «Подключить», хотя ничего делать не нужно.
+        val reconnecting = VpnConnectionState.Reconnecting("profile", "Ожидание сети Android")
+            .toQuickSettingsTilePresentation()
+
+        assertEquals(true, reconnecting.active)
+        assertEquals(QuickSettingsTilePresentation.Subtitle.Reconnecting, reconnecting.subtitle)
+    }
 }

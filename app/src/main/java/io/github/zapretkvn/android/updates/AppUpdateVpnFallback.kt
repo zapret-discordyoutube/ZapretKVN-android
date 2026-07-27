@@ -104,7 +104,11 @@ class AppUpdateVpnFallback(
 
     private suspend fun stableState(): VpnConnectionState {
         val current = vpnController.state.value
-        if (current !is VpnConnectionState.Starting && current !is VpnConnectionState.Stopping) {
+        if (
+            current !is VpnConnectionState.Starting &&
+            current !is VpnConnectionState.Stopping &&
+            current !is VpnConnectionState.Reconnecting
+        ) {
             return current
         }
         return withTimeoutOrNull(VPN_TRANSITION_TIMEOUT_MILLIS) {

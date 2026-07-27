@@ -91,6 +91,7 @@ class Gate6ProcessProbeReceiver : BroadcastReceiver() {
             is VpnConnectionState.Starting -> "starting"
             is VpnConnectionState.Connected -> "connected"
             is VpnConnectionState.Stopping -> "stopping"
+            is VpnConnectionState.Reconnecting -> "reconnecting"
             is VpnConnectionState.Error -> "error"
         }
         return listOf(

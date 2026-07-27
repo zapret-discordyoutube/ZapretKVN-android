@@ -87,6 +87,13 @@
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
+
+            <!-- Without this filter a long press on the quick settings tile opens App info. -->
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <activity

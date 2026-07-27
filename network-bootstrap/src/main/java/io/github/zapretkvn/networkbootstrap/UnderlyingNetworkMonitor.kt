@@ -138,20 +138,30 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
         return AutoCloseable { observers -= observer }
     }
 
-    suspend fun awaitUnderlying(timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS): UnderlyingNetworkState =
+    /**
+     * Ждёт сеть, удовлетворяющую [accept]. Предикат позволяет вызывающему коду
+     * требовать не просто наличие `Network`, а завершённую настройку линка:
+     * во время Wi‑Fi ↔ cellular Android публикует кандидата раньше, чем тот
+     * становится пригодным для bootstrap.
+     */
+    suspend fun awaitUnderlying(
+        timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS,
+        accept: (UnderlyingNetworkState) -> Boolean = ACCEPT_ANY,
+    ): UnderlyingNetworkState =
         try {
             withTimeout(timeoutMillis) {
-                current.takeIf { it.network != null } ?: suspendCancellableCoroutine { continuation ->
-                    var registration: AutoCloseable? = null
-                    registration = observe { state ->
-                        if (state.network != null && continuation.isActive) {
-                            registration?.close()
-                            continuation.resume(state)
+                current.takeIf { it.network != null && accept(it) }
+                    ?: suspendCancellableCoroutine { continuation ->
+                        var registration: AutoCloseable? = null
+                        registration = observe { state ->
+                            if (state.network != null && accept(state) && continuation.isActive) {
+                                registration?.close()
+                                continuation.resume(state)
+                            }
                         }
+                        if (!continuation.isActive) registration.close()
+                        continuation.invokeOnCancellation { registration.close() }
                     }
-                    if (!continuation.isActive) registration.close()
-                    continuation.invokeOnCancellation { registration.close() }
-                }
             }
         } catch (timeout: TimeoutCancellationException) {
             throw BootstrapFailureException(
@@ -166,26 +176,35 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     suspend fun awaitStableUnderlying(
         timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS,
         settleMillis: Long = DEFAULT_SETTLE_MILLIS,
+        settleAttempts: Int = DEFAULT_SETTLE_ATTEMPTS,
+        accept: (UnderlyingNetworkState) -> Boolean = ACCEPT_ANY,
     ): UnderlyingNetworkState {
-        var candidate = awaitUnderlying(timeoutMillis)
-        repeat(MAX_SETTLE_ATTEMPTS) {
+        require(settleAttempts > 0)
+        var candidate = awaitUnderlying(timeoutMillis, accept)
+        repeat(settleAttempts) {
             delay(settleMillis)
             val latest = current
-            if (latest.network != null && latest == candidate) return latest
-            if (latest.network != null) candidate = latest
+            if (latest.network == null || !accept(latest)) return@repeat
+            if (latest == candidate) return latest
+            candidate = latest
         }
         throw BootstrapFailureException(
             BootstrapFailureCode.NetworkChanged,
-            technicalDetail = "settle_ms=$settleMillis,identity=${candidate.identity.orEmpty()}",
+            technicalDetail = "settle_ms=$settleMillis,attempts=$settleAttempts," +
+                "identity=${candidate.identity.orEmpty()}",
         )
     }
 
     suspend fun <T> runOnStableNetwork(
-        maxNetworkChanges: Int = 1,
+        maxNetworkChanges: Int = DEFAULT_MAX_NETWORK_CHANGES,
+        timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS,
+        settleMillis: Long = DEFAULT_SETTLE_MILLIS,
+        settleAttempts: Int = DEFAULT_SETTLE_ATTEMPTS,
+        accept: (UnderlyingNetworkState) -> Boolean = ACCEPT_ANY,
         operation: suspend (UnderlyingNetworkState) -> T,
     ): StableNetworkResult<T> {
         require(maxNetworkChanges >= 0)
-        var state = awaitStableUnderlying()
+        var state = awaitStableUnderlying(timeoutMillis, settleMillis, settleAttempts, accept)
         repeat(maxNetworkChanges + 1) { attempt ->
             val outcome = try {
                 Result.success(operation(state))
@@ -206,7 +225,7 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
                 NetworkTransitionDecision.Accept ->
                     return StableNetworkResult(state, outcome.getOrThrow())
                 NetworkTransitionDecision.Retry -> {
-                    state = awaitStableUnderlying()
+                    state = awaitStableUnderlying(timeoutMillis, settleMillis, settleAttempts, accept)
                     return@repeat
                 }
                 NetworkTransitionDecision.Fail -> throw BootstrapFailureException(
@@ -340,6 +359,8 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     companion object {
         const val DEFAULT_NETWORK_TIMEOUT_MILLIS = 8_000L
         const val DEFAULT_SETTLE_MILLIS = 250L
-        private const val MAX_SETTLE_ATTEMPTS = 4
+        const val DEFAULT_SETTLE_ATTEMPTS = 8
+        const val DEFAULT_MAX_NETWORK_CHANGES = 1
+        private val ACCEPT_ANY: (UnderlyingNetworkState) -> Boolean = { true }
     }
 }

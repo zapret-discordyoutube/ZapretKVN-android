@@ -146,12 +146,17 @@ delays.sort()
 expected = [
     ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/vpn/HealthProbeRace.kt", 1),
-    ("app/src/main/java/io/github/zapretkvn/android/vpn/ZapretVpnService.kt", 1),
+    # Дебаунс перезапуска по смене сети плюс ограниченный backoff автоматического
+    # восстановления. Ожидание сети событийное, поэтому таймера не добавляет.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/ZapretVpnService.kt", 2),
     ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/UnderlyingNetworkMonitor.kt", 1),
 ]
 if delays != expected:
     raise SystemExit(f"Unexpected production timer/retry surface: {delays!r}")
-print("Production delay calls are limited to visible session time, probe stagger, network debounce and bootstrap settle.")
+print(
+    "Production delay calls are limited to visible session time, probe stagger, "
+    "network debounce, bounded recovery backoff and bootstrap settle."
+)
 PY
 
 python3 - "$MANIFEST" "$PROJECT_ROOT/app/src/main/res/xml/diagnostic_file_paths.xml" <<'PY'

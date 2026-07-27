@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import io.github.zapretkvn.android.MainActivity
@@ -30,6 +31,7 @@ import io.github.zapretkvn.android.config.RuntimeConfigResult
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
 import io.github.zapretkvn.android.routing.GlobalRoutingPolicy
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
+import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
 import io.github.zapretkvn.networkbootstrap.CodedFailure
 import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.CommandClientHandler
@@ -66,36 +68,6 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-
-private data class UnderlyingPolicyKey(
-    val identity: String?,
-    val captivePortal: Boolean,
-    val strictPrivateDns: Boolean,
-    val strictPrivateDnsServerName: String?,
-    val strictPrivateDnsReady: Boolean,
-)
-
-private fun UnderlyingNetworkState.policyKey() = UnderlyingPolicyKey(
-    identity = identity,
-    captivePortal = captivePortal,
-    strictPrivateDns = privateDnsMode == PrivateDnsMode.Strict,
-    strictPrivateDnsServerName = privateDnsServerName.takeIf { privateDnsMode == PrivateDnsMode.Strict },
-    strictPrivateDnsReady = privateDnsMode != PrivateDnsMode.Strict || (privateDnsActive && validated),
-)
-
-internal enum class NetworkRestartDecision {
-    KeepSession,
-    DebounceRestart,
-}
-
-internal object NetworkRestartPolicy {
-    fun <T> decide(sessionBaseline: T, observed: T): NetworkRestartDecision =
-        if (sessionBaseline == observed) {
-            NetworkRestartDecision.KeepSession
-        } else {
-            NetworkRestartDecision.DebounceRestart
-        }
-}
 
 internal object AutomaticDnsFallbackPolicy {
     /**
@@ -161,10 +133,43 @@ class ZapretVpnService : VpnService() {
     private var terminalError = false
     private val restartScheduleLock = Any()
     private var networkRestartJob: Job? = null
+    private var networkChangeSinceElapsed = 0L
+
+    /**
+     * Монитор сети живёт со сервисом, а не с сессией. Иначе восстановление после
+     * отказа было невозможно: сессия закрывалась вместе с callback, и появление
+     * рабочей сети через несколько секунд уже некому было увидеть. Заодно
+     * перезапуск больше не ждёт повторной доставки capabilities/linkProperties
+     * для только что зарегистрированного callback.
+     *
+     * Экземпляр пересоздаётся, потому что закрытие терминально: между закрытием
+     * перед публикацией ошибки и фактическим `onDestroy` пользователь успевает
+     * нажать «Подключить».
+     */
+    private val networkMonitorLock = Any()
+    @Volatile
+    private var networkMonitorInstance: DefaultNetworkMonitor? = null
+    private val networkMonitor: DefaultNetworkMonitor
+        get() = synchronized(networkMonitorLock) {
+            networkMonitorInstance ?: DefaultNetworkMonitor(this).also { networkMonitorInstance = it }
+        }
+    private val recoveryLock = Any()
+    private var recoveryJob: Job? = null
+
+    /** Подряд идущие автоматические попытки на текущей физической сети. */
+    @Volatile
+    private var recoveryAttempt = 0
+
+    /** Все автоматические попытки с последнего успешного подключения. */
+    @Volatile
+    private var recoveryTotalAttempts = 0
+    @Volatile
+    private var attemptNetworkIdentity: String? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        runCatching { networkMonitor.start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -219,14 +224,23 @@ class ZapretVpnService : VpnService() {
         super.onRevoke()
     }
 
+    private fun closeNetworkMonitor() {
+        val current = synchronized(networkMonitorLock) {
+            networkMonitorInstance.also { networkMonitorInstance = null }
+        }
+        runCatching { current?.close() }
+    }
+
     override fun onDestroy() {
         cancelScheduledNetworkRestart()
+        cancelRecovery()
         controller.cancelCurrentConnectionDiagnostic()
         cancelLifecycleJob()
         val remaining = detachSessions()
         remaining.forEach(ActiveSession::closeTun)
         runBlocking(Dispatchers.IO) { remaining.forEach(ActiveSession::close) }
         serviceScope.cancel()
+        closeNetworkMonitor()
         finishForeground()
         if (!terminalError) {
             controller.publish(controller.currentGeneration(), VpnConnectionState.Stopped)
@@ -236,6 +250,8 @@ class ZapretVpnService : VpnService() {
 
     private fun requestStart(profileId: String, startId: Int, updaterRouting: Boolean) {
         stopInProgress.set(false)
+        cancelRecovery()
+        resetRecoveryCounters()
         val token = controller.nextGeneration()
         terminalError = false
         controller.beginConnectionDiagnostic(token, "user_start")
@@ -250,14 +266,48 @@ class ZapretVpnService : VpnService() {
                 detachSessions().forEach(ActiveSession::close)
                 if (token != controller.currentGeneration()) return@withLock
                 try {
+                    awaitConnectableNetwork(token, profileId, updaterRouting)
                     startWithDeadline(token, profileId, updaterRouting = updaterRouting)
                 } catch (error: Throwable) {
                     if (token == controller.currentGeneration()) {
-                        failLocked(token, error, startId)
+                        failLocked(token, profileId, error, startId, updaterRouting)
                     }
                 }
             }
         })
+    }
+
+    /**
+     * Ожидание физической сети вынесено за пределы [startWithDeadline]: бюджет
+     * подключения не должен тратиться на то, что Android ещё поднимает Wi‑Fi.
+     * Сначала ждём зрелую сеть, затем соглашаемся на любую пригодную, и только
+     * после этого отказ становится `NET-101` — уже восстановимым.
+     */
+    private suspend fun awaitConnectableNetwork(
+        token: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+    ) {
+        attemptNetworkIdentity = null
+        networkMonitor.start()
+        if (!networkMonitor.current.isSettledForConnect()) {
+            controller.publish(
+                token,
+                VpnConnectionState.Starting(profileId, "Ожидание сети Android", updaterRouting),
+            )
+            showForeground(ForegroundNotificationState.CheckingNetwork)
+            val settled = try {
+                networkMonitor.awaitUnderlying(NETWORK_SETTLE_WAIT_MILLIS) { it.isSettledForConnect() }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: BootstrapFailureException) {
+                null
+            }
+            if (settled == null) {
+                networkMonitor.awaitUnderlying(NETWORK_USABLE_WAIT_MILLIS) { it.isUsableForConnect() }
+            }
+        }
+        attemptNetworkIdentity = networkMonitor.current.identity
     }
 
     private suspend fun startLocked(
@@ -350,53 +400,52 @@ class ZapretVpnService : VpnService() {
             VpnConnectionState.Starting(profileId, "Проверка сети Android", updaterRouting),
         )
         showForeground(ForegroundNotificationState.CheckingNetwork)
-        val networkMonitor = DefaultNetworkMonitor(this).also(DefaultNetworkMonitor::start)
+        networkMonitor.start()
         controller.startConnectionDiagnosticStage(token, "bootstrap", "Bootstrap DNS и доступность сервера")
-        val networkBootstrap = try {
-            networkMonitor.runOnStableNetwork { candidate ->
-                val underlying = if (VpnTestHooks.consumeCaptivePortalOverride()) {
-                    candidate.copy(captivePortal = true, validated = false)
-                } else {
-                    candidate
-                }
-                controller.publishDiagnosticNetwork(token, underlying)
-                if (underlying.captivePortal) {
-                    error("Интернет требует авторизации в Wi-Fi.")
-                }
-                if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
-                    (configuredDnsMode == DnsMode.Secure ||
-                        (configuredDnsMode == DnsMode.Automatic && dnsMode != DnsMode.Android))
-                ) {
-                    throw StrictPrivateDnsException(
-                        "Strict Private DNS несовместим с этим режимом. " +
-                            "Выберите «DNS Android» или «Из JSON».",
-                    )
-                }
-                if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
-                    dnsMode == DnsMode.Android &&
-                    (!underlying.privateDnsActive || !underlying.validated)
-                ) {
-                    throw StrictPrivateDnsException(
-                        "Strict Private DNS не отвечает. " +
-                            "Исправьте системную настройку или выберите «Из JSON».",
-                    )
-                }
-                container.proxyBootstrapper.prepare(
-                    profileId = profileId,
-                    rawJson = profile.json,
-                    underlying = checkNotNull(underlying.network),
-                    noCacheLookup = noCacheLookup,
+        val networkBootstrap = networkMonitor.runOnStableNetwork(
+            maxNetworkChanges = BOOTSTRAP_MAX_NETWORK_CHANGES,
+            timeoutMillis = NETWORK_USABLE_WAIT_MILLIS,
+            accept = { it.isUsableForConnect() },
+        ) { candidate ->
+            val underlying = if (VpnTestHooks.consumeCaptivePortalOverride()) {
+                candidate.copy(captivePortal = true, validated = false)
+            } else {
+                candidate
+            }
+            controller.publishDiagnosticNetwork(token, underlying)
+            if (underlying.captivePortal) {
+                throw CaptivePortalException()
+            }
+            if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
+                (configuredDnsMode == DnsMode.Secure ||
+                    (configuredDnsMode == DnsMode.Automatic && dnsMode != DnsMode.Android))
+            ) {
+                throw StrictPrivateDnsException(
+                    "Strict Private DNS несовместим с этим режимом. " +
+                        "Выберите «DNS Android» или «Из JSON».",
                 )
             }
-        } catch (error: Throwable) {
-            networkMonitor.close()
-            throw error
+            if (underlying.privateDnsMode == PrivateDnsMode.Strict &&
+                dnsMode == DnsMode.Android &&
+                (!underlying.privateDnsActive || !underlying.validated)
+            ) {
+                throw StrictPrivateDnsException(
+                    "Strict Private DNS не отвечает. " +
+                        "Исправьте системную настройку или выберите «Из JSON».",
+                )
+            }
+            container.proxyBootstrapper.prepare(
+                profileId = profileId,
+                rawJson = profile.json,
+                underlying = checkNotNull(underlying.network),
+                noCacheLookup = noCacheLookup,
+            )
         }
         val underlying = networkBootstrap.network
         val preparedBootstrap = networkBootstrap.value
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
-        val runtimeJson = try {
+        val runtimeJson =
             when (
                 val runtime = RuntimeConfigBuilder.build(
                     profile.json,
@@ -416,10 +465,6 @@ class ZapretVpnService : VpnService() {
                 is RuntimeConfigResult.Ready -> runtime.json
                 is RuntimeConfigResult.Invalid -> error(runtime.message)
             }
-        } catch (error: Throwable) {
-            networkMonitor.close()
-            throw error
-        }
         controller.publishEffectiveOverlay(
             token,
             EffectiveOverlaySummary.create(runtimeJson, dnsMode),
@@ -430,13 +475,8 @@ class ZapretVpnService : VpnService() {
             VpnConnectionState.Starting(profileId, "Проверка sing-box", updaterRouting),
         )
         showForeground(ForegroundNotificationState.ValidatingCore)
-        try {
-            Libbox.checkConfig(runtimeJson)
-            check(token == controller.currentGeneration()) { "Запуск отменён." }
-        } catch (error: Throwable) {
-            networkMonitor.close()
-            throw error
-        }
+        Libbox.checkConfig(runtimeJson)
+        check(token == controller.currentGeneration()) { "Запуск отменён." }
 
         controller.startConnectionDiagnosticStage(token, "platform_adapter", "Подготовка Android VPN adapter")
         controller.publish(
@@ -546,6 +586,8 @@ class ZapretVpnService : VpnService() {
             controller.startConnectionDiagnosticStage(token, "finalize", "Финализация сессии")
             container.proxyBootstrapper.recordSuccess(profileId, preparedBootstrap)
             check(activatePendingSession(resources, token)) { "Запуск отменён." }
+            resetRecoveryCounters()
+            synchronized(restartScheduleLock) { networkChangeSinceElapsed = 0L }
             resources.attachNetworkObserver(networkMonitor.observe { state ->
                 onUnderlyingNetworkEvent(resources, state)
             })
@@ -633,17 +675,15 @@ class ZapretVpnService : VpnService() {
      * определения не должна блокировать запуск — вернём false и пойдём обычной
      * цепочкой, где строгие гейты внутри startLocked остаются страховкой.
      */
-    private suspend fun snapshotStrictPrivateDns(): Boolean {
-        val monitor = DefaultNetworkMonitor(this).also(DefaultNetworkMonitor::start)
-        return try {
-            monitor.runOnStableNetwork { it.privateDnsMode == PrivateDnsMode.Strict }.value
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            false
-        } finally {
-            monitor.close()
-        }
+    private suspend fun snapshotStrictPrivateDns(): Boolean = try {
+        networkMonitor.start()
+        networkMonitor.runOnStableNetwork(
+            accept = { it.isUsableForConnect() },
+        ) { it.privateDnsMode == PrivateDnsMode.Strict }.value
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Throwable) {
+        false
     }
 
     private fun requestRestart(
@@ -652,8 +692,13 @@ class ZapretVpnService : VpnService() {
         startId: Int,
         noCacheLookup: Boolean,
         updaterRouting: Boolean? = null,
+        resetRecovery: Boolean = true,
     ) {
         stopInProgress.set(false)
+        if (resetRecovery) {
+            cancelRecovery()
+            resetRecoveryCounters()
+        }
         val token = controller.nextGeneration()
         trackLifecycleJob(serviceScope.launch {
             serviceLock.withLock {
@@ -680,6 +725,7 @@ class ZapretVpnService : VpnService() {
                 showForeground(ForegroundNotificationState.Restarting)
                 detachSessions().forEach(ActiveSession::close)
                 try {
+                    awaitConnectableNetwork(token, targetProfile, targetUpdaterRouting)
                     startWithDeadline(
                         token,
                         targetProfile,
@@ -687,7 +733,9 @@ class ZapretVpnService : VpnService() {
                         updaterRouting = targetUpdaterRouting,
                     )
                 } catch (error: Throwable) {
-                    if (token == controller.currentGeneration()) failLocked(token, error, startId)
+                    if (token == controller.currentGeneration()) {
+                        failLocked(token, targetProfile, error, startId, targetUpdaterRouting)
+                    }
                 }
             }
         })
@@ -715,18 +763,29 @@ class ZapretVpnService : VpnService() {
     private fun onUnderlyingNetworkEvent(session: ActiveSession, state: UnderlyingNetworkState) {
         if (activeSession !== session) return
         controller.publishDiagnosticNetwork(session.generation, state)
-        val nextPolicyKey = state.policyKey()
-        if (
-            NetworkRestartPolicy.decide(session.networkPolicyKey, nextPolicyKey) ==
-            NetworkRestartDecision.KeepSession
-        ) {
-            cancelScheduledNetworkRestart()
-            return
-        }
+        val now = SystemClock.elapsedRealtime()
         synchronized(restartScheduleLock) {
+            val waitedMillis = if (networkChangeSinceElapsed == 0L) {
+                0L
+            } else {
+                now - networkChangeSinceElapsed
+            }
+            val plan = NetworkRestartPolicy.plan(
+                sessionBaseline = session.networkPolicyKey,
+                observed = state.policyKey(),
+                observedSettled = state.isSettledForConnect(),
+                waitedMillis = waitedMillis,
+            )
+            if (plan.decision == NetworkRestartDecision.KeepSession) {
+                networkChangeSinceElapsed = 0L
+                networkRestartJob?.cancel()
+                networkRestartJob = null
+                return
+            }
+            if (networkChangeSinceElapsed == 0L) networkChangeSinceElapsed = now
             networkRestartJob?.cancel()
             networkRestartJob = serviceScope.launch {
-                delay(NETWORK_RESTART_DEBOUNCE_MILLIS)
+                delay(plan.debounceMillis)
                 val current = activeSession
                 if (current !== session || current.generation != controller.currentGeneration()) return@launch
                 if (
@@ -749,6 +808,7 @@ class ZapretVpnService : VpnService() {
 
     private fun restartDiagnosticTrigger(reason: String): String = when (reason) {
         "Смена сети Android" -> "network_change"
+        "Автоматическое переподключение" -> "auto_recovery"
         "Сброс DNS-состояния" -> "dns_cache_clear"
         "Изменение маршрутизации" -> "routing_change"
         "Подписка обновлена пользователем" -> "subscription_refresh"
@@ -768,6 +828,8 @@ class ZapretVpnService : VpnService() {
     ) {
         if (!stopInProgress.compareAndSet(false, true)) return
         cancelScheduledNetworkRestart()
+        cancelRecovery()
+        resetRecoveryCounters()
         controller.cancelCurrentConnectionDiagnostic()
         val token = controller.nextGeneration()
         controller.beginStopDiagnostic(token, trigger)
@@ -796,6 +858,7 @@ class ZapretVpnService : VpnService() {
                     controller.finishStopDiagnosticStage(token, key)
                 }
             }
+            closeNetworkMonitor()
             controller.completeStopDiagnostic(token)
             finishForeground()
             if (startId > 0) stopSelfResult(startId) else stopSelf()
@@ -817,10 +880,14 @@ class ZapretVpnService : VpnService() {
             serviceLock.withLock {
                 val session = activeSession
                 if (session == null || session.profileId != profileId) {
+                    // Восстановление здесь бессмысленно: сессии нет, а не сети.
+                    attemptNetworkIdentity = null
                     failLocked(
-                        controller.currentGeneration(),
-                        IllegalStateException("Активный VPN-профиль не найден."),
-                        startId,
+                        token = controller.currentGeneration(),
+                        profileId = profileId,
+                        error = IllegalStateException("Активный VPN-профиль не найден."),
+                        startId = startId,
+                        updaterRouting = false,
                     )
                     return@withLock
                 }
@@ -848,6 +915,7 @@ class ZapretVpnService : VpnService() {
                     showForeground(ForegroundNotificationState.Restarting)
                     detachSessions().forEach(ActiveSession::close)
                     try {
+                        awaitConnectableNetwork(restartToken, profileId, session.updaterRouting)
                         startWithDeadline(
                             restartToken,
                             profileId,
@@ -856,7 +924,13 @@ class ZapretVpnService : VpnService() {
                     } catch (restartError: Throwable) {
                         if (restartToken == controller.currentGeneration()) {
                             restartError.addSuppressed(runtimeSwitchError)
-                            failLocked(restartToken, restartError, startId)
+                            failLocked(
+                                token = restartToken,
+                                profileId = profileId,
+                                error = restartError,
+                                startId = startId,
+                                updaterRouting = session.updaterRouting,
+                            )
                         }
                     }
                 } catch (validationError: Throwable) {
@@ -1018,7 +1092,13 @@ class ZapretVpnService : VpnService() {
         controller.publishSelection(session.generation, groupTag, outboundTag)
     }
 
-    private suspend fun failLocked(token: Long, error: Throwable, startId: Int) {
+    private suspend fun failLocked(
+        token: Long,
+        profileId: String,
+        error: Throwable,
+        startId: Int,
+        updaterRouting: Boolean,
+    ) {
         cancelScheduledNetworkRestart()
         val startupCoreLogs = controller.diagnostics.value.connectionAttempt
             ?.takeIf { it.generation == token }
@@ -1029,10 +1109,162 @@ class ZapretVpnService : VpnService() {
             startupCoreLogs = startupCoreLogs,
         )
         detachSessions().forEach(ActiveSession::close)
+        val decision = recoveryDecision(profileId, failure)
+        if (decision == VpnRecoveryDecision.Terminal) {
+            publishTerminalFailure(token, failure)
+            if (startId > 0) stopSelfResult(startId) else stopSelf()
+            return
+        }
+        scheduleRecovery(token, profileId, updaterRouting, failure, decision)
+    }
+
+    private fun recoveryDecision(
+        profileId: String,
+        failure: VpnConnectionState.Error,
+    ): VpnRecoveryDecision {
+        if (stopInProgress.get() || profileId.isBlank()) return VpnRecoveryDecision.Terminal
+        val startedOn = attemptNetworkIdentity
+        return VpnRecoveryPolicy.decide(
+            failureCode = failure.code,
+            attempt = recoveryAttempt,
+            totalAttempts = recoveryTotalAttempts,
+            networkChangedDuringAttempt = startedOn != null &&
+                startedOn != networkMonitor.current.identity,
+        )
+    }
+
+    private fun resetRecoveryCounters() {
+        recoveryAttempt = 0
+        recoveryTotalAttempts = 0
+    }
+
+    /**
+     * Callback сети закрывается до публикации: инвариант «терминальное состояние
+     * означает полностью освобождённые ресурсы» проверяется gate-тестами сразу
+     * после появления состояния, а `onDestroy` приходит позже.
+     */
+    private fun publishTerminalFailure(token: Long, failure: VpnConnectionState.Error) {
+        resetRecoveryCounters()
         terminalError = true
+        closeNetworkMonitor()
         finishForeground()
         controller.publish(token, failure)
-        if (startId > 0) stopSelfResult(startId) else stopSelf()
+    }
+
+    /**
+     * Держит сервис живым между попытками. Наблюдатель сети переживает отказ,
+     * поэтому появление рабочей сети само поднимает VPN — раньше сервис умирал
+     * вместе с монитором и требовал ручного «Подключить».
+     */
+    private fun scheduleRecovery(
+        token: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+        failure: VpnConnectionState.Error,
+        decision: VpnRecoveryDecision,
+    ) {
+        val attempt = recoveryAttempt + 1
+        recoveryAttempt = attempt
+        recoveryTotalAttempts += 1
+        val failedOnIdentity = attemptNetworkIdentity
+        controller.publishRecoverableFailure(token, failure)
+        cancelRecovery()
+        val job = serviceScope.launch {
+            if (decision is VpnRecoveryDecision.RetryAfter) {
+                publishRecovering(
+                    token = token,
+                    profileId = profileId,
+                    updaterRouting = updaterRouting,
+                    failure = failure,
+                    message = "Повтор подключения через ${decision.delayMillis / 1_000} с",
+                    attempt = attempt,
+                )
+                showForeground(ForegroundNotificationState.Retrying)
+                delay(decision.delayMillis)
+            }
+            if (!networkMonitor.current.isSettledForConnect()) {
+                publishRecovering(
+                    token = token,
+                    profileId = profileId,
+                    updaterRouting = updaterRouting,
+                    failure = failure,
+                    message = "Ожидание сети Android",
+                    attempt = attempt,
+                )
+                showForeground(ForegroundNotificationState.AwaitingNetwork)
+            }
+            val ready = awaitRecoveryNetwork()
+            if (failedOnIdentity != null && ready.identity != failedOnIdentity) recoveryAttempt = 0
+            requestRestart(
+                profileId = profileId,
+                reason = "Автоматическое переподключение",
+                startId = 0,
+                noCacheLookup = false,
+                updaterRouting = updaterRouting,
+                resetRecovery = false,
+            )
+        }
+        synchronized(recoveryLock) { recoveryJob = job }
+        job.invokeOnCompletion {
+            synchronized(recoveryLock) { if (recoveryJob === job) recoveryJob = null }
+        }
+    }
+
+    /**
+     * Ждёт сеть столько, сколько нужно: отключённый на ночь Wi-Fi не должен
+     * превращаться в ошибку, которую пользователь потом чинит руками. Это
+     * ожидание события `ConnectivityManager`, а не серия попыток — ни таймера,
+     * ни опроса, ни wakelock оно не создаёт, поэтому границы применяются к числу
+     * попыток подключения, а не к длительности простоя.
+     *
+     * Внутри каждой итерации сначала ждём зрелую сеть, затем соглашаемся на любую
+     * пригодную: Wi‑Fi без подтверждённого интернета Android может не пометить
+     * validated никогда.
+     */
+    private suspend fun awaitRecoveryNetwork(): UnderlyingNetworkState {
+        while (true) {
+            awaitRecoveryNetworkStage(RECOVERY_SETTLE_WAIT_MILLIS) { it.isSettledForConnect() }
+                ?.let { return it }
+            awaitRecoveryNetworkStage(RECOVERY_USABLE_WAIT_MILLIS) { it.isUsableForConnect() }
+                ?.let { return it }
+        }
+    }
+
+    private suspend fun awaitRecoveryNetworkStage(
+        timeoutMillis: Long,
+        accept: (UnderlyingNetworkState) -> Boolean,
+    ): UnderlyingNetworkState? = try {
+        networkMonitor.awaitUnderlying(timeoutMillis, accept)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: BootstrapFailureException) {
+        null
+    }
+
+    private fun publishRecovering(
+        token: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+        failure: VpnConnectionState.Error,
+        message: String,
+        attempt: Int,
+    ) {
+        controller.publish(
+            token,
+            VpnConnectionState.Reconnecting(
+                profileId = profileId,
+                message = message,
+                code = failure.code,
+                attempt = attempt,
+                maxAttempts = VpnRecoveryPolicy.MAX_ATTEMPTS,
+                updaterRouting = updaterRouting,
+            ),
+        )
+    }
+
+    private fun cancelRecovery() {
+        val job = synchronized(recoveryLock) { recoveryJob.also { recoveryJob = null } }
+        job?.cancel()
     }
 
     internal fun requestStopFromCore() {
@@ -1092,6 +1324,7 @@ class ZapretVpnService : VpnService() {
         synchronized(restartScheduleLock) {
             networkRestartJob?.cancel()
             networkRestartJob = null
+            networkChangeSinceElapsed = 0L
         }
     }
 
@@ -1449,10 +1682,6 @@ class ZapretVpnService : VpnService() {
                         client.also { client = null }
                     }
                     runCatching { current?.disconnect() }
-                    val observer = synchronized(resourceLock) {
-                        networkObserver.also { networkObserver = null }
-                    }
-                    runCatching { observer?.close() }
                 }
                 timedStopStage("close_libbox_service", "Остановка сервиса libbox") {
                     runCatching { server?.closeService() }.getOrThrow()
@@ -1464,8 +1693,13 @@ class ZapretVpnService : VpnService() {
                     }
                     runCatching { current?.close() }.getOrThrow()
                 }
-                timedStopStage("close_network", "Закрытие мониторинга сети") {
-                    networkMonitor.close()
+                // Монитор принадлежит сервису и переживает сессию: его наблюдатель
+                // нужен восстановлению после отказа. Сессия снимает только свою подписку.
+                timedStopStage("close_network", "Отписка от мониторинга сети") {
+                    val observer = synchronized(resourceLock) {
+                        networkObserver.also { networkObserver = null }
+                    }
+                    runCatching { observer?.close() }
                 }
             } finally {
                 VpnRuntimeMetrics.sessionClosed()
@@ -1490,6 +1724,19 @@ class ZapretVpnService : VpnService() {
     }
 
     private class RuntimeSwitchException(cause: Throwable) : Exception(cause)
+
+    /**
+     * Отдельный код нужен восстановлению: авторизация в Wi-Fi — действие
+     * пользователя, но как только Android снимет флаг captive portal, попытку
+     * можно повторить автоматически.
+     */
+    private class CaptivePortalException : IllegalStateException(
+        "Интернет требует авторизации в Wi-Fi.",
+    ), CodedFailure {
+        override val failureCode = CAPTIVE_PORTAL_CODE
+        override val userMessage = checkNotNull(message)
+        override val technicalDetail = "captive_portal=true"
+    }
 
     private class StrictPrivateDnsException(message: String) : IllegalStateException(message), CodedFailure {
         override val failureCode = "DNS-110"
@@ -1625,6 +1872,8 @@ class ZapretVpnService : VpnService() {
         CheckingHealth("Проверка DNS и HTTPS"),
         Connected("Подключено"),
         Restarting("Перезапуск VPN"),
+        AwaitingNetwork("Ожидание сети Android"),
+        Retrying("Повтор подключения"),
         Stopping("Отключение"),
     }
 
@@ -1645,8 +1894,25 @@ class ZapretVpnService : VpnService() {
         private const val EXTRA_UPDATER_ROUTING = "updater_routing"
         private const val NOTIFICATION_CHANNEL_ID = "vpn"
         private const val NOTIFICATION_ID = 1001
-        private const val NETWORK_RESTART_DEBOUNCE_MILLIS = 750L
         private const val CONNECTION_START_TIMEOUT_MILLIS = 45_000L
+
+        /** Ожидание зрелой сети перед попыткой; в бюджет подключения не входит. */
+        private const val NETWORK_SETTLE_WAIT_MILLIS = 10_000L
+
+        /** Компромисс, если Android так и не подтвердил доступ в интернет. */
+        private const val NETWORK_USABLE_WAIT_MILLIS = 15_000L
+
+        /**
+         * Бюджеты ступеней внутри ожидания сети. Само ожидание не ограничено:
+         * это цена одной итерации предпочтения «зрелая сеть → любая пригодная».
+         */
+        private const val RECOVERY_SETTLE_WAIT_MILLIS = 30_000L
+        private const val RECOVERY_USABLE_WAIT_MILLIS = 180_000L
+
+        /** Bootstrap переживает две смены сети: переход Wi-Fi ↔ cellular не атомарен. */
+        private const val BOOTSTRAP_MAX_NETWORK_CHANGES = 2
+
+        private const val CAPTIVE_PORTAL_CODE = "NET-110"
         private val NEW_LINES = Regex("[\\r\\n\\t]+")
 
         fun startIntent(

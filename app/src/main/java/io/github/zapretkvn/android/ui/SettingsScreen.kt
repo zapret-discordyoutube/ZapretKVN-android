@@ -1377,6 +1377,7 @@ private fun VpnConnectionState.diagnosticLabel(): String = when (this) {
     is VpnConnectionState.Starting -> "Подключение: $message"
     is VpnConnectionState.Connected -> "Подключено: $profileName"
     is VpnConnectionState.Stopping -> "Отключение"
+    is VpnConnectionState.Reconnecting -> "Переподключение: $message"
     is VpnConnectionState.Error -> "Ошибка VPN"
 }
 

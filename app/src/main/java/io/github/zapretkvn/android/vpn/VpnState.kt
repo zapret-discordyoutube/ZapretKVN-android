@@ -14,6 +14,20 @@ sealed interface VpnConnectionState {
         val updaterRouting: Boolean = false,
     ) : VpnConnectionState
     data class Stopping(val profileId: String?) : VpnConnectionState
+
+    /**
+     * Попытка провалилась транзиентно, сервис жив и восстанавливается сам.
+     * [code] — код провалившейся попытки, [attempt] и [maxAttempts] показывают
+     * пользователю, что ожидание конечно.
+     */
+    data class Reconnecting(
+        val profileId: String,
+        val message: String,
+        val code: String = "",
+        val attempt: Int = 1,
+        val maxAttempts: Int = 1,
+        val updaterRouting: Boolean = false,
+    ) : VpnConnectionState
     data class Error(
         val message: String,
         val code: String = "",
