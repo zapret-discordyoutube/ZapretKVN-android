@@ -6,7 +6,7 @@
 
 Zapret KVN — быстрый и бережный VPN-клиент для Android на базе `sing-box-extended`. Он позволяет выбрать не только VPN-профиль, но и конкретные приложения и сайты, которым нужен VPN.
 
-Получить ключи можно тут: https://t.me/zapretvpns_bot
+### [Получить ключи можно тут](https://t.me/zapretvpns_bot) | [Скачать](https://github.com/youtubediscord/ZapretKVN-android/releases)
 
 Обычный VPN-клиент часто отправляет в туннель весь трафик телефона. При подключении
 Zapret KVN передаёт Android список выбранных приложений, и система направляет в TUN
