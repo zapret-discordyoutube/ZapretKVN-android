@@ -36,6 +36,9 @@ expect_no_match() {
 
 expect_match "$ASSETS/zapret-ru-domains.srs" "example.ru"
 expect_match "$ASSETS/zapret-ru-domains.srs" "example.xn--p1ai"
+expect_match "$ASSETS/zapret-ru-domains.srs" "championat.com"
+expect_match "$ASSETS/zapret-ru-domains.srs" "www.championat.com"
+expect_no_match "$ASSETS/zapret-ru-domains.srs" "notchampionat.com"
 expect_no_match "$ASSETS/zapret-ru-domains.srs" "example.com"
 expect_match "$ASSETS/zapret-ru-ip.srs" "5.255.255.5"
 expect_match "$ASSETS/zapret-ru-ip.srs" "2a02:6b8::feed:0ff"
