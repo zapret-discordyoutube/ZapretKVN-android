@@ -50,6 +50,7 @@ class ZapretQuickSettingsTileService : TileService() {
             is VpnConnectionState.Starting,
             is VpnConnectionState.Reconnecting,
             -> container.vpnController.stop()
+            is VpnConnectionState.Paused -> container.vpnController.resumePaused()
             is VpnConnectionState.Stopping -> Unit
             VpnConnectionState.Stopped,
             is VpnConnectionState.Error,
@@ -98,6 +99,8 @@ class ZapretQuickSettingsTileService : TileService() {
                 QuickSettingsTilePresentation.Subtitle.On -> R.string.quick_settings_tile_on
                 QuickSettingsTilePresentation.Subtitle.Stopping ->
                     R.string.quick_settings_tile_stopping
+                QuickSettingsTilePresentation.Subtitle.Paused ->
+                    R.string.quick_settings_tile_paused
                 QuickSettingsTilePresentation.Subtitle.Reconnecting ->
                     R.string.quick_settings_tile_reconnecting
                 QuickSettingsTilePresentation.Subtitle.Error -> R.string.quick_settings_tile_error

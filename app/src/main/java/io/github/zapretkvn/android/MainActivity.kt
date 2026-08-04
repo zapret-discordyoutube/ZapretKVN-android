@@ -32,6 +32,7 @@ import io.github.zapretkvn.android.ui.theme.ZapretTheme
 import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.android.vpn.AppsViewModel
 import io.github.zapretkvn.android.vpn.VpnController
+import io.github.zapretkvn.android.vpn.VpnConnectionState
 
 class MainActivity : ComponentActivity() {
     private val vpnController: VpnController
@@ -146,7 +147,11 @@ class MainActivity : ComponentActivity() {
                     onVpnStart = ::requestVpnStart,
                     onVpnStop = vpnController::stop,
                     onVpnRestart = {
-                        vpnController.restartIfConnected("Перезапуск пользователем")
+                        if (vpnState is VpnConnectionState.Paused) {
+                            vpnController.resumePaused()
+                        } else {
+                            vpnController.restartIfConnected("Перезапуск пользователем")
+                        }
                     },
                     onSelectOutbound = vpnController::selectOutbound,
                     onMeasurePing = vpnController::measurePing,

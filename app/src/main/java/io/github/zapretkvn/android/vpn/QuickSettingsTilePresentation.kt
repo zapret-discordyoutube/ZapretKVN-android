@@ -9,6 +9,7 @@ internal data class QuickSettingsTilePresentation(
         Starting,
         On,
         Stopping,
+        Paused,
         Reconnecting,
         Error,
     }
@@ -27,6 +28,10 @@ internal fun VpnConnectionState.toQuickSettingsTilePresentation(): QuickSettings
         is VpnConnectionState.Connected -> QuickSettingsTilePresentation(
             active = true,
             subtitle = QuickSettingsTilePresentation.Subtitle.On,
+        )
+        is VpnConnectionState.Paused -> QuickSettingsTilePresentation(
+            active = false,
+            subtitle = QuickSettingsTilePresentation.Subtitle.Paused,
         )
         is VpnConnectionState.Stopping -> QuickSettingsTilePresentation(
             active = false,

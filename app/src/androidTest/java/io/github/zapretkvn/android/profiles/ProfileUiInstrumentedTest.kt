@@ -22,6 +22,7 @@ import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.hardening.TunMtuMode
+import io.github.zapretkvn.android.ui.NetworkTransportSetting
 import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import kotlinx.coroutines.flow.first
@@ -59,6 +60,7 @@ class ProfileUiInstrumentedTest {
         container.uiSettingsStore.setVpnHidingBlockLocalEndpoints(true)
         container.uiSettingsStore.setVpnHidingNeutralSessionName(false)
         container.uiSettingsStore.setVpnHidingTunMtuMode(TunMtuMode.CoreDefault)
+        resetNetworkAutomation()
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
     }
 
@@ -77,6 +79,7 @@ class ProfileUiInstrumentedTest {
         container.uiSettingsStore.setVpnHidingBlockLocalEndpoints(true)
         container.uiSettingsStore.setVpnHidingNeutralSessionName(false)
         container.uiSettingsStore.setVpnHidingTunMtuMode(TunMtuMode.CoreDefault)
+        resetNetworkAutomation()
     }
 
     @Test
@@ -267,6 +270,38 @@ class ProfileUiInstrumentedTest {
     }
 
     @Test
+    fun settingsConfigureAndPersistNetworkAutomation() {
+        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        composeRule.onNodeWithTag("settings-list")
+            .performScrollToNode(hasText("Автоматизация VPN"))
+        composeRule.onNodeWithText("Автоматизация VPN").performClick()
+
+        composeRule.onNodeWithTag("network-automation-enabled").performClick()
+        composeRule.onNodeWithTag("network-automation-wifi").performScrollTo().performClick()
+        composeRule.onNodeWithTag("trusted-wifi-add-manual").performScrollTo().performClick()
+        composeRule.onNodeWithText("Имя сети (SSID)").performTextReplacement("Office Wi-Fi")
+        composeRule.onNodeWithText("Добавить").performClick()
+
+        composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
+            runBlocking {
+                container.uiSettingsStore.settings.first().networkAutomation.let { automation ->
+                    automation.enabled &&
+                        !automation.useVpnOnWifi &&
+                        "Office Wi-Fi" in automation.trustedWifiSsids
+                }
+            }
+        }
+        composeRule.onNodeWithText("Office Wi-Fi").assertExists()
+
+        composeRule.activityRule.scenario.recreate()
+        composeRule.waitForIdle()
+        val persisted = runBlocking { container.uiSettingsStore.settings.first().networkAutomation }
+        assertTrue(persisted.enabled)
+        assertTrue(!persisted.useVpnOnWifi)
+        assertTrue("Office Wi-Fi" in persisted.trustedWifiSsids)
+    }
+
+    @Test
     fun settingsEditDisableAndPersistDnsOverride() {
         runBlocking { container.uiSettingsStore.setDnsMode(DnsMode.Secure) }
         composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
@@ -349,6 +384,19 @@ class ProfileUiInstrumentedTest {
         val token = container.vpnController.nextGeneration()
         container.vpnController.publish(token, VpnConnectionState.Starting("", "Сброс теста"))
         container.vpnController.publish(token, VpnConnectionState.Stopped)
+    }
+
+    private suspend fun resetNetworkAutomation() {
+        val trusted = container.uiSettingsStore.settings.first()
+            .networkAutomation
+            .trustedWifiSsids
+        trusted.forEach { container.uiSettingsStore.removeTrustedWifi(it) }
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Wifi, true)
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Cellular, true)
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Ethernet, true)
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Other, true)
+        container.uiSettingsStore.setPauseOnTrustedWifi(true)
+        container.uiSettingsStore.setNetworkAutomationEnabled(false)
     }
 
     private companion object {

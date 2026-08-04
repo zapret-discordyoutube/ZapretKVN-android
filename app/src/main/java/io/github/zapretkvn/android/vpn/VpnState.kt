@@ -13,6 +13,10 @@ sealed interface VpnConnectionState {
         val connectedAtEpochMillis: Long,
         val updaterRouting: Boolean = false,
     ) : VpnConnectionState
+    data class Paused(
+        val profileId: String,
+        val message: String,
+    ) : VpnConnectionState
     data class Stopping(val profileId: String?) : VpnConnectionState
 
     /**

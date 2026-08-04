@@ -43,4 +43,15 @@ class QuickSettingsTilePresentationTest {
         assertEquals(true, reconnecting.active)
         assertEquals(QuickSettingsTilePresentation.Subtitle.Reconnecting, reconnecting.subtitle)
     }
+
+    @Test
+    fun `network automation pause is visible but has no active tunnel`() {
+        val paused = VpnConnectionState.Paused("profile", "KVN не нужен в доверенном Wi-Fi")
+
+        assertEquals(false, paused.toQuickSettingsTilePresentation().active)
+        assertEquals(
+            QuickSettingsTilePresentation.Subtitle.Paused,
+            paused.toQuickSettingsTilePresentation().subtitle,
+        )
+    }
 }

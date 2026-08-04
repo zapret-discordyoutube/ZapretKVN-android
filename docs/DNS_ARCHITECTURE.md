@@ -162,7 +162,13 @@ Lockdown Android способен блокировать трафик прило
 - Там, где используется `NetworkRequest`, он явно требует `NET_CAPABILITY_NOT_VPN`; callback живёт в scope `VpnService`, всегда снимается при stop и не использует `GlobalScope`.
 - События сериализуются и дедуплицируются по компактному policy key: identity `Network`/интерфейса, captive flag, strict mode, strict hostname и strict readiness (`active && validated`). Поэтому смена или поломка strict DNS уже во время сессии вызывает один контролируемый restart/fail-close даже при прежнем интерфейсе. Короткие повторы callback объединяются; устаревший bootstrap/restart отменяется generation token.
 - Для наблюдения объявляется обычное, не runtime-разрешение `ACCESS_NETWORK_STATE`;
+  для legacy-чтения имени текущей сети на API 26–28 — `ACCESS_WIFI_STATE`;
   `CHANGE_NETWORK_STATE` приложению не требуется.
+- Опциональная автоматика по типу transport не требует дополнительных разрешений. Только
+  точное сравнение доверенного SSID запрашивает `ACCESS_FINE_LOCATION` по действию
+  пользователя и callback с `FLAG_INCLUDE_LOCATION_INFO` на API 31+. При redaction,
+  отказе разрешения или выключенной геолокации SSID считается неизвестным и VPN не
+  отключается; имя сети не экспортируется в diagnostic JSON.
 - При смене policy key обновляем resolver и, если используется явная socket binding, `setUnderlyingNetworks()`, после чего выполняем контролируемый перезапуск core.
 - Наличие `NET_CAPABILITY_CAPTIVE_PORTAL` блокирует автоматическое подключение и открывает системный вход в Wi‑Fi.
 - Отсутствие `NET_CAPABILITY_VALIDATED` показываем в диагностике и обычно само по себе не считаем отказом: системная проверочная точка может быть заблокирована при рабочем интернете. Исключение — режим «DNS Android» при настроенном strict Private DNS: сочетание strict с неактивным Private DNS или невалидированной сетью блокирует запуск, чтобы Android 9 не ушёл на обычный DNS.

@@ -129,6 +129,19 @@ class DiagnosticExporter(
             )
             put("network", networkJson(network))
             put(
+                "network_automation",
+                buildJsonObject {
+                    val automation = settings.networkAutomation
+                    put("enabled", automation.enabled)
+                    put("vpn_on_wifi", automation.useVpnOnWifi)
+                    put("vpn_on_cellular", automation.useVpnOnCellular)
+                    put("vpn_on_ethernet", automation.useVpnOnEthernet)
+                    put("vpn_on_other", automation.useVpnOnOther)
+                    put("pause_on_trusted_wifi", automation.pauseOnTrustedWifi)
+                    put("trusted_wifi_count", automation.trustedWifiSsids.size)
+                },
+            )
+            put(
                 "dns",
                 buildJsonObject {
                     put("mode", settings.dnsMode.name)
@@ -227,6 +240,7 @@ class DiagnosticExporter(
                 VpnConnectionState.Stopped -> "stopped"
                 is VpnConnectionState.Starting -> "starting"
                 is VpnConnectionState.Connected -> "connected"
+                is VpnConnectionState.Paused -> "paused"
                 is VpnConnectionState.Stopping -> "stopping"
                 is VpnConnectionState.Reconnecting -> "reconnecting"
                 is VpnConnectionState.Error -> "error"

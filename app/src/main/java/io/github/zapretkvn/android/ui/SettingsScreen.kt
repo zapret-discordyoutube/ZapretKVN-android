@@ -75,6 +75,7 @@ import java.util.Date
 
 private enum class SettingsDestination {
     Main,
+    NetworkAutomation,
     VpnHiding,
     Diagnostics,
     Community,
@@ -117,6 +118,12 @@ fun SettingsScreen(
         SettingsDestination.VpnHiding -> VpnHidingSettings(
             contentPadding = contentPadding,
             state = state,
+            viewModel = viewModel,
+            onBack = goBack,
+        )
+        SettingsDestination.NetworkAutomation -> NetworkAutomationSettingsScreen(
+            contentPadding = contentPadding,
+            settings = state.settings.networkAutomation,
             viewModel = viewModel,
             onBack = goBack,
         )
@@ -347,6 +354,12 @@ private fun SettingsMain(
 
         item(key = "sections") {
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                SettingsLinkRow(
+                    title = "Автоматизация VPN",
+                    subtitle = networkAutomationSummary(state.settings.networkAutomation),
+                    onClick = { onOpen(SettingsDestination.NetworkAutomation) },
+                )
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 SettingsLinkRow(
                     title = "Скрытие VPN",
                     subtitle = "Rootless-защита от localhost-проб и экспериментальные параметры TUN",
@@ -1249,7 +1262,7 @@ private fun AboutSettings(
 }
 
 @Composable
-private fun SettingsSubpage(
+internal fun SettingsSubpage(
     contentPadding: PaddingValues,
     title: String,
     onBack: () -> Unit,
@@ -1376,6 +1389,7 @@ private fun VpnConnectionState.diagnosticLabel(): String = when (this) {
     VpnConnectionState.Stopped -> "VPN выключен"
     is VpnConnectionState.Starting -> "Подключение: $message"
     is VpnConnectionState.Connected -> "Подключено: $profileName"
+    is VpnConnectionState.Paused -> "Пауза: $message"
     is VpnConnectionState.Stopping -> "Отключение"
     is VpnConnectionState.Reconnecting -> "Переподключение: $message"
     is VpnConnectionState.Error -> "Ошибка VPN"

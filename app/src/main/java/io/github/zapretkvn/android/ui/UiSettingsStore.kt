@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import io.github.zapretkvn.android.BuildConfig
@@ -14,6 +15,8 @@ import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.updates.UpdateChannel
+import io.github.zapretkvn.android.vpn.NetworkAutomationSettings
+import io.github.zapretkvn.android.vpn.TrustedWifiName
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -35,6 +38,7 @@ data class UiSettings(
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
+    val networkAutomation: NetworkAutomationSettings = NetworkAutomationSettings(),
 )
 
 private val Context.uiSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -82,6 +86,19 @@ class UiSettingsStore(
                     tunMtuMode = preferences[VPN_HIDING_TUN_MTU_MODE]
                         ?.let { stored -> TunMtuMode.entries.firstOrNull { it.name == stored } }
                         ?: TunMtuMode.Normalize1500,
+                ),
+                networkAutomation = NetworkAutomationSettings(
+                    enabled = preferences[NETWORK_AUTOMATION_ENABLED] ?: false,
+                    useVpnOnWifi = preferences[NETWORK_AUTOMATION_WIFI] ?: true,
+                    useVpnOnCellular = preferences[NETWORK_AUTOMATION_CELLULAR] ?: true,
+                    useVpnOnEthernet = preferences[NETWORK_AUTOMATION_ETHERNET] ?: true,
+                    useVpnOnOther = preferences[NETWORK_AUTOMATION_OTHER] ?: true,
+                    pauseOnTrustedWifi = preferences[NETWORK_AUTOMATION_TRUSTED_WIFI] ?: true,
+                    trustedWifiSsids = preferences[NETWORK_AUTOMATION_TRUSTED_SSIDS]
+                        .orEmpty()
+                        .mapNotNull(TrustedWifiName::normalize)
+                        .take(TrustedWifiName.MAX_NETWORKS)
+                        .toSet(),
                 ),
             )
         }
@@ -142,6 +159,48 @@ class UiSettingsStore(
         dataStore.edit { it[VPN_HIDING_TUN_MTU_MODE] = mode.name }
     }
 
+    suspend fun setNetworkAutomationEnabled(enabled: Boolean) {
+        dataStore.edit { it[NETWORK_AUTOMATION_ENABLED] = enabled }
+    }
+
+    suspend fun setUseVpnOnNetwork(transport: NetworkTransportSetting, enabled: Boolean) {
+        dataStore.edit {
+            it[when (transport) {
+                NetworkTransportSetting.Wifi -> NETWORK_AUTOMATION_WIFI
+                NetworkTransportSetting.Cellular -> NETWORK_AUTOMATION_CELLULAR
+                NetworkTransportSetting.Ethernet -> NETWORK_AUTOMATION_ETHERNET
+                NetworkTransportSetting.Other -> NETWORK_AUTOMATION_OTHER
+            }] = enabled
+        }
+    }
+
+    suspend fun setPauseOnTrustedWifi(enabled: Boolean) {
+        dataStore.edit { it[NETWORK_AUTOMATION_TRUSTED_WIFI] = enabled }
+    }
+
+    suspend fun addTrustedWifi(rawSsid: String) {
+        val ssid = requireNotNull(TrustedWifiName.normalize(rawSsid)) {
+            "Имя Wi-Fi пустое или длиннее допустимого Android SSID."
+        }
+        dataStore.edit { preferences ->
+            val current = preferences[NETWORK_AUTOMATION_TRUSTED_SSIDS].orEmpty()
+                .mapNotNull(TrustedWifiName::normalize)
+                .toSet()
+            require(ssid in current || current.size < TrustedWifiName.MAX_NETWORKS) {
+                "Можно сохранить не более ${TrustedWifiName.MAX_NETWORKS} доверенных Wi-Fi."
+            }
+            preferences[NETWORK_AUTOMATION_TRUSTED_SSIDS] = current + ssid
+        }
+    }
+
+    suspend fun removeTrustedWifi(ssid: String) {
+        val normalized = TrustedWifiName.normalize(ssid) ?: return
+        dataStore.edit { preferences ->
+            preferences[NETWORK_AUTOMATION_TRUSTED_SSIDS] =
+                preferences[NETWORK_AUTOMATION_TRUSTED_SSIDS].orEmpty() - normalized
+        }
+    }
+
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
@@ -158,7 +217,23 @@ class UiSettingsStore(
         val VPN_HIDING_NEUTRAL_SESSION_NAME =
             booleanPreferencesKey("vpn_hiding_neutral_session_name")
         val VPN_HIDING_TUN_MTU_MODE = stringPreferencesKey("vpn_hiding_tun_mtu_mode")
+        val NETWORK_AUTOMATION_ENABLED = booleanPreferencesKey("network_automation_enabled")
+        val NETWORK_AUTOMATION_WIFI = booleanPreferencesKey("network_automation_wifi")
+        val NETWORK_AUTOMATION_CELLULAR = booleanPreferencesKey("network_automation_cellular")
+        val NETWORK_AUTOMATION_ETHERNET = booleanPreferencesKey("network_automation_ethernet")
+        val NETWORK_AUTOMATION_OTHER = booleanPreferencesKey("network_automation_other")
+        val NETWORK_AUTOMATION_TRUSTED_WIFI =
+            booleanPreferencesKey("network_automation_trusted_wifi")
+        val NETWORK_AUTOMATION_TRUSTED_SSIDS =
+            stringSetPreferencesKey("network_automation_trusted_ssids")
     }
+}
+
+enum class NetworkTransportSetting {
+    Wifi,
+    Cellular,
+    Ethernet,
+    Other,
 }
 
 internal fun resolveUpdateChannel(

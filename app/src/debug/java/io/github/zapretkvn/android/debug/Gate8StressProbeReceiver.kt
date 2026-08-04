@@ -129,6 +129,7 @@ class Gate8StressProbeReceiver : BroadcastReceiver() {
             VpnConnectionState.Stopped -> "stopped"
             is VpnConnectionState.Starting -> "starting"
             is VpnConnectionState.Connected -> "connected"
+            is VpnConnectionState.Paused -> "paused"
             is VpnConnectionState.Stopping -> "stopping"
             is VpnConnectionState.Reconnecting -> "reconnecting"
             is VpnConnectionState.Error -> "error"

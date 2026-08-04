@@ -171,6 +171,10 @@ internal fun HomeScreen(
                             )
                         }
                     }
+                    is VpnConnectionState.Paused -> Text(
+                        vpnState.message,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
                     else -> Unit
                 }
 
@@ -230,6 +234,7 @@ private fun ConnectionHeader(state: VpnConnectionState) {
         is VpnConnectionState.Error -> MaterialTheme.colorScheme.error
         is VpnConnectionState.Starting,
         is VpnConnectionState.Reconnecting,
+        is VpnConnectionState.Paused,
         is VpnConnectionState.Stopping,
         -> MaterialTheme.colorScheme.tertiary
         VpnConnectionState.Stopped -> MaterialTheme.colorScheme.outline
@@ -463,6 +468,19 @@ private fun ConnectionAction(
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                 ) { Text("Остановить") }
             }
+            is VpnConnectionState.Paused -> Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onStop,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) { Text("Остановить") }
+                Button(
+                    onClick = onRestart,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                ) { Text("Подключить сейчас") }
+            }
             is VpnConnectionState.Connected -> Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -554,6 +572,7 @@ private fun VpnConnectionState.title(): String = when (this) {
     VpnConnectionState.Stopped -> "VPN выключен"
     is VpnConnectionState.Starting -> "Подключение"
     is VpnConnectionState.Connected -> "VPN подключён"
+    is VpnConnectionState.Paused -> "VPN на паузе"
     is VpnConnectionState.Stopping -> "Отключение"
     is VpnConnectionState.Reconnecting -> "Переподключение"
     is VpnConnectionState.Error -> "Ошибка VPN"

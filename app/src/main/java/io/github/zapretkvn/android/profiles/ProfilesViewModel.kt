@@ -26,6 +26,7 @@ import io.github.zapretkvn.android.routing.RuleSetAssetManager
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.UiSettings
 import io.github.zapretkvn.android.ui.UiSettingsStore
+import io.github.zapretkvn.android.ui.NetworkTransportSetting
 import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.BootstrapCache
@@ -602,6 +603,27 @@ class ProfilesViewModel(
     fun setVpnHidingTunMtuMode(mode: TunMtuMode) = operation(markBusy = false) {
         settingsStore.setVpnHidingTunMtuMode(mode)
         vpnController.restartIfConnected("Смена MTU для скрытия VPN")
+    }
+
+    fun setNetworkAutomationEnabled(enabled: Boolean) = operation(markBusy = false) {
+        settingsStore.setNetworkAutomationEnabled(enabled)
+    }
+
+    fun setUseVpnOnNetwork(transport: NetworkTransportSetting, enabled: Boolean) =
+        operation(markBusy = false) {
+            settingsStore.setUseVpnOnNetwork(transport, enabled)
+        }
+
+    fun setPauseOnTrustedWifi(enabled: Boolean) = operation(markBusy = false) {
+        settingsStore.setPauseOnTrustedWifi(enabled)
+    }
+
+    fun addTrustedWifi(ssid: String) = operation(markBusy = false) {
+        settingsStore.addTrustedWifi(ssid)
+    }
+
+    fun removeTrustedWifi(ssid: String) = operation(markBusy = false) {
+        settingsStore.removeTrustedWifi(ssid)
     }
 
     fun consumeMessage() {

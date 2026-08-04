@@ -7,6 +7,8 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -48,6 +50,7 @@ data class UnderlyingNetworkState(
     val privateDnsActive: Boolean = false,
     val privateDnsServerName: String? = null,
     val dnsServers: List<String> = emptyList(),
+    val wifiSsid: String? = null,
 ) {
     val identity: String?
         get() = network?.let { "${it.networkHandle}:${interfaceName.orEmpty()}" }
@@ -85,6 +88,7 @@ private fun UnderlyingNetworkState.bootstrapKey() = BootstrapNetworkKey(
 class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     private val connectivity = context.applicationContext
         .getSystemService(ConnectivityManager::class.java)
+    private val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
     private val handler = Handler(Looper.getMainLooper())
     private val observers = CopyOnWriteArraySet<(UnderlyingNetworkState) -> Unit>()
     private val candidates = ConcurrentHashMap<Network, CandidateParts>()
@@ -95,7 +99,11 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     var current: UnderlyingNetworkState = UnderlyingNetworkState()
         private set
 
-    private val callback = object : ConnectivityManager.NetworkCallback() {
+    private inner class UnderlyingNetworkCallback : ConnectivityManager.NetworkCallback {
+        constructor() : super()
+
+        constructor(flags: Int) : super(flags)
+
         override fun onAvailable(network: Network) {
             candidates.putIfAbsent(network, CandidateParts())
         }
@@ -119,6 +127,13 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
             publishBestCandidate()
         }
     }
+
+    private val callback: ConnectivityManager.NetworkCallback =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            UnderlyingNetworkCallback(ConnectivityManager.NetworkCallback.FLAG_INCLUDE_LOCATION_INFO)
+        } else {
+            UnderlyingNetworkCallback()
+        }
 
     fun start() {
         check(!closed.get()) { "Network monitor is already closed." }
@@ -304,6 +319,8 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
                     .mapNotNull { it.hostAddress }
                     .distinct()
                     .sorted(),
+                wifiSsid = wifiSsid(capabilities)
+                    ?.let(::normalizeWifiSsid),
             ),
             score = candidateScore(capabilities),
         )
@@ -329,6 +346,22 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
         else -> "other"
     }
+
+    private fun normalizeWifiSsid(value: String): String? {
+        if (value == WifiManager.UNKNOWN_SSID) return null
+        return value
+            .removeSurrounding("\"")
+            .takeIf(String::isNotBlank)
+    }
+
+    @Suppress("DEPRECATION")
+    @SuppressLint("MissingPermission")
+    private fun wifiSsid(capabilities: NetworkCapabilities): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            (capabilities.transportInfo as? WifiInfo)?.ssid
+        } else {
+            wifiManager.connectionInfo?.ssid
+        }
 
     private fun publish(next: UnderlyingNetworkState) {
         if (next == current) return

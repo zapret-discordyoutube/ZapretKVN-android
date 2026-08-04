@@ -84,8 +84,12 @@ class VpnController(
 
     fun switchProfileIfConnected(profileId: String): Boolean {
         require(profileId.isNotBlank()) { "Профиль не выбран." }
-        val connected = mutableState.value as? VpnConnectionState.Connected ?: return false
-        if (connected.profileId == profileId) return false
+        val currentProfileId = when (val current = mutableState.value) {
+            is VpnConnectionState.Connected -> current.profileId
+            is VpnConnectionState.Paused -> current.profileId
+            else -> return false
+        }
+        if (currentProfileId == profileId) return false
         start(profileId)
         return true
     }
@@ -100,6 +104,11 @@ class VpnController(
 
     fun stop() {
         ContextCompat.startForegroundService(context, ZapretVpnService.stopIntent(context))
+    }
+
+    fun resumePaused() {
+        if (mutableState.value !is VpnConnectionState.Paused) return
+        ContextCompat.startForegroundService(context, ZapretVpnService.resumeIntent(context))
     }
 
     fun restartIfConnected(reason: String) {
@@ -204,6 +213,7 @@ class VpnController(
                 is VpnConnectionState.Stopped,
                 is VpnConnectionState.Error,
                 is VpnConnectionState.Reconnecting,
+                is VpnConnectionState.Paused,
                 is VpnConnectionState.Stopping,
                 -> mutableSessionStats.value = trafficAccumulator.stop()
             }
@@ -212,7 +222,8 @@ class VpnController(
             safeState is VpnConnectionState.Starting ||
             safeState is VpnConnectionState.Stopped ||
             safeState is VpnConnectionState.Error ||
-            safeState is VpnConnectionState.Reconnecting
+            safeState is VpnConnectionState.Reconnecting ||
+            safeState is VpnConnectionState.Paused
         ) {
             mutableGroups.value = emptyList()
         }
@@ -716,6 +727,10 @@ class VpnController(
             }
             is VpnConnectionState.Error -> recordConnectionFailure(generation, state)
             is VpnConnectionState.Reconnecting -> publishDiagnosticLogStream(generation, false)
+            is VpnConnectionState.Paused -> {
+                cancelCurrentConnectionDiagnostic()
+                publishDiagnosticLogStream(generation, false)
+            }
             VpnConnectionState.Stopped,
             is VpnConnectionState.Stopping,
             -> publishDiagnosticLogStream(generation, false)

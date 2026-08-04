@@ -146,9 +146,10 @@ delays.sort()
 expected = [
     ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/vpn/HealthProbeRace.kt", 1),
-    # Дебаунс перезапуска по смене сети плюс ограниченный backoff автоматического
-    # восстановления. Ожидание сети событийное, поэтому таймера не добавляет.
-    ("app/src/main/java/io/github/zapretkvn/android/vpn/ZapretVpnService.kt", 2),
+    # Дебаунс перезапуска и двух направлений автоматизации по смене сети плюс
+    # ограниченный backoff восстановления. Одновременно активен только один
+    # debounce Job; ожидание сети событийное и таймера не добавляет.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/ZapretVpnService.kt", 4),
     ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/UnderlyingNetworkMonitor.kt", 1),
 ]
 if delays != expected:
@@ -176,6 +177,9 @@ source_permissions = {node.get(android + "name") for node in root.findall("uses-
 expected_source_permissions = {
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.ACCESS_WIFI_STATE",
+    "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
     "android.permission.POST_NOTIFICATIONS",

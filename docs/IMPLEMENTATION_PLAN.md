@@ -315,6 +315,9 @@ connect health-check и затем только при видимой диагн
 - [x] `I6-08` Завершить Профили: группы, source, last update, add actions и ошибки.
 - [x] `I6-09` Завершить Маршрутизацию: две карточки, rules, app picker, advanced JSON.
 - [x] `I6-10` Завершить Настройки: тема, DNS, Stable/Beta, Диагностика, Сообщество, О приложении.
+- [x] `I6-10a` Добавить выключенную по умолчанию сетевую автоматику: независимые
+  Wi-Fi/cellular/Ethernet/other правила, bounded trusted-SSID list, fail-safe при
+  redacted SSID, видимое состояние паузы без TUN и ручной override до смены сети.
 - [x] `I6-10A` Добавить отдельный экран «Скрытие VPN» и rootless runtime-модуль без нового process/thread/polling: localhost endpoints закрыты по умолчанию, stored JSON не меняется.
 - [ ] `I6-10B` Завершить physical gate MTU 1500 на IPv4/IPv6/NAT64/QUIC, операторах, OEM и энергии; initial device-test позволил включить default с явным откатом к profile/core.
 - [x] `I6-10C` Повторно проверить на физическом Android WireGuard/AWG после исправления:

@@ -49,7 +49,11 @@ class AppUpdateVpnFallback(
             throw UpdateException("сначала разрешите VPN и подключите профиль вручную")
         }
         val before = stableState()
-        val profileId = (before as? VpnConnectionState.Connected)?.profileId
+        val profileId = when (before) {
+            is VpnConnectionState.Connected -> before.profileId
+            is VpnConnectionState.Paused -> before.profileId
+            else -> null
+        }
             ?: settingsStore.settings.first().activeProfileId
             ?: throw UpdateException("не выбран VPN-профиль")
         if (before is VpnConnectionState.Connected && before.updaterRouting) {
@@ -57,6 +61,7 @@ class AppUpdateVpnFallback(
         }
 
         val restoreConnectedVpn = before is VpnConnectionState.Connected
+        val restorePausedVpn = before is VpnConnectionState.Paused
         try {
             if (restoreConnectedVpn) {
                 vpnController.restartUpdaterRouting(profileId, enabled = true)
@@ -77,11 +82,11 @@ class AppUpdateVpnFallback(
                 }
             }
         } catch (cancelled: CancellationException) {
-            restoreAfterFailedConnect(profileId, restoreConnectedVpn)
+            restoreAfterFailedConnect(profileId, restoreConnectedVpn, restorePausedVpn)
             throw cancelled
         }
         if (connected !is VpnConnectionState.Connected) {
-            restoreAfterFailedConnect(profileId, restoreConnectedVpn)
+            restoreAfterFailedConnect(profileId, restoreConnectedVpn, restorePausedVpn)
             val detail = (connected as? VpnConnectionState.Error)?.message
                 ?: "VPN не подключился за отведённое время"
             throw UpdateException(detail)
@@ -91,12 +96,19 @@ class AppUpdateVpnFallback(
             vpnController = vpnController,
             profileId = profileId,
             restoreConnectedVpn = restoreConnectedVpn,
+            restorePausedVpn = restorePausedVpn,
         )
     }
 
-    private fun restoreAfterFailedConnect(profileId: String, restoreConnectedVpn: Boolean) {
+    private fun restoreAfterFailedConnect(
+        profileId: String,
+        restoreConnectedVpn: Boolean,
+        restorePausedVpn: Boolean,
+    ) {
         if (restoreConnectedVpn) {
             runCatching { vpnController.restartUpdaterRouting(profileId, enabled = false) }
+        } else if (restorePausedVpn) {
+            runCatching { vpnController.start(profileId) }
         } else {
             runCatching(vpnController::stop)
         }
@@ -114,6 +126,7 @@ class AppUpdateVpnFallback(
         return withTimeoutOrNull(VPN_TRANSITION_TIMEOUT_MILLIS) {
             vpnController.state.first { state ->
                 state is VpnConnectionState.Connected ||
+                    state is VpnConnectionState.Paused ||
                     state is VpnConnectionState.Stopped ||
                     state is VpnConnectionState.Error
             }
@@ -124,6 +137,7 @@ class AppUpdateVpnFallback(
         private val vpnController: VpnController,
         private val profileId: String,
         private val restoreConnectedVpn: Boolean,
+        private val restorePausedVpn: Boolean,
     ) : UpdateVpnSession {
         private val closed = AtomicBoolean(false)
 
@@ -148,6 +162,14 @@ class AppUpdateVpnFallback(
                             state is VpnConnectionState.Connected &&
                             state.profileId == profileId &&
                             !state.updaterRouting
+                    }
+                }
+            } else if (restorePausedVpn) {
+                runCatching { vpnController.start(profileId) }
+                withTimeoutOrNull(VPN_TRANSITION_TIMEOUT_MILLIS) {
+                    vpnController.state.first { state ->
+                        state is VpnConnectionState.Paused ||
+                            state is VpnConnectionState.Error
                     }
                 }
             } else {

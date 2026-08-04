@@ -60,6 +60,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -134,6 +136,16 @@ class ZapretVpnService : VpnService() {
     private val restartScheduleLock = Any()
     private var networkRestartJob: Job? = null
     private var networkChangeSinceElapsed = 0L
+    @Volatile
+    private var automationSettings = NetworkAutomationSettings()
+    @Volatile
+    private var automationOverrideIdentity: String? = null
+    @Volatile
+    private var pausedAutomation: PausedAutomationSession? = null
+    private val pausedAutomationLock = Any()
+    private var pausedNetworkObserver: AutoCloseable? = null
+    private var automationSettingsJob: Job? = null
+    private val currentWifiSsidReader by lazy { CurrentWifiSsidReader(this) }
 
     /**
      * Монитор сети живёт со сервисом, а не с сессией. Иначе восстановление после
@@ -170,6 +182,16 @@ class ZapretVpnService : VpnService() {
         super.onCreate()
         createNotificationChannel()
         runCatching { networkMonitor.start() }
+        automationSettingsJob = serviceScope.launch {
+            container.uiSettingsStore.settings
+                .map { it.networkAutomation }
+                .distinctUntilChanged()
+                .collect { settings ->
+                    val changed = automationSettings != settings
+                    automationSettings = settings
+                    if (changed) reevaluateNetworkAutomation()
+                }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -205,6 +227,7 @@ class ZapretVpnService : VpnService() {
                 startId = startId,
             )
             ACTION_STOP -> requestStop(startId, null)
+            ACTION_RESUME -> requestResumePaused(startId, manualOverride = true)
             else -> {
                 val policy = VpnSystemPolicyDetector.detect(this)
                 requestStop(startId, policy.blockingMessage, policy)
@@ -234,6 +257,9 @@ class ZapretVpnService : VpnService() {
     override fun onDestroy() {
         cancelScheduledNetworkRestart()
         cancelRecovery()
+        clearPausedAutomation()
+        automationSettingsJob?.cancel()
+        automationSettingsJob = null
         controller.cancelCurrentConnectionDiagnostic()
         cancelLifecycleJob()
         val remaining = detachSessions()
@@ -263,11 +289,15 @@ class ZapretVpnService : VpnService() {
         showForeground(ForegroundNotificationState.ValidatingProfile)
         trackLifecycleJob(serviceScope.launch {
             serviceLock.withLock {
+                automationOverrideIdentity = null
+                clearPausedAutomation()
                 detachSessions().forEach(ActiveSession::close)
                 if (token != controller.currentGeneration()) return@withLock
                 try {
                     awaitConnectableNetwork(token, profileId, updaterRouting)
-                    startWithDeadline(token, profileId, updaterRouting = updaterRouting)
+                    if (!pauseForNetworkAutomation(token, profileId, updaterRouting)) {
+                        startWithDeadline(token, profileId, updaterRouting = updaterRouting)
+                    }
                 } catch (error: Throwable) {
                     if (token == controller.currentGeneration()) {
                         failLocked(token, profileId, error, startId, updaterRouting)
@@ -725,15 +755,18 @@ class ZapretVpnService : VpnService() {
                     VpnConnectionState.Starting(targetProfile, reason, targetUpdaterRouting),
                 )
                 showForeground(ForegroundNotificationState.Restarting)
+                clearPausedAutomation()
                 detachSessions().forEach(ActiveSession::close)
                 try {
                     awaitConnectableNetwork(token, targetProfile, targetUpdaterRouting)
-                    startWithDeadline(
-                        token,
-                        targetProfile,
-                        noCacheLookup,
-                        updaterRouting = targetUpdaterRouting,
-                    )
+                    if (!pauseForNetworkAutomation(token, targetProfile, targetUpdaterRouting)) {
+                        startWithDeadline(
+                            token,
+                            targetProfile,
+                            noCacheLookup,
+                            updaterRouting = targetUpdaterRouting,
+                        )
+                    }
                 } catch (error: Throwable) {
                     if (token == controller.currentGeneration()) {
                         failLocked(token, targetProfile, error, startId, targetUpdaterRouting)
@@ -765,6 +798,11 @@ class ZapretVpnService : VpnService() {
     private fun onUnderlyingNetworkEvent(session: ActiveSession, state: UnderlyingNetworkState) {
         if (activeSession !== session) return
         controller.publishDiagnosticNetwork(session.generation, state)
+        val automationDecision = networkAutomationDecision(state, session.updaterRouting)
+        if (automationDecision is NetworkAutomationDecision.PauseVpn) {
+            scheduleAutomationPause(session, state)
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         synchronized(restartScheduleLock) {
             val waitedMillis = if (networkChangeSinceElapsed == 0L) {
@@ -808,6 +846,277 @@ class ZapretVpnService : VpnService() {
         }
     }
 
+    private suspend fun pauseForNetworkAutomation(
+        token: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+    ): Boolean {
+        automationSettings = container.uiSettingsStore.settings.first().networkAutomation
+        val decision = networkAutomationDecision(networkMonitor.current, updaterRouting)
+        if (decision !is NetworkAutomationDecision.PauseVpn) return false
+        enterAutomationPause(
+            generation = token,
+            profileId = profileId,
+            updaterRouting = updaterRouting,
+            reason = decision.reason,
+        )
+        return true
+    }
+
+    private fun networkAutomationDecision(
+        state: UnderlyingNetworkState,
+        updaterRouting: Boolean,
+    ): NetworkAutomationDecision {
+        if (updaterRouting) return NetworkAutomationDecision.RunVpn
+        val overrideIdentity = automationOverrideIdentity
+        if (overrideIdentity != null) {
+            if (state.identity == overrideIdentity) return NetworkAutomationDecision.RunVpn
+            automationOverrideIdentity = null
+        }
+        val wifiSsid = state.wifiSsid ?: if (
+            state.transport == "wifi" &&
+            automationSettings.pauseOnTrustedWifi &&
+            automationSettings.trustedWifiSsids.isNotEmpty()
+        ) {
+            runCatching(currentWifiSsidReader::read).getOrNull()
+        } else {
+            null
+        }
+        return NetworkAutomationPolicy.decide(
+            settings = automationSettings,
+            networkAvailable = state.network != null,
+            transport = state.transport,
+            wifiSsid = wifiSsid,
+        )
+    }
+
+    private fun scheduleAutomationPause(
+        session: ActiveSession,
+        state: UnderlyingNetworkState,
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(restartScheduleLock) {
+            val waitedMillis = if (networkChangeSinceElapsed == 0L) {
+                0L
+            } else {
+                now - networkChangeSinceElapsed
+            }
+            if (networkChangeSinceElapsed == 0L) networkChangeSinceElapsed = now
+            val debounceMillis = if (
+                state.isSettledForConnect() ||
+                waitedMillis >= NetworkRestartPolicy.MAX_SETTLING_WAIT_MILLIS
+            ) {
+                NetworkRestartPolicy.SETTLED_DEBOUNCE_MILLIS
+            } else {
+                NetworkRestartPolicy.SETTLING_DEBOUNCE_MILLIS
+            }
+            networkRestartJob?.cancel()
+            lateinit var scheduled: Job
+            scheduled = serviceScope.launch {
+                delay(debounceMillis)
+                val current = activeSession
+                if (current !== session || current.generation != controller.currentGeneration()) {
+                    return@launch
+                }
+                val latest = networkAutomationDecision(current.networkMonitor.current, current.updaterRouting)
+                if (latest !is NetworkAutomationDecision.PauseVpn) return@launch
+                synchronized(restartScheduleLock) {
+                    if (networkRestartJob === scheduled) networkRestartJob = null
+                }
+                requestAutomationPause(current)
+            }
+            networkRestartJob = scheduled
+        }
+    }
+
+    private fun requestAutomationPause(session: ActiveSession) {
+        trackLifecycleJob(serviceScope.launch {
+            serviceLock.withLock {
+                if (activeSession !== session || session.generation != controller.currentGeneration()) {
+                    return@withLock
+                }
+                val latest = networkAutomationDecision(networkMonitor.current, session.updaterRouting)
+                if (latest !is NetworkAutomationDecision.PauseVpn) return@withLock
+                cancelRecovery()
+                resetRecoveryCounters()
+                val token = controller.nextGeneration()
+                val sessions = detachSessions()
+                sessions.forEach(ActiveSession::closeTun)
+                sessions.forEach(ActiveSession::close)
+                enterAutomationPause(
+                    generation = token,
+                    profileId = session.profileId,
+                    updaterRouting = session.updaterRouting,
+                    reason = latest.reason,
+                )
+            }
+        })
+    }
+
+    private fun enterAutomationPause(
+        generation: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+        reason: NetworkPauseReason,
+    ) {
+        clearPausedAutomation()
+        val paused = PausedAutomationSession(
+            profileId = profileId,
+            updaterRouting = updaterRouting,
+            generation = generation,
+            reason = reason,
+        )
+        synchronized(pausedAutomationLock) { pausedAutomation = paused }
+        terminalError = false
+        controller.publish(
+            generation,
+            VpnConnectionState.Paused(profileId, reason.userMessage()),
+        )
+        showForeground(ForegroundNotificationState.Paused)
+        var initialized = false
+        val observer = networkMonitor.observe { state ->
+            if (initialized) onPausedNetworkEvent(state)
+        }
+        val accepted = synchronized(pausedAutomationLock) {
+            if (pausedAutomation == paused) {
+                pausedNetworkObserver = observer
+                true
+            } else {
+                false
+            }
+        }
+        initialized = true
+        if (!accepted) {
+            observer.close()
+        } else {
+            onPausedNetworkEvent(networkMonitor.current)
+        }
+    }
+
+    private fun onPausedNetworkEvent(state: UnderlyingNetworkState) {
+        val paused = pausedAutomation ?: return
+        when (val decision = networkAutomationDecision(state, paused.updaterRouting)) {
+            is NetworkAutomationDecision.PauseVpn -> {
+                cancelScheduledNetworkRestart()
+                if (decision.reason != paused.reason) {
+                    val updated = paused.copy(reason = decision.reason)
+                    synchronized(pausedAutomationLock) {
+                        if (pausedAutomation == paused) pausedAutomation = updated
+                    }
+                    controller.publish(
+                        paused.generation,
+                        VpnConnectionState.Paused(paused.profileId, decision.reason.userMessage()),
+                    )
+                    showForeground(ForegroundNotificationState.Paused)
+                }
+            }
+            NetworkAutomationDecision.WaitForNetwork -> cancelScheduledNetworkRestart()
+            NetworkAutomationDecision.RunVpn -> schedulePausedResume(paused, state)
+        }
+    }
+
+    private fun schedulePausedResume(
+        paused: PausedAutomationSession,
+        state: UnderlyingNetworkState,
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        synchronized(restartScheduleLock) {
+            val waitedMillis = if (networkChangeSinceElapsed == 0L) {
+                0L
+            } else {
+                now - networkChangeSinceElapsed
+            }
+            if (networkChangeSinceElapsed == 0L) networkChangeSinceElapsed = now
+            val debounceMillis = if (
+                state.isSettledForConnect() ||
+                waitedMillis >= NetworkRestartPolicy.MAX_SETTLING_WAIT_MILLIS
+            ) {
+                NetworkRestartPolicy.SETTLED_DEBOUNCE_MILLIS
+            } else {
+                NetworkRestartPolicy.SETTLING_DEBOUNCE_MILLIS
+            }
+            networkRestartJob?.cancel()
+            lateinit var scheduled: Job
+            scheduled = serviceScope.launch {
+                delay(debounceMillis)
+                if (pausedAutomation != paused) return@launch
+                if (networkAutomationDecision(networkMonitor.current, paused.updaterRouting) !=
+                    NetworkAutomationDecision.RunVpn
+                ) {
+                    return@launch
+                }
+                synchronized(restartScheduleLock) {
+                    if (networkRestartJob === scheduled) networkRestartJob = null
+                }
+                requestResumePaused(startId = 0, manualOverride = false)
+            }
+            networkRestartJob = scheduled
+        }
+    }
+
+    private fun reevaluateNetworkAutomation() {
+        activeSession?.let { session ->
+            val decision = networkAutomationDecision(networkMonitor.current, session.updaterRouting)
+            if (decision is NetworkAutomationDecision.PauseVpn) {
+                requestAutomationPause(session)
+            }
+            return
+        }
+        val paused = pausedAutomation ?: return
+        when (val decision = networkAutomationDecision(networkMonitor.current, paused.updaterRouting)) {
+            is NetworkAutomationDecision.PauseVpn -> {
+                if (decision.reason != paused.reason) {
+                    val updated = paused.copy(reason = decision.reason)
+                    synchronized(pausedAutomationLock) {
+                        if (pausedAutomation == paused) pausedAutomation = updated
+                    }
+                    controller.publish(
+                        paused.generation,
+                        VpnConnectionState.Paused(paused.profileId, decision.reason.userMessage()),
+                    )
+                }
+            }
+            NetworkAutomationDecision.RunVpn -> requestResumePaused(0, manualOverride = false)
+            NetworkAutomationDecision.WaitForNetwork -> Unit
+        }
+    }
+
+    private fun requestResumePaused(startId: Int, manualOverride: Boolean) {
+        val paused = synchronized(pausedAutomationLock) { pausedAutomation } ?: return
+        if (!manualOverride &&
+            networkAutomationDecision(networkMonitor.current, paused.updaterRouting) !=
+            NetworkAutomationDecision.RunVpn
+        ) {
+            return
+        }
+        if (clearPausedAutomation(paused) == null) return
+        if (manualOverride) automationOverrideIdentity = networkMonitor.current.identity
+        requestRestart(
+            profileId = paused.profileId,
+            reason = if (manualOverride) {
+                "Подключение до смены сети"
+            } else {
+                "Автоматическое подключение по сети"
+            },
+            startId = startId,
+            noCacheLookup = false,
+            updaterRouting = paused.updaterRouting,
+        )
+    }
+
+    private fun clearPausedAutomation(
+        expected: PausedAutomationSession? = null,
+    ): PausedAutomationSession? {
+        val (paused, observer) = synchronized(pausedAutomationLock) {
+            val current = pausedAutomation
+            if (expected != null && current != expected) return null
+            pausedAutomation = null
+            current to pausedNetworkObserver.also { pausedNetworkObserver = null }
+        }
+        runCatching { observer?.close() }
+        return paused
+    }
+
     private fun restartDiagnosticTrigger(reason: String): String = when (reason) {
         "Смена сети Android" -> "network_change"
         "Автоматическое переподключение" -> "auto_recovery"
@@ -832,14 +1141,16 @@ class ZapretVpnService : VpnService() {
         cancelScheduledNetworkRestart()
         cancelRecovery()
         resetRecoveryCounters()
+        automationOverrideIdentity = null
         controller.cancelCurrentConnectionDiagnostic()
         val token = controller.nextGeneration()
         controller.beginStopDiagnostic(token, trigger)
         systemPolicy?.let { controller.publishVpnSystemPolicy(token, it) }
         terminalError = errorMessage != null
+        val paused = clearPausedAutomation()
         val sessions = detachSessions()
         sessions.forEach { it.enableStopDiagnostics(token) }
-        val profileId = sessions.firstOrNull()?.profileId
+        val profileId = sessions.firstOrNull()?.profileId ?: paused?.profileId
 
         controller.startStopDiagnosticStage(token, "cancel_run", "Отмена текущего запуска")
         cancelLifecycleJob()
@@ -1342,6 +1653,14 @@ class ZapretVpnService : VpnService() {
                 )
                 builder.addAction(0, "Перезапустить", restartIntent)
             }
+        } else if (state == ForegroundNotificationState.Paused) {
+            val resumeIntent = PendingIntent.getService(
+                this,
+                4,
+                resumeIntent(this),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, "Подключить сейчас", resumeIntent)
         }
         val notification = builder
             .addAction(0, "Остановить", stopIntent)
@@ -1464,6 +1783,13 @@ class ZapretVpnService : VpnService() {
             technicalDetail = technicalDetail,
         )
     }
+
+    private data class PausedAutomationSession(
+        val profileId: String,
+        val updaterRouting: Boolean,
+        val generation: Long,
+        val reason: NetworkPauseReason,
+    )
 
     private class ActiveSession(
         val profileId: String,
@@ -1906,6 +2232,7 @@ class ZapretVpnService : VpnService() {
         CreatingTun("Создание TUN"),
         CheckingHealth("Проверка DNS и HTTPS"),
         Connected("Подключено"),
+        Paused("VPN на паузе по правилу сети"),
         Restarting("Перезапуск VPN"),
         AwaitingNetwork("Ожидание сети Android"),
         Retrying("Повтор подключения"),
@@ -1917,6 +2244,7 @@ class ZapretVpnService : VpnService() {
         private const val GROUP_PING_CONCURRENCY = 4
         private const val ACTION_START = "io.github.zapretkvn.android.vpn.START"
         private const val ACTION_STOP = "io.github.zapretkvn.android.vpn.STOP"
+        private const val ACTION_RESUME = "io.github.zapretkvn.android.vpn.RESUME"
         private const val ACTION_SELECT = "io.github.zapretkvn.android.vpn.SELECT"
         private const val ACTION_RESTART = "io.github.zapretkvn.android.vpn.RESTART"
         private const val ACTION_CLEAR_DNS_CACHE = "io.github.zapretkvn.android.vpn.CLEAR_DNS_CACHE"
@@ -1962,6 +2290,9 @@ class ZapretVpnService : VpnService() {
 
         fun stopIntent(context: Context): Intent =
             Intent(context, ZapretVpnService::class.java).setAction(ACTION_STOP)
+
+        fun resumeIntent(context: Context): Intent =
+            Intent(context, ZapretVpnService::class.java).setAction(ACTION_RESUME)
 
         fun selectIntent(
             context: Context,

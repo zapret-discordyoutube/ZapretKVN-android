@@ -30,6 +30,7 @@ import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.routing.RoutingMatchType
 import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.routing.RoutingRuleAction
+import io.github.zapretkvn.android.ui.NetworkTransportSetting
 import java.io.File
 import java.io.FileInputStream
 import java.net.DatagramSocket
@@ -1174,6 +1175,73 @@ class VpnServiceInstrumentedTest {
             assertEquals(1, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
         } finally {
             VpnTestHooks.reset()
+            stopIfNeeded(container.vpnController, context)
+            shell("svc data enable")
+            shell("su 0 svc wifi enable")
+            container.profileStore.delete(profile.id)
+            denyVpn(packageName)
+        }
+    }
+
+    @Test
+    fun networkAutomationPausesOnWifiAndResumesOnCellular() = runBlocking {
+        if (!isEmulator()) return@runBlocking
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        val packageName = context.packageName
+        allowVpn(packageName)
+        shell("settings put global private_dns_mode off")
+        shell("svc data enable")
+        shell("su 0 svc wifi enable")
+        awaitUnderlyingTransport(context, NetworkCapabilities.TRANSPORT_WIFI)
+        container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Wifi, false)
+        container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Cellular, true)
+        container.uiSettingsStore.setNetworkAutomationEnabled(true)
+        val profile = createProfile(container, "Network automation", TWO_SERVER_DIRECT_CONFIG)
+        try {
+            container.vpnController.start(profile.id)
+            val pausedOnWifi = withTimeout(15_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Paused }
+            }
+            assertTrue(pausedOnWifi is VpnConnectionState.Paused)
+            withTimeout(5_000) {
+                while (hasVpnNetwork(context)) delay(50)
+            }
+            assertEquals(0, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
+            assertEquals(1, VpnRuntimeMetrics.snapshot().activeNetworkCallbacks)
+
+            VpnTestHooks.succeedNextHealthCheck()
+            shell("su 0 svc wifi disable")
+            awaitUnderlyingTransport(context, NetworkCapabilities.TRANSPORT_CELLULAR)
+            val connectedOnCellular = withTimeout(30_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Connected }
+            }
+            assertTrue(connectedOnCellular is VpnConnectionState.Connected)
+            assertEquals(1, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
+
+            shell("su 0 svc wifi enable")
+            awaitUnderlyingTransport(context, NetworkCapabilities.TRANSPORT_WIFI)
+            withTimeout(15_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Paused }
+            }
+            withTimeout(5_000) {
+                while (hasVpnNetwork(context)) delay(50)
+            }
+            assertEquals(0, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
+
+            VpnTestHooks.succeedNextHealthCheck()
+            container.uiSettingsStore.setNetworkAutomationEnabled(false)
+            withTimeout(30_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Connected }
+            }
+            assertEquals(1, VpnRuntimeMetrics.snapshot().activeTunDescriptors)
+        } finally {
+            VpnTestHooks.reset()
+            container.uiSettingsStore.setNetworkAutomationEnabled(false)
+            container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Wifi, true)
+            container.uiSettingsStore.setUseVpnOnNetwork(NetworkTransportSetting.Cellular, true)
             stopIfNeeded(container.vpnController, context)
             shell("svc data enable")
             shell("su 0 svc wifi enable")
