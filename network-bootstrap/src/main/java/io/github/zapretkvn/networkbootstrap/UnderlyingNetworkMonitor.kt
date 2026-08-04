@@ -1,6 +1,7 @@
 package io.github.zapretkvn.networkbootstrap
 
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.LinkProperties
@@ -102,6 +103,7 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     private inner class UnderlyingNetworkCallback : ConnectivityManager.NetworkCallback {
         constructor() : super()
 
+        @TargetApi(Build.VERSION_CODES.S)
         constructor(flags: Int) : super(flags)
 
         override fun onAvailable(network: Network) {
