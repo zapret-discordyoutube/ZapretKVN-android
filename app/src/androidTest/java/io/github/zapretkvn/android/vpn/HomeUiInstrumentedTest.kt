@@ -10,6 +10,7 @@ import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.profiles.ProfileSource
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -161,6 +162,32 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("VPN подключён").assertExists()
         composeRule.onNodeWithText("Отключить").assertExists()
         composeRule.onNodeWithText("Выбрать приложения").assertDoesNotExist()
+    }
+
+    @Test
+    fun startingProgressDoesNotEraseCommandGroupSnapshot() {
+        val generation = container.vpnController.nextGeneration()
+        container.vpnController.publish(
+            generation,
+            VpnConnectionState.Starting(checkNotNull(profileId), "Создание TUN"),
+        )
+        val groups = listOf(
+            RuntimeSelectorGroup(
+                tag = "zapret-proxy",
+                type = "selector",
+                selected = "Moscow",
+                selectable = true,
+                items = emptyList(),
+            ),
+        )
+        container.vpnController.publishGroups(generation, groups)
+
+        container.vpnController.publish(
+            generation,
+            VpnConnectionState.Starting(checkNotNull(profileId), "Проверка DNS и HTTPS"),
+        )
+
+        assertEquals(groups, container.vpnController.selectorGroups.value)
     }
 
     private companion object {

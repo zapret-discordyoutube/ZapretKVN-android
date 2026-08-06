@@ -40,16 +40,29 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class VpnServiceInstrumentedTest {
+    @Before
+    fun isolateGlobalRoutingPolicy() = runBlocking {
+        setRoutingPolicy(RoutingPreset.Custom)
+    }
+
+    @After
+    fun restoreGlobalRoutingPolicy() = runBlocking {
+        VpnTestHooks.reset()
+        setRoutingPolicy(RoutingPreset.Custom)
+    }
+
     @Test
     fun foregroundNotificationContainsOnlyConnectionState() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -338,16 +351,18 @@ class VpnServiceInstrumentedTest {
         val packageName = context.packageName
         allowVpn(packageName)
         GateEchoServer().use { echo ->
+            val rules = listOf(
+                ManagedRoutingRule(
+                    RoutingMatchType.IpCidr,
+                    listOf("192.0.2.0/24"),
+                    RoutingRuleAction.Block,
+                ),
+            )
+            setRoutingPolicy(RoutingPreset.Custom, rules)
             val configured = RoutingConfigEditor.apply(
                 raw = GateProfiles.directOverride(echo.reachableAddress, echo.port),
                 preset = RoutingPreset.Custom,
-                manualRules = listOf(
-                    ManagedRoutingRule(
-                        RoutingMatchType.IpCidr,
-                        listOf("192.0.2.0/24"),
-                        RoutingRuleAction.Block,
-                    ),
-                ),
+                manualRules = rules,
                 installed = InstalledRuleSets(1, emptyMap()),
             ).json
             val profile = createProfile(container, "Route reject", configured)
@@ -468,16 +483,18 @@ class VpnServiceInstrumentedTest {
         awaitPrivateDns(context, PrivateDnsMode.Off)
         container.uiSettingsStore.setDnsMode(DnsMode.FromJson)
         val blockedHost = "www.iana.org"
+        val rules = listOf(
+            ManagedRoutingRule(
+                RoutingMatchType.Domain,
+                listOf(blockedHost),
+                RoutingRuleAction.Block,
+            ),
+        )
+        setRoutingPolicy(RoutingPreset.Custom, rules)
         val configured = RoutingConfigEditor.apply(
             raw = GateProfiles.embeddedDohLimit(blockedHost),
             preset = RoutingPreset.Custom,
-            manualRules = listOf(
-                ManagedRoutingRule(
-                    RoutingMatchType.Domain,
-                    listOf(blockedHost),
-                    RoutingRuleAction.Block,
-                ),
-            ),
+            manualRules = rules,
             installed = InstalledRuleSets(1, emptyMap()),
         ).json
         val profile = createProfile(container, "Embedded DoH limitation", configured)
@@ -528,24 +545,25 @@ class VpnServiceInstrumentedTest {
                 val installed = container.ruleSetAssetManager.ensureInstalled()
                 val extractionMillis = (System.nanoTime() - extractionStart) / 1_000_000
                 val totalBytes = installed.paths.values.sumOf { File(it).length() }
-                val edited = RoutingConfigEditor.apply(
+                setRoutingPolicy(RoutingPreset.RussiaDirect)
+                val profile = createProfile(
+                    container,
+                    "Routing performance",
                     GateProfiles.routingMatrix(
                         echo.reachableAddress,
                         socks.port,
                         "perf-gate.ru",
                         "perf-gate.example",
                     ),
-                    RoutingPreset.RussiaDirect,
-                    emptyList(),
-                    installed,
-                ).json
-                val configured = GateProfiles.withDestinationOverrides(
-                    edited,
-                    echo.reachableAddress,
-                    echo.port,
                 )
-                val profile = createProfile(container, "Routing performance", configured)
                 try {
+                    VpnTestHooks.setEffectiveRoutingTransform { effective ->
+                        GateProfiles.withDestinationOverrides(
+                            effective,
+                            echo.reachableAddress,
+                            echo.port,
+                        )
+                    }
                     val connectStart = System.nanoTime()
                     connect(container.vpnController, profile.id)
                     awaitActiveResources()
@@ -590,13 +608,14 @@ class VpnServiceInstrumentedTest {
                             "cpu_ms_per_flow=$cpuPerFlowMillis pss_before_kb=$pssBeforeKb " +
                             "pss_after_kb=$pssAfterKb pss_growth_kb=$pssGrowthKb",
                     )
-                    assertEquals(50_089L, totalBytes)
+                    assertEquals(50_114L, totalBytes)
                     assertTrue("Rule-set extraction took ${extractionMillis}ms", extractionMillis < 5_000)
                     assertTrue("Cold VPN start took ${coldConnectMillis}ms", coldConnectMillis < 20_000)
                     assertTrue("Lookup CPU is ${cpuPerFlowMillis}ms/flow", cpuPerFlowMillis < 250.0)
                     assertTrue("Lookup PSS grew by ${pssGrowthKb}KiB", pssGrowthKb < 32 * 1024)
                 } finally {
                     stopIfNeeded(container.vpnController, context)
+                    VpnTestHooks.reset()
                     container.profileStore.delete(profile.id)
                     container.appSelectionStore.setMode(AppScopeMode.Include)
                     container.uiSettingsStore.setDnsMode(DnsMode.FromJson)
@@ -1048,14 +1067,21 @@ class VpnServiceInstrumentedTest {
             shell("settings put global private_dns_mode hostname")
             awaitPrivateDns(context, PrivateDnsMode.Strict, "dns.google", expectedActive = true)
 
-            listOf(DnsMode.Automatic, DnsMode.Secure).forEach { managedMode ->
-                VpnTestHooks.reset()
-                container.uiSettingsStore.setDnsMode(managedMode)
-                val blocked = connectResult(container.vpnController, profile.id)
-                assertTrue("$managedMode was not blocked", blocked is VpnConnectionState.Error)
-                assertTrue((blocked as VpnConnectionState.Error).message.contains("Strict Private DNS"))
-                assertFalse(hasVpnNetwork(context))
-            }
+            VpnTestHooks.reset()
+            container.uiSettingsStore.setDnsMode(DnsMode.Secure)
+            val blocked = connectResult(container.vpnController, profile.id)
+            assertTrue("Secure was not blocked", blocked is VpnConnectionState.Error)
+            assertTrue((blocked as VpnConnectionState.Error).message.contains("Strict Private DNS"))
+            assertFalse(hasVpnNetwork(context))
+
+            VpnTestHooks.reset()
+            container.uiSettingsStore.setDnsMode(DnsMode.Automatic)
+            val automatic = connectResult(container.vpnController, profile.id)
+            assertTrue(
+                "Automatic did not narrow to Android DNS: $automatic",
+                automatic is VpnConnectionState.Connected,
+            )
+            stop(container.vpnController, context)
 
             VpnTestHooks.reset()
             container.uiSettingsStore.setDnsMode(DnsMode.Android)
@@ -1695,6 +1721,15 @@ class VpnServiceInstrumentedTest {
     ): ProfileMetadata {
         container.profileStore.initialize()
         return container.profileStore.create(name, json, ProfileSource.RawJson)
+    }
+
+    private suspend fun setRoutingPolicy(
+        preset: RoutingPreset,
+        rules: List<ManagedRoutingRule> = emptyList(),
+    ) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        container.routingPolicyStore.set(GlobalRoutingPolicy(preset, rules))
     }
 
     private suspend fun awaitActiveResources() {

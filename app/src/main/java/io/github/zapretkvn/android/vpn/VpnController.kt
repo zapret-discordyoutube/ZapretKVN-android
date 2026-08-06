@@ -219,7 +219,6 @@ class VpnController(
             }
         }
         if (
-            safeState is VpnConnectionState.Starting ||
             safeState is VpnConnectionState.Stopped ||
             safeState is VpnConnectionState.Error ||
             safeState is VpnConnectionState.Reconnecting ||
@@ -251,7 +250,14 @@ class VpnController(
         )
     }
 
-    internal fun nextGeneration(): Long = latestGeneration.incrementAndGet()
+    internal fun nextGeneration(): Long {
+        val generation = latestGeneration.incrementAndGet()
+        // Clear the previous session once, before callbacks can publish data for
+        // this generation. Repeated Starting progress updates must not erase the
+        // initial CommandGroup snapshot when it arrives quickly.
+        mutableGroups.value = emptyList()
+        return generation
+    }
 
     internal fun currentGeneration(): Long = latestGeneration.get()
 

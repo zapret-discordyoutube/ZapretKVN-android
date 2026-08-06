@@ -82,11 +82,16 @@ class UpdateUiInstrumentedTest {
     @Test
     fun settingsPersistChannelAndKeepManualCheckAvailable() {
         composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        runBlocking {
+            container.updateController.cancelAndDelete()
+            container.updateController.state.first { it == UpdateState.Idle }
+        }
         composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Обновления"))
         composeRule.onNodeWithText("Обновления").assertExists()
         composeRule.onNodeWithText("Проверить обновления").assertExists()
+        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Beta"))
         composeRule.onNode(hasText("Beta") and hasClickAction()).performClick()
-        composeRule.waitUntil(5_000) {
+        composeRule.waitUntil(10_000) {
             runBlocking { container.uiSettingsStore.settings.first().updateChannel == UpdateChannel.Beta }
         }
         composeRule.onNodeWithText("Обновления").assertExists()

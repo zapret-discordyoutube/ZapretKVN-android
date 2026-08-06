@@ -623,15 +623,6 @@ class ZapretVpnService : VpnService() {
             resources.attachNetworkObserver(networkMonitor.observe { state ->
                 onUnderlyingNetworkEvent(resources, state)
             })
-            controller.publish(
-                token,
-                VpnConnectionState.Connected(
-                    profileId = profileId,
-                    profileName = profile.metadata.name,
-                    connectedAtEpochMillis = System.currentTimeMillis(),
-                    updaterRouting = updaterRouting,
-                ),
-            )
             startHomeStatusObserver(resources)
             startDiagnosticsObserver(resources)
             if (!controller.diagnosticsVisible.value) resources.closeLogClient(controller)
@@ -643,6 +634,18 @@ class ZapretVpnService : VpnService() {
         }
 
         if (token == controller.currentGeneration() && activeSession === resources) {
+            // Connected is the public hand-off point. Publish it only after every
+            // startup step that owns the session has completed; an immediate user
+            // action may replace the lifecycle job as soon as this state is visible.
+            controller.publish(
+                token,
+                VpnConnectionState.Connected(
+                    profileId = profileId,
+                    profileName = profile.metadata.name,
+                    connectedAtEpochMillis = System.currentTimeMillis(),
+                    updaterRouting = updaterRouting,
+                ),
+            )
             showForeground(ForegroundNotificationState.Connected)
         }
     }

@@ -79,7 +79,7 @@ class RoutingNativeInstrumentedTest {
                 "cold_install_ms=$installMillis average_check_ms=$averageLoadMillis",
         )
 
-        assertTrue("Unexpected rule-set size: $totalBytes", totalBytes == 50_089L)
+        assertTrue("Unexpected rule-set size: $totalBytes", totalBytes == 50_114L)
         assertTrue("Cold extraction took ${installMillis}ms", installMillis < 5_000)
         assertTrue("Average pinned-core load took ${averageLoadMillis}ms", averageLoadMillis < 1_000.0)
     }

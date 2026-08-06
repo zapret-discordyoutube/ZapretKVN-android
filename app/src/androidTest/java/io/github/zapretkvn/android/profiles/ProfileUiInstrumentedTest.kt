@@ -105,7 +105,7 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
         composeRule.onNodeWithText("Буфер обмена").assertExists()
         composeRule.onNodeWithText("Обновлено:", substring = true).assertExists()
-        composeRule.onNodeWithText("JSON").performClick()
+        composeRule.onNodeWithText("JSON").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             composeRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size >= 2
         }
@@ -123,7 +123,7 @@ class ProfileUiInstrumentedTest {
         composeRule.waitForIdle()
         composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
-        composeRule.onNodeWithText("JSON").performClick()
+        composeRule.onNodeWithText("JSON").performScrollTo().performClick()
         composeRule.onAllNodes(hasSetTextAction())[1].assertTextContains(UPDATED_DIRECT)
     }
 
@@ -151,7 +151,7 @@ class ProfileUiInstrumentedTest {
             runCatching { composeRule.onNodeWithText("Серверы").fetchSemanticsNode() }.isSuccess
         }
         composeRule.onNodeWithText("Серверов: 2", substring = true).assertExists()
-        composeRule.onNodeWithText("Серверы").performClick()
+        composeRule.onNodeWithText("Серверы").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {
                 composeRule.onNodeWithTag("profile-servers-sheet").fetchSemanticsNode()
@@ -199,7 +199,9 @@ class ProfileUiInstrumentedTest {
             }
         }
         assertTrue("Каждый профиль должен содержать ровно один сервер", singleServerProfiles)
+        composeRule.onNodeWithTag("profiles-list").performScrollToNode(hasText("first"))
         composeRule.onNodeWithText("first").assertExists()
+        composeRule.onNodeWithTag("profiles-list").performScrollToNode(hasText("second"))
         composeRule.onNodeWithText("second").assertExists()
     }
 

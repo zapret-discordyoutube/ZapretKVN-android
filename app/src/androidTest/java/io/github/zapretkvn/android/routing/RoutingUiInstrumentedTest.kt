@@ -60,7 +60,7 @@ class RoutingUiInstrumentedTest {
 
     @Test
     fun presetSummaryAndDomainBlockMatchTheGlobalEffectivePolicy() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        openRoutingTrafficCard()
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode()
@@ -119,7 +119,7 @@ class RoutingUiInstrumentedTest {
 
     @Test
     fun addRuleButtonKeepsItsLabelHorizontal() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        openRoutingTrafficCard()
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode()
@@ -139,7 +139,7 @@ class RoutingUiInstrumentedTest {
 
     @Test
     fun routingExplainsThatProfileJsonDoesNotStoreGlobalRules() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        openRoutingTrafficCard()
         composeRule.onNodeWithTag("routing-list")
             .performScrollToNode(hasText("Исходный JSON профиля"))
         composeRule.onNodeWithText("Исходный JSON профиля").assertExists()
@@ -160,7 +160,7 @@ class RoutingUiInstrumentedTest {
 
     @Test
     fun advancedJsonOpensTheActiveProfileAndBackReturnsToRouting() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        openRoutingTrafficCard()
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNode(
@@ -181,12 +181,14 @@ class RoutingUiInstrumentedTest {
         }
         composeRule.onNodeWithText("Routing UI").assertExists()
         composeRule.onNodeWithContentDescription("Назад").performClick()
+        composeRule.onNodeWithTag("routing-list")
+            .performScrollToNode(hasText("Правило трафика"))
         composeRule.onNodeWithText("Правило трафика").assertExists()
     }
 
     @Test
     fun everyPresetSummaryMatchesCompiledEffectiveJson() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        openRoutingTrafficCard()
         composeRule.waitUntil(20_000) {
             runCatching { composeRule.onNodeWithText("Изменить режим").fetchSemanticsNode() }.isSuccess
         }
@@ -199,6 +201,8 @@ class RoutingUiInstrumentedTest {
             RoutingPreset.AllThroughVpn,
         )
         sequence.forEach { preset ->
+            composeRule.onNodeWithTag("routing-list")
+                .performScrollToNode(hasText("Изменить режим"))
             composeRule.waitUntil(10_000) {
                 runCatching {
                     composeRule.onNodeWithTag("routing-change-preset").fetchSemanticsNode()
@@ -244,6 +248,15 @@ class RoutingUiInstrumentedTest {
             assertTrue(inspection.summary.startsWith(preset.detail))
             assertFalse(effective.contains("package_name"))
         }
+    }
+
+    private fun openRoutingTrafficCard() {
+        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.waitUntil(10_000) {
+            runCatching { composeRule.onNodeWithTag("routing-list").fetchSemanticsNode() }.isSuccess
+        }
+        composeRule.onNodeWithTag("routing-list")
+            .performScrollToNode(hasText("Правило трафика"))
     }
 
     private fun profile(): String = ManagedProfileFactory.single(

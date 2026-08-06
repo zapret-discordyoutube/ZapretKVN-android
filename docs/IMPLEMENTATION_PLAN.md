@@ -239,7 +239,7 @@ effective JSON выбранного профиля.
 
 Gate 4 закрыт автоматизированно 22 июля 2026 года на AVD API 26 и 36. Все шесть presets прошли реальный TUN-путь через локальный SOCKS5 proxy/direct/reject для RU/non-RU domain и IPv4/IPv6; отдельный UID-тест подтвердил, что невыбранное приложение остаётся вне TUN. Стандартный DNS block и HTTPS DoH→numeric path воспроизводят документированную границу domain-only block. UI summary, сохранённый JSON и фактический outbound совпали для каждого preset.
 
-Exact pinned core загрузил два `.srs` за 1 114 мкс при 758 624 байтах allocations; lookup benchmark — 329 нс/op, 1 104 B/op, 2 allocs/op. Суммарный размер assets — 50 089 байт. В полном debug-прогоне API 36: extraction 2 мс, cold connect 41 мс, 40 реальных flows — 100 мс CPU и +356 КиБ PSS; API 26: 5 мс, 63 мс, 300 мс CPU и без роста PSS. Это закрывает автоматизированный performance-пункт, но не release-gate энергии на физических устройствах.
+Exact pinned core загрузил два `.srs` за 1 114 мкс при 758 624 байтах allocations; lookup benchmark — 329 нс/op, 1 104 B/op, 2 allocs/op. Суммарный размер assets после добавления `championat.com` — 50 114 байт. В полном debug-прогоне API 36: extraction 2 мс, cold connect 41 мс, 40 реальных flows — 100 мс CPU и +356 КиБ PSS; API 26: 5 мс, 63 мс, 300 мс CPU и без роста PSS. Это закрывает автоматизированный performance-пункт, но не release-gate энергии на физических устройствах.
 
 ## Этап 5 — ссылки, QR и подписки
 
@@ -611,7 +611,7 @@ production default по AVD-данным не изменён.
   и полная блокировка приложений.
 - [x] Android instrumented tests: текущие 67/67 пройдены на API 36; базовые 66/66 — на API 26/29, security delta 3/3 — на API 26.
 - [x] Hard process recreation: `scripts/verify-process-recreation.sh` пройден на API 26/36; после смерти процесса ноль session/core/TUN/callback/client, после нового connect ровно один экземпляр.
-- [x] Packaged `.srs`: exact CLI RU/non-RU domain/IPv4/IPv6, manifest/license/SHA, atomic repair; 50 089 байт, cold install 14 мс на AVD API 36.
+- [x] Packaged `.srs`: exact CLI RU/non-RU domain/IPv4/IPv6, manifest/license/SHA, atomic repair; 50 114 байт после добавления `championat.com`, cold install 14 мс на AVD API 36.
 - [x] Routing lookup/cold-start CPU/RAM measurements выполнены на AVD API 26/36 и exact core benchmark.
 - [x] Test 18 собран локально из commit `e637391` для arm64-v8a, armeabi-v7a и x86_64 и опубликован отдельным GitHub prerelease с SHA-256/metadata.
 - [x] Test 20 опубликован из commit `352fb31` с редактируемым DNS override; Auto DNS fallback в него ещё не входил.

@@ -291,7 +291,7 @@ domain и IPv4/IPv6; UI summary, тогда сохранявшийся JSON и �
 TUN. Физическое переключение нескольких профилей относится к пострелизному device
 gate и не подменяется JVM-тестом.
 
-Exact core benchmark production assets: load 1 114 мкс, 758 624 allocation bytes; lookup 329 нс/op, 1 104 B/op, 2 allocs/op. Размер двух `.srs` — 50 089 байт. Полный debug-прогон API 36 дал extraction 2 мс, cold connect 41 мс, 100 мс CPU на 40 flows и +356 КиБ PSS; API 26 — 5 мс, 63 мс, 300 мс CPU и нулевой положительный PSS growth. Это закрывает автоматизированный Gate 4, но не физический release-gate энергии/OEM ниже.
+Exact core benchmark production assets: load 1 114 мкс, 758 624 allocation bytes; lookup 329 нс/op, 1 104 B/op, 2 allocs/op. Размер двух `.srs` после добавления `championat.com` — 50 114 байт. Полный debug-прогон API 36 дал extraction 2 мс, cold connect 41 мс, 100 мс CPU на 40 flows и +356 КиБ PSS; API 26 — 5 мс, 63 мс, 300 мс CPU и нулевой положительный PSS growth. Это закрывает автоматизированный Gate 4, но не физический release-gate энергии/OEM ниже.
 
 Перед выпуском нужны следующие тесты. Это детализация P1, P7 и P8 из единого раздела [«Потом проверить»](ARCHITECTURE.md#потом-проверить--открытые-вопросы), а не отдельный список нерешённых архитектурных вопросов:
 
