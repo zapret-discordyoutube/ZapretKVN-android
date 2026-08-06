@@ -122,11 +122,13 @@ if len(providers) != 1 or providers[0][2] != "false":
 print(f"Merged release manifest verified: {len(components)} components, {len(exported)} exported.")
 PY
 
-if unzip -Z1 "$APK" | grep -Eiq '(^|/)(profiles|diagnostics|updates)(/|$)|\.(log|tmp|part)$'; then
+APK_ENTRIES="$TEMP_DIR/apk-entries.txt"
+unzip -Z1 "$APK" > "$APK_ENTRIES"
+if grep -Eiq '(^|/)(profiles|diagnostics|updates)(/|$)|\.(log|tmp|part)$' "$APK_ENTRIES"; then
     echo "Release APK contains runtime credential/temp material" >&2
     exit 1
 fi
-mapfile -t DEX_ENTRIES < <(unzip -Z1 "$APK" | grep -E '^classes([0-9]+)?\.dex$')
+mapfile -t DEX_ENTRIES < <(grep -E '^classes([0-9]+)?\.dex$' "$APK_ENTRIES")
 (( ${#DEX_ENTRIES[@]} > 0 ))
 for dex_entry in "${DEX_ENTRIES[@]}"; do
     dex_file="$TEMP_DIR/${dex_entry//\//_}"
@@ -145,11 +147,10 @@ SYMBOL_SIZE="$(stat -c '%s' "$SYMBOL_ZIP")"
 grep -Fq 'io.github.zapretkvn.android' "$MAPPING"
 
 mapfile -t NATIVE_ABIS < <(
-    unzip -Z1 "$APK" \
-        | sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' \
+    sed -n 's#^lib/\([^/]*\)/.*\.so$#\1#p' "$APK_ENTRIES" \
         | sort -u
 )
-mapfile -t NATIVE_LIBS < <(unzip -Z1 "$APK" | grep -E '^lib/[^/]+/[^/]+\.so$' | sort)
+mapfile -t NATIVE_LIBS < <(grep -E '^lib/[^/]+/[^/]+\.so$' "$APK_ENTRIES" | sort)
 if [[ "${#NATIVE_ABIS[@]}" -ne 1 ]]; then
     echo "Release APK must contain exactly one native ABI: ${NATIVE_ABIS[*]:-none}" >&2
     exit 1
@@ -166,11 +167,11 @@ esac
 
 unzip -p "$APK" "lib/$ABI/libbox.so" > "$TEMP_DIR/libbox.so"
 [[ -s "$TEMP_DIR/libbox.so" ]]
-readelf -S "$TEMP_DIR/libbox.so" | grep -Fq '.gopclntab'
+readelf -S "$TEMP_DIR/libbox.so" | grep -F '.gopclntab' >/dev/null
 for native_lib in "${NATIVE_LIBS[@]}"; do
     extracted="$TEMP_DIR/${native_lib//\//_}"
     unzip -p "$APK" "$native_lib" > "$extracted"
-    if readelf -S "$extracted" | grep -Fq '.symtab'; then
+    if readelf -S "$extracted" | grep -F '.symtab' >/dev/null; then
         echo "Packaged production native library must be stripped: $native_lib" >&2
         exit 1
     fi
@@ -178,8 +179,8 @@ done
 if [[ "$ABI" == arm64-v8a ]]; then
     unzip -tq "$SYMBOL_ZIP"
     unzip -p "$SYMBOL_ZIP" arm64-v8a/libbox.so > "$TEMP_DIR/libbox-symbols.so"
-    readelf -S "$TEMP_DIR/libbox-symbols.so" | grep -Fq '.symtab'
-    readelf -S "$TEMP_DIR/libbox-symbols.so" | grep -Fq '.debug_info'
+    readelf -S "$TEMP_DIR/libbox-symbols.so" | grep -F '.symtab' >/dev/null
+    readelf -S "$TEMP_DIR/libbox-symbols.so" | grep -F '.debug_info' >/dev/null
     jq -e --arg commit "$CORE_COMMIT" --arg patch_sha256 "$CORE_PATCH_SHA256" '
       .core_commit == $commit and .core_patch_sha256 == $patch_sha256 and
       .abi == "arm64-v8a" and .loadable_sections_exact == true

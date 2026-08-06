@@ -74,9 +74,10 @@ if grep -Eq 'Gate6ProcessProbeReceiver|Gate7UpgradeProbeReceiver|Gate8StressProb
     echo "Release APK contains a debug-only gate receiver" >&2
     exit 1
 fi
+PROFILEABLE_CONTEXT="$(grep -F -A1 'E: profileable' app/build/manifest-tree.txt || true)"
 if [[ "$(grep -Fc 'E: profileable' app/build/manifest-tree.txt || true)" -ne 1 ]] ||
-    ! grep -F -A1 'E: profileable' app/build/manifest-tree.txt | grep -Fq 'android:shell' ||
-    ! grep -F -A1 'E: profileable' app/build/manifest-tree.txt | grep -Fq '=true'; then
+    ! grep -Fq 'android:shell' <<<"$PROFILEABLE_CONTEXT" ||
+    ! grep -Fq '=true' <<<"$PROFILEABLE_CONTEXT"; then
     echo "Release APK must remain shell-profileable for the physical performance gate" >&2
     exit 1
 fi
@@ -88,7 +89,8 @@ if (( VPN_SERVICE_COUNT != 1 )); then
 fi
 
 ALWAYS_ON_COUNT="$(grep -Fc 'android.net.VpnService.SUPPORTS_ALWAYS_ON' app/build/manifest-tree.txt || true)"
-if (( ALWAYS_ON_COUNT != 1 )) || ! grep -F -A1 'android.net.VpnService.SUPPORTS_ALWAYS_ON' app/build/manifest-tree.txt | grep -Fq '=false'; then
+ALWAYS_ON_CONTEXT="$(grep -F -A1 'android.net.VpnService.SUPPORTS_ALWAYS_ON' app/build/manifest-tree.txt || true)"
+if (( ALWAYS_ON_COUNT != 1 )) || ! grep -Fq '=false' <<<"$ALWAYS_ON_CONTEXT"; then
     echo "Release APK must explicitly opt its VPN service out of Always-on" >&2
     exit 1
 fi
