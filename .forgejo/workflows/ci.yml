@@ -1,0 +1,50 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: android
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Go
+        uses: https://data.forgejo.org/actions/setup-go@v6
+        with:
+          go-version: 1.26.4
+          cache: false
+
+      - name: Restore Gradle and native build cache
+        uses: https://data.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cache/go-build
+            core-build/gopath/pkg/mod
+          key: zapret-kvn-android-${{ hashFiles('core.properties', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle*') }}
+
+      - name: Verify, test and build
+        run: scripts/ci-build.sh
+
+      - name: Upload build proof
+        uses: https://data.forgejo.org/actions/upload-artifact@v4
+        with:
+          name: zapret-kvn-build
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/APK-SHA256SUMS
+            app/build/permissions.txt
+            app/build/manifest-tree.txt
+            core-build/output/SHA256SUMS
+            core-build/output/core-build-metadata.json
+            build/release-candidate/security-report-*.json
