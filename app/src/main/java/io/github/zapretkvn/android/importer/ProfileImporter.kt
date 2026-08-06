@@ -196,6 +196,7 @@ object ShareLinkParser {
             server = host,
             serverPort = requirePort(uri),
             uuid = uuid,
+            encryption = query["encryption"]?.takeIf(String::isNotBlank) ?: "none",
             flow = normalizeVlessFlow(query["flow"]),
             tls = tls(query, host),
             transport = transport(query),

@@ -42,6 +42,7 @@ object ProtocolOutboundBuilders {
         server: String,
         serverPort: Int,
         uuid: String,
+        encryption: String = "none",
         flow: String? = null,
         tls: TlsSettings = TlsSettings(),
         transport: TransportSettings? = null,
@@ -53,7 +54,7 @@ object ProtocolOutboundBuilders {
             put("server", server)
             put("server_port", serverPort)
             put("uuid", uuid)
-            put("encryption", "none")
+            put("encryption", encryption)
             flow?.takeIf(String::isNotBlank)?.let { put("flow", it) }
             putTls(tls)
             transport?.let { put("transport", it.toJson()) }

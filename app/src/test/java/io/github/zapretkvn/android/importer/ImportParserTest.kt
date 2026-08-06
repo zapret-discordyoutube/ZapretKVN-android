@@ -277,6 +277,23 @@ class ImportParserTest {
     }
 
     @Test
+    fun `vless encryption is preserved for pinned core validation`() {
+        val encryption = "mlkem768x25519plus.native.0rtt." +
+            Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { it.toByte() })
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +
+                "?security=reality&flow=xtls-rprx-vision&encryption=$encryption" +
+                "&sni=cdn.example&fp=edge&pbk=public-key&sid=abcd#VLESSenc",
+            ProfileSource.Clipboard,
+        ) as ImportCandidate.Managed
+
+        assertEquals(
+            encryption,
+            candidate.servers.single().outbound.string("encryption"),
+        )
+    }
+
+    @Test
     fun `vless unknown flow fails before core validation`() {
         val error = assertThrows(ImportException::class.java) {
             ImportParser.parse(
