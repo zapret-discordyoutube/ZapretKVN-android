@@ -33,7 +33,13 @@ jobs:
           key: zapret-kvn-android-${{ hashFiles('core.properties', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle*') }}
 
       - name: Verify, test and build
-        run: scripts/ci-build.sh
+        run: |
+          set -euo pipefail
+          if git grep -n -I -E -- 'git\.zapret\.moe/(api/v1/repos/)?zapretdiscordyoutube/[A-Za-z0-9._-]+-upstream' -- ':!.forgejo/workflows/ci.yml'; then
+            echo 'Use the official third-party source instead of our retired mirror.' >&2
+            exit 1
+          fi
+          scripts/ci-build.sh
 
       - name: Upload build proof
         uses: https://data.forgejo.org/forgejo/upload-artifact@v4
