@@ -6,7 +6,7 @@
 
 Zapret KVN — быстрый и бережный VPN-клиент для Android на базе `sing-box-extended`. Он позволяет выбрать не только VPN-профиль, но и конкретные приложения и сайты, которым нужен VPN.
 
-### [Получить ключи можно тут](https://t.me/zapretvpns_bot) | [Скачать](https://github.com/youtubediscord/ZapretKVN-android/releases) | [Windows](https://github.com/youtubediscord/zapret-kvn)
+### [Получить ключи можно тут](https://t.me/zapretvpns_bot) | [Скачать](https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases) | [Windows](https://git.zapret.moe/zapretdiscordyoutube/zapret-kvn)
 
 Обычный VPN-клиент часто отправляет в туннель весь трафик телефона. При подключении
 Zapret KVN передаёт Android список выбранных приложений, и система направляет в TUN
@@ -371,7 +371,7 @@ Android всё равно показывает системный `VpnService`, 
 
 Stable-сборки используют package `io.github.zapretkvn.android` и постоянный production
 key. `0.2.3` обновляет `0.2.1`, `0.2.2` и `0.2.1-beta.30` без потери app-private данных. Ручные
-debug-сборки публикуются в [GitHub Releases](https://github.com/youtubediscord/ZapretKVN-android/releases)
+стабильные сборки публикуются в [Forgejo Releases](https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases), а отладочные APK сохраняются как артефакты Forgejo Actions
 как prerelease; у них отдельный package `io.github.zapretkvn.android.debug` и Android
 debug key, поэтому они устанавливаются рядом и не обновляют production-приложение.
 
@@ -412,7 +412,7 @@ Hysteria2 и других протоколов. В дальнейшем такж
 - Явные режимы «Из JSON», «DNS Android» и «Защищённый через VPN» не переключаются автоматически. «Из JSON» сохраняет заданную DNS-секцию буквально; только когда её вообще нет, runtime использует минимальный local DNS Android. Bounded fallback `профиль → Android → DoH` действует только в режиме «Автоматически» и закрывает предыдущий TUN/core перед следующей попыткой.
 - Domain-only block не является firewall: для гарантии нужен IP/CIDR rule-set.
 - Clash YAML и Hysteria v1 URI пока не импортируются; raw JSON остаётся ответственностью пользователя.
-- APK проверяется один раз при запуске по выбранному каналу и вручную из настроек; Beta выбирает последний опубликованный prerelease по `published_at`, а найденное обновление показывает release notes. Если GitHub недоступен напрямую, updater один раз временно повторяет только свой запрос через выбранный VPN-профиль и затем восстанавливает прежнее состояние VPN; постоянного правила для GitHub и влияния на другие приложения нет. Загрузка выполняется после подтверждения; после проверки APK штатный Android installer открывается автоматически и запрашивает финальное подтверждение. `silent install` недоступен. Подписки не обновляются в фоне, core обновляется только вместе с APK.
+- APK проверяется один раз при запуске по выбранному каналу и вручную из настроек; Beta выбирает последний опубликованный prerelease по `published_at`, а найденное обновление показывает release notes. Если Forgejo недоступен напрямую, updater один раз временно повторяет только свой запрос через выбранный VPN-профиль и затем восстанавливает прежнее состояние VPN; постоянного правила для Forgejo и влияния на другие приложения нет. Загрузка выполняется после подтверждения; после проверки APK штатный Android installer открывается автоматически и запрашивает финальное подтверждение. `silent install` недоступен. Подписки не обновляются в фоне, core обновляется только вместе с APK.
 - При неработающем proxy/DNS VPN закрывается без бесконечного retry и plaintext DNS fallback.
 
 ## Документация
@@ -455,11 +455,11 @@ git tag -a vMAJOR.MINOR.PATCH -m "Zapret KVN MAJOR.MINOR.PATCH"
 scripts/publish-local-stable.sh vMAJOR.MINOR.PATCH --final-gate-approved
 ```
 
-Publisher не ждёт GitHub Actions: он создаёт приватный draft, последовательно загружает
+Publisher не ждёт Forgejo Actions: он создаёт приватный draft, последовательно загружает
 и сверяет SHA-256 всех assets, публикует только полный набор и запускает независимую
 фоновую проверку. Прерванная загрузка возобновляется из проверенного локального bundle
-без замены remote assets. Production key в Actions не передаётся; system image
-эмулятора кешируется между verification runs. Полный контракт ключей, tag и защиты от
+без замены remote assets. Production key в Actions не передаётся; фоновая проверка
+повторяет сборку и сверяет фактически опубликованный пакет. Полный контракт ключей, tag и защиты от
 повторной публикации описан в [инструкции по подписи](SIGNING.md).
 
 Для debug APK другой архитектуры используйте, например:

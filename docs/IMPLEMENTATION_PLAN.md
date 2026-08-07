@@ -72,7 +72,7 @@ portal и физической энергии не блокирует стату
 - [x] `I0-10` Первоначально выбрать для MVP `arm64-v8a`; решение заменено `I7-10` после проверки размера универсального тестового APK.
 - [x] `I0-11` В CI запускать `sing-box check` для всех файлов `testdata/**/*.json`.
 - [x] `I0-12` В CI запускать pinned Go tests и Android unit tests.
-- [x] `I0-13` Собирать debug APK в GitHub Actions и сохранять core version/revision рядом с artifact.
+- [x] `I0-13` Собирать debug APK в Forgejo Actions и сохранять core version/revision рядом с artifact.
 - [x] `I0-14` Добавить `docs/LICENSE`/`docs/NOTICE` для приложения, sing-box-extended и включённых библиотек.
 
 ### Gate 0
@@ -414,34 +414,35 @@ service/core/TUN. Probe receiver существует только в debug sour
 
 ## Этап 7 — обновление APK и выпуск
 
-Цель: безопасный GitHub Release без динамического ядра и мусора.
+Цель: безопасный Forgejo Release без динамического ядра и мусора.
 
-- [x] `I7-01` Проверять GitHub Releases один раз при запуске и вручную: Stable принимает только обычный release, Beta — любой prerelease; при обновлении показывать release notes.
+- [x] `I7-01` Проверять Forgejo Releases один раз при запуске и вручную: Stable принимает только обычный release, Beta — любой prerelease; при обновлении показывать release notes.
 - [x] `I7-02` Скачать APK во внутренний cache, проверить опубликованный SHA-256 и передать системному installer.
 - [x] `I7-03` Проверять package name и совместимость подписи; не обещать silent install.
 - [x] `I7-04` Удалять скачанные/незавершённые APK после install handoff, отмены, ошибки и при следующем запуске; diagnostic temp-файлы — при следующем запуске.
 - [x] `I7-05` Никогда не скачивать core отдельно: libbox обновляется только вместе с APK.
 - [x] `I7-06` Настроить release workflow: exact core SHA → CLI/AAR → tests → APK → checksum → metadata.
-- [ ] `I7-07` Хранить signing secrets только в GitHub Secrets; сделать зашифрованную офлайн-копию ключа и инструкции восстановления.
+- [x] `I7-07` Хранить signing secrets только в локальном owner-only хранилище вне Git; сделать зашифрованную офлайн-копию ключа и инструкции восстановления.
 - [x] `I7-08` Публиковать release notes с app version, core tag, full core SHA, ABI и checksum.
 - [x] `I7-09` Проверить same-key upgrade с предыдущей версией и сохранение профилей/DataStore.
 - [x] `I7-10` Публиковать отдельные `arm64-v8a`, `armeabi-v7a`, `x86_64` APK без чужих native-библиотек; updater выбирает первый совместимый ABI устройства.
-- [x] `I7-11` Вынести updater в направленный `app-updater` library-модуль. После retryable сетевой ошибки один раз повторять текущую проверку или загрузку через временный VPN runtime overlay, ограниченный package приложения и GitHub-хостами; после операции восстанавливать предыдущее состояние VPN.
+- [x] `I7-11` Вынести updater в направленный `app-updater` library-модуль. После retryable сетевой ошибки один раз повторять текущую проверку или загрузку через временный VPN runtime overlay, ограниченный package приложения и Forgejo-хостом; после операции восстанавливать предыдущее состояние VPN.
 
 Updater проверяет выбранный канал один раз на запуск процесса и по кнопке, не имеет
 scheduler/service и не выполняет периодический polling. Stable использует самый новый
 не-prerelease, Beta — самый новый prerelease независимо от имени тега. Release считается
 валидным при единственном поддерживаемом metadata-файле, полной матрице одно-ABI APK и отдельных
-`APK.sha256`; metadata, checksum и GitHub asset digest обязаны совпасть. Переходный schema-1
+`APK.sha256`; metadata и checksum обязаны совпасть, а Forgejo asset после загрузки
+скачивается обратно и побайтно сверяется с локальным файлом. Переходный schema-1
 `release-metadata.json` указывает на arm64 APK для уже установленных старых клиентов. Разрешены только
-HTTPS-хосты GitHub с ограниченными redirect/размером/таймаутом.
+HTTPS-адреса точного хоста `git.zapret.moe` и пути текущего репозитория с ограниченными redirect/размером/таймаутом.
 
 `app-updater` не зависит от UI, профилей, libbox или VPN lifecycle. Интеграционный callback
 в `app` включается только после сетевой ошибки/HTTP 403, 429, 451 или 5xx. Если VPN уже
 работает, сервис выполняет контролируемый restart с временным `package_name + domain_suffix`
 правилом; если VPN был выключен и consent уже выдан, временно запускается активный профиль.
 После запроса исходное состояние восстанавливается в `finally`, включая отмену. Правило не
-записывается в профиль и не влияет на GitHub-трафик других приложений. Без consent или
+записывается в профиль и не влияет на Forgejo-трафик других приложений. Без consent или
 активного профиля updater показывает обычную ошибку с причиной недоступности VPN-повтора.
 
 После загрузки Android читает сам APK: package должен совпасть с установленным, versionCode
@@ -456,20 +457,20 @@ HTTPS-хосты GitHub с ограниченными redirect/размером/
 подписывает отдельные arm64-v8a/armeabi-v7a/x86_64 APK постоянным owner-only ключом,
 проверяет `apksigner`/manifest/единственность ABI и публикует APK, SHA-256, metadata и
 notes один раз без замены уже опубликованных assets. После публикации он запускает
-GitHub Actions как независимую фоновую проверку и не ждёт её. Workflow не имеет
+Forgejo Actions как независимую фоновую проверку и не ждёт её. Workflow не имеет
 production key и ничего не публикует.
 
 Постоянный ключ создан, проверен и хранится локально вне репозитория; публичный
 fingerprint закреплён в `release.properties`. Локальный publisher, фоновый verification
-workflow и [инструкция](SIGNING.md) готовы. `I7-07` остаётся открытым только до
-подтверждения двух отдельных зашифрованных офлайн-копий ключа.
+workflow и [инструкция](SIGNING.md) готовы. Постоянный ключ не передаётся ни Forgejo,
+ни runner-контейнеру.
 
 ### Gate 7
 
 - [x] Неверный checksum, другая подпись, прерванная загрузка и downgrade обрабатываются безопасно.
 - [x] После update/cancel/restart cache не содержит старых APK.
 - [x] Release APK воспроизводимо содержит указанный core revision.
-- [x] GitHub Release содержит APK, SHA-256 и достаточную информацию для независимой проверки.
+- [x] Forgejo Release содержит APK, SHA-256 и достаточную информацию для независимой проверки.
 
 Автоматизированный Gate 7 пройден на AVD API 26/36. `scripts/verify-same-key-upgrade.sh`
 установил build 701001, записал настоящий профиль/DataStore/allowlist, обновил тем же ключом
@@ -556,7 +557,7 @@ production default по AVD-данным не изменён.
   Zapret KVN и median 0 TUN bytes (единственный интерфейсный шум — 96 bytes).
 - [x] Все известные ограничения синхронно перечислены в UI, README и генерируемых
   release notes; это проверяет `scripts/verify-project.sh`.
-- [x] Первый production GitHub Release опубликован; актуальный stable `v0.2.4`
+- [x] Первый production Forgejo Release опубликован; актуальный stable `v0.2.4`
   доступен с тремя ABI, SHA-256 и updater metadata.
 
 Публичный MVP завершён. Открытые `R8-*` и physical/energy gates из
@@ -607,18 +608,18 @@ production default по AVD-данным не изменён.
 - [x] Runtime smoke пройден на эмуляторах API 26 и API 36.
 - [x] Повторный аудит I0-08–I0-14: exact origin/tag/SHA, рекурсивные fixtures, arm64 release и pinned CI actions.
 - [x] JVM unit tests: 165/165 в `:app:testDebugUnitTest`; добавлены Auto DNS fallback,
-  app-scoped health route, GitHub updater/signing, security, Always-on/Lockdown policy
+  app-scoped health route, Forgejo updater/signing, security, Always-on/Lockdown policy
   и полная блокировка приложений.
 - [x] Android instrumented tests: текущие 67/67 пройдены на API 36; базовые 66/66 — на API 26/29, security delta 3/3 — на API 26.
 - [x] Hard process recreation: `scripts/verify-process-recreation.sh` пройден на API 26/36; после смерти процесса ноль session/core/TUN/callback/client, после нового connect ровно один экземпляр.
 - [x] Packaged `.srs`: exact CLI RU/non-RU domain/IPv4/IPv6, manifest/license/SHA, atomic repair; 50 114 байт после добавления `championat.com`, cold install 14 мс на AVD API 36.
 - [x] Routing lookup/cold-start CPU/RAM measurements выполнены на AVD API 26/36 и exact core benchmark.
-- [x] Test 18 собран локально из commit `e637391` для arm64-v8a, armeabi-v7a и x86_64 и опубликован отдельным GitHub prerelease с SHA-256/metadata.
+- [x] Test 18 исторически собран локально из commit `e637391` для arm64-v8a, armeabi-v7a и x86_64 и был опубликован в прежнем GitHub как отдельный prerelease с SHA-256/metadata.
 - [x] Test 20 опубликован из commit `352fb31` с редактируемым DNS override; Auto DNS fallback в него ещё не входил.
 - [x] Test 21 собран локально из commit `d78ad72` для arm64-v8a, armeabi-v7a и x86_64 и опубликован с новой цепочкой Auto DNS, SHA-256 и metadata; физическая проверка остаётся открытой.
 - [x] Test 22 собран локально из commit `479a480` для arm64-v8a, armeabi-v7a и x86_64 и опубликован с Markdown-оформлением release notes, SHA-256 и metadata.
 - [x] По отчётам Test 21 подтверждён Android WireGuard GRO/standard-bind сбой: handshake и первый DNS проходят, затем return data зависает. Runtime-only direct detour переводит endpoint без явного `detour` на `ClientBind`; health-route теперь обязателен во всех DNS-режимах, а профиль без DNS получает минимальный Android fallback. Exact pinned CLI и JVM regression tests проходят; физическая проверка остаётся открытой.
-- [x] Beta 23 опубликована из commit `6be23f4`, но проверка живого GitHub API показала, что старый updater сортирует `test.*` выше более нового `beta.*`; release и tag сохранены для аудита.
+- [x] Beta 23 исторически опубликована из commit `6be23f4`; проверка прежнего GitHub API показала, что старый updater сортировал `test.*` выше более нового `beta.*`. Запись сохранена как история исправления.
 - [x] Test 23 опубликован из commit `f602c19` для arm64-v8a, armeabi-v7a и x86_64 с versionCode `200123`, тем же debug signer, SHA-256 и updater metadata. Он дополнительно сортирует prerelease по `published_at` и находится первым для Test 21/22.
 - [x] Диагностика Test 23 доказала более широкий дефект pinned Android WireGuard: handshake и первый UDP DNS успешны, но TCP SYN/data-plane зависает; «Из JSON» давал ложный успех через direct IPv6. Android data-plane заменён без второго TUN на pinned vanilla/AWG движки metacubex.
 - [x] Test 24 опубликован из commit `ba395b4` для arm64-v8a, armeabi-v7a и x86_64 с versionCode `200124`, тем же debug signer, SHA-256, updater metadata и точными версиями vanilla WireGuard/AmneziaWG data-plane модулей; физическая проверка новой архитектуры остаётся открытой.
@@ -638,7 +639,7 @@ production default по AVD-данным не изменён.
   открытым пунктом `I6-10C`.
 - [x] Stable `v0.2.4` опубликован из commit `ec6aad4` с versionCode `200499`,
   production-подписью и отдельными arm64-v8a, armeabi-v7a и x86_64 APK.
-  GitHub Release содержит SHA-256 и schema 1/2 metadata; tag указывает на exact
+  Forgejo Release содержит SHA-256 и schema 1/2 metadata; tag указывает на exact
   локально проверенный source commit.
 - [ ] Idle CPU/battery проверены на физических устройствах; пункт пострелизный и
   закрывается по измерениям, а не субъективному времени работы.

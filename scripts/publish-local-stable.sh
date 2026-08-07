@@ -5,25 +5,52 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAG="${1:-}"
 APPROVAL="${2:-}"
 SIGNING_DIR="${ZAPRET_SIGNING_DIR:-${HOME:?HOME is required}/.zapret-kvn-signing}"
-SIGNING_ENV="$SIGNING_DIR/github-secrets.env"
+SIGNING_ENV="${ZAPRET_SIGNING_ENV:-$SIGNING_DIR/signing-secrets.env}"
+if [[ ! -f "$SIGNING_ENV" && -f "$SIGNING_DIR/github-secrets.env" ]]; then
+    SIGNING_ENV="$SIGNING_DIR/github-secrets.env"
+fi
 SIGNING_STORE="$SIGNING_DIR/zapret-kvn-release.jks"
 SIGNING_FINGERPRINT_FILE="$SIGNING_DIR/certificate-sha256.txt"
 RELEASE_MATRIX_DIR="$PROJECT_ROOT/app/build/outputs/apk/matrix/release"
 OUTPUT_DIR="$PROJECT_ROOT/build/local-release/$TAG"
 STAGING_OUTPUT_DIR="$PROJECT_ROOT/build/local-release/.$TAG.staging"
-RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-youtubediscord/ZapretKVN-android}"
+RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-zapretdiscordyoutube/ZapretKVN-android}"
+FORGEJO_URL="${ZAPRET_FORGEJO_URL:-https://git.zapret.moe}"
+FORGEJO_TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.config/forgejo/zapret-kvn-android-release-token}"
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-approved ]]; then
     echo "Usage: $0 vMAJOR.MINOR.PATCH --final-gate-approved" >&2
     exit 1
 fi
 
-for command in gh git jq keytool mv sha256sum stat timeout; do
+for command in curl git jq keytool mv sha256sum stat timeout; do
     command -v "$command" >/dev/null || {
         echo "Missing required command: $command" >&2
         exit 1
     }
 done
+if [[ -n "${ZAPRET_FORGEJO_TOKEN:-}" ]]; then
+    FORGEJO_TOKEN="$ZAPRET_FORGEJO_TOKEN"
+else
+    if [[ ! -f "$FORGEJO_TOKEN_FILE" || "$(stat -c '%a' "$FORGEJO_TOKEN_FILE")" != 600 ]]; then
+        echo "Forgejo token file must exist with mode 600: $FORGEJO_TOKEN_FILE" >&2
+        exit 1
+    fi
+    IFS= read -r FORGEJO_TOKEN < "$FORGEJO_TOKEN_FILE"
+fi
+if [[ -z "$FORGEJO_TOKEN" ]]; then
+    echo "Forgejo token is empty" >&2
+    exit 1
+fi
+RELEASE_PROBE="$(mktemp)"
+trap 'rm -f -- "$RELEASE_PROBE"' EXIT
+forgejo_api() {
+    curl --silent --show-error --fail \
+        --connect-timeout 20 --max-time 120 \
+        -H "Authorization: token $FORGEJO_TOKEN" \
+        -H 'Accept: application/json' \
+        "$@"
+}
 if [[ "$(stat -c '%a' "$SIGNING_DIR")" != 700 ]]; then
     echo "Signing directory must have mode 700: $SIGNING_DIR" >&2
     exit 1
@@ -51,7 +78,7 @@ if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
     echo "Local main must exactly match origin/main before publication" >&2
     exit 1
 fi
-if [[ "$(gh repo view --json nameWithOwner --jq .nameWithOwner)" != "$RELEASE_REPOSITORY" ]]; then
+if [[ "$(git remote get-url origin)" != *"/$RELEASE_REPOSITORY.git" ]]; then
     echo "Current repository does not match the updater release repository" >&2
     exit 1
 fi
@@ -77,26 +104,20 @@ elif [[ "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
     exit 1
 fi
 
-if release_json="$(
-    gh api --paginate "repos/$RELEASE_REPOSITORY/releases?per_page=100" 2>/dev/null \
-        | jq -sce \
-            --arg tag "$TAG" \
-            '
-                [.[] | .[] | select(.tag_name == $tag)]
-                | if length == 1 then
-                    .[0]
-                elif length == 0 then
-                    empty
-                else
-                    error("multiple GitHub Releases use the requested tag")
-                end
-            '
-)"; then
+release_http="$(curl --silent --show-error \
+    --connect-timeout 20 --max-time 120 \
+    -H "Authorization: token $FORGEJO_TOKEN" \
+    -H 'Accept: application/json' \
+    --output "$RELEASE_PROBE" \
+    --write-out '%{http_code}' \
+    "$FORGEJO_URL/api/v1/repos/$RELEASE_REPOSITORY/releases/tags/$TAG")"
+if [[ "$release_http" == 200 ]]; then
+    release_json="$(jq -ce . "$RELEASE_PROBE")"
     if ! jq -e \
         --arg tag "$TAG" \
         '.tag_name == $tag and .draft == true and .prerelease == false' \
         <<<"$release_json" >/dev/null; then
-        echo "GitHub Release already exists and is not a resumable draft: $TAG" >&2
+        echo "Forgejo Release already exists and is not a resumable draft: $TAG" >&2
         exit 1
     fi
     if [[ ! -d "$OUTPUT_DIR" ]]; then
@@ -105,6 +126,9 @@ if release_json="$(
         exit 1
     fi
     echo "Found resumable stable draft: $TAG"
+elif [[ "$release_http" != 404 ]]; then
+    echo "Forgejo release probe failed with HTTP $release_http" >&2
+    exit 1
 fi
 
 # This file is owner-only and is the existing canonical local copy of the release
@@ -175,7 +199,7 @@ if [[ "$ZAPRET_RELEASE_CHANNEL" != stable || "$ZAPRET_PRERELEASE" != false ]]; t
     exit 1
 fi
 
-latest_tag="$(gh api "repos/$RELEASE_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)"
+latest_tag="$(forgejo_api "$FORGEJO_URL/api/v1/repos/$RELEASE_REPOSITORY/releases/latest" 2>/dev/null | jq -r '.tag_name // empty' || true)"
 if [[ -n "$latest_tag" ]]; then
     latest_version_code="$(
         "$PROJECT_ROOT/scripts/derive-release-version.sh" "$latest_tag" \
@@ -216,14 +240,20 @@ else
     echo "Promoted verified release bundle atomically: $OUTPUT_DIR"
 fi
 
-"$PROJECT_ROOT/scripts/publish-github-stable.sh" \
+"$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" \
     "$TAG" \
     "$OUTPUT_DIR" \
     "$RELEASE_REPOSITORY"
 
-if gh workflow run release.yml --repo "$RELEASE_REPOSITORY" --ref main -f "tag=$TAG"; then
-    echo "Stable $TAG published; independent GitHub Actions verification was dispatched."
+dispatch_payload="$(jq -n --arg tag "$TAG" '{ref:"main",inputs:{tag:$tag}}')"
+if forgejo_api \
+    --request POST \
+    -H 'Content-Type: application/json' \
+    --data "$dispatch_payload" \
+    "$FORGEJO_URL/api/v1/repos/$RELEASE_REPOSITORY/actions/workflows/release-verify.yml/dispatches" \
+    >/dev/null; then
+    echo "Stable $TAG published; independent Forgejo Actions verification was dispatched."
 else
-    echo "Stable $TAG was published, but background verification dispatch failed." >&2
+    echo "Stable $TAG was published, but background Forgejo verification dispatch failed." >&2
     exit 1
 fi

@@ -1,0 +1,88 @@
+name: Verify published stable
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing locally published stable tag
+        required: true
+        type: string
+
+jobs:
+  verify:
+    runs-on: android
+    timeout-minutes: 180
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      ZAPRET_UPDATE_REPOSITORY: zapretdiscordyoutube/ZapretKVN-android
+      ZAPRET_REQUIRE_SIGNED_RELEASE: "1"
+
+    steps:
+      - name: Validate requested stable tag
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+      - name: Checkout exact release tag
+        uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Set up pinned Go
+        uses: https://data.forgejo.org/actions/setup-go@v6
+        with:
+          go-version: 1.26.4
+          cache: false
+
+      - name: Restore Gradle and native build cache
+        uses: https://data.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.cache/go-build
+            core-build/gopath/pkg/mod
+          key: zapret-kvn-android-release-${{ hashFiles('core.properties', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle*') }}
+
+      - name: Verify, test and build from the tagged source
+        run: scripts/ci-build.sh
+
+      - name: Download the published Forgejo bundle
+        run: |
+          set -euo pipefail
+          release_url="https://git.zapret.moe/api/v1/repos/$ZAPRET_UPDATE_REPOSITORY/releases/tags/$RELEASE_TAG"
+          curl --fail --silent --show-error --proto '=https' "$release_url" > release.json
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            '.tag_name == $tag and .draft == false and .prerelease == false and (.assets | length) == 8' \
+            release.json >/dev/null
+          mkdir published-release
+          while IFS=$'\t' read -r name url; do
+            [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+            expected="https://git.zapret.moe/$ZAPRET_UPDATE_REPOSITORY/releases/download/$RELEASE_TAG/"
+            [[ "$url" == "$expected"* ]]
+            curl --fail --silent --show-error --location \
+              --proto '=https' --max-redirs 3 \
+              --output "published-release/$name" \
+              "$url"
+          done < <(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' release.json)
+
+      - name: Verify the exact published release bundle
+        run: scripts/verify-release-bundle.sh "$RELEASE_TAG" published-release
+
+      - name: Upload release proof
+        uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: zapret-kvn-${{ inputs.tag }}-proof
+          if-no-files-found: error
+          path: |
+            published-release/**
+            app/build/permissions.txt
+            app/build/manifest-tree.txt
+            app/build/outputs/mapping/release/mapping.txt
+            core-build/output/core-version.txt
+            core-build/output/core-build-metadata.json
+            core-build/output/native-debug-symbols.zip
+            core-build/output/native-symbols-metadata.json
+            core-build/output/native-symbols-SHA256SUMS
+            build/release-candidate/security-report-*.json

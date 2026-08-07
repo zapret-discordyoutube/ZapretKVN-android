@@ -144,7 +144,7 @@ app-private clipboard history и foreground notification из закрытого
 median 407 ms; release `run-as` отклонён, process crash отсутствует.
 
 `R8-21…R8-24` закрыты. `R8-25` остаётся открытым только для последнего arm64 APK,
-подписанного постоянным GitHub release key и установленного/обновлённого на реальном
+подписанного постоянным Forgejo release key и установленного/обновлённого на реальном
 устройстве непосредственно перед публикацией. Временный тестовый ключ не выдаётся за
 production evidence.
 
@@ -157,8 +157,8 @@ real-device прогон `R8-25`.
 
 Stable publisher запускается локально после явного `--final-gate-approved`, сверяет
 production JKS с закреплённым публичным SHA-256, повторяет host-side build/test/security
-gates и создаёт GitHub Release без ожидания GitHub Actions. После публикации фоновый
-workflow с одноразовым тестовым ключом повторяет 67 instrumented-тестов, process
-recreation, 100/50 stress и no-background-traffic matrix, затем скачивает Release и
-проверяет metadata, checksum, ABI, version и production fingerprint. Production key
-в GitHub Actions больше не передаётся.
+gates и создаёт Forgejo Release без ожидания Forgejo Actions. После публикации фоновый
+workflow с одноразовым тестовым ключом повторяет сборку исходников, затем скачивает
+Release и проверяет metadata, checksum, ABI, version и production fingerprint. Полные
+instrumented/process/stress/device-gates выполняются локально до публикации. Production key
+в Forgejo Actions больше не передаётся.

@@ -477,7 +477,7 @@ private fun UpdateControls(
                 CircularProgressIndicator(modifier = Modifier.padding(end = 12.dp))
                 Text(
                     when (state.operation) {
-                        UpdateOperation.Check -> "GitHub недоступен напрямую. Временно включаем VPN для проверки…"
+                        UpdateOperation.Check -> "Forgejo недоступен напрямую. Временно включаем VPN для проверки…"
                         UpdateOperation.Download -> "Загрузка заблокирована. Временно включаем VPN для updater…"
                     },
                 )

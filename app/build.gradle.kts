@@ -36,7 +36,7 @@ val debugVersionNameSuffix = providers.gradleProperty("zapretDebugVersionNameSuf
     .get()
 val updateRepository = providers.gradleProperty("zapretUpdateRepository")
     .orElse(providers.environmentVariable("ZAPRET_UPDATE_REPOSITORY"))
-    .orElse("youtubediscord/ZapretKVN-android")
+    .orElse("zapretdiscordyoutube/ZapretKVN-android")
     .get()
     .also { require(Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+").matches(it)) }
 val supportedApkAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")

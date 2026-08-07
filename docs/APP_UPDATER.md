@@ -3,7 +3,7 @@
 Изолированный модуль обновления APK. Он не зависит от UI, профилей, libbox или
 реализации VPN в `app`.
 
-- `GitHubUpdateSource.kt` — HTTPS, GitHub Releases и загрузка.
+- `ForgejoUpdateSource.kt` — HTTPS, Forgejo Releases и загрузка.
 - `UpdateModels.kt` — release metadata, состояния и строгий JSON parser.
 - `ApkUpdateVerifier.kt` — package/version/minSdk/signing policy.
 - `UpdateController.kt` — одна проверка, загрузка, cache cleanup и один VPN retry.

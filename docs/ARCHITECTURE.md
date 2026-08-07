@@ -38,7 +38,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 - сохраняет настоящий sing-box JSON и неизвестные extended-поля;
 - даёт простой GUI для наиболее частых полей и raw-редактор для остальных;
 - для новых managed-профилей по умолчанию направляет RU и LAN напрямую, а остальное через VPN только у выбранных приложений, экономя VPN-сервер;
-- распространяется готовым APK только через GitHub Releases.
+- распространяется готовым APK только через Forgejo Releases.
 
 Основной приоритет: корректность → простота → скорость → дополнительные функции.
 
@@ -66,7 +66,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 | Go runtime | `Libbox.SetMemoryLimit(false)`: стандартный GC, без Android GC=10 |
 | Телеметрия | Только session totals; 1 Гц лишь пока главная видима |
 | Ядро | Встроено в APK и обновляется только вместе с приложением |
-| Обновления | GitHub Releases, Stable/Beta, APK + SHA-256 |
+| Обновления | Forgejo Releases, Stable/Beta, APK + SHA-256 |
 | Фоновая работа | Только включённый пользователем VPN service, включая видимую сетевую паузу без TUN; нет фоновой синхронизации |
 
 Для targetSdk 34+ единственный VPN service объявляет foreground type `systemExempted`: официальная таблица Android прямо включает в допустимые случаи VPN-приложения, настроенные через системный VPN consent. `specialUse` не нужен и не создаёт лишнюю Play Console review-категорию. Lint пока требует `SCHEDULE_EXACT_ALARM` без учёта VPN-исключения, поэтому только на service стоит точечный `tools:ignore="ForegroundServicePermission"`; alarm-разрешение намеренно не добавляется. См. [Android foreground service types](https://developer.android.com/develop/background-work/services/fgs/service-types#system-exempted).
@@ -90,7 +90,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 15. Скорость не показывается в уведомлении; status/log streams существуют только пока нужен соответствующий экран.
 16. Управляемый профиль не создаёт NTP, remote rule-set, периодический URL-test или явный persistent keepalive сверх defaults выбранного протокола.
 17. `VpnService.Builder.allowBypass()` не вызывается; rootless hardening не обещает скрыть системный TUN/`TRANSPORT_VPN`.
-18. Updater не создаёт постоянного GitHub route: VPN overlay существует только во время одной повторной операции, совпадает одновременно по package приложения и GitHub domain suffix и всегда снимается через восстановление сессии.
+18. Updater не создаёт постоянного Forgejo route: VPN overlay существует только во время одной повторной операции, совпадает одновременно по package приложения и Forgejo hostname и всегда снимается через восстановление сессии.
 
 ## Реальный сетевой путь
 
@@ -540,7 +540,7 @@ Runtime-копия каждого профиля, включая raw JSON и end
 
 ```text
 app/                 product orchestration, UI, profile/config, libbox и VpnService
-app-updater/         GitHub release API, download, checksum/APK/signing policy и retry callback
+app-updater/         Forgejo release API, download, checksum/APK/signing policy и retry callback
 network-bootstrap/   Android underlying Network, согласованный snapshot, bootstrap DNS и коды NET/DNS
 wireguard-import/    независимый parser WireGuard/AWG без зависимости от app
 ```
@@ -583,7 +583,7 @@ wireguard-import/    независимый parser WireGuard/AWG без зави
   полный, восстановленный, частичный и неудачный каталог без сохранения package list.
   Ошибка источника не заменяется придуманным сообщением: picker показывает имя
   операции, исходный `Throwable.toString()` и фактические counts остальных источников;
-- `REQUEST_INSTALL_PACKAGES` только для явно запущенного GitHub updater и штатного installer;
+- `REQUEST_INSTALL_PACKAGES` только для явно запущенного Forgejo updater и штатного installer;
 - системный file picker без broad storage permission;
 - буфер только после явного нажатия.
 
@@ -599,11 +599,11 @@ Material 3 следует системной светлой/тёмной тем�
 
 Diagnostic JSON создаётся только явной кнопкой, не содержит raw profile, package list, endpoint, внешний IP или credentials и включает app/core revision+patch SHA-256, Android/API/device ABI, non-VPN network/Private DNS, runtime resource counters, connection timeline, одну прошлую process-exit запись, последний app crash, log counters и структурную сводку effective `zapret-*` overlay. Временный файл перезаписывает предыдущий, передаётся системным Sharesheet через non-exported `FileProvider` с read grant и удаляется при следующем запуске.
 
-Updater проверяет только GitHub Releases Stable/Beta и только после явной кнопки. По `Build.SUPPORTED_ABIS` он выбирает один APK из `release-metadata-v2.json` (`arm64-v8a`, `armeabi-v7a` или `x86_64`), требует отдельный SHA-256 и GitHub digest, ограничивает HTTPS/redirect/размер, затем проверяет package, повышение versionCode, minSdk и signing history содержимого APK. Лишь после этого APK из `cache/updates` передаётся штатному Android installer через bounded non-exported FileProvider. Ошибка, отмена и следующий запуск удаляют временный APK. Core никогда не скачивается отдельно: libbox меняется только вместе с подписанным APK. Legacy `release-metadata.json` сохраняется для одного переходного arm64-обновления старых клиентов.
+Updater проверяет только Forgejo Releases Stable/Beta и только после явной кнопки. По `Build.SUPPORTED_ABIS` он выбирает один APK из `release-metadata-v2.json` (`arm64-v8a`, `armeabi-v7a` или `x86_64`), требует отдельный SHA-256, ограничивает HTTPS/redirect/размер и доверяет только точному хосту и пути репозитория. Затем он проверяет package, повышение versionCode, minSdk и signing history содержимого APK. Лишь после этого APK из `cache/updates` передаётся штатному Android installer через bounded non-exported FileProvider. Ошибка, отмена и следующий запуск удаляют временный APK. Core никогда не скачивается отдельно: libbox меняется только вместе с подписанным APK. Legacy `release-metadata.json` сохраняется для одного переходного arm64-обновления старых клиентов.
 
-Release workflow строит CLI/AAR/APK из одного полного commit и одного tracked patchset, проверяет embedded revision и patch SHA-256,
-подписывает постоянным ключом из GitHub environment и публикует три одно-ABI APK, checksums,
-metadata и release notes. APK с чужим ABI, отсутствующим `libbox` или debug symbols отклоняется. Assets существующего tag не заменяются. Порядок создания и
+Локальный release publisher строит CLI/AAR/APK из одного полного commit и одного tracked patchset, проверяет embedded revision и patch SHA-256,
+подписывает постоянным owner-only ключом и публикует три одно-ABI APK, checksums,
+metadata и release notes в Forgejo. APK с чужим ABI, отсутствующим `libbox` или debug symbols отклоняется. Assets существующего tag не заменяются. Порядок создания и
 восстановления офлайн-ключа зафиксирован в [SIGNING.md](SIGNING.md).
 
 Ссылки находятся только в «Настройки → Сообщество»:
@@ -699,7 +699,7 @@ Gate: malformed input не меняет существующие профили;
 
 Gate: полный пользовательский путь «установил → импортировал → выбрал приложения → подключился → отправил диагностику».
 
-### Этап 7 — updater и GitHub Release
+### Этап 7 — updater и Forgejo Release
 
 - ручной Stable/Beta check без фоновой синхронизации;
 - checksum/package/version/signing-history validation до installer;
@@ -708,7 +708,7 @@ Gate: полный пользовательский путь «установи�
 
 Updater находится в отдельном `app-updater` library-модуле. Прямая retryable ошибка
 проверки или загрузки допускает ровно один повтор: `app` временно перезапускает/поднимает
-текущий VPN с runtime-only правилом для package Zapret KVN и доменов GitHub. После запроса
+текущий VPN с runtime-only правилом для package Zapret KVN и хоста Forgejo. После запроса
 предыдущее состояние VPN восстанавливается даже при отмене; stored JSON и трафик других
 приложений не меняются. Отдельного VPN service, фонового worker или постоянного правила нет.
 
@@ -740,7 +740,7 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
   дополнительно прошли 100 connect/stop и 50 Wi-Fi/cellular transitions;
 - API 36 AVD прошёл 16 performance-сценариев по пять повторов: невыбранные 8 MiB дали median TUN=0, System Trace/batterystats/raw metrics сохранены, а `mixed`, MTU 9000 и GCPercent 100 оставлены без изменений по порогу 5%; физическая энергия не считается доказанной;
 - same-key upgrade probe на API 26/36 сохраняет настоящий профиль, active id, DataStore и allowlist между versionCode 701001→701002; Android отклоняет downgrade и APK с другим ключом без потери данных;
-- подписанный R8 release bundle с временным тестовым ключом локально прошёл `apksigner`, package/version/core metadata и SHA-256 consistency; постоянный production key и внешний GitHub Release остаются действиями владельца;
+- подписанный R8 release bundle с временным тестовым ключом локально прошёл `apksigner`, package/version/core metadata и SHA-256 consistency; постоянный production key и внешний Forgejo Release остаются действиями владельца;
 - отдельный debug-only adb probe на API 26/36 подтверждает hard process contract: после смерти процесса Android снимает service/TUN/core и новый UI показывает `Stopped`, а следующий connect создаёт ровно один экземпляр; receiver отсутствует в release manifest;
 - exact CLI проверяет packaged RU domain/IP `.srs` на RU/non-RU domain, IPv4 и IPv6; manifest закрепляет источник, commit/license и SHA-256, а installer атомарно восстанавливает повреждённый asset до запуска VPN;
 - exact core benchmark: загрузка `.srs` 1 114 мкс/758 624 allocation bytes, lookup 329 нс/op, 1 104 B/op и 2 allocs/op; полный Android debug-прогон дал cold connect 41/63 мс и 2,5/7,5 мс CPU на flow на API 36/26 без продолжающегося роста PSS;
@@ -748,7 +748,7 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
 - Markdown, локальные ссылки, fixture hashes, lint и полный локальный аналог CI проверены;
 - P12–P14, физическая/энергетическая часть P15 и обязательный release-gate энергии на устройстве ещё не выполнены.
 
-Эти результаты закрывают локальные автоматизированные Gate 2/4/6/7, но не закрывают физический Gate 3 и выпускную OEM/energy matrix: ещё нужны настоящий captive portal, IPv6-only/NAT64, blocked-DNS/LKG/DoH и повтор per-app/routing на физических сетях/устройствах. Они также не заменяют внешний GitHub Actions run, постоянный signing key и фактически опубликованный Release. Приложение нельзя считать готовым к выпуску до этапа 8.
+Эти результаты закрывают локальные автоматизированные Gate 2/4/6/7, но не закрывают физический Gate 3 и выпускную OEM/energy matrix: ещё нужны настоящий captive portal, IPv6-only/NAT64, blocked-DNS/LKG/DoH и повтор per-app/routing на физических сетях/устройствах. Они также не заменяют внешний Forgejo Actions run, постоянный signing key и фактически опубликованный Release. Приложение нельзя считать готовым к выпуску до этапа 8.
 
 ## Потом проверить — открытые вопросы
 
@@ -782,7 +782,7 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
 - [Android PackageManager: APK/signing contract](https://developer.android.com/reference/android/content/pm/PackageManager)
 - [Android SigningInfo: rotation and multiple signers](https://developer.android.com/reference/android/content/pm/SigningInfo)
 - [Android installer intent contract](https://developer.android.com/reference/android/content/Intent#ACTION_INSTALL_PACKAGE)
-- [GitHub REST API: releases and assets](https://docs.github.com/en/rest/releases/releases)
+- [Forgejo API](https://forgejo.org/docs/latest/user/api-usage/)
 - [Pinned core: Android memory/GC policy](https://github.com/shtorm-7/sing-box-extended/blob/ff11f007ec798136a5de258f947a4f34011a37ea/experimental/libbox/memory.go)
 - [Pinned core: status/log command server](https://github.com/shtorm-7/sing-box-extended/blob/ff11f007ec798136a5de258f947a4f34011a37ea/daemon/started_service.go)
 - [Pinned core: internal Clash API creation from PlatformLogWriter](https://github.com/shtorm-7/sing-box-extended/blob/ff11f007ec798136a5de258f947a4f34011a37ea/box.go)

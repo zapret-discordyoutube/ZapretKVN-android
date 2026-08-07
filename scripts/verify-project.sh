@@ -15,8 +15,8 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -f "$PROJECT_ROOT/audit/rule_set_performance_test.go" ]]
 [[ -f "$PROJECT_ROOT/scripts/core-patchset.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/publish-local-stable.sh" ]]
-[[ -x "$PROJECT_ROOT/scripts/publish-github-stable.sh" ]]
-[[ -x "$PROJECT_ROOT/scripts/test-publish-github-stable.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-publish-forgejo-stable.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/verify-release-bundle.sh" ]]
 [[ -f "$PROJECT_ROOT/release.properties" ]]
 source "$PROJECT_ROOT/core.properties"
@@ -24,17 +24,12 @@ source "$PROJECT_ROOT/scripts/core-patchset.sh"
 verify_core_patchset "$PROJECT_ROOT"
 [[ -f "$PROJECT_ROOT/scripts/gate8-performance-summary.jq" ]]
 
-RELEASE_WORKFLOW="$PROJECT_ROOT/.github/workflows/release.yml"
+RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/release-verify.yml"
 grep -Fq 'workflow_dispatch:' "$RELEASE_WORKFLOW"
-grep -Fq 'scripts/verify-gate8-performance.sh' "$RELEASE_WORKFLOW"
+grep -Fq 'scripts/ci-build.sh' "$RELEASE_WORKFLOW"
 grep -Fq 'scripts/verify-release-bundle.sh' "$RELEASE_WORKFLOW"
-grep -Fq 'Restore Android emulator packages' "$RELEASE_WORKFLOW"
-grep -Fq 'Install or verify Android emulator packages' "$RELEASE_WORKFLOW"
-grep -Fq 'android-emulator-${{ runner.os }}' "$RELEASE_WORKFLOW"
-grep -Fq 'android-emulator-packages.outputs.cache-hit' "$RELEASE_WORKFLOW"
-grep -Fq 'permissions:' "$RELEASE_WORKFLOW"
-grep -Fq 'contents: read' "$RELEASE_WORKFLOW"
-if grep -Fq 'gh release create' "$RELEASE_WORKFLOW" ||
+grep -Fq 'git.zapret.moe/api/v1/repos/' "$RELEASE_WORKFLOW"
+if grep -Fq 'release create' "$RELEASE_WORKFLOW" ||
     grep -Fq 'ANDROID_SIGNING_KEYSTORE_BASE64' "$RELEASE_WORKFLOW" ||
     grep -Fq 'secrets.ANDROID_SIGNING' "$RELEASE_WORKFLOW"; then
     echo "Background release verification must not publish or access the production key" >&2
@@ -46,18 +41,16 @@ if grep -Eq '^[[:space:]]+push:' "$RELEASE_WORKFLOW"; then
 fi
 LOCAL_PUBLISHER="$PROJECT_ROOT/scripts/publish-local-stable.sh"
 grep -Fq -- '--final-gate-approved' "$LOCAL_PUBLISHER"
-grep -Fq 'scripts/publish-github-stable.sh' "$LOCAL_PUBLISHER"
-grep -Fq 'gh workflow run release.yml' "$LOCAL_PUBLISHER"
+grep -Fq 'scripts/publish-forgejo-stable.sh' "$LOCAL_PUBLISHER"
+grep -Fq 'actions/workflows/release-verify.yml/dispatches' "$LOCAL_PUBLISHER"
 grep -Fq 'scripts/ci-build.sh' "$LOCAL_PUBLISHER"
 grep -Fq 'scripts/verify-release-bundle.sh' "$LOCAL_PUBLISHER"
-GITHUB_PUBLISHER="$PROJECT_ROOT/scripts/publish-github-stable.sh"
-grep -Fq 'gh release create' "$GITHUB_PUBLISHER"
-grep -Fq -- '--draft' "$GITHUB_PUBLISHER"
-grep -Fq 'gh release upload' "$GITHUB_PUBLISHER"
-grep -Fq 'timeout --foreground' "$GITHUB_PUBLISHER"
-# shellcheck disable=SC2016
-grep -Fq '.digest == $digest' "$GITHUB_PUBLISHER"
-"$PROJECT_ROOT/scripts/test-publish-github-stable.sh"
+FORGEJO_PUBLISHER="$PROJECT_ROOT/scripts/publish-forgejo-stable.sh"
+grep -Fq '/api/v1' "$FORGEJO_PUBLISHER"
+grep -Fq 'draft:true,prerelease:false' "$FORGEJO_PUBLISHER"
+grep -Fq 'draft:false,prerelease:false' "$FORGEJO_PUBLISHER"
+grep -Fq 'sha256sum "$downloaded"' "$FORGEJO_PUBLISHER"
+"$PROJECT_ROOT/scripts/test-publish-forgejo-stable.sh"
 source "$PROJECT_ROOT/release.properties"
 if [[ ! "$RELEASE_SIGNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Invalid public production signing fingerprint" >&2
@@ -77,11 +70,11 @@ printf '%s  %s\n' \
     | sha256sum -c - >/dev/null
 
 INVALID_ACTIONS="$(
-    sed -n 's/^[[:space:]]*uses:[[:space:]]*//p' "$PROJECT_ROOT"/.github/workflows/*.yml \
-        | grep -Ev '@[0-9a-f]{40}([[:space:]]+#.*)?$' || true
+    sed -n 's/^[[:space:]]*uses:[[:space:]]*//p' "$PROJECT_ROOT"/.forgejo/workflows/*.yml \
+        | grep -Ev '^https://data\.forgejo\.org/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[^[:space:]]+$' || true
 )"
 if [[ -n "$INVALID_ACTIONS" ]]; then
-    echo "GitHub Actions must be pinned to full commit SHAs:" >&2
+    echo "Forgejo Actions must use explicit trusted action URLs:" >&2
     printf '%s\n' "$INVALID_ACTIONS" >&2
     exit 1
 fi

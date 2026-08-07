@@ -42,7 +42,7 @@ class UpdateUiInstrumentedTest {
     @Test
     fun availableDialogShowsReleaseChanges() {
         val candidate = UpdateCandidate(
-            release = GitHubRelease(
+            release = ForgejoRelease(
                 tag = "v0.2.0-test.12",
                 title = "Test 12",
                 body = "### Поддержка форматирования\n\n**Важно:** исправлен Beta-канал и очистка APK.",
@@ -62,8 +62,8 @@ class UpdateUiInstrumentedTest {
                 apkSha256 = "0".repeat(64),
                 apkSize = 1,
             ),
-            apkAsset = GitHubAsset("update.apk", "https://github.com/apk", 1, null),
-            checksumAsset = GitHubAsset("update.apk.sha256", "https://github.com/sha", 1, null),
+            apkAsset = ForgejoAsset("update.apk", "https://git.zapret.moe/apk", 1, null),
+            checksumAsset = ForgejoAsset("update.apk.sha256", "https://git.zapret.moe/sha", 1, null),
         )
         composeRule.activity.setContent {
             ZapretTheme(darkTheme = false) {

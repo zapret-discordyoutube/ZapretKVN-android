@@ -787,8 +787,8 @@ object RuntimeConfigBuilder {
 
     private val PACKAGE_FIELDS = setOf("include_package", "exclude_package")
     private val ANDROID_PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
-    private val UPDATER_DOMAINS = listOf("github.com", "githubusercontent.com")
-    private val UPDATER_DOMAIN_SUFFIXES = listOf(".github.com", ".githubusercontent.com")
+    private val UPDATER_DOMAINS = listOf("git.zapret.moe")
+    private val UPDATER_DOMAIN_SUFFIXES = emptyList<String>()
     private val ROUTE_EXCLUDE_FIELDS = setOf(
         "route_exclude_address",
         "route_exclude_address_set",

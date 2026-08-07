@@ -1,7 +1,7 @@
 # Подпись Zapret KVN Android
 
 Release APK всегда должен быть подписан одним постоянным ключом. Stable собирается и
-публикуется локально владельцем; production JKS и пароли не передаются в GitHub Actions
+публикуется локально владельцем; production JKS и пароли не передаются в Forgejo Actions
 и не добавляются в Git.
 
 ## Однократное создание ключа офлайн
@@ -32,9 +32,12 @@ keytool -exportcert -rfc -keystore zapret-kvn-release.jks -alias zapret-kvn-rele
 
 - `zapret-kvn-release.jks` — постоянный production key;
 - `certificate-sha256.txt` — SHA-256 сертификата;
-- `github-secrets.env` — существующий owner-only env-файл с
+- `signing-secrets.env` — owner-only env-файл с
   `ANDROID_SIGNING_STORE_PASSWORD`, `ANDROID_SIGNING_KEY_ALIAS`,
   `ANDROID_SIGNING_KEY_PASSWORD` и `ANDROID_SIGNING_CERT_SHA256`.
+
+Для совместимости publisher также понимает историческое имя `github-secrets.env`, но
+файл по-прежнему хранится только локально и не передаётся Forgejo.
 
 Другой каталог можно явно задать через `ZAPRET_SIGNING_DIR`. Публичный fingerprint
 закреплён в `release.properties`; publisher до сборки требует точного совпадения JKS,
@@ -56,9 +59,9 @@ scripts/publish-local-stable.sh vMAJOR.MINOR.PATCH --final-gate-approved
 
 Скрипт повторно fetch-ит `origin/main`, при необходимости отправляет только уже созданный
 tag, запускает локальные тесты и release-аудиты, собирает и подписывает три ABI, проверяет
-bundle и создаёт приватный draft GitHub Release. Восемь assets загружаются по одному с
-ограничением времени и повторами; после каждой загрузки размер и GitHub SHA-256 digest
-сравниваются с локальным файлом. Release становится публичным только после точного
+bundle и создаёт приватный draft Forgejo Release. Восемь assets загружаются по одному с
+ограничением времени и повторами; после каждой загрузки файл скачивается обратно из
+Forgejo и его размер и SHA-256 сравниваются с локальным файлом. Release становится публичным только после точного
 совпадения всего набора. Существующий опубликованный Release или несовпадающий tag
 никогда не заменяется.
 
@@ -72,22 +75,21 @@ bundle и создаёт приватный draft GitHub Release. Восемь a
 отдельные `.sha256` и `release-metadata-v2.json` с package, version, точным commit ядра,
 signing fingerprint и размером APK.
 
-После публикации он запускает `release.yml` и сразу завершается, не ожидая workflow.
-GitHub Actions ничего не публикует и не имеет production key: он собирает исходники с
-одноразовым тестовым ключом, выполняет Android-gates, скачивает опубликованные локально
-assets и независимо проверяет metadata, checksum, ABI, версии и production fingerprint.
-Пакет эмулятора и system image закреплённого Android API кешируются между verification
-runs; AVD каждый раз создаётся заново и запускается с `-wipe-data`.
+После публикации он запускает `release-verify.yml` и сразу завершается, не ожидая workflow.
+Forgejo Actions ничего не публикует и не имеет production key: он собирает исходники с
+одноразовым тестовым ключом, скачивает опубликованные локально assets и независимо
+проверяет metadata, checksum, ABI, версии и production fingerprint. Проверки на реальном
+устройстве и эмуляторе остаются обязательным локальным финальным gate до публикации.
 
 ## Возобновление прерванной публикации
 
 Не удалять `build/local-release/TAG`, draft, remote assets или tag и не использовать
 `--clobber`. Повторный запуск той же команды сначала полностью проверит сохранённый
-bundle, затем продолжит только draft с тем же tag: совпавшие по GitHub `sha256:` assets
-будут пропущены, отсутствующие — загружены по одному.
+bundle, затем продолжит только draft с тем же tag: совпавшие по размеру и фактическому
+SHA-256 скачанных из Forgejo файлов будут пропущены, отсутствующие — загружены по одному.
 
-Если remote asset существует, но отличается размером, состоянием или digest, publisher
+Если remote asset существует, но отличается размером или содержимым, publisher
 остановится. Такой asset не удаляется и не заменяется; исправление выпускается новым tag.
-Именно пакетная загрузка восьми файлов через один `gh release create` зависла при
+Именно пакетная загрузка восьми файлов одной операцией зависла при
 публикации `v0.2.12`, тогда как отдельные загрузки APK завершились за несколько секунд,
 поэтому batch-upload для stable запрещён.

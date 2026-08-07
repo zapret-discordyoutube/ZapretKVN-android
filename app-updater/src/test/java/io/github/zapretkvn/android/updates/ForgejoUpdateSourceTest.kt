@@ -5,7 +5,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
-class GitHubUpdateSourceTest {
+class ForgejoUpdateSourceTest {
     @Test
     fun `stable release requires metadata apk and two agreeing digests`() {
         val http = FakeHttp()
@@ -13,7 +13,7 @@ class GitHubUpdateSourceTest {
         http.text[METADATA_URL] = metadata(SHA)
         http.text[CHECKSUM_URL] = "$SHA  $APK"
 
-        val candidate = GitHubUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
             .latest(UpdateChannel.Stable)
 
         assertEquals(102_003_099, candidate.metadata.versionCode)
@@ -29,18 +29,18 @@ class GitHubUpdateSourceTest {
         }
         assertEquals(
             "v1.2.3",
-            GitHubUpdateSource(REPOSITORY, APPLICATION_ID, betaHttp, listOf("arm64-v8a"))
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, betaHttp, listOf("arm64-v8a"))
                 .latest(UpdateChannel.Beta).release.tag,
         )
         betaHttp.text[CHECKSUM_URL] = "${"f".repeat(64)}  $APK"
         assertThrows(UpdateException::class.java) {
-            GitHubUpdateSource(REPOSITORY, APPLICATION_ID, betaHttp, listOf("arm64-v8a"))
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, betaHttp, listOf("arm64-v8a"))
                 .latest(UpdateChannel.Beta)
         }
     }
 
     @Test
-    fun `beta selects newest publication when github semver order is stale`() {
+    fun `beta selects newest publication when API order is stale`() {
         val http = FakeHttp().apply {
             text[LIST] = "[" +
                 release(
@@ -58,7 +58,7 @@ class GitHubUpdateSourceTest {
             text[CHECKSUM_URL] = "$SHA  $APK"
         }
 
-        val candidate = GitHubUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
             .latest(UpdateChannel.Beta)
 
         assertEquals("Newest published prerelease", candidate.release.title)
@@ -75,11 +75,11 @@ class GitHubUpdateSourceTest {
         }
 
         assertThrows(UpdateException::class.java) {
-            GitHubUpdateSource(REPOSITORY, APPLICATION_ID, onlyStable, listOf("arm64-v8a"))
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, onlyStable, listOf("arm64-v8a"))
                 .latest(UpdateChannel.Beta)
         }
         assertThrows(UpdateException::class.java) {
-            GitHubUpdateSource(REPOSITORY, APPLICATION_ID, onlyBeta, listOf("arm64-v8a"))
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, onlyBeta, listOf("arm64-v8a"))
                 .latest(UpdateChannel.Stable)
         }
     }
@@ -92,7 +92,7 @@ class GitHubUpdateSourceTest {
             text[V7_CHECKSUM_URL] = "$SHA  $V7_APK"
         }
 
-        val candidate = GitHubUpdateSource(
+        val candidate = ForgejoUpdateSource(
             REPOSITORY,
             APPLICATION_ID,
             http,
@@ -104,15 +104,16 @@ class GitHubUpdateSourceTest {
     }
 
     @Test
-    fun `only fixed github https hosts are accepted`() {
-        assertEquals("https://api.github.com/repos/a/b", GitHubHttpsClient.validatedUrl("https://api.github.com/repos/a/b"))
+    fun `only fixed Forgejo https hosts are accepted`() {
         assertEquals(
-            "https://release-assets.githubusercontent.com/file",
-            GitHubHttpsClient.validatedUrl("https://release-assets.githubusercontent.com/file"),
+            "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases/download/v1/file",
+            ForgejoHttpsClient.validatedUrl(
+                "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases/download/v1/file",
+            ),
         )
-        assertThrows(UpdateException::class.java) { GitHubHttpsClient.validatedUrl("http://github.com/file") }
-        assertThrows(UpdateException::class.java) { GitHubHttpsClient.validatedUrl("https://example.com/file") }
-        assertThrows(UpdateException::class.java) { GitHubHttpsClient.validatedUrl("https://github.com@evil.example/file") }
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("http://git.zapret.moe/file") }
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://example.com/file") }
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://git.zapret.moe@evil.example/file") }
     }
 
     private class FakeHttp : UpdateHttpClient {
@@ -123,17 +124,17 @@ class GitHubUpdateSourceTest {
     }
 
     private companion object {
-        const val REPOSITORY = "ZapretKVN/ZapretKVN"
+        const val REPOSITORY = "zapretdiscordyoutube/ZapretKVN-android"
         const val APPLICATION_ID = "io.github.zapretkvn.android"
-        const val LIST = "https://api.github.com/repos/$REPOSITORY/releases?per_page=20"
-        const val METADATA_URL = "https://github.com/ZapretKVN/ZapretKVN/releases/download/v1.2.3/release-metadata.json"
-        const val CHECKSUM_URL = "https://github.com/ZapretKVN/ZapretKVN/releases/download/v1.2.3/app.sha256"
-        const val APK_URL = "https://github.com/ZapretKVN/ZapretKVN/releases/download/v1.2.3/app"
+        const val LIST = "https://git.zapret.moe/api/v1/repos/$REPOSITORY/releases?limit=20"
+        const val METADATA_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/release-metadata.json"
+        const val CHECKSUM_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/app.sha256"
+        const val APK_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/app"
         const val APK = "Zapret-KVN-v1.2.3-arm64-v8a.apk"
         const val V7_APK = "Zapret-KVN-v1.2.3-armeabi-v7a.apk"
         const val X64_APK = "Zapret-KVN-v1.2.3-x86_64.apk"
-        const val MATRIX_METADATA_URL = "https://github.com/ZapretKVN/ZapretKVN/releases/download/v1.2.3/release-metadata-v2.json"
-        const val V7_CHECKSUM_URL = "https://github.com/ZapretKVN/ZapretKVN/releases/download/v1.2.3/v7.sha256"
+        const val MATRIX_METADATA_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/release-metadata-v2.json"
+        const val V7_CHECKSUM_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/v7.sha256"
         const val SHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
         fun release(
@@ -142,7 +143,7 @@ class GitHubUpdateSourceTest {
             publishedAt: String? = null,
         ) = """
             {
-              "tag_name":"v1.2.3","name":"$title","html_url":"https://github.com/ZapretKVN/ZapretKVN/releases/tag/v1.2.3",
+              "tag_name":"v1.2.3","name":"$title","html_url":"https://git.zapret.moe/$REPOSITORY/releases/tag/v1.2.3",
               ${publishedAt?.let { "\"published_at\":\"$it\"," }.orEmpty()}
               "draft":false,"prerelease":$prerelease,
               "assets":[
@@ -162,7 +163,7 @@ class GitHubUpdateSourceTest {
 
         fun matrixRelease() = """
             {
-              "tag_name":"v1.2.3","name":"1.2.3","html_url":"https://github.com/ZapretKVN/ZapretKVN/releases/tag/v1.2.3",
+              "tag_name":"v1.2.3","name":"1.2.3","html_url":"https://git.zapret.moe/$REPOSITORY/releases/tag/v1.2.3",
               "draft":false,"prerelease":false,
               "assets":[
                 {"name":"release-metadata-v2.json","browser_download_url":"$MATRIX_METADATA_URL","size":1000},

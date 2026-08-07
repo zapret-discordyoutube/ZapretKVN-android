@@ -10,21 +10,21 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 
-data class GitHubAsset(
+data class ForgejoAsset(
     val name: String,
     val downloadUrl: String,
     val size: Long,
     val digest: String?,
 )
 
-data class GitHubRelease(
+data class ForgejoRelease(
     val tag: String,
     val title: String,
     val body: String,
     val pageUrl: String,
     val draft: Boolean,
     val prerelease: Boolean,
-    val assets: List<GitHubAsset>,
+    val assets: List<ForgejoAsset>,
     val publishedAt: String? = null,
 )
 
@@ -41,10 +41,10 @@ data class ReleaseMetadata(
 )
 
 data class UpdateCandidate(
-    val release: GitHubRelease,
+    val release: ForgejoRelease,
     val metadata: ReleaseMetadata,
-    val apkAsset: GitHubAsset,
-    val checksumAsset: GitHubAsset,
+    val apkAsset: ForgejoAsset,
+    val checksumAsset: ForgejoAsset,
 )
 
 enum class UpdateChannel {
@@ -87,12 +87,12 @@ object UpdateJson {
         isLenient = false
     }
 
-    fun releases(raw: String): List<GitHubRelease> {
+    fun releases(raw: String): List<ForgejoRelease> {
         val element = try {
             json.parseToJsonElement(raw)
         } catch (error: Exception) {
             throw UpdateException(
-                "GitHub вернул некорректный JSON.",
+                "Forgejo вернул некорректный JSON.",
                 cause = error,
                 retryViaVpn = true,
             )
@@ -101,7 +101,7 @@ object UpdateJson {
             is JsonObject -> listOf(element)
             is JsonArray -> element.mapNotNull { it as? JsonObject }
             else -> throw UpdateException(
-                "GitHub вернул неожиданный формат release.",
+                "Forgejo вернул неожиданный формат release.",
                 retryViaVpn = true,
             )
         }
@@ -204,17 +204,17 @@ object UpdateJson {
         return normalizedSha256(match.groupValues[1])
     }
 
-    private fun release(root: JsonObject): GitHubRelease {
+    private fun release(root: JsonObject): ForgejoRelease {
         val assets = (root["assets"] as? JsonArray).orEmpty().mapNotNull { value ->
             val asset = value as? JsonObject ?: return@mapNotNull null
-            GitHubAsset(
+            ForgejoAsset(
                 name = asset.requiredString("name"),
                 downloadUrl = asset.requiredString("browser_download_url"),
                 size = asset.requiredLong("size"),
                 digest = asset.string("digest"),
             )
         }
-        return GitHubRelease(
+        return ForgejoRelease(
             tag = root.requiredString("tag_name"),
             title = root.string("name")?.takeIf(String::isNotBlank) ?: root.requiredString("tag_name"),
             body = root.string("body").orEmpty().take(MAX_RELEASE_NOTES_CHARS),
@@ -241,7 +241,7 @@ object UpdateJson {
 
     private fun JsonObject.requiredBoolean(name: String): Boolean =
         (get(name) as? JsonPrimitive)?.booleanOrNull
-            ?: throw UpdateException("Поле $name отсутствует в GitHub release.")
+            ?: throw UpdateException("Поле $name отсутствует в Forgejo release.")
 
     private fun JsonObject.requiredInt(name: String): Int =
         (get(name) as? JsonPrimitive)?.intOrNull

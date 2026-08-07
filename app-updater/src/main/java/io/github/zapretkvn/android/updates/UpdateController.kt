@@ -26,8 +26,8 @@ class UpdateController(
     repository: String,
     private val currentVersionName: String,
     private val currentVersionCode: Long,
-    private val source: UpdateReleaseSource = GitHubUpdateSource(repository, context.packageName),
-    private val http: UpdateHttpClient = GitHubHttpsClient(),
+    private val source: UpdateReleaseSource = ForgejoUpdateSource(repository, context.packageName),
+    private val http: UpdateHttpClient = ForgejoHttpsClient(),
     private val verifier: ApkUpdateVerifier = AndroidApkUpdateVerifier(context),
     private val vpnFallback: UpdateVpnFallback? = null,
     private val installIntentFactory: UpdateInstallIntentFactory = UpdateInstallIntentFactory {

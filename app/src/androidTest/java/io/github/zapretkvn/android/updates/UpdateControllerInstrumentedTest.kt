@@ -28,13 +28,13 @@ class UpdateControllerInstrumentedTest {
         var restored = 0
         val controller = UpdateController(
             context = context,
-            repository = "ZapretKVN/ZapretKVN",
+            repository = "zapretdiscordyoutube/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource {
                 attempts++
                 if (attempts == 1) {
-                    throw UpdateException("GitHub недоступен.", retryViaVpn = true)
+                    throw UpdateException("Forgejo недоступен.", retryViaVpn = true)
                 }
                 candidate
             },
@@ -60,7 +60,7 @@ class UpdateControllerInstrumentedTest {
         var checks = 0
         val controller = UpdateController(
             context = context,
-            repository = "ZapretKVN/ZapretKVN",
+            repository = "zapretdiscordyoutube/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource {
@@ -158,7 +158,7 @@ class UpdateControllerInstrumentedTest {
         val candidate = candidate(bytes)
         val controller = UpdateController(
             context = context,
-            repository = "ZapretKVN/ZapretKVN",
+            repository = "zapretdiscordyoutube/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource { candidate },
@@ -186,7 +186,7 @@ class UpdateControllerInstrumentedTest {
 
         val cancelling = UpdateController(
             context = context,
-            repository = "ZapretKVN/ZapretKVN",
+            repository = "zapretdiscordyoutube/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource { candidate },
@@ -226,7 +226,7 @@ class UpdateControllerInstrumentedTest {
         verifier: ApkUpdateVerifier,
     ) = UpdateController(
         context = context,
-        repository = "ZapretKVN/ZapretKVN",
+        repository = "zapretdiscordyoutube/ZapretKVN-android",
         currentVersionName = "1.0.0",
         currentVersionCode = 1,
         installIntentFactory = AndroidUpdateInstallIntentFactory(context),
@@ -261,9 +261,9 @@ class UpdateControllerInstrumentedTest {
             apkSha256 = sha,
             apkSize = bytes.size.toLong(),
         )
-        val apk = GitHubAsset(name, "https://github.com/ZapretKVN/ZapretKVN/apk", bytes.size.toLong(), "sha256:$sha")
+        val apk = ForgejoAsset(name, "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/apk", bytes.size.toLong(), "sha256:$sha")
         return UpdateCandidate(
-            release = GitHubRelease(
+            release = ForgejoRelease(
                 "v1.1.0",
                 "1.1.0",
                 "Changes",
@@ -274,7 +274,7 @@ class UpdateControllerInstrumentedTest {
             ),
             metadata = metadata,
             apkAsset = apk,
-            checksumAsset = GitHubAsset("$name.sha256", "https://github.com/sha", 100, null),
+            checksumAsset = ForgejoAsset("$name.sha256", "https://git.zapret.moe/sha", 100, null),
         )
     }
 
