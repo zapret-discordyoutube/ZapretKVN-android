@@ -44,6 +44,45 @@ jobs:
             core-build/gopath/pkg/mod
           key: zapret-kvn-android-release-${{ hashFiles('core.properties', 'gradle/wrapper/gradle-wrapper.properties', '**/*.gradle*') }}
 
+      - name: Materialize the protected release signer
+        shell: bash
+        env:
+          ANDROID_SIGNING_KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          required=(
+            ANDROID_SIGNING_KEYSTORE_BASE64
+            ANDROID_SIGNING_STORE_PASSWORD
+            ANDROID_SIGNING_KEY_ALIAS
+            ANDROID_SIGNING_KEY_PASSWORD
+            ANDROID_SIGNING_CERT_SHA256
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Required Forgejo secret is absent: $name" >&2
+              exit 1
+            fi
+          done
+
+          signing_dir="$RUNNER_TEMP/zapret-kvn-signing"
+          signing_store="$signing_dir/release.jks"
+          install -d -m 0700 "$signing_dir"
+          printf '%s' "$ANDROID_SIGNING_KEYSTORE_BASE64" | base64 --decode > "$signing_store"
+          chmod 0600 "$signing_store"
+          test -s "$signing_store"
+
+          {
+            printf 'ZAPRET_SIGNING_STORE_FILE=%s\n' "$signing_store"
+            printf 'ZAPRET_SIGNING_STORE_PASSWORD=%s\n' "$ANDROID_SIGNING_STORE_PASSWORD"
+            printf 'ZAPRET_SIGNING_KEY_ALIAS=%s\n' "$ANDROID_SIGNING_KEY_ALIAS"
+            printf 'ZAPRET_SIGNING_KEY_PASSWORD=%s\n' "$ANDROID_SIGNING_KEY_PASSWORD"
+            printf 'ZAPRET_EXPECTED_SIGNER_SHA256=%s\n' "$ANDROID_SIGNING_CERT_SHA256"
+          } >> "$GITHUB_ENV"
+
       - name: Verify, test and build from the tagged source
         run: scripts/ci-build.sh
 
