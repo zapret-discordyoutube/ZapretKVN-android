@@ -296,8 +296,8 @@ class RuntimeConfigBuilderTest {
             "io.github.zapretkvn.android",
             ((updaterRule["package_name"] as JsonArray).single() as JsonPrimitive).content,
         )
-        assertEquals("[\"git.zapret.moe\"]", updaterRule["domain"].toString())
-        assertEquals("[]", updaterRule["domain_suffix"].toString())
+        assertEquals("[\"zapret.moe\"]", updaterRule["domain"].toString())
+        assertEquals("[\".zapret.moe\"]", updaterRule["domain_suffix"].toString())
         assertEquals("zapret-proxy", updaterRule.string("outbound"))
         assertTrue(
             dnsRules.any { rule ->
@@ -305,7 +305,7 @@ class RuntimeConfigBuilderTest {
                     rule["package_name"] == updaterRule["package_name"]
             },
         )
-        assertFalse("stored profile must stay untouched", "git.zapret.moe" in stored)
+        assertFalse("stored profile must stay untouched", "zapret.moe" in stored)
     }
 
     @Test
