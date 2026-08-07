@@ -10,6 +10,13 @@ jobs:
   build:
     runs-on: android
     timeout-minutes: 120
+    env:
+      GRADLE_OPTS: >-
+        -Dorg.gradle.daemon=false
+        -Dorg.gradle.workers.max=1
+        -Dorg.gradle.parallel=false
+        -Dkotlin.compiler.execution.strategy=in-process
+        -Dkotlin.daemon.enabled=false
     steps:
       - name: Checkout
         uses: https://data.forgejo.org/actions/checkout@v6

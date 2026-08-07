@@ -15,6 +15,12 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.tag }}
       ZAPRET_UPDATE_REPOSITORY: zapretdiscordyoutube/ZapretKVN-android
+      GRADLE_OPTS: >-
+        -Dorg.gradle.daemon=false
+        -Dorg.gradle.workers.max=1
+        -Dorg.gradle.parallel=false
+        -Dkotlin.compiler.execution.strategy=in-process
+        -Dkotlin.daemon.enabled=false
 
     steps:
       - name: Validate requested stable tag
