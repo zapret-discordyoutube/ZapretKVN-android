@@ -36,11 +36,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
-private data class ServerPingMeasurement(
-    val millis: Int,
-    val measuredAtEpochSeconds: Long,
-)
-
 class VpnController(
     private val context: Context,
     previousCrash: AppCrashRecord? = null,
@@ -59,9 +54,6 @@ class VpnController(
     private val trafficAccumulator = SessionTrafficAccumulator()
     private val mutableSessionStats = MutableStateFlow(trafficAccumulator.value)
     private val trafficLock = Any()
-    private val serverPingLock = Any()
-    private val serverPings = mutableMapOf<String, ServerPingMeasurement>()
-    private var serverPingGeneration = Long.MIN_VALUE
     private val latestGeneration = AtomicLong(0)
 
     val state: StateFlow<VpnConnectionState> = mutableState.asStateFlow()
@@ -143,11 +135,6 @@ class VpnController(
         )
     }
 
-    fun measurePing() {
-        if (mutableState.value !is VpnConnectionState.Connected) return
-        ContextCompat.startForegroundService(context, ZapretVpnService.pingIntent(context))
-    }
-
     fun measureGroup(groupTag: String) {
         val connected = mutableState.value as? VpnConnectionState.Connected ?: return
         if (groupTag.isBlank()) return
@@ -179,12 +166,6 @@ class VpnController(
             if (generation < previous) return
             if (latestGeneration.compareAndSet(previous, generation)) break
         }
-        synchronized(serverPingLock) {
-            if (serverPingGeneration != generation) {
-                serverPings.clear()
-                serverPingGeneration = generation
-            }
-        }
         val safeState = if (state is VpnConnectionState.Error) {
             val message = sanitizeDiagnosticText(state.message, 360)
             val fallbackCode = DiagnosticFailureClassifier.classify(message).supportCode
@@ -198,8 +179,10 @@ class VpnController(
         } else {
             state
         }
-        mutableState.value = safeState
+        // Publish diagnostics first: StateFlow collectors may resume immediately on
+        // the state write and terminal states must already have a terminal attempt.
         updateDiagnosticConnectionState(generation, safeState)
+        mutableState.value = safeState
         synchronized(trafficLock) {
             when (safeState) {
                 is VpnConnectionState.Connected -> {
@@ -318,6 +301,35 @@ class VpnController(
         }
     }
 
+    internal fun beginConnectionCandidate(generation: Long, candidateAttemptId: Int) {
+        mutableDiagnostics.update { current ->
+            val attempt = current.connectionAttempt
+                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
+                ?: return@update current
+            current.copy(
+                connectionAttempt = attempt.copy(candidateAttemptId = candidateAttemptId.coerceAtLeast(1)),
+            )
+        }
+    }
+
+    internal fun recordConnectionVpnNetwork(
+        generation: Long,
+        identity: String? = null,
+        lost: Boolean = false,
+    ) {
+        mutableDiagnostics.update { current ->
+            val attempt = current.connectionAttempt
+                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
+                ?: return@update current
+            current.copy(
+                connectionAttempt = attempt.copy(
+                    vpnNetworkIdentity = identity?.take(40) ?: attempt.vpnNetworkIdentity,
+                    vpnNetworkLost = attempt.vpnNetworkLost || lost,
+                ),
+            )
+        }
+    }
+
     internal fun finishConnectionDiagnosticStage(
         generation: Long,
         key: String,
@@ -352,11 +364,12 @@ class VpnController(
         }
     }
 
-    internal fun cancelCurrentConnectionDiagnostic() {
+    internal fun cancelCurrentConnectionDiagnostic(reason: String = "superseded") {
         finishConnectionDiagnostic(
             generation = null,
             outcome = DiagnosticAttemptOutcome.Cancelled,
             stageStatus = DiagnosticStageStatus.Cancelled,
+            cancellationReason = reason,
         )
     }
 
@@ -468,57 +481,136 @@ class VpnController(
     }
 
     internal fun publishGroups(generation: Long, groups: List<RuntimeSelectorGroup>) {
-        if (generation < latestGeneration.get()) return
-        synchronized(serverPingLock) {
-            val measurements = if (serverPingGeneration == generation) serverPings else emptyMap()
-            mutableGroups.value = groups.map { group ->
-                group.copy(
-                    items = group.items.map { item ->
-                        measurements[item.tag]?.let { measurement ->
-                            item.copy(
-                                pingMillis = measurement.millis,
-                                pingMeasuredAtEpochSeconds = measurement.measuredAtEpochSeconds,
-                            )
-                        } ?: item
+        mutableGroups.update { current ->
+            if (generation != currentGeneration()) return@update current
+            val priorGroups = current.associateBy(RuntimeSelectorGroup::tag)
+            groups.map { incoming ->
+                val prior = priorGroups[incoming.tag]
+                val priorItems = prior?.items?.associateBy(RuntimeOutboundItem::tag).orEmpty()
+                incoming.copy(
+                    probeProgress = prior?.probeProgress,
+                    items = incoming.items.map { item ->
+                        val previous = priorItems[item.tag] ?: return@map item
+                        item.copy(
+                            icmp = previous.icmp,
+                            relay = when {
+                                prior?.probeProgress?.running == true -> previous.relay
+                                item.relay.lastSample()?.measuredAtEpochMillis
+                                    ?.let { incomingTime ->
+                                        incomingTime >
+                                            (previous.relay.lastSample()?.measuredAtEpochMillis ?: 0L)
+                                    } == true -> item.relay
+                                previous.relay == LatencyProbeState.NotTested -> item.relay
+                                else -> previous.relay
+                            },
+                        )
                     },
                 )
             }
         }
     }
 
-    internal fun publishServerPing(generation: Long, outboundTag: String, pingMillis: Long?) {
-        if (generation != currentGeneration() || outboundTag.isBlank()) return
-        val measurement = pingMillis?.let {
-            ServerPingMeasurement(
-                millis = it.coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
-                measuredAtEpochSeconds = System.currentTimeMillis() / 1_000L,
+    internal fun beginLatencyProbe(
+        generation: Long,
+        requestId: Long,
+        groupTag: String,
+        networkIdentity: String,
+        icmpTargets: Set<String>,
+    ): Boolean {
+        var started = false
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            val result = LatencyProbeReducer.begin(
+                groups,
+                requestId,
+                groupTag,
+                networkIdentity,
+                icmpTargets,
+            )
+            started = result.started
+            result.groups
+        }
+        return started
+    }
+
+    internal fun publishLatencyBatch(
+        generation: Long,
+        requestId: Long,
+        groupTag: String,
+        networkIdentity: String,
+        relay: Map<String, LatencyProbeState> = emptyMap(),
+        icmp: Map<String, LatencyProbeState> = emptyMap(),
+    ) {
+        if (relay.isEmpty() && icmp.isEmpty()) return
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            LatencyProbeReducer.publishBatch(
+                groups,
+                requestId,
+                groupTag,
+                networkIdentity,
+                relay,
+                icmp,
             )
         }
-        synchronized(serverPingLock) {
-            if (serverPingGeneration != generation) {
-                serverPings.clear()
-                serverPingGeneration = generation
-            }
-            if (measurement == null) serverPings.remove(outboundTag)
-            else serverPings[outboundTag] = measurement
-            mutableGroups.update { groups ->
-                groups.map { group ->
-                    group.copy(
-                        items = group.items.map { item ->
-                            if (item.tag != outboundTag) item else item.copy(
-                                pingMillis = measurement?.millis,
-                                pingMeasuredAtEpochSeconds = measurement?.measuredAtEpochSeconds,
-                            )
-                        },
-                    )
-                }
+    }
+
+    internal fun completeLatencyProbe(
+        generation: Long,
+        requestId: Long,
+        groupTag: String,
+        networkIdentity: String,
+    ) {
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            LatencyProbeReducer.complete(groups, requestId, groupTag, networkIdentity)
+        }
+    }
+
+    internal fun cancelLatencyProbe(
+        generation: Long,
+        requestId: Long,
+        groupTag: String,
+        networkIdentity: String,
+    ) {
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            LatencyProbeReducer.cancel(groups, requestId, groupTag, networkIdentity)
+        }
+    }
+
+    internal fun markLatencyStale(generation: Long) {
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            LatencyProbeReducer.markStale(groups)
+        }
+    }
+
+    internal fun publishBackgroundIcmp(
+        generation: Long,
+        outboundTag: String,
+        state: LatencyProbeState,
+    ) {
+        if (generation != currentGeneration() || outboundTag.isBlank()) return
+        mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            groups.map { group ->
+                group.copy(
+                    items = group.items.map { item ->
+                        if (item.tag == outboundTag && item.icmp !is LatencyProbeState.Running) {
+                            item.copy(icmp = state)
+                        } else {
+                            item
+                        }
+                    },
+                )
             }
         }
     }
 
     internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) {
-        if (generation < latestGeneration.get()) return
         mutableGroups.update { groups ->
+            if (generation != currentGeneration()) return@update groups
             groups.map { group ->
                 if (group.tag == groupTag) group.copy(selected = outboundTag) else group
             }
@@ -529,6 +621,10 @@ class VpnController(
         val safe = sanitizeDiagnosticText(message, 360)
         mutableMessage.value = safe
         appendApplicationDiagnosticLog(level = 5, message = safe)
+    }
+
+    internal fun publishMessage(generation: Long, message: String) {
+        if (generation == currentGeneration()) publishMessage(message)
     }
 
     internal fun publishDiagnosticWarning(message: String) {
@@ -690,14 +786,6 @@ class VpnController(
         }
     }
 
-    internal fun publishPing(generation: Long, pingMillis: Long?) {
-        synchronized(trafficLock) {
-            trafficAccumulator.updatePing(generation, pingMillis)?.let {
-                mutableSessionStats.value = it
-            }
-        }
-    }
-
     internal fun clearConnectionIdentity(generation: Long) {
         synchronized(trafficLock) {
             trafficAccumulator.clearConnectionIdentity(generation)?.let {
@@ -744,6 +832,7 @@ class VpnController(
                 generation = generation,
                 outcome = DiagnosticAttemptOutcome.Connected,
                 stageStatus = DiagnosticStageStatus.Success,
+                cancellationReason = null,
             )
         }
     }
@@ -753,6 +842,7 @@ class VpnController(
             generation = generation,
             outcome = DiagnosticAttemptOutcome.Failed,
             stageStatus = DiagnosticStageStatus.Failed,
+            cancellationReason = null,
         )
         val safe = sanitizeDiagnosticText(state.message, 360)
         val now = System.currentTimeMillis()
@@ -798,6 +888,7 @@ class VpnController(
         generation: Long?,
         outcome: DiagnosticAttemptOutcome,
         stageStatus: DiagnosticStageStatus,
+        cancellationReason: String?,
     ) {
         val elapsed = SystemClock.elapsedRealtime()
         mutableDiagnostics.update { current ->
@@ -812,6 +903,7 @@ class VpnController(
                     totalDurationMillis = (elapsed - attempt.startedAtElapsedRealtimeMillis)
                         .coerceAtLeast(0L),
                     outcome = outcome,
+                    cancellationReason = cancellationReason?.take(40),
                     stages = attempt.stages.completeRunningStage(elapsed, stageStatus),
                 ),
             )
@@ -838,6 +930,7 @@ class VpnController(
         copy(
             totalDurationMillis = (elapsed - startedAtElapsedRealtimeMillis).coerceAtLeast(0L),
             outcome = DiagnosticAttemptOutcome.Cancelled,
+            cancellationReason = "superseded",
             stages = stages.completeRunningStage(elapsed, DiagnosticStageStatus.Cancelled),
         )
     } else {

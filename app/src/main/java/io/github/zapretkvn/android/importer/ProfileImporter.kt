@@ -19,6 +19,8 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -66,18 +68,6 @@ object ImportParser {
     ): ImportCandidate {
         val text = input.removePrefix("\uFEFF").trim()
         if (text.isEmpty()) throw ImportException("Источник импорта пуст.")
-        if (text.startsWith('{')) {
-            try {
-                JsonConfig.parse(text)
-            } catch (error: Exception) {
-                throw ImportException("Файл не содержит корректный JSON.", error)
-            }
-            return ImportCandidate.RawJson(
-                json = JsonConfig.format(text),
-                suggestedName = suggestedName,
-                source = source,
-            )
-        }
         if (WireGuardConfigParser.looksLikeConfig(text)) {
             val wireGuard = try {
                 WireGuardConfigParser.parse(text)
@@ -92,7 +82,22 @@ object ImportParser {
                 source = source,
             )
         }
-
+        if (text.startsWith('{') || text.startsWith('[')) {
+            val parsed = try {
+                JsonConfig.parse(text)
+            } catch (error: Exception) {
+                throw ImportException("Файл не содержит корректный JSON.", error)
+            }
+            parseJsonCandidates(parsed, source, suggestedName)?.let { return it }
+            if (parsed !is JsonObject) {
+                throw ImportException("JSON-массив должен содержать ссылки конфигураций.")
+            }
+            return ImportCandidate.RawJson(
+                json = JsonConfig.format(text),
+                suggestedName = suggestedName,
+                source = source,
+            )
+        }
         val direct = extractLinks(text)
         val extracted = if (direct.links.isNotEmpty()) {
             direct
@@ -119,6 +124,39 @@ object ImportParser {
             importWarnings = extracted.unsupportedSchemes.takeIf(List<String>::isNotEmpty)?.let { schemes ->
                 listOf("Пропущены неподдерживаемые схемы: ${schemes.joinToString { "$it://" }}.")
             }.orEmpty(),
+        )
+    }
+
+    private fun parseJsonCandidates(
+        root: JsonElement,
+        source: ProfileSource,
+        suggestedName: String,
+    ): ImportCandidate.Managed? {
+        val items = when (root) {
+            is JsonArray -> root
+            is JsonObject -> JSON_SUBSCRIPTION_KEYS
+                .firstNotNullOfOrNull { key -> root[key] as? JsonArray }
+                ?: return null
+            else -> return null
+        }
+        if (items.isEmpty()) throw ImportException("JSON-подписка не содержит конфигураций.")
+        val links = items.mapIndexed { index, item ->
+            when (item) {
+                is JsonPrimitive -> item.contentOrNull
+                is JsonObject -> JSON_LINK_KEYS.firstNotNullOfOrNull { key ->
+                    (item[key] as? JsonPrimitive)?.contentOrNull
+                }
+                else -> null
+            }?.trim()?.takeIf(String::isNotEmpty)
+                ?: throw ImportException(
+                    "JSON-подписка: элемент №${index + 1} не содержит строковое поле link/url/uri.",
+                )
+        }
+        val servers = links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
+        return ImportCandidate.Managed(
+            servers = servers,
+            suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
+            source = if (servers.size == 1) source else ProfileSource.Subscription,
         )
     }
 
@@ -185,6 +223,8 @@ object ImportParser {
     private val URI_SCHEME_PATTERN = Regex("(?i)\\b([a-z][a-z0-9+.-]*)://")
     private val LINK_BOUNDARIES = charArrayOf('"', '\'', '`', '<', '>', '\u200B')
     private val TRAILING_LINK_WRAPPERS = charArrayOf(',', ';', '.', ')', ']', '}')
+    private val JSON_SUBSCRIPTION_KEYS = listOf("servers", "configs", "proxies", "nodes")
+    private val JSON_LINK_KEYS = listOf("link", "url", "uri")
 
     private data class ExtractedLinks(
         val links: List<String>,
@@ -214,13 +254,14 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
+        rejectUnknownParameters(query, VLESS_QUERY_KEYS, "VLESS")
         val name = displayName(uri, "VLESS ${index + 1}")
         val uuid = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В VLESS отсутствует UUID.")
         return ProtocolOutboundBuilders.vless(
             displayName = name,
             server = host,
-            serverPort = requirePort(uri),
+            serverPort = requirePort(uri, 443),
             uuid = uuid,
             encryption = query["encryption"]?.takeIf(String::isNotBlank) ?: "none",
             flow = normalizeVlessFlow(query["flow"]),
@@ -243,12 +284,13 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
+        rejectUnknownParameters(query, TROJAN_QUERY_KEYS, "Trojan")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В Trojan отсутствует пароль.")
         return ProtocolOutboundBuilders.trojan(
             displayName = displayName(uri, "Trojan ${index + 1}"),
             server = host,
-            serverPort = requirePort(uri),
+            serverPort = requirePort(uri, 443),
             password = password,
             tls = tls(query, host, defaultEnabled = true),
             transport = transport(query),
@@ -260,8 +302,9 @@ object ShareLinkParser {
         val data = JsonConfig.parse(decodeBase64(encoded)) as? JsonObject
             ?: throw ImportException("VMess payload должен быть JSON-объектом.")
         val host = data.text("add") ?: throw ImportException("В VMess отсутствует сервер.")
-        val port = data.number("port") ?: throw ImportException("В VMess отсутствует порт.")
+        val port = data.number("port") ?: 443
         val uuid = data.text("id") ?: throw ImportException("В VMess отсутствует UUID.")
+        rejectUnknownFields(data, VMESS_FIELDS, "VMess")
         val network = data.text("net").orEmpty()
         val transport = when (network) {
             "", "tcp" -> null
@@ -295,6 +338,8 @@ object ShareLinkParser {
                 serverName = data.text("sni") ?: host,
                 insecure = data.text("allowInsecure") == "1",
                 utlsFingerprint = data.text("fp"),
+                realityPublicKey = data.text("pbk"),
+                realityShortId = data.text("sid"),
                 alpn = data.text("alpn").orEmpty()
                     .split(',')
                     .map(String::trim)
@@ -309,9 +354,13 @@ object ShareLinkParser {
         val fragment = body.substringAfter('#', "")
         val beforeFragment = body.substringBefore('#')
         val rawQuery = beforeFragment.substringAfter('?', "")
-        if (rawQuery.split('&').any { decode(it.substringBefore('=')).equals("plugin", true) }) {
+        val shadowQuery = rawQuery.split('&').filter(String::isNotBlank).associate { part ->
+            decode(part.substringBefore('=')) to decode(part.substringAfter('=', ""))
+        }
+        if (shadowQuery.keys.any { it.equals("plugin", true) }) {
             throw ImportException("Shadowsocks plugin в URI пока не поддерживается.")
         }
+        rejectUnknownParameters(shadowQuery, emptySet(), "Shadowsocks")
         val withoutFragment = beforeFragment.substringBefore('?')
         val expanded = if ('@' in withoutFragment) withoutFragment else decodeBase64(withoutFragment)
         val credentialPart = expanded.substringBeforeLast('@')
@@ -327,7 +376,7 @@ object ShareLinkParser {
         return ProtocolOutboundBuilders.shadowsocks(
             displayName = decode(fragment).ifBlank { "Shadowsocks ${index + 1}" },
             server = requireHost(serverUri),
-            serverPort = requirePort(serverUri),
+            serverPort = requirePort(serverUri, 8388),
             method = method,
             password = password,
         )
@@ -342,6 +391,7 @@ object ShareLinkParser {
         val uri = URI(normalized)
         val host = requireHost(uri)
         val query = query(uri)
+        rejectUnknownParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: query["auth"]?.takeIf(String::isNotBlank)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
@@ -352,7 +402,7 @@ object ShareLinkParser {
         return ProtocolOutboundBuilders.hysteria2(
             displayName = displayName(uri, "Hysteria2 ${index + 1}"),
             server = host,
-            serverPort = requirePort(uri),
+            serverPort = requirePort(uri, 443),
             password = password,
             tls = TlsSettings(
                 enabled = true,
@@ -374,6 +424,7 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
+        rejectUnknownParameters(query, TUIC_QUERY_KEYS, "TUIC")
         val credentials = decode(uri.rawUserInfo)
         val uuid = credentials.substringBefore(':').takeIf(String::isNotBlank)
             ?: throw ImportException("В TUIC отсутствует UUID.")
@@ -382,7 +433,7 @@ object ShareLinkParser {
         return ProtocolOutboundBuilders.tuic(
             displayName = displayName(uri, "TUIC ${index + 1}"),
             server = host,
-            serverPort = requirePort(uri),
+            serverPort = requirePort(uri, 443),
             uuid = uuid,
             password = password,
             congestionControl = query["congestion_control"] ?: query["congestion-control"],
@@ -458,6 +509,32 @@ object ShareLinkParser {
             key to value
         }
 
+    private fun rejectUnknownParameters(
+        query: Map<String, String>,
+        supported: Set<String>,
+        protocol: String,
+    ) {
+        val unknown = query.keys.filterNot(supported::contains).sorted()
+        if (unknown.isNotEmpty()) {
+            throw ImportException(
+                "$protocol содержит неподдерживаемые параметры: ${unknown.joinToString()}.",
+            )
+        }
+    }
+
+    private fun rejectUnknownFields(
+        data: JsonObject,
+        supported: Set<String>,
+        protocol: String,
+    ) {
+        val unknown = data.keys.filterNot(supported::contains).sorted()
+        if (unknown.isNotEmpty()) {
+            throw ImportException(
+                "$protocol содержит неподдерживаемые поля: ${unknown.joinToString()}.",
+            )
+        }
+    }
+
     private fun displayName(uri: URI, fallback: String): String =
         decode(uri.rawFragment.orEmpty()).ifBlank { fallback }
 
@@ -472,9 +549,11 @@ object ShareLinkParser {
         ?.removeSurrounding("[", "]")
         ?: throw ImportException("В ссылке отсутствует сервер.")
 
-    private fun requirePort(uri: URI): Int = uri.port
-        .takeIf { it in 1..65535 }
-        ?: throw ImportException("В ссылке отсутствует корректный порт.")
+    private fun requirePort(uri: URI, defaultPort: Int): Int = when {
+        uri.port == -1 -> defaultPort
+        uri.port in 1..65535 -> uri.port
+        else -> throw ImportException("В ссылке отсутствует корректный порт.")
+    }
 
     private fun JsonObject.text(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
@@ -485,6 +564,28 @@ object ShareLinkParser {
     }
 
     private val XHTTP_MODES = setOf("auto", "packet-up", "stream-up", "stream-one")
+    private val TRANSPORT_QUERY_KEYS = setOf(
+        "type", "path", "host", "serviceName", "service_name", "mode", "extra",
+    )
+    private val TLS_QUERY_KEYS = setOf(
+        "security", "sni", "serverName", "allowInsecure", "fp", "pbk", "publicKey",
+        "sid", "shortId", "alpn",
+    )
+    private val VLESS_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS + setOf("flow", "encryption")
+    private val TROJAN_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS
+    private val HYSTERIA2_QUERY_KEYS = setOf(
+        "auth", "sni", "peer", "insecure", "allowInsecure", "alpn", "obfs",
+        "obfs-password", "obfs_password", "upmbps", "downmbps",
+    )
+    private val TUIC_QUERY_KEYS = setOf(
+        "sni", "allow_insecure", "allowInsecure", "insecure", "alpn",
+        "congestion_control", "congestion-control", "udp_relay_mode", "udp-relay-mode",
+        "zero_rtt_handshake", "zero-rtt-handshake", "heartbeat",
+    )
+    private val VMESS_FIELDS = setOf(
+        "v", "ps", "add", "port", "id", "aid", "scy", "net", "path", "host", "type",
+        "extra", "tls", "sni", "allowInsecure", "fp", "alpn", "pbk", "sid",
+    )
 
 }
 

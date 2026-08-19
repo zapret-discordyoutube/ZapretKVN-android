@@ -70,15 +70,9 @@ internal class SessionTrafficAccumulator(
         return value
     }
 
-    fun updatePing(generation: Long, pingMillis: Long?): VpnSessionStats? {
-        if (generation != this.generation) return null
-        value = value.copy(pingMillis = pingMillis?.coerceAtLeast(0))
-        return value
-    }
-
     fun clearConnectionIdentity(generation: Long): VpnSessionStats? {
         if (generation != this.generation) return null
-        value = value.copy(externalIp = null, pingMillis = null)
+        value = value.copy(externalIp = null)
         return value
     }
 }

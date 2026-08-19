@@ -251,6 +251,7 @@ data class DiagnosticStageTiming(
 data class DiagnosticConnectionAttempt(
     val generation: Long,
     val trigger: String,
+    val candidateAttemptId: Int = 1,
     val startedAtEpochMillis: Long,
     internal val startedAtElapsedRealtimeMillis: Long,
     val totalDurationMillis: Long? = null,
@@ -259,6 +260,9 @@ data class DiagnosticConnectionAttempt(
     val startupCoreLogs: List<DiagnosticLogLine> = emptyList(),
     val startupCoreLogStats: DiagnosticLogStats = DiagnosticLogStats(),
     val failure: DiagnosticFailure? = null,
+    val cancellationReason: String? = null,
+    val vpnNetworkIdentity: String? = null,
+    val vpnNetworkLost: Boolean = false,
 ) {
     val slowestCompletedStage: DiagnosticStageTiming?
         get() = stages

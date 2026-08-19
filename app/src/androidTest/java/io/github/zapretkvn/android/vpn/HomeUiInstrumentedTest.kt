@@ -35,6 +35,7 @@ class HomeUiInstrumentedTest {
         container.uiSettingsStore.setHideServerAddresses(true)
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
         container.appSelectionStore.replaceBlocklist(emptySet())
+        val measuredAt = System.currentTimeMillis()
         val generation = container.vpnController.nextGeneration()
         container.vpnController.publish(
             generation,
@@ -53,16 +54,17 @@ class HomeUiInstrumentedTest {
                             tag = "Moscow",
                             type = "vless",
                             endpoint = "vpn.example:443",
-                            pingMillis = 42,
-                            pingMeasuredAtEpochSeconds = 1,
-                            relayDelayMillis = 84,
-                            relayTestedAtEpochSeconds = 2,
+                            icmp = LatencyProbeState.Success(
+                                LatencySample(42, measuredAt, null),
+                            ),
+                            relay = LatencyProbeState.Success(
+                                LatencySample(84, measuredAt, null),
+                            ),
                         ),
                     ),
                 ),
             ),
         )
-        container.vpnController.publishPing(generation, 42)
         container.vpnController.publishExternalIp(generation, "203.0.113.9")
         container.vpnController.publishStatusStream(generation, true)
         container.vpnController.publishTraffic(generation, 1_024, 2_048, 4_096, 8_192)
@@ -85,8 +87,8 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("Daily VPN").assertExists()
         composeRule.onNodeWithText("203.0.113.9").assertExists()
         composeRule.onNodeWithText("42 мс").assertExists()
-        composeRule.onNodeWithText("ICMP 42 мс").assertExists()
-        composeRule.onNodeWithText("Relay 84 мс").assertExists()
+        composeRule.onNodeWithText("ICMP · 42 мс").assertExists()
+        composeRule.onNodeWithText("Relay HTTPS · 84 мс").assertExists()
         composeRule.onNodeWithText("↓ 8.0 КБ").assertExists()
         composeRule.onNodeWithText("↑ 4.0 КБ").assertExists()
         composeRule.onNodeWithContentDescription("График загрузки и отдачи за последние 60 секунд").assertExists()
@@ -96,7 +98,7 @@ class HomeUiInstrumentedTest {
         composeRule.onAllNodesWithText("VLESS · ********").assertCountEquals(2)
         composeRule.onNodeWithText("vpn.example", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("Проверить оба").assertExists()
-        composeRule.onAllNodesWithText("Relay 84 мс").assertCountEquals(2)
+        composeRule.onAllNodesWithText("Relay HTTPS · 84 мс").assertCountEquals(2)
     }
 
     @Test

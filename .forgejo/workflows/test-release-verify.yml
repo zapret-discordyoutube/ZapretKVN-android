@@ -1,0 +1,68 @@
+name: Verify published emulator-only test
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing locally published test prerelease tag
+        required: true
+        type: string
+
+jobs:
+  verify:
+    runs-on: android
+    timeout-minutes: 120
+    env:
+      TEST_TAG: ${{ inputs.tag }}
+      ZAPRET_UPDATE_REPOSITORY: zapretkvn/ZapretKVN-android
+      GRADLE_OPTS: >-
+        -Dorg.gradle.daemon=false
+        -Dorg.gradle.workers.max=1
+        -Dorg.gradle.parallel=false
+        -Dkotlin.compiler.execution.strategy=in-process
+        -Dkotlin.daemon.enabled=false
+
+    steps:
+      - name: Validate requested test tag
+        run: |
+          [[ "$TEST_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-test\.[0-9]+$ ]]
+
+      - name: Checkout exact test tag
+        uses: https://data.forgejo.org/actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Verify tagged source and Android tests
+        run: |
+          scripts/verify-project.sh
+          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+
+      - name: Download exact prerelease assets
+        run: |
+          set -euo pipefail
+          release_url="https://git.zapret.moe/api/v1/repos/$ZAPRET_UPDATE_REPOSITORY/releases/tags/$TEST_TAG"
+          curl --fail --silent --show-error --proto '=https' "$release_url" > test-release.json
+          jq -e --arg tag "$TEST_TAG" \
+            '.tag_name == $tag and .draft == false and .prerelease == true and (.assets | length) == 5' \
+            test-release.json >/dev/null
+          mkdir published-test
+          while IFS=$'\t' read -r name url; do
+            [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+            expected="https://git.zapret.moe/$ZAPRET_UPDATE_REPOSITORY/releases/download/$TEST_TAG/"
+            [[ "$url" == "$expected"* ]]
+            curl --fail --silent --show-error --location --proto '=https' --max-redirs 3 \
+              --output "published-test/$name" "$url"
+          done < <(jq -r '.assets[] | [.name, .browser_download_url] | @tsv' test-release.json)
+
+      - name: Verify exact downloaded bundle
+        run: scripts/verify-test-bundle.sh "$TEST_TAG" published-test
+
+      - name: Upload verification proof
+        uses: https://data.forgejo.org/forgejo/upload-artifact@v4
+        with:
+          name: zapret-kvn-${{ inputs.tag }}-emulator-test-proof
+          if-no-files-found: error
+          path: |
+            published-test/**
+            app/build/reports/tests/testDebugUnitTest/**

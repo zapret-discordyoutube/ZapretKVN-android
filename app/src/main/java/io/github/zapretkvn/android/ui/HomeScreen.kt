@@ -53,12 +53,16 @@ import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.profiles.ProfileMetadata
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.vpn.AppScopeMode
+import io.github.zapretkvn.android.vpn.LatencyFailure
+import io.github.zapretkvn.android.vpn.LatencyProbeState
+import io.github.zapretkvn.android.vpn.LatencyUnsupportedReason
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
 import io.github.zapretkvn.android.vpn.primaryGroup
+import io.github.zapretkvn.android.vpn.withFreshness
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
@@ -82,11 +86,19 @@ internal fun HomeScreen(
     onStop: () -> Unit,
     onRestart: () -> Unit,
     onSelectOutbound: (String, String, String) -> Unit,
-    onMeasurePing: () -> Unit,
     onMeasureGroup: (String) -> Unit,
 ) {
     var serverSheetOpen by rememberSaveable { mutableStateOf(false) }
     val connected = vpnState as? VpnConnectionState.Connected
+    var nowEpochMillis by remember(connected?.connectedAtEpochMillis) {
+        mutableLongStateOf(System.currentTimeMillis())
+    }
+    LaunchedEffect(connected?.connectedAtEpochMillis) {
+        while (connected != null) {
+            delay(1_000)
+            nowEpochMillis = System.currentTimeMillis()
+        }
+    }
     val currentGroup = selectorGroups.primaryGroup()
     val currentServer = currentGroup?.items?.firstOrNull { it.tag == currentGroup.selected }
 
@@ -127,7 +139,7 @@ internal fun HomeScreen(
                     if (currentServer != null) {
                         ServerSummary(
                             server = currentServer,
-                            pingMillis = sessionStats.pingMillis,
+                            nowEpochMillis = nowEpochMillis,
                             hideServerAddresses = hideServerAddresses,
                             onClick = { serverSheetOpen = true },
                         )
@@ -138,16 +150,27 @@ internal fun HomeScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    SessionFacts(sessionStats, connected.connectedAtEpochMillis, onMeasurePing)
+                    SessionFacts(
+                        stats = sessionStats,
+                        connectedAt = connected.connectedAtEpochMillis,
+                        icmp = currentServer?.icmp,
+                        nowEpochMillis = nowEpochMillis,
+                    )
                     TrafficChart(sessionStats.samples)
                     TrafficTotals(sessionStats)
                 }
 
                 when (vpnState) {
-                    is VpnConnectionState.Starting -> Text(
-                        vpnState.message,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    is VpnConnectionState.Starting -> Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(vpnState.message, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "Проверка DNS и доступа может занять до 20 секунд.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     is VpnConnectionState.Error -> Column(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
@@ -220,6 +243,7 @@ internal fun HomeScreen(
         ModalBottomSheet(onDismissRequest = { serverSheetOpen = false }) {
             ServerSelectorSheet(
                 groups = selectorGroups,
+                nowEpochMillis = nowEpochMillis,
                 hideServerAddresses = hideServerAddresses,
                 onSelect = { group, item ->
                     onSelectOutbound(connected.profileId, group.tag, item.tag)
@@ -258,7 +282,7 @@ private fun ConnectionHeader(state: VpnConnectionState) {
 @Composable
 private fun ServerSummary(
     server: RuntimeOutboundItem,
-    pingMillis: Long?,
+    nowEpochMillis: Long,
     hideServerAddresses: Boolean,
     onClick: () -> Unit,
 ) {
@@ -294,11 +318,11 @@ private fun ServerSummary(
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    "ICMP ${formatPing(pingMillis ?: server.pingMillis?.toLong())}",
+                    "Relay HTTPS · ${formatLatency(server.relay, nowEpochMillis)}",
                     style = MaterialTheme.typography.labelLarge,
                 )
                 Text(
-                    "Relay ${formatPing(server.relayDelayMillis?.toLong())}",
+                    "ICMP · ${formatLatency(server.icmp, nowEpochMillis)}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
                 )
@@ -355,14 +379,12 @@ private fun OfflineServerSummary(
 }
 
 @Composable
-private fun SessionFacts(stats: VpnSessionStats, connectedAt: Long, onMeasurePing: () -> Unit) {
-    var now by remember(connectedAt) { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(connectedAt) {
-        while (true) {
-            delay(1_000)
-            now = System.currentTimeMillis()
-        }
-    }
+private fun SessionFacts(
+    stats: VpnSessionStats,
+    connectedAt: Long,
+    icmp: LatencyProbeState?,
+    nowEpochMillis: Long,
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Fact(
             label = "IP",
@@ -371,14 +393,12 @@ private fun SessionFacts(stats: VpnSessionStats, connectedAt: Long, onMeasurePin
         )
         Fact(
             label = "ICMP",
-            value = formatPing(stats.pingMillis),
-            modifier = Modifier
-                .weight(0.8f)
-                .clickable(onClick = onMeasurePing),
+            value = formatLatency(icmp, nowEpochMillis),
+            modifier = Modifier.weight(0.8f),
         )
         Fact(
             label = "Время",
-            value = formatDuration((now - connectedAt).coerceAtLeast(0)),
+            value = formatDuration((nowEpochMillis - connectedAt).coerceAtLeast(0)),
             modifier = Modifier.weight(0.9f),
         )
     }
@@ -537,6 +557,7 @@ private fun ConnectionAction(
 @Composable
 private fun ServerSelectorSheet(
     groups: List<RuntimeSelectorGroup>,
+    nowEpochMillis: Long,
     hideServerAddresses: Boolean,
     onSelect: (RuntimeSelectorGroup, RuntimeOutboundItem) -> Unit,
     onMeasureGroup: (String) -> Unit,
@@ -549,8 +570,8 @@ private fun ServerSelectorSheet(
         item {
             Text("Серверы", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             Text(
-                "Показываем два разных измерения: ICMP до endpoint и Relay через штатный " +
-                    "URL-test sing-box. Текущий сервер не переключается; «—» — успешного ответа нет.",
+                "Relay HTTPS открывает тестовое соединение через outbound, но не переключает " +
+                    "выбранный сервер. ICMP отправляет Echo до endpoint по основной сети Android.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -558,13 +579,34 @@ private fun ServerSelectorSheet(
         }
         groups.filter { it.items.isNotEmpty() }.forEach { group ->
             item(key = "header-${group.tag}") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        group.tag,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    TextButton(onClick = { onMeasureGroup(group.tag) }) { Text("Проверить оба") }
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            group.tag,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        TextButton(
+                            onClick = { onMeasureGroup(group.tag) },
+                            modifier = Modifier.semantics {
+                                contentDescription = if (group.probeProgress?.running == true) {
+                                    "Отменить Relay HTTPS и ICMP для ${group.tag}"
+                                } else {
+                                    "Проверить Relay HTTPS и ICMP для ${group.tag}"
+                                }
+                            },
+                        ) {
+                            Text(if (group.probeProgress?.running == true) "Отменить" else "Проверить оба")
+                        }
+                    }
+                    group.probeProgress?.takeIf { it.running }?.let { progress ->
+                        Text(
+                            "Relay ${progress.relayCompleted}/${progress.relayTotal} · " +
+                                "ICMP ${progress.icmpCompleted}/${progress.icmpTotal}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
             items(group.items, key = { "${group.tag}-${it.tag}" }) { item ->
@@ -598,11 +640,11 @@ private fun ServerSelectorSheet(
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            "Relay ${formatPing(item.relayDelayMillis?.toLong())}",
+                            "Relay HTTPS · ${formatLatency(item.relay, nowEpochMillis)}",
                             style = MaterialTheme.typography.labelLarge,
                         )
                         Text(
-                            "ICMP ${formatPing(item.pingMillis?.toLong())}",
+                            "ICMP · ${formatLatency(item.icmp, nowEpochMillis)}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -652,4 +694,42 @@ internal fun formatPing(value: Long?): String {
     val seconds = hundredths / 100
     val fraction = (hundredths % 100).toString().padStart(2, '0').trimEnd('0')
     return if (fraction.isEmpty()) "$seconds с" else "$seconds,$fraction с"
+}
+
+internal fun formatLatency(
+    rawState: LatencyProbeState?,
+    nowEpochMillis: Long = System.currentTimeMillis(),
+): String {
+    if (rawState == null) return "Не проверено"
+    val state = rawState.withFreshness(nowEpochMillis, rawState.sampleIdentity())
+    return when (state) {
+        LatencyProbeState.NotTested -> "Не проверено"
+        is LatencyProbeState.Running -> state.previous?.let {
+            "Проверяется · было ${formatPing(it.millis.toLong())}"
+        } ?: "Проверяется"
+        is LatencyProbeState.Success -> formatPing(state.sample.millis.toLong())
+        is LatencyProbeState.Failed -> {
+            val label = when (state.reason) {
+                LatencyFailure.NoResponse -> "Нет ответа"
+                LatencyFailure.Dns -> "Ошибка DNS"
+                LatencyFailure.Failed -> "Ошибка"
+            }
+            state.previous?.let { "$label · было ${formatPing(it.millis.toLong())}" } ?: label
+        }
+        is LatencyProbeState.Unsupported -> when (state.reason) {
+            LatencyUnsupportedReason.MissingEndpoint -> "Нет endpoint"
+            LatencyUnsupportedReason.NestedGroup -> "Группа · откройте отдельно"
+        }
+        is LatencyProbeState.Stale -> "Устарело · ${formatPing(state.sample.millis.toLong())}"
+    }
+}
+
+private fun LatencyProbeState.sampleIdentity(): String? = when (this) {
+    LatencyProbeState.NotTested,
+    is LatencyProbeState.Unsupported,
+    -> null
+    is LatencyProbeState.Running -> previous?.networkIdentity
+    is LatencyProbeState.Success -> sample.networkIdentity
+    is LatencyProbeState.Failed -> previous?.networkIdentity
+    is LatencyProbeState.Stale -> sample.networkIdentity
 }

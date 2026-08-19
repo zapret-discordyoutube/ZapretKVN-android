@@ -28,8 +28,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -86,7 +88,7 @@ class DiagnosticExporter(
         val network = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 4)
+            put("report_version", 5)
             put("created_at", isoTimestamp(now))
             put("created_at_epoch_ms", now)
             put(
@@ -116,7 +118,7 @@ class DiagnosticExporter(
                 },
             )
             put("vpn", vpnStateJson(vpnController.state.value))
-            put("runtime_resources", runtimeResourcesJson())
+            put("runtime_resources", runtimeResourcesJson(diagnostics.effectiveOverlay))
             put(
                 "vpn_system_policy",
                 buildJsonObject {
@@ -251,13 +253,26 @@ class DiagnosticExporter(
         }
     }
 
-    private fun runtimeResourcesJson(): JsonObject {
+    private fun runtimeResourcesJson(effectiveOverlay: String?): JsonObject {
         val resources = VpnRuntimeMetrics.snapshot()
+        val innerWireGuardMtu = effectiveOverlay
+            ?.let { runCatching { JsonConfig.parse(it) }.getOrNull() }
+            ?.let { it as? JsonObject }
+            ?.get("wireguard_mtu_values") as? JsonArray
         return buildJsonObject {
             put("sessions", resources.activeSessions)
             put("libbox_instances", resources.activeLibboxInstances)
             put("platform_adapters", resources.activePlatformAdapters)
             put("tun_descriptors", resources.activeTunDescriptors)
+            put(
+                "outer_tun_mtu",
+                resources.outerTunMtu?.let(::JsonPrimitive) ?: JsonPrimitive("unknown"),
+            )
+            put(
+                "inner_wireguard_mtu",
+                innerWireGuardMtu?.takeIf { it.isNotEmpty() }
+                    ?: JsonPrimitive("unknown"),
+            )
             put("network_callbacks", resources.activeNetworkCallbacks)
             put("status_clients", resources.activeStatusClients)
             put("log_clients", resources.activeLogClients)
@@ -289,9 +304,20 @@ class DiagnosticExporter(
         buildJsonObject {
             put("generation", attempt.generation)
             put("trigger", attempt.trigger)
+            put("candidate_attempt_id", attempt.candidateAttemptId)
             put("started_at_epoch_ms", attempt.startedAtEpochMillis)
             put("outcome", attempt.outcome.code)
+            attempt.cancellationReason?.let { put("cancellation_reason", it) }
+            attempt.vpnNetworkIdentity?.let { put("vpn_network_identity", it) }
+            put("vpn_network_lost", attempt.vpnNetworkLost)
             attempt.totalDurationMillis?.let { put("total_duration_ms", it) }
+            val elapsed = attempt.totalDurationMillis
+                ?: (SystemClock.elapsedRealtime() - attempt.startedAtElapsedRealtimeMillis).coerceAtLeast(0L)
+            put("elapsed_ms", elapsed)
+            put("remaining_startup_budget_ms", (45_000L - elapsed).coerceAtLeast(0L))
+            attempt.stages.lastOrNull { it.status == io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus.Running }
+                ?.let { put("current_stage", it.key) }
+            put("dns_probe_socket_path", "vpn_uid_tun")
             put("failure", failureJson(attempt.failure))
             attempt.slowestCompletedStage?.let { slowest ->
                 put(

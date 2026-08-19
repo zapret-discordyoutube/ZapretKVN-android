@@ -52,6 +52,8 @@ class DiagnosticExportInstrumentedTest {
         val token = container.vpnController.nextGeneration()
         try {
             container.vpnController.beginConnectionDiagnostic(token, "instrumented_test")
+            container.vpnController.beginConnectionCandidate(token, 2)
+            container.vpnController.recordConnectionVpnNetwork(token, identity = "42", lost = true)
             container.vpnController.startConnectionDiagnosticStage(token, "profile", "Профиль")
             container.vpnController.startConnectionDiagnosticStage(token, "dns_probe", "DNS-проверка")
             container.vpnController.publish(token, VpnConnectionState.Starting("hidden-profile", "Тест"))
@@ -119,7 +121,7 @@ class DiagnosticExportInstrumentedTest {
 
             val report = exporter.createReport()
             JsonConfig.parse(report)
-            assertTrue("\"report_version\": 4" in report)
+            assertTrue("\"report_version\": 5" in report)
             assertTrue(BuildConfig.CORE_COMMIT in report)
             assertTrue(BuildConfig.CORE_PATCH_SHA256 in report)
             assertTrue("\"private_dns_mode\"" in report)
@@ -137,6 +139,14 @@ class DiagnosticExportInstrumentedTest {
             assertTrue("\"log_stats\"" in report)
             assertTrue("\"previous_process_exit\"" in report)
             assertTrue("\"runtime_resources\"" in report)
+            assertTrue("\"outer_tun_mtu\"" in report)
+            assertTrue("\"inner_wireguard_mtu\"" in report)
+            assertTrue("\"candidate_attempt_id\": 2" in report)
+            assertTrue("\"vpn_network_identity\": \"42\"" in report)
+            assertTrue("\"vpn_network_lost\": true" in report)
+            assertTrue("\"dns_probe_socket_path\": \"vpn_uid_tun\"" in report)
+            assertTrue("\"elapsed_ms\"" in report)
+            assertTrue("\"remaining_startup_budget_ms\"" in report)
             assertTrue("\"runtime_log_persisted\": false" in report)
             assertTrue("\"support_code\": \"DNS-200\"" in report)
             assertEquals(

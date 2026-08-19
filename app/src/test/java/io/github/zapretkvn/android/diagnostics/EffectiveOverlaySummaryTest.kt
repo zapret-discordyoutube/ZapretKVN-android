@@ -79,6 +79,8 @@ class EffectiveOverlaySummaryTest {
         assertEquals("1", (summary["health_probe_route_count"] as JsonPrimitive).content)
         assertEquals("1", (summary["health_probe_tls_sniff_count"] as JsonPrimitive).content)
         assertEquals("1", (summary["bootstrap_address_count"] as JsonPrimitive).content)
+        assertTrue((summary["bootstrap_hosts_overlay"] as JsonPrimitive).boolean)
+        assertFalse("bootstrap_lkg" in summary)
     }
 
     @Test

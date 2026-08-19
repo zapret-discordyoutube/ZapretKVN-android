@@ -4,13 +4,15 @@ import io.github.zapretkvn.android.config.OutboundDescription
 import io.github.zapretkvn.android.config.SelectorGroup
 
 internal fun List<RuntimeSelectorGroup>.primaryGroup(): RuntimeSelectorGroup? =
-    firstOrNull { group ->
+    firstOrNull { group -> group.primary && group.items.any { it.tag == group.selected } }
+        ?: firstOrNull { group ->
         group.selectable && group.items.any { it.tag == group.selected }
     } ?: firstOrNull { it.items.isNotEmpty() }
 
 internal class ServerPingTargetResolver(
     private val descriptions: Map<String, OutboundDescription>,
     initialGroups: List<SelectorGroup>,
+    private val primaryGroupTag: String? = null,
 ) {
     private val initialSelections = initialGroups.associate { group ->
         group.tag to (group.default ?: group.outbounds.firstOrNull()).orEmpty()
@@ -18,7 +20,10 @@ internal class ServerPingTargetResolver(
 
     fun selected(runtimeGroups: List<RuntimeSelectorGroup>): ServerPingTarget? {
         val selections = selections(runtimeGroups)
-        val rootTag = runtimeGroups.primaryGroup()?.tag ?: initialSelections.keys.firstOrNull()
+        val rootTag = runtimeGroups.firstOrNull { it.tag == primaryGroupTag }?.tag
+            ?: runtimeGroups.primaryGroup()?.tag
+            ?: primaryGroupTag
+            ?: initialSelections.keys.firstOrNull()
         val selectedTag = rootTag?.let(selections::get)
         if (selectedTag != null) return resolve(selectedTag, selections)
         return descriptions.values.singleOrNull { it.serverHost != null }?.toTarget()
@@ -28,12 +33,12 @@ internal class ServerPingTargetResolver(
         groupTag: String,
         runtimeGroups: List<RuntimeSelectorGroup>,
     ): List<ServerPingTarget> {
-        val selections = selections(runtimeGroups)
         val members = runtimeGroups.firstOrNull { it.tag == groupTag }
             ?.items
             ?.map(RuntimeOutboundItem::tag)
             .orEmpty()
-        return members.mapNotNull { resolve(it, selections) }.distinctBy(ServerPingTarget::outboundTag)
+        return members.mapNotNull { descriptions[it]?.toTarget() }
+            .distinctBy(ServerPingTarget::outboundTag)
     }
 
     private fun selections(runtimeGroups: List<RuntimeSelectorGroup>): Map<String, String> =

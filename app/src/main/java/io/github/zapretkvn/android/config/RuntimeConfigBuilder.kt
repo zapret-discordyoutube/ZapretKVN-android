@@ -163,9 +163,18 @@ object RuntimeConfigBuilder {
             return invalid("FakeIP найден в JSON. Для него выберите режим «Из JSON».")
         }
         var runtimeOutbounds = storedOutbounds?.let(::enableManagedInterrupt)
+        var runtimeEndpoints = root["endpoints"] as? JsonArray
         options.bootstrapHost?.let { overlay ->
-            runtimeOutbounds = runtimeOutbounds?.let { applyBootstrapOutbound(it, overlay) }
-                ?: return invalid("В конфигурации отсутствуют outbounds для bootstrap.")
+            val outboundMatch = runtimeOutbounds?.hasTaggedEntry(overlay.outboundTag) == true
+            val endpointMatch = runtimeEndpoints?.hasTaggedEntry(overlay.outboundTag) == true
+            if (outboundMatch == endpointMatch) {
+                return invalid("Bootstrap target должен однозначно ссылаться на один outbound или endpoint.")
+            }
+            if (outboundMatch) {
+                runtimeOutbounds = applyBootstrapResolver(checkNotNull(runtimeOutbounds), overlay)
+            } else {
+                runtimeEndpoints = applyBootstrapResolver(checkNotNull(runtimeEndpoints), overlay)
+            }
         }
         val storedLog = root["log"] as? JsonObject
         val runtimeLog = buildJsonObject {
@@ -179,6 +188,7 @@ object RuntimeConfigBuilder {
                 this["inbounds"] = runtimeInbounds
                 this["log"] = runtimeLog
                 runtimeOutbounds?.let { this["outbounds"] = it }
+                runtimeEndpoints?.let { this["endpoints"] = it }
                 if (managed) {
                     sanitizeManagedExperimental(root["experimental"])?.let {
                         this["experimental"] = it
@@ -677,13 +687,17 @@ object RuntimeConfigBuilder {
             (it as? JsonObject)?.string("type") == "fakeip"
         }
 
-    private fun applyBootstrapOutbound(
-        outbounds: JsonArray,
+    private fun JsonArray.hasTaggedEntry(tag: String): Boolean = any { element ->
+        (element as? JsonObject)?.string("tag") == tag
+    }
+
+    private fun applyBootstrapResolver(
+        entries: JsonArray,
         overlay: BootstrapHostOverlay,
-    ): JsonArray = JsonArray(outbounds.map { element ->
-        val outbound = element as? JsonObject ?: return@map element
-        if (outbound.string("tag") != overlay.outboundTag) return@map element
-        JsonObject(outbound.toMutableMap().apply {
+    ): JsonArray = JsonArray(entries.map { element ->
+        val entry = element as? JsonObject ?: return@map element
+        if (entry.string("tag") != overlay.outboundTag) return@map element
+        JsonObject(entry.toMutableMap().apply {
             this["domain_resolver"] = JsonPrimitive(BOOTSTRAP_DNS_TAG)
         })
     })

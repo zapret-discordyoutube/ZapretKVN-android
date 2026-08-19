@@ -121,7 +121,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 4. Прочитать профиль и создать runtime-копию JSON.
 5. Проверить один TUN, полные IPv4/IPv6 routes, rule-set assets и запрещённые socket bind-поля.
 6. Очистить импортированные `include_package`/`exclude_package` только в runtime-копии и применить одну глобальную allowlist.
-7. Добавить только разрешённые runtime overlays: health-check, при необходимости bootstrap LKG, минимальный Android DNS для профиля без DNS и внутренний WireGuard MTU, если он отсутствует.
+7. Добавить только разрешённые runtime overlays: health-check, runtime-only hosts bootstrap из свежего pre-VPN resolve или допустимого LKG строго для выбранного member, минимальный Android DNS для профиля без DNS и внутренний WireGuard MTU, если он отсутствует.
 8. Выполнить `libbox CheckConfig()` до `establish()`.
 9. Проверить captive portal/Private DNS и разрешить адрес активного proxy-сервера через underlying Android network.
 10. Создать platform adapter и локальный libbox command server в том же Android process.
@@ -190,7 +190,7 @@ notification и сам сервис. Кнопка «Подключить сей�
 Главная
 ├─ Состояние и большая кнопка подключения
 ├─ Профиль и выбранный сервер
-├─ Внешний IP, пинг, время сессии
+├─ Внешний IP, Relay HTTPS, ICMP и время сессии
 ├─ Download / Upload
 └─ Лёгкий график последних 60 секунд
 
@@ -223,12 +223,12 @@ notification и сам сервис. Кнопка «Подключить сей�
 
 - состояние;
 - профиль/сервер;
-- IP и пинг;
+- IP, Relay HTTPS и ICMP как независимые показатели;
 - время;
 - получено/отправлено;
 - две тонкие линии скорости за 60 секунд.
 
-Статистика хранится только в памяти текущей сессии. Суммарные счётчики читаются раз в секунду только пока главная находится в lifecycle `STARTED`; при уходе с экрана stream и ticker закрываются. IP запрашивается один раз после подключения; пинг — при подключении и вручную. Постоянное уведомление показывает только состояние, а не живую скорость.
+Статистика хранится только в памяти текущей сессии. Суммарные счётчики читаются раз в секунду только пока главная находится в lifecycle `STARTED`; при уходе с экрана stream и ticker закрываются. IP запрашивается один раз после подключения; Relay HTTPS и ICMP запускаются только явной командой «Проверить оба». Постоянное уведомление показывает только состояние, а не живую скорость.
 
 В production runtime всегда создаётся внутренний `clash_api` traffic manager, но
 без `external_controller` или сетевого listener. Постоянный command client слушает
@@ -238,13 +238,17 @@ notification и сам сервис. Кнопка «Подключить сей�
 `CommandLog` кратко захватывает bounded core-лог во время connect health-check,
 затем существует только при открытом экране диагностики.
 
-Пинг на карточке — RTT одного ICMP Echo до hostname фактически выбранного
-VPN-сервера. Сокет привязывается к underlying `Network` через Android
-`Network.bindSocket()`, поэтому пакеты не проходят через TUN. HTTPS health-check
-только подтверждает работоспособность маршрута и никогда не публикуется как пинг.
-Если сервер блокирует ICMP, интерфейс показывает «—» без подмены значением
-TCP/HTTPS URL-test. Один пакет отправляется при подключении и один — только по
-ручному действию пользователя; периодического ping-loop нет. Внешний IP
+Relay HTTPS и ICMP имеют разные state machine и никогда не подменяют друг друга.
+Relay выполняет `HEAD https://www.gstatic.com/generate_204` через конкретный leaf-outbound:
+тестовое TCP/TLS/HTTP-соединение создаётся, но selector/urltest selection, history и
+активные соединения не изменяются. ICMP — RTT одного Echo до hostname endpoint;
+сокет привязывается к underlying `Network` через Android `Network.bindSocket()` и
+не проходит через TUN. Все DNS-адреса endpoint пробуются до первого ответа.
+Интерфейс различает «Не проверено», running, success, timeout/error, unsupported и
+stale; успешное значение устаревает через пять минут или сразу после смены сети.
+Один session-owned coordinator допускает только один отменяемый запуск: Relay идёт
+очередью по 10, ICMP — по 4, вложенная группа открывается отдельно. Периодического
+ping-loop нет. Внешний IP
 дополнительно запрашивается один раз после успешного подключения или ручной смены
 сервера через dual-stack [ipify endpoint](https://www.ipify.org/); ошибка этого
 неблокирующего запроса не отключает VPN и не запускает retry. Значения, 60 точек
@@ -509,13 +513,13 @@ Runtime-копия каждого профиля, включая raw JSON и end
 - runtime-копия managed JSON использует `log.level = "warn"`; raw JSON сохраняет явно выбранный уровень. Libbox хранит не более 256 строк в памяти, а `log.output` удаляется только из runtime-копии, поэтому запись runtime-лога на диск отсутствует;
 - `CommandStatus` с интервалом 1 секунда включается только для видимой главной; `CommandConnections` не включается никогда; bounded `CommandLog` открывается на время connect health-check и затем только при видимой диагностике;
 - 60 значений графика — обычный кольцевой массив в памяти. Уведомление, фон и закрытый UI не обновляют график;
-- health-check выполняется при подключении и значимой смене сети, IP — один раз за соединение, ping — при подключении и вручную. Периодических проверок «на всякий случай» нет;
+- health-check выполняется при подключении и значимой смене сети, IP — один раз за соединение, Relay/ICMP — только явной командой. Периодических проверок «на всякий случай» нет;
 - автоматическое восстановление после транзиентного отказа ждёт сеть по событию `ConnectivityManager`, а не опросом; единственный таймер — ограниченный backoff повтора. Простой без сети не стоит ничего и потому не ограничен, а число попыток подключения ограничено жёстко; wakelock и alarm не используются;
 - DNS cache остаётся включённым с capacity 4096. Только явный Secure или последний Auto-этап использует `parallel`: Quad9, Google, OpenDNS, Cloudflare и Yandex стартуют на cache miss, потому что `sequential` exact core не достигает резерва при зависании первого; успешный DNS профиля/Android не создаёт DoH-трафика;
 - updater, подписки и импорт работают только после действия пользователя;
 - rootless hardening выполняется один раз при сборке runtime JSON и не создаёт scanner, timer, listener или отдельный process;
 - приложение не запрашивает `WAKE_LOCK` и исключение из battery optimization;
-- managed presets используют selector и ручной ping, а не `urltest`; не создают NTP, remote rule-set и явные persistent keepalive.
+- managed presets используют selector и явную read-only проверку Relay/ICMP, а не policy `urltest`; не создают NTP, remote rule-set и явные persistent keepalive.
 
 Импортированный JSON остаётся источником истины и может сам содержать `urltest`, NTP, remote rule-set, внешний Clash controller, verbose log или keepalive. Перед запуском GUI показывает единое предупреждение «Профиль содержит фоновую или внешнюю активность». Включённая по умолчанию и видимая в настройках localhost-защита удаляет control listener только из effective runtime; остальные поля не меняются.
 
@@ -593,9 +597,9 @@ wireguard-import/    независимый parser WireGuard/AWG без зави
 
 Material 3 следует системной светлой/тёмной теме. Dynamic Color применяется на Android 12+; Android 8–11 получают встроенную согласованную палитру.
 
-Диагностика остаётся обычным пакетом внутри `app`, а не отдельным Gradle-модулем или сервисом. Каждая попытка подключения/контролируемого restart создаёт в памяти bounded timeline максимум из 20 этапов с монотонной длительностью: профиль и scope, сеть Android, bootstrap DNS/TCP, runtime overlay, `CheckConfig`, platform adapter, command server, запуск core/TUN, selector/log clients, ожидание VPN network, отдельные UDP/TCP/Android DNS probes, HTTPS probe и финализация. Экран и diagnostic JSON v4 показывают итог, общую длительность, status/detail каждого этапа и самый долгий этап. Отдельный stop timeline фиксирует отмену запуска, закрытие Android TUN, callback/job, command clients, libbox service, command server и network monitor; незавершённый этап экспортируется со статусом `running` и текущей длительностью. Замеры происходят только при переходах между этапами: ticker, polling, worker и дополнительный сетевой запрос для них не создаются.
+Диагностика остаётся обычным пакетом внутри `app`, а не отдельным Gradle-модулем или сервисом. Каждая попытка подключения/контролируемого restart создаёт в памяти bounded timeline максимум из 20 этапов с монотонной длительностью: профиль и scope, сеть Android, bootstrap DNS/TCP, runtime overlay, `CheckConfig`, platform adapter, command server, запуск core/TUN, selector/log clients, ожидание VPN network, отдельные UDP/TCP/Android DNS probes, HTTPS probe и финализация. Экран и diagnostic JSON v5 показывают итог, candidate attempt ID, причину отмены, leased VPN Network identity/loss, текущий этап, elapsed/remaining budget, socket path, фактический outer TUN MTU, status/detail каждого этапа и самый долгий этап. Отдельный stop timeline фиксирует отмену запуска, закрытие Android TUN, callback/job, command clients, libbox service, command server и network monitor; незавершённый этап экспортируется со статусом `running` и текущей длительностью. Замеры происходят только при переходах между этапами: ticker, polling, worker и дополнительный сетевой запрос для них не создаются.
 
-Диагностика и главная показывают стабильный support-код (`NET-*`, `DNS-*`, `SRV-*`, `CFG-*`, `CORE-*`, `VPN-*`, `AUTH-*`) рядом с понятным сообщением. `VPN-200` означает, что DNS-проверка уже пройдена, но полезный HTTPS-трафик через выбранный VPN outbound не прошёл. `AUTH-100` назначается только по явному отказу авторизации в ошибке или startup-логе ядра; `timeout`, `EOF` и молчаливое закрытие VLESS не считаются доказательством отключённого UUID и остаются `VPN-200`. Для WireGuard startup core-лог различает два паттерна поверх `VPN-200`/`DNS-200`: `VPN-210` — «received handshake response» есть, но данные через туннель не возвращаются (блокировка протокола DPI или сломанный форвардинг/NAT на сервере — с клиента неразличимо), `VPN-211` — рукопожатие отправляется, но ответ не приходит; сырые строки-доказательства из core-лога (redacted) попадают в техническую деталь ошибки. `VPN-210` требует явных доказательств мёртвого data-plane (retry «stopped hearing back» или «dns: exchange failed … deadline exceeded»), а успешный «dns: exchanged» через туннель отменяет вердикт: полевой случай июля 2026 показал, что strict Private DNS (DoT :853 refused) валит DNS-пробу при полностью живом туннеле. Сам паттерн VPN-210 подтверждён полевыми отчётами: тот же WG-профиль работал из другой сети и с AmneziaWG-обфускацией, то есть DPI режет именно чистый WireGuard после рукопожатия. Для bootstrap код задаёт типизированная ошибка `network-bootstrap`; для остальных старых путей app назначает стабильный код категории. Вся suspend-цепочка запуска имеет один 30-секундный deadline: по истечении VPN fail-close останавливается с `VPN-120`, без retry-loop. Diagnostic JSON хранит redacted техническую деталь (`rcode`, `errno`, timeout), но endpoint и credentials туда не попадают. В памяти остаются три последние попытки подключения, до 20 этапов и до 48 startup core-записей на попытку. Одинаковые соседние сообщения схлопываются, а handshake/endpoint/TUN/timeout/warn/error имеют приоритет над обычным packet/DNS-шумом; counters показывают полученные, схлопнутые и отброшенные строки. Вход одного callback ограничен 48 записями, общий журнал — 80, внутренний backlog libbox — 256. `CommandLog` кратко работает во время connect health-check; после подключения он остаётся только пока экран диагностики видим и Activity находится в `STARTED`. Runtime/core traffic log не попадает в Logcat и на диск. На диск атомарно записывается только один последний uncaught Kotlin/Java crash: timestamp, тип, redacted message и максимум 16 сокращённых stack frames в `noBackupFilesDir`; следующий crash заменяет предыдущий. На API 30+ дополнительно читается одна системная запись о прошлом завершении процесса (включая native crash/ANR), но большой system trace намеренно не копируется.
+Диагностика и главная показывают стабильный support-код (`NET-*`, `DNS-*`, `SRV-*`, `CFG-*`, `CORE-*`, `VPN-*`, `AUTH-*`) рядом с понятным сообщением. `VPN-200` означает, что DNS-проверка уже пройдена, но полезный HTTPS-трафик через выбранный VPN outbound не прошёл. `AUTH-100` назначается только по явному отказу авторизации в ошибке или startup-логе ядра; `timeout`, `EOF` и молчаливое закрытие VLESS не считаются доказательством отключённого UUID и остаются `VPN-200`. Для WireGuard startup core-лог различает два паттерна поверх `VPN-200`/`DNS-200`: `VPN-210` — «received handshake response» есть, но данные через туннель не возвращаются (блокировка протокола DPI или сломанный форвардинг/NAT на сервере — с клиента неразличимо), `VPN-211` — рукопожатие отправляется, но ответ не приходит; сырые строки-доказательства из core-лога (redacted) попадают в техническую деталь ошибки. `VPN-210` требует явных доказательств мёртвого data-plane (retry «stopped hearing back» или «dns: exchange failed … deadline exceeded»), а успешный «dns: exchanged» через туннель отменяет вердикт: полевой случай июля 2026 показал, что strict Private DNS (DoT :853 refused) валит DNS-пробу при полностью живом туннеле. Сам паттерн VPN-210 подтверждён полевыми отчётами: тот же WG-профиль работал из другой сети и с AmneziaWG-обфускацией, то есть DPI режет именно чистый WireGuard после рукопожатия. Для bootstrap код задаёт типизированная ошибка `network-bootstrap`; для остальных старых путей app назначает стабильный код категории. Вся suspend-цепочка запуска имеет один 45-секундный monotonic deadline, а DNS+HTTPS health-gate — вложенный предел 20 секунд: по истечении VPN fail-close останавливается с `VPN-120`, без retry-loop. Diagnostic JSON хранит redacted техническую деталь (`rcode`, `errno`, timeout), но endpoint и credentials туда не попадают. В памяти остаются три последние попытки подключения, до 20 этапов и до 48 startup core-записей на попытку. Одинаковые соседние сообщения схлопываются, а handshake/endpoint/TUN/timeout/warn/error имеют приоритет над обычным packet/DNS-шумом; counters показывают полученные, схлопнутые и отброшенные строки. Вход одного callback ограничен 48 записями, общий журнал — 80, внутренний backlog libbox — 256. `CommandLog` кратко работает во время connect health-check; после подключения он остаётся только пока экран диагностики видим и Activity находится в `STARTED`. Runtime/core traffic log не попадает в Logcat и на диск. На диск атомарно записывается только один последний uncaught Kotlin/Java crash: timestamp, тип, redacted message и максимум 16 сокращённых stack frames в `noBackupFilesDir`; следующий crash заменяет предыдущий. На API 30+ дополнительно читается одна системная запись о прошлом завершении процесса (включая native crash/ANR), но большой system trace намеренно не копируется.
 
 Diagnostic JSON создаётся только явной кнопкой, не содержит raw profile, package list, endpoint, внешний IP или credentials и включает app/core revision+patch SHA-256, Android/API/device ABI, non-VPN network/Private DNS, runtime resource counters, connection timeline, одну прошлую process-exit запись, последний app crash, log counters и структурную сводку effective `zapret-*` overlay. Временный файл перезаписывает предыдущий, передаётся системным Sharesheet через non-exported `FileProvider` с read grant и удаляется при следующем запуске.
 

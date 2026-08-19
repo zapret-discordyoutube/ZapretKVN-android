@@ -54,13 +54,35 @@ class ServerPingTargetResolverTest {
         )
     }
 
+    @Test
+    fun `group probe does not recurse into nested selector`() {
+        val resolver = ServerPingTargetResolver(
+            descriptions,
+            listOf(
+                SelectorGroup("root", listOf("nested", "proxy-a"), "nested"),
+                SelectorGroup("nested", listOf("proxy-b"), "proxy-b"),
+            ),
+            primaryGroupTag = "root",
+        )
+        val runtime = listOf(
+            group("root", selected = "nested", "nested", "proxy-a"),
+            group("nested", selected = "proxy-b", "proxy-b"),
+        )
+
+        assertEquals(
+            listOf(ServerPingTarget("proxy-a", "a.example")),
+            resolver.group("root", runtime),
+        )
+        assertEquals(ServerPingTarget("proxy-b", "b.example"), resolver.selected(runtime))
+    }
+
     private fun group(tag: String, selected: String, vararg items: String) = RuntimeSelectorGroup(
         tag = tag,
         type = "selector",
         selected = selected,
         selectable = true,
         items = items.map { item ->
-            RuntimeOutboundItem(item, "vless", null, null, null)
+            RuntimeOutboundItem(item, "vless", null)
         },
     )
 }

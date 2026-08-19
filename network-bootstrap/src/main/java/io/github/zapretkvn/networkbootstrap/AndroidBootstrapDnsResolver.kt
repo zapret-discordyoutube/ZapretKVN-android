@@ -13,10 +13,9 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AndroidBootstrapDnsResolver(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
@@ -28,18 +27,15 @@ class AndroidBootstrapDnsResolver(
     ): List<InetAddress> {
         require(hostname.isNotBlank()) { "Hostname must not be blank." }
         return try {
-            withTimeout(timeoutMillis) {
+            withTimeoutOrNull(timeoutMillis) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     resolveModern(network, hostname, noCacheLookup)
                 } else {
                     resolveLegacy(network, hostname)
                 }
-            }
-        } catch (timeout: TimeoutCancellationException) {
-            throw BootstrapFailureException(
+            } ?: throw BootstrapFailureException(
                 BootstrapFailureCode.DnsTimeout,
                 technicalDetail = "timeout_ms=$timeoutMillis",
-                cause = timeout,
             )
         } catch (cancelled: CancellationException) {
             throw cancelled

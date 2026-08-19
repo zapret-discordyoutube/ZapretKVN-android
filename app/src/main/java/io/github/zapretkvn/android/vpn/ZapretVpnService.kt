@@ -43,18 +43,19 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LogIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.OverrideOptions
+import io.nekohasekai.libbox.RelayDelayProbeHandler
+import io.nekohasekai.libbox.RelayDelayProbeResult
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.SystemProxyStatus
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -65,8 +66,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -124,6 +123,7 @@ class ZapretVpnService : VpnService() {
     private val stopInProgress = AtomicBoolean(false)
     private val sessionStateLock = Any()
     private val lifecycleJobLock = Any()
+    private val lifecycleCommandLock = Any()
 
     private val container by lazy { (application as ZapretApplication).container }
     private val controller by lazy { container.vpnController }
@@ -220,7 +220,6 @@ class ZapretVpnService : VpnService() {
                     ?.getBooleanExtra(EXTRA_UPDATER_ROUTING, false),
             )
             ACTION_CLEAR_DNS_CACHE -> requestClearDnsCache(startId)
-            ACTION_PING -> requestPing(startId)
             ACTION_PING_GROUP -> requestGroupPing(
                 profileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty(),
                 groupTag = intent.getStringExtra(EXTRA_GROUP_TAG).orEmpty(),
@@ -275,10 +274,12 @@ class ZapretVpnService : VpnService() {
     }
 
     private fun requestStart(profileId: String, startId: Int, updaterRouting: Boolean) {
-        stopInProgress.set(false)
+        val token = synchronized(lifecycleCommandLock) {
+            stopInProgress.set(false)
+            controller.nextGeneration()
+        }
         cancelRecovery()
         resetRecoveryCounters()
-        val token = controller.nextGeneration()
         terminalError = false
         controller.beginConnectionDiagnostic(token, "user_start")
         controller.startConnectionDiagnosticStage(token, "profile", "Профиль и область приложений")
@@ -522,8 +523,11 @@ class ZapretVpnService : VpnService() {
             networkPolicyKey = underlying.policyKey(),
             outboundDescriptions = ConfigAnalyzer.outboundDescriptions(profile.json),
             selectorGroups = ConfigAnalyzer.selectorGroups(profile.json),
+            primaryGroupTag = BootstrapConfig.selectedProxyTag(runtimeJson),
             updaterRouting = updaterRouting,
             controller = controller,
+            scope = serviceScope,
+            icmpPingProbe = container.icmpPingProbe,
         )
         if (!registerPendingSession(resources, token)) {
             resources.close()
@@ -573,6 +577,7 @@ class ZapretVpnService : VpnService() {
                     controller,
                     token,
                     resources.outboundDescriptions,
+                    resources.primaryGroupTag,
                 ),
                 CommandClientOptions().apply {
                     addCommand(Libbox.CommandGroup)
@@ -594,6 +599,12 @@ class ZapretVpnService : VpnService() {
                 mode = dnsMode,
                 internalDnsServer = dnsServer,
                 proxyIpFamily = BootstrapConfig.selectedProxyIpFamily(profile.json),
+                onNetworkLease = { identity ->
+                    controller.recordConnectionVpnNetwork(token, identity.toString())
+                },
+                onNetworkLost = {
+                    controller.recordConnectionVpnNetwork(token, lost = true)
+                },
                 onStageStarted = { stage ->
                     controller.startConnectionDiagnosticStage(
                         token,
@@ -669,6 +680,7 @@ class ZapretVpnService : VpnService() {
             }
             val candidates =
                 AutomaticDnsFallbackPolicy.candidates(configuredMode, hasProfileDns, strictPrivateDns)
+            var candidateAttemptId = 0
             AutomaticDnsFallbackPolicy.run(
                 candidates = candidates,
                 onFallback = { previous, candidate, failure ->
@@ -691,6 +703,8 @@ class ZapretVpnService : VpnService() {
                     )
                 },
                 attempt = { candidate ->
+                    candidateAttemptId += 1
+                    controller.beginConnectionCandidate(token, candidateAttemptId)
                     startLocked(
                         token = token,
                         profileId = profileId,
@@ -728,13 +742,21 @@ class ZapretVpnService : VpnService() {
         noCacheLookup: Boolean,
         updaterRouting: Boolean? = null,
         resetRecovery: Boolean = true,
+        expectedGeneration: Long? = null,
     ) {
-        stopInProgress.set(false)
+        val token = synchronized(lifecycleCommandLock) {
+            if (expectedGeneration != null &&
+                (expectedGeneration != controller.currentGeneration() || stopInProgress.get())
+            ) {
+                return
+            }
+            stopInProgress.set(false)
+            controller.nextGeneration()
+        }
         if (resetRecovery) {
             cancelRecovery()
             resetRecoveryCounters()
         }
-        val token = controller.nextGeneration()
         trackLifecycleJob(serviceScope.launch {
             serviceLock.withLock {
                 if (token != controller.currentGeneration()) return@withLock
@@ -780,6 +802,10 @@ class ZapretVpnService : VpnService() {
     }
 
     private fun requestClearDnsCache(startId: Int) {
+        val expectedGeneration = controller.currentGeneration()
+        // Do not register this short pre-command as the active lifecycle job:
+        // requestRestart() installs the real job and would otherwise cancel its
+        // own caller before the restart command can be observed reliably.
         serviceScope.launch {
             container.bootstrapCache.clear()
             val profileId = serviceLock.withLock { activeSession?.profileId.orEmpty() }
@@ -793,6 +819,7 @@ class ZapretVpnService : VpnService() {
                     reason = "Сброс DNS-состояния",
                     startId = startId,
                     noCacheLookup = true,
+                    expectedGeneration = expectedGeneration,
                 )
             }
         }
@@ -801,6 +828,7 @@ class ZapretVpnService : VpnService() {
     private fun onUnderlyingNetworkEvent(session: ActiveSession, state: UnderlyingNetworkState) {
         if (activeSession !== session) return
         controller.publishDiagnosticNetwork(session.generation, state)
+        if (state.identity != session.networkPolicyKey.identity) session.onNetworkChanged()
         val automationDecision = networkAutomationDecision(state, session.updaterRouting)
         if (automationDecision is NetworkAutomationDecision.PauseVpn) {
             scheduleAutomationPause(session, state)
@@ -844,6 +872,7 @@ class ZapretVpnService : VpnService() {
                     reason = "Смена сети Android",
                     startId = 0,
                     noCacheLookup = false,
+                    expectedGeneration = current.generation,
                 )
             }
         }
@@ -1140,13 +1169,17 @@ class ZapretVpnService : VpnService() {
         systemPolicy: VpnSystemPolicy? = null,
         trigger: String = if (errorMessage == null) "user_stop" else "policy_stop",
     ) {
-        if (!stopInProgress.compareAndSet(false, true)) return
+        val token = synchronized(lifecycleCommandLock) {
+            if (!stopInProgress.compareAndSet(false, true)) return
+            controller.nextGeneration()
+        }
         cancelScheduledNetworkRestart()
         cancelRecovery()
         resetRecoveryCounters()
         automationOverrideIdentity = null
-        controller.cancelCurrentConnectionDiagnostic()
-        val token = controller.nextGeneration()
+        controller.cancelCurrentConnectionDiagnostic(
+            if (trigger == "user_stop") "user_cancelled" else trigger,
+        )
         controller.beginStopDiagnostic(token, trigger)
         systemPolicy?.let { controller.publishVpnSystemPolicy(token, it) }
         terminalError = errorMessage != null
@@ -1174,14 +1207,16 @@ class ZapretVpnService : VpnService() {
                     controller.finishStopDiagnosticStage(token, key)
                 }
             }
-            closeNetworkMonitor()
             controller.completeStopDiagnostic(token)
-            finishForeground()
-            if (startId > 0) stopSelfResult(startId) else stopSelf()
-            if (errorMessage == null) {
-                controller.publish(token, VpnConnectionState.Stopped)
-            } else {
-                controller.publish(token, VpnConnectionState.Error(errorMessage))
+            if (token == controller.currentGeneration()) {
+                closeNetworkMonitor()
+                finishForeground()
+                if (startId > 0) stopSelfResult(startId) else stopSelf()
+                if (errorMessage == null) {
+                    controller.publish(token, VpnConnectionState.Stopped)
+                } else {
+                    controller.publish(token, VpnConnectionState.Error(errorMessage))
+                }
             }
         }
     }
@@ -1257,36 +1292,6 @@ class ZapretVpnService : VpnService() {
         })
     }
 
-    private fun requestPing(startId: Int) {
-        serviceScope.launch {
-            val session = serviceLock.withLock { activeSession }
-            if (session == null) {
-                controller.publishMessage("Сначала подключите VPN.")
-                finishForeground()
-                stopSelfResult(startId)
-                return@launch
-            }
-            val target = session.selectedPingTarget(controller.selectorGroups.value)
-            runCatching {
-                requireNotNull(target) { "У выбранного VPN-сервера нет адреса для ICMP." }
-                measureServerPing(session, target)
-            }
-                .onSuccess { ping ->
-                    if (activeSession === session) {
-                        controller.publishServerPing(session.generation, checkNotNull(target).outboundTag, ping)
-                        controller.publishPing(session.generation, ping)
-                    }
-                }
-                .onFailure {
-                    if (activeSession === session && target != null) {
-                        controller.publishServerPing(session.generation, target.outboundTag, null)
-                        controller.publishPing(session.generation, null)
-                    }
-                    controller.publishMessage("Не удалось измерить пинг: ${safeError(it).message}")
-                }
-        }
-    }
-
     private fun requestGroupPing(profileId: String, groupTag: String, startId: Int) {
         serviceScope.launch {
             val session = serviceLock.withLock { activeSession }
@@ -1298,76 +1303,12 @@ class ZapretVpnService : VpnService() {
                 }
                 return@launch
             }
-            runCatching {
-                require(groupTag.isNotBlank()) { "Группа серверов не выбрана." }
-                val group = controller.selectorGroups.value.firstOrNull { it.tag == groupTag }
-                requireNotNull(group) { "Группа серверов не найдена в sing-box." }
-                require(group.items.isNotEmpty()) { "В группе нет relay для проверки." }
-                val client = requireNotNull(session.client()) {
-                    "Command client sing-box недоступен."
-                }
-                val relayError = try {
-                    withContext(Dispatchers.IO) { client.urlTest(groupTag) }
-                    null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    error
-                }
-                val icmpError = try {
-                    val targets = session.groupPingTargets(groupTag, controller.selectorGroups.value)
-                    require(targets.isNotEmpty()) { "В группе нет серверов с адресом для ICMP." }
-                    val results = session.networkMonitor.runOnStableNetwork { underlying ->
-                        val network = requireNotNull(underlying.network) {
-                            "Основная сеть Android недоступна."
-                        }
-                        val concurrency = Semaphore(GROUP_PING_CONCURRENCY)
-                        coroutineScope {
-                            targets.map { target ->
-                                async {
-                                    concurrency.withPermit {
-                                        target to runCatching {
-                                            container.icmpPingProbe.measure(network, target)
-                                        }.getOrNull()
-                                    }
-                                }
-                            }.awaitAll()
-                        }
-                    }.value
-                    results.forEach { (target, ping) ->
-                        controller.publishServerPing(session.generation, target.outboundTag, ping)
-                    }
-                    val selected = session.selectedPingTarget(controller.selectorGroups.value)
-                    results.firstOrNull { it.first.outboundTag == selected?.outboundTag }?.let { (_, ping) ->
-                        controller.publishPing(session.generation, ping)
-                    }
-                    null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    error
-                }
-                if (relayError != null && icmpError != null) {
-                    throw IllegalStateException(
-                        "Обе проверки завершились ошибкой: " +
-                            "relay — ${safeError(relayError).message}; " +
-                            "ICMP — ${safeError(icmpError).message}",
-                        relayError,
-                    ).also { it.addSuppressed(icmpError) }
-                }
-                controller.publishMessage(when {
-                    relayError == null && icmpError == null ->
-                        "Relay URL-test запущен, ICMP измерен."
-                    relayError == null ->
-                        "Relay URL-test запущен; ICMP недоступен: " +
-                            safeError(checkNotNull(icmpError)).message
-                    else ->
-                        "ICMP измерен; relay URL-test недоступен: " +
-                            safeError(relayError).message
-                })
-            }.onFailure {
-                controller.publishMessage("Не удалось проверить задержки: ${safeError(it).message}")
+            val group = controller.selectorGroups.value.firstOrNull { it.tag == groupTag }
+            if (group == null || group.items.isEmpty()) {
+                controller.publishMessage(session.generation, "Группа серверов не найдена в sing-box.")
+                return@launch
             }
+            session.toggleLatencyProbe(group)
         }
     }
 
@@ -1399,32 +1340,12 @@ class ZapretVpnService : VpnService() {
 
     private fun startConnectionIdentityProbe(session: ActiveSession) {
         session.replaceIdentityJob(serviceScope.launch {
-            coroutineScope {
-                launch {
-                    val target = session.selectedPingTarget(controller.selectorGroups.value)
-                    val ping = target?.let { runCatching { measureServerPing(session, it) }.getOrNull() }
-                    if (activeSession === session && target != null) {
-                        controller.publishServerPing(session.generation, target.outboundTag, ping)
-                        controller.publishPing(session.generation, ping)
-                    }
-                }
-                launch {
-                    val externalIp = runCatching { container.vpnExternalIpProbe.fetch() }.getOrNull()
-                    if (externalIp != null && activeSession === session) {
-                        controller.publishExternalIp(session.generation, externalIp)
-                    }
-                }
+            val externalIp = runCatching { container.vpnExternalIpProbe.fetch() }.getOrNull()
+            if (externalIp != null && activeSession === session) {
+                controller.publishExternalIp(session.generation, externalIp)
             }
         })
     }
-
-    private suspend fun measureServerPing(
-        session: ActiveSession,
-        target: ServerPingTarget,
-    ): Long = session.networkMonitor.runOnStableNetwork { underlying ->
-        val network = requireNotNull(underlying.network) { "Основная сеть Android недоступна." }
-        container.icmpPingProbe.measure(network, target)
-    }.value
 
     /**
      * Навязывает ядру сервер из сохранённого профиля сразу после старта.
@@ -1469,17 +1390,14 @@ class ZapretVpnService : VpnService() {
         val candidate = ConfigAnalyzer.selectServer(stored.json, groupTag, outboundTag)
         withContext(Dispatchers.Default) { Libbox.checkConfig(candidate) }
         container.profileStore.update(session.profileId, candidate)
-        val client = Libbox.newCommandClient(
-            object : BaseClientHandler() {},
-            CommandClientOptions().apply { addCommand(Libbox.CommandGroup) },
-        )
+        val client = session.client()
+            ?: throw RuntimeSwitchException(IllegalStateException("Клиент selector-группы уже закрыт."))
         try {
-            client.connect()
-            client.selectOutbound(groupTag, outboundTag)
+            withContext(Dispatchers.IO) {
+                client.selectOutbound(groupTag, outboundTag)
+            }
         } catch (error: Throwable) {
             throw RuntimeSwitchException(error)
-        } finally {
-            runCatching { client.disconnect() }
         }
         controller.publishSelection(session.generation, groupTag, outboundTag)
     }
@@ -1594,6 +1512,7 @@ class ZapretVpnService : VpnService() {
                 noCacheLookup = false,
                 updaterRouting = updaterRouting,
                 resetRecovery = false,
+                expectedGeneration = token,
             )
         }
         synchronized(recoveryLock) { recoveryJob = job }
@@ -1845,8 +1764,11 @@ class ZapretVpnService : VpnService() {
         val networkPolicyKey: UnderlyingPolicyKey,
         val outboundDescriptions: Map<String, OutboundDescription>,
         selectorGroups: List<SelectorGroup>,
+        val primaryGroupTag: String?,
         val updaterRouting: Boolean,
         private val controller: VpnController,
+        scope: CoroutineScope,
+        icmpPingProbe: IcmpPingProbe,
     ) : AutoCloseable {
         private val closing = AtomicBoolean(false)
         private val tunCloseStarted = AtomicBoolean(false)
@@ -1866,19 +1788,27 @@ class ZapretVpnService : VpnService() {
         private var logClient: CommandClient? = null
         private var logClientCounted = false
         @Volatile private var stopDiagnosticGeneration = Long.MIN_VALUE
-        private val pingTargetResolver = ServerPingTargetResolver(outboundDescriptions, selectorGroups)
+        private val pingTargetResolver = ServerPingTargetResolver(
+            outboundDescriptions,
+            selectorGroups,
+            primaryGroupTag,
+        )
+        private val latencyProbeCoordinator = LatencyProbeCoordinator(
+            generation = generation,
+            scope = scope,
+            networkMonitor = networkMonitor,
+            targetResolver = pingTargetResolver,
+            icmpProbe = icmpPingProbe,
+            controller = controller,
+        )
 
         init {
             VpnRuntimeMetrics.sessionOpened()
         }
 
-        fun selectedPingTarget(groups: List<RuntimeSelectorGroup>): ServerPingTarget? =
-            pingTargetResolver.selected(groups)
+        fun toggleLatencyProbe(group: RuntimeSelectorGroup) = latencyProbeCoordinator.toggle(group)
 
-        fun groupPingTargets(
-            groupTag: String,
-            groups: List<RuntimeSelectorGroup>,
-        ): List<ServerPingTarget> = pingTargetResolver.group(groupTag, groups)
+        fun onNetworkChanged() = latencyProbeCoordinator.onNetworkChanged()
 
         fun attachPlatform(candidate: AndroidPlatformAdapter) {
             val accepted = synchronized(resourceLock) {
@@ -2071,6 +2001,9 @@ class ZapretVpnService : VpnService() {
                 return
             }
             try {
+                timedStopStage("close_latency_probe", "Остановка проверки задержек") {
+                    latencyProbeCoordinator.close()
+                }
                 closeTun()
                 timedStopStage("close_observers", "Остановка callback и фоновых задач") {
                     val resources = synchronized(resourceLock) {
@@ -2233,6 +2166,7 @@ class ZapretVpnService : VpnService() {
         private val controller: VpnController,
         private val generation: Long,
         private val descriptions: Map<String, OutboundDescription>,
+        private val primaryGroupTag: String?,
     ) : BaseClientHandler() {
 
         override fun writeGroups(message: OutboundGroupIterator) {
@@ -2249,9 +2183,7 @@ class ZapretVpnService : VpnService() {
                                     tag = item.tag,
                                     type = item.type.ifBlank { description?.type ?: "unknown" },
                                     endpoint = description?.endpoint,
-                                    pingMillis = null,
-                                    pingMeasuredAtEpochSeconds = null,
-                                ).withRelayTestResult(item.urlTestTime, item.urlTestDelay),
+                                ).withRelayHistory(item.urlTestTime, item.urlTestDelay),
                             )
                         }
                     }
@@ -2262,6 +2194,7 @@ class ZapretVpnService : VpnService() {
                             selected = group.selected,
                             selectable = group.selectable,
                             items = items,
+                            primary = group.tag == primaryGroupTag,
                         ),
                     )
                 }
@@ -2287,14 +2220,12 @@ class ZapretVpnService : VpnService() {
 
     companion object {
         private const val STATUS_INTERVAL_NANOS = 1_000_000_000L
-        private const val GROUP_PING_CONCURRENCY = 4
         private const val ACTION_START = "io.github.zapretkvn.android.vpn.START"
         private const val ACTION_STOP = "io.github.zapretkvn.android.vpn.STOP"
         private const val ACTION_RESUME = "io.github.zapretkvn.android.vpn.RESUME"
         private const val ACTION_SELECT = "io.github.zapretkvn.android.vpn.SELECT"
         private const val ACTION_RESTART = "io.github.zapretkvn.android.vpn.RESTART"
         private const val ACTION_CLEAR_DNS_CACHE = "io.github.zapretkvn.android.vpn.CLEAR_DNS_CACHE"
-        private const val ACTION_PING = "io.github.zapretkvn.android.vpn.PING"
         private const val ACTION_PING_GROUP = "io.github.zapretkvn.android.vpn.PING_GROUP"
         private const val EXTRA_PROFILE_ID = "profile_id"
         private const val EXTRA_GROUP_TAG = "group_tag"
@@ -2367,9 +2298,6 @@ class ZapretVpnService : VpnService() {
 
         fun clearDnsCacheIntent(context: Context): Intent =
             Intent(context, ZapretVpnService::class.java).setAction(ACTION_CLEAR_DNS_CACHE)
-
-        fun pingIntent(context: Context): Intent =
-            Intent(context, ZapretVpnService::class.java).setAction(ACTION_PING)
 
         fun pingGroupIntent(context: Context, profileId: String, groupTag: String): Intent =
             Intent(context, ZapretVpnService::class.java)

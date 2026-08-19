@@ -18,6 +18,11 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -x "$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-publish-forgejo-stable.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/verify-release-bundle.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/derive-test-version.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/build-test-bundle.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/create-test-bundle.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/verify-test-bundle.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/publish-forgejo-test.sh" ]]
 [[ -f "$PROJECT_ROOT/release.properties" ]]
 source "$PROJECT_ROOT/core.properties"
 source "$PROJECT_ROOT/scripts/core-patchset.sh"
@@ -50,6 +55,15 @@ grep -Fq '/api/v1' "$FORGEJO_PUBLISHER"
 grep -Fq 'draft:true,prerelease:false' "$FORGEJO_PUBLISHER"
 grep -Fq 'draft:false,prerelease:false' "$FORGEJO_PUBLISHER"
 grep -Fq 'sha256sum "$downloaded"' "$FORGEJO_PUBLISHER"
+TEST_RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/test-release-verify.yml"
+grep -Fq 'workflow_dispatch:' "$TEST_RELEASE_WORKFLOW"
+grep -Fq 'scripts/verify-test-bundle.sh' "$TEST_RELEASE_WORKFLOW"
+grep -Fq ':app:testDebugUnitTest' "$TEST_RELEASE_WORKFLOW"
+TEST_PUBLISHER="$PROJECT_ROOT/scripts/publish-forgejo-test.sh"
+grep -Fq 'draft:true,prerelease:true' "$TEST_PUBLISHER"
+grep -Fq 'draft:false,prerelease:true' "$TEST_PUBLISHER"
+grep -Fq 'sha256sum "$downloaded"' "$TEST_PUBLISHER"
+grep -Fq 'actions/workflows/test-release-verify.yml/dispatches' "$TEST_PUBLISHER"
 "$PROJECT_ROOT/scripts/test-publish-forgejo-stable.sh"
 source "$PROJECT_ROOT/release.properties"
 if [[ ! "$RELEASE_SIGNER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then

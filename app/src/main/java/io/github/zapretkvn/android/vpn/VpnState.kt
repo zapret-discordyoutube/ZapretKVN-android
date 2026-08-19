@@ -45,6 +45,8 @@ data class RuntimeSelectorGroup(
     val selected: String,
     val selectable: Boolean,
     val items: List<RuntimeOutboundItem>,
+    val primary: Boolean = false,
+    val probeProgress: LatencyProbeProgress? = null,
 ) {
     val outbounds: List<String>
         get() = items.map(RuntimeOutboundItem::tag)
@@ -55,20 +57,103 @@ data class RuntimeOutboundItem(
     val type: String,
     val endpoint: String?,
     /** ICMP Echo RTT до адреса endpoint по основной сети Android. */
-    val pingMillis: Int?,
-    val pingMeasuredAtEpochSeconds: Long?,
-    /** Штатный sing-box URL-test через сам outbound, а не ICMP до адреса сервера. */
-    val relayDelayMillis: Int? = null,
-    val relayTestedAtEpochSeconds: Long? = null,
+    val icmp: LatencyProbeState = LatencyProbeState.NotTested,
+    /** HTTPS HEAD через outbound; не является ICMP до адреса сервера. */
+    val relay: LatencyProbeState = LatencyProbeState.NotTested,
 )
 
-internal fun RuntimeOutboundItem.withRelayTestResult(
+data class LatencySample(
+    val millis: Int,
+    val measuredAtEpochMillis: Long,
+    val networkIdentity: String?,
+)
+
+enum class LatencyFailure {
+    NoResponse,
+    Dns,
+    Failed,
+}
+
+enum class LatencyUnsupportedReason {
+    MissingEndpoint,
+    NestedGroup,
+}
+
+sealed interface LatencyProbeState {
+    data object NotTested : LatencyProbeState
+    data class Running(val previous: LatencySample?) : LatencyProbeState
+    data class Success(val sample: LatencySample) : LatencyProbeState
+    data class Failed(
+        val reason: LatencyFailure,
+        val previous: LatencySample? = null,
+    ) : LatencyProbeState
+    data class Unsupported(val reason: LatencyUnsupportedReason) : LatencyProbeState
+    data class Stale(val sample: LatencySample) : LatencyProbeState
+}
+
+data class LatencyProbeProgress(
+    val requestId: Long,
+    val networkIdentity: String,
+    val relayCompleted: Int,
+    val relayTotal: Int,
+    val icmpCompleted: Int,
+    val icmpTotal: Int,
+    val running: Boolean,
+)
+
+internal fun LatencyProbeState.lastSample(): LatencySample? = when (this) {
+    LatencyProbeState.NotTested,
+    is LatencyProbeState.Unsupported,
+    -> null
+    is LatencyProbeState.Running -> previous
+    is LatencyProbeState.Success -> sample
+    is LatencyProbeState.Failed -> previous
+    is LatencyProbeState.Stale -> sample
+}
+
+internal fun LatencyProbeState.markStale(): LatencyProbeState =
+    lastSample()?.let(LatencyProbeState::Stale) ?: this
+
+internal fun LatencyProbeState.restoreAfterCancellation(): LatencyProbeState = when (this) {
+    is LatencyProbeState.Running -> previous
+        ?.let(LatencyProbeState::Success)
+        ?: LatencyProbeState.NotTested
+    else -> this
+}
+
+internal fun LatencyProbeState.withFreshness(
+    nowEpochMillis: Long,
+    networkIdentity: String?,
+): LatencyProbeState = when (this) {
+    is LatencyProbeState.Success -> if (
+        nowEpochMillis - sample.measuredAtEpochMillis >= LATENCY_FRESHNESS_MILLIS ||
+        sample.networkIdentity != null && sample.networkIdentity != networkIdentity
+    ) {
+        LatencyProbeState.Stale(sample)
+    } else {
+        this
+    }
+    else -> this
+}
+
+internal fun RuntimeOutboundItem.withRelayHistory(
     testedAtEpochSeconds: Long,
     delayMillis: Int,
 ): RuntimeOutboundItem = copy(
-    relayDelayMillis = delayMillis.takeIf { testedAtEpochSeconds > 0L },
-    relayTestedAtEpochSeconds = testedAtEpochSeconds.takeIf { it > 0L },
+    relay = if (testedAtEpochSeconds > 0L && delayMillis >= 0) {
+        LatencyProbeState.Success(
+            LatencySample(
+                millis = delayMillis,
+                measuredAtEpochMillis = testedAtEpochSeconds * 1_000L,
+                networkIdentity = null,
+            ),
+        )
+    } else {
+        LatencyProbeState.NotTested
+    },
 )
+
+internal const val LATENCY_FRESHNESS_MILLIS = 5 * 60 * 1_000L
 
 data class TrafficSample(
     val uploadBytesPerSecond: Long,
@@ -79,7 +164,6 @@ data class VpnSessionStats(
     val profileId: String? = null,
     val connectedAtEpochMillis: Long? = null,
     val externalIp: String? = null,
-    val pingMillis: Long? = null,
     val uploadTotalBytes: Long = 0,
     val downloadTotalBytes: Long = 0,
     val samples: List<TrafficSample> = emptyList(),

@@ -199,7 +199,7 @@ object EffectiveOverlaySummary {
                         }
                     },
                 )
-                put("bootstrap_lkg", bootstrap != null)
+                put("bootstrap_hosts_overlay", bootstrap != null)
                 put("bootstrap_address_count", bootstrapAddresses)
             },
         )

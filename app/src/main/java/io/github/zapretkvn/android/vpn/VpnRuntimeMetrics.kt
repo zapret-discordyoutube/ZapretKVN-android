@@ -14,6 +14,7 @@ internal object VpnRuntimeMetrics {
     private val libboxInstances = AtomicInteger()
     private val adapters = AtomicInteger()
     private val tunDescriptors = AtomicInteger()
+    private val outerTunMtu = AtomicInteger()
     private val networkCallbacks = AtomicInteger()
     private val createdLibboxInstances = AtomicInteger()
     private val registeredNetworkCallbacks = AtomicInteger()
@@ -28,6 +29,7 @@ internal object VpnRuntimeMetrics {
         activeLibboxInstances = libboxInstances.get(),
         activePlatformAdapters = adapters.get(),
         activeTunDescriptors = tunDescriptors.get(),
+        outerTunMtu = outerTunMtu.get().takeIf { it > 0 },
         activeNetworkCallbacks = networkCallbacks.get(),
         activeStatusClients = statusClients.get(),
         activeLogClients = logClients.get(),
@@ -47,8 +49,14 @@ internal object VpnRuntimeMetrics {
     fun libboxClosed() = libboxInstances.decrementAndGet().requireNonNegative("libbox")
     fun adapterOpened() = adapters.incrementAndGet()
     fun adapterClosed() = adapters.decrementAndGet().requireNonNegative("adapter")
-    fun tunOpened() = tunDescriptors.incrementAndGet()
-    fun tunClosed() = tunDescriptors.decrementAndGet().requireNonNegative("TUN")
+    fun tunOpened(mtu: Int) {
+        outerTunMtu.set(mtu)
+        tunDescriptors.incrementAndGet()
+    }
+    fun tunClosed() {
+        tunDescriptors.decrementAndGet().requireNonNegative("TUN")
+        outerTunMtu.set(0)
+    }
     fun callbackOpened() {
         registeredNetworkCallbacks.incrementAndGet()
         networkCallbacks.incrementAndGet()
@@ -78,6 +86,7 @@ internal data class VpnRuntimeSnapshot(
     val activeLibboxInstances: Int,
     val activePlatformAdapters: Int,
     val activeTunDescriptors: Int,
+    val outerTunMtu: Int?,
     val activeNetworkCallbacks: Int,
     val activeStatusClients: Int,
     val activeLogClients: Int,
@@ -86,7 +95,7 @@ internal data class VpnRuntimeSnapshot(
         get() = this == Idle
 
     companion object {
-        val Idle = VpnRuntimeSnapshot(0, 0, 0, 0, 0, 0, 0)
+        val Idle = VpnRuntimeSnapshot(0, 0, 0, 0, null, 0, 0, 0)
     }
 }
 

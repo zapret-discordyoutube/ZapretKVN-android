@@ -70,7 +70,7 @@ internal object VpnRecoveryPolicy {
         attempt >= MAX_ATTEMPTS || totalAttempts >= MAX_TOTAL_ATTEMPTS ->
             VpnRecoveryDecision.Terminal
         failureCode in AWAIT_NETWORK_CODES -> VpnRecoveryDecision.AwaitNetwork
-        failureCode in RETRY_CODES || networkChangedDuringAttempt ->
+        failureCode in RETRY_CODES || (failureCode.isBlank() && networkChangedDuringAttempt) ->
             VpnRecoveryDecision.RetryAfter(backoffMillis(attempt))
         else -> VpnRecoveryDecision.Terminal
     }

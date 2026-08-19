@@ -154,7 +154,6 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onSelectOutbound = vpnController::selectOutbound,
-                    onMeasurePing = vpnController::measurePing,
                     onMeasureGroup = vpnController::measureGroup,
                     onHomeSelected = ::setHomeSelected,
                     onDiagnosticsSelected = ::setDiagnosticsSelected,

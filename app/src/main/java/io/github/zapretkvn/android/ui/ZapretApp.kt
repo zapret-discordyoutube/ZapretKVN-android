@@ -130,7 +130,6 @@ fun ZapretApp(
     onVpnStop: () -> Unit,
     onVpnRestart: () -> Unit,
     onSelectOutbound: (String, String, String) -> Unit,
-    onMeasurePing: () -> Unit,
     onMeasureGroup: (String) -> Unit,
     onHomeSelected: (Boolean) -> Unit,
     onDiagnosticsSelected: (Boolean) -> Unit,
@@ -270,7 +269,6 @@ fun ZapretApp(
                 onStop = onVpnStop,
                 onRestart = onVpnRestart,
                 onSelectOutbound = onSelectOutbound,
-                onMeasurePing = onMeasurePing,
                 onMeasureGroup = onMeasureGroup,
             )
             AppTab.Profiles -> ProfilesScreen(
@@ -1088,7 +1086,8 @@ private fun RawEditorScreen(
     busy: Boolean,
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
-    var addressesRevealed by rememberSaveable(editor.profileId, hideServerAddresses) {
+    // Sensitive endpoints must be concealed again after Activity recreation.
+    var addressesRevealed by remember(editor.profileId, hideServerAddresses) {
         mutableStateOf(!hideServerAddresses)
     }
     val requestClose = {

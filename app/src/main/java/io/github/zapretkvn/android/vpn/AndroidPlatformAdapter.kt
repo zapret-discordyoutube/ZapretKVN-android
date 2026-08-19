@@ -145,7 +145,7 @@ internal class AndroidPlatformAdapter(
                 error("Повторное создание TUN запрещено.")
             }
             tunDescriptor = descriptor
-            VpnRuntimeMetrics.tunOpened()
+            VpnRuntimeMetrics.tunOpened(options.mtu)
         }
         verifyProtectCapability()
         VpnTestHooks.afterTunEstablished()

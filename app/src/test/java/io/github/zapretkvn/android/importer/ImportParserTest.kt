@@ -198,6 +198,59 @@ class ImportParserTest {
     }
 
     @Test
+    fun `json subscription is canonicalized as candidates while sing box json stays raw`() {
+        val candidate = ImportParser.parse(
+            """
+                {
+                  "servers": [
+                    "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls#One",
+                    {"url":"trojan://secret@two.example?sni=two.example#Two"}
+                  ]
+                }
+            """.trimIndent(),
+            ProfileSource.Url,
+            "JSON subscription",
+        ) as ImportCandidate.Managed
+
+        assertEquals(ProfileSource.Subscription, candidate.source)
+        assertEquals(listOf("vless", "trojan"), candidate.servers.map { it.outbound.string("type") })
+        assertEquals(listOf("443", "443"), candidate.servers.map {
+            (it.outbound["server_port"] as JsonPrimitive).content
+        })
+
+        val raw = ImportParser.parse(
+            """{"outbounds":[{"type":"direct","tag":"direct"}]}""",
+            ProfileSource.File,
+        )
+        assertTrue(raw is ImportCandidate.RawJson)
+    }
+
+    @Test
+    fun `standard ports reality fields and unsupported parameter failures are explicit`() {
+        val vmessPayload = Base64.getEncoder().withoutPadding().encodeToString(
+            """{"v":"2","ps":"Reality","add":"vm.example","id":"22222222-2222-4222-8222-222222222222","net":"tcp","tls":"reality","sni":"front.example","pbk":"public-key","sid":"abcd"}"""
+                .toByteArray(),
+        )
+        val vmess = ShareLinkParser.parse("vmess://$vmessPayload").outbound
+        val reality = ((vmess["tls"] as JsonObject)["reality"] as JsonObject)
+        assertEquals("443", (vmess["server_port"] as JsonPrimitive).content)
+        assertEquals("public-key", reality.string("public_key"))
+        assertEquals("abcd", reality.string("short_id"))
+
+        val ssCredentials = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("aes-128-gcm:secret".toByteArray())
+        val shadowsocks = ShareLinkParser.parse("ss://$ssCredentials@ss.example#SS").outbound
+        assertEquals("8388", (shadowsocks["server_port"] as JsonPrimitive).content)
+
+        val error = assertThrows(ImportException::class.java) {
+            ShareLinkParser.parse(
+                "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&spx=%2F",
+            )
+        }
+        assertTrue(error.message.orEmpty().contains("spx"))
+    }
+
+    @Test
     fun `text dump extracts every supported link across labels wrappers and shared lines`() {
         val vmessPayload = Base64.getEncoder().withoutPadding().encodeToString(
             """{"v":"2","ps":"VMess","add":"vm.example","port":"443","id":"22222222-2222-4222-8222-222222222222","aid":"0","scy":"auto","net":"tcp","tls":"tls","sni":"vm.example"}"""
@@ -510,7 +563,7 @@ class ImportParserTest {
             "trojan://5c8e7f8b-14b3-4ed4-a512-df54bf37c223@77-246-97-234.sslip.io:39529" +
                 "?security=reality&type=xhttp&sni=www.intel.com" +
                 "&pbk=nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4" +
-                "&fp=edge&sid=82bdd80edf4aaf7c&spx=%2F#Trojan+XHTTP",
+                "&fp=edge&sid=82bdd80edf4aaf7c#Trojan+XHTTP",
             ProfileSource.Clipboard,
         ) as ImportCandidate.Managed
         val outbound = candidate.servers.single().outbound

@@ -80,6 +80,18 @@ class VpnRecoveryPolicyTest {
     }
 
     @Test
+    fun `network change does not retry a typed data plane failure`() {
+        assertEquals(
+            VpnRecoveryDecision.Terminal,
+            VpnRecoveryPolicy.decide(
+                failureCode = "VPN-200",
+                attempt = 0,
+                networkChangedDuringAttempt = true,
+            ),
+        )
+    }
+
+    @Test
     fun `consecutive attempts on one network are bounded`() {
         assertEquals(
             VpnRecoveryDecision.Terminal,

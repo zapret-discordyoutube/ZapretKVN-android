@@ -4,8 +4,8 @@
 
 - Source: <https://github.com/shtorm-7/sing-box-extended>
 - Pinned commit: `ff11f007ec798136a5de258f947a4f34011a37ea`
-- Android patch: `core-patches/0001-android-wireguard-data-plane.patch`
-- Patch SHA-256: `9f51f588bea76b108509359bec825c22d8d68f6f78b68cf191cf1f512bda22e8`
+- Android patchset manifest: `core-patches/series.sha256`
+- Patchset manifest SHA-256: `9ed4cdc263f5ea5b6413d3bc55068f5f8bca7dc0132e0ecb91f96818f5dcf441`
 - License: GNU General Public License version 3 or later.
 - Copyright: 2022 nekohasekai and contributors.
 

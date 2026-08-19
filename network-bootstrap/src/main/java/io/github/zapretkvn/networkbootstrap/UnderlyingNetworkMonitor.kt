@@ -18,10 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 enum class PrivateDnsMode {
@@ -108,18 +107,27 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
 
         override fun onAvailable(network: Network) {
             candidates.putIfAbsent(network, CandidateParts())
+            seedNetwork(network)
         }
 
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
             candidates.compute(network) { _, previous ->
-                (previous ?: CandidateParts()).copy(capabilities = capabilities)
+                CandidateParts(
+                    capabilities = capabilities,
+                    linkProperties = previous?.linkProperties
+                        ?: connectivity.getLinkProperties(network),
+                )
             }
             publishBestCandidate()
         }
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
             candidates.compute(network) { _, previous ->
-                (previous ?: CandidateParts()).copy(linkProperties = linkProperties)
+                CandidateParts(
+                    capabilities = previous?.capabilities
+                        ?: connectivity.getNetworkCapabilities(network),
+                    linkProperties = linkProperties,
+                )
             }
             publishBestCandidate()
         }
@@ -142,10 +150,35 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
         if (!started.compareAndSet(false, true)) return
         try {
             registerCallback()
+            seedActiveNetwork()
         } catch (error: Throwable) {
             started.set(false)
             throw error
         }
+    }
+
+    /**
+     * A callback registered while Android is switching transports is allowed to
+     * arrive in pieces. Seed the already active physical network synchronously so
+     * callers do not wait for a capabilities/link-properties event that may have
+     * happened just before registration. Later callbacks remain authoritative.
+     */
+    private fun seedActiveNetwork() {
+        val network = connectivity.activeNetwork ?: return
+        seedNetwork(network)
+    }
+
+    private fun seedNetwork(network: Network) {
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return
+        val linkProperties = connectivity.getLinkProperties(network) ?: return
+        if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return
+        candidates.compute(network) { _, previous ->
+            CandidateParts(
+                capabilities = previous?.capabilities ?: capabilities,
+                linkProperties = previous?.linkProperties ?: linkProperties,
+            )
+        }
+        publishBestCandidate()
     }
 
     fun observe(observer: (UnderlyingNetworkState) -> Unit): AutoCloseable {
@@ -164,31 +197,38 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     suspend fun awaitUnderlying(
         timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS,
         accept: (UnderlyingNetworkState) -> Boolean = ACCEPT_ANY,
-    ): UnderlyingNetworkState =
-        try {
-            withTimeout(timeoutMillis) {
+    ): UnderlyingNetworkState {
+        val result = try {
+            withTimeoutOrNull(timeoutMillis) {
                 current.takeIf { it.network != null && accept(it) }
                     ?: suspendCancellableCoroutine { continuation ->
+                        val delivered = AtomicBoolean(false)
                         var registration: AutoCloseable? = null
                         registration = observe { state ->
-                            if (state.network != null && accept(state) && continuation.isActive) {
+                            if (
+                                state.network != null &&
+                                accept(state) &&
+                                delivered.compareAndSet(false, true)
+                            ) {
                                 registration?.close()
                                 continuation.resume(state)
                             }
                         }
-                        if (!continuation.isActive) registration.close()
-                        continuation.invokeOnCancellation { registration.close() }
+                        if (delivered.get() || !continuation.isActive) registration.close()
+                        continuation.invokeOnCancellation {
+                            delivered.set(true)
+                            registration.close()
+                        }
                     }
             }
-        } catch (timeout: TimeoutCancellationException) {
-            throw BootstrapFailureException(
-                BootstrapFailureCode.NetworkUnavailable,
-                technicalDetail = "timeout_ms=$timeoutMillis",
-                cause = timeout,
-            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         }
+        return result ?: throw BootstrapFailureException(
+            BootstrapFailureCode.NetworkUnavailable,
+            technicalDetail = "timeout_ms=$timeoutMillis",
+        )
+    }
 
     suspend fun awaitStableUnderlying(
         timeoutMillis: Long = DEFAULT_NETWORK_TIMEOUT_MILLIS,

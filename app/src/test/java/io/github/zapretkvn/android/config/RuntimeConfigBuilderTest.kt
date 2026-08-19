@@ -835,6 +835,33 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
+    fun `bootstrap overlay applies resolver to selected WireGuard endpoint only`() {
+        val stored = validConfig(rootExtra = """,
+          "endpoints":[
+            {"type":"wireguard","tag":"wg-a","address":["10.0.0.2/32"],"peers":[{"address":"wg.example","port":51820}]},
+            {"type":"wireguard","tag":"wg-b","address":["10.0.0.3/32"],"peers":[{"address":"other.example","port":51820}]}
+          ]
+        """)
+            .replace("\"final\":\"zapret-proxy\"", "\"final\":\"wg-a\"")
+            .replace(
+                "{\"type\":\"selector\",\"tag\":\"zapret-proxy\",\"outbounds\":[\"server-a\"],\"default\":\"server-a\"},",
+                "",
+            )
+        val result = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(
+                bootstrapHost = BootstrapHostOverlay("wg-a", "wg.example", listOf("203.0.113.20")),
+            ),
+        ) as RuntimeConfigResult.Ready
+        val root = JsonConfig.parse(result.json) as JsonObject
+        val endpoints = (root["endpoints"] as JsonArray).map { it as JsonObject }
+
+        assertEquals("zapret-bootstrap-lkg", endpoints.first { it.string("tag") == "wg-a" }.string("domain_resolver"))
+        assertEquals(null, endpoints.first { it.string("tag") == "wg-b" }.string("domain_resolver"))
+        assertFalse("stored profile must stay untouched", "domain_resolver" in stored)
+    }
+
+    @Test
     fun `managed DNS rejects IPv4 tun without room for internal resolver`() {
         val slash32 = validConfig().replace("172.19.0.1/30", "172.19.0.1/32")
         val result = RuntimeConfigBuilder.build(

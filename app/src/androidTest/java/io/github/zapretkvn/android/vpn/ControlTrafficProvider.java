@@ -32,6 +32,7 @@ public final class ControlTrafficProvider extends ContentProvider {
     public static final String EXTRA_PORT = "port";
     public static final String EXTRA_SIZE = "size";
     public static final String EXTRA_VALUE = "value";
+    public static final String EXTRA_REPEAT = "repeat";
     public static final String EXTRA_BYTES = "bytes";
     public static final String EXTRA_CHUNK_BYTES = "chunk-bytes";
     public static final String CLOUDFLARE_IPV4 = "1.1.1.1";
@@ -105,14 +106,18 @@ public final class ControlTrafficProvider extends ContentProvider {
 
     private void udpEcho(Bundle extras) throws Exception {
         byte[] payload = payload(extras);
+        int repeat = extras.getInt(EXTRA_REPEAT, 1);
+        if (repeat < 1 || repeat > 128) throw new IllegalArgumentException("Invalid UDP repeat count");
         try (DatagramSocket socket = new DatagramSocket()) {
             socket.setSoTimeout(TIMEOUT_MILLIS);
             InetSocketAddress destination = destination(extras);
-            socket.send(new DatagramPacket(payload, payload.length, destination));
-            DatagramPacket response = new DatagramPacket(new byte[payload.length + 1], payload.length + 1);
-            socket.receive(response);
-            byte[] received = Arrays.copyOf(response.getData(), response.getLength());
-            if (!Arrays.equals(payload, received)) throw new IllegalStateException("UDP echo mismatch");
+            for (int index = 0; index < repeat; index++) {
+                socket.send(new DatagramPacket(payload, payload.length, destination));
+                DatagramPacket response = new DatagramPacket(new byte[payload.length + 1], payload.length + 1);
+                socket.receive(response);
+                byte[] received = Arrays.copyOf(response.getData(), response.getLength());
+                if (!Arrays.equals(payload, received)) throw new IllegalStateException("UDP echo mismatch");
+            }
         }
     }
 

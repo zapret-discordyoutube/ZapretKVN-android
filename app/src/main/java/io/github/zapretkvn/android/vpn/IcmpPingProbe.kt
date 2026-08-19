@@ -14,7 +14,10 @@ import android.system.StructPollfd
 import java.io.FileDescriptor
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.UnknownHostException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -22,6 +25,15 @@ data class ServerPingTarget(
     val outboundTag: String,
     val hostname: String,
 )
+
+internal class IcmpProbeException(
+    val failure: LatencyFailure,
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)
+
+private class IcmpNoResponseException(message: String) : Exception(message)
+private class IcmpInvalidReplyException(message: String) : Exception(message)
 
 /** Measures real ICMP Echo RTT to a VPN server over Android's underlying network. */
 class IcmpPingProbe(
@@ -31,16 +43,52 @@ class IcmpPingProbe(
         require(replyTimeoutMillis > 0)
     }
 
-    suspend fun measure(network: Network, target: ServerPingTarget): Long =
-        withTimeout(TOTAL_TIMEOUT_MILLIS) {
+    suspend fun measure(network: Network, target: ServerPingTarget): Long {
+        var resolving = true
+        return try {
+            withTimeout(TOTAL_TIMEOUT_MILLIS) {
             withContext(Dispatchers.IO) {
-                val address = network.getAllByName(target.hostname).firstOrNull()
-                requireNotNull(address) {
-                    "Не удалось разрешить адрес VPN-сервера ${target.hostname}."
+                val addresses = try {
+                    network.getAllByName(target.hostname).toList()
+                } catch (error: UnknownHostException) {
+                    throw IcmpProbeException(
+                        LatencyFailure.Dns,
+                        "Не удалось разрешить адрес VPN-сервера.",
+                        error,
+                    )
                 }
-                measureOnce(network, address)
+                if (addresses.isEmpty()) {
+                    throw IcmpProbeException(LatencyFailure.Dns, "DNS не вернул адрес VPN-сервера.")
+                }
+                resolving = false
+                val failures = mutableListOf<Throwable>()
+                for (address in addresses) {
+                    try {
+                        return@withContext measureOnce(network, address)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        failures += error
+                    }
+                }
+                val noResponse = failures.all { it is IcmpNoResponseException }
+                throw IcmpProbeException(
+                    if (noResponse) LatencyFailure.NoResponse else LatencyFailure.Failed,
+                    if (noResponse) "VPN-сервер не ответил на ICMP Echo."
+                    else "ICMP Echo завершился ошибкой для всех адресов endpoint.",
+                    failures.firstOrNull(),
+                )
             }
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            throw IcmpProbeException(
+                if (resolving) LatencyFailure.Dns else LatencyFailure.NoResponse,
+                if (resolving) "DNS endpoint не ответил вовремя."
+                else "VPN-сервер не ответил на ICMP Echo вовремя.",
+                timeout,
+            )
         }
+    }
 
     private fun measureOnce(network: Network, address: InetAddress): Long {
         val ipv6 = address is Inet6Address
@@ -59,14 +107,18 @@ class IcmpPingProbe(
                 fd = descriptor
                 events = POLLIN.toShort()
             }
-            check(Os.poll(arrayOf(poll), replyTimeoutMillis) > 0 && (poll.revents.toInt() and POLLIN) != 0) {
-                "VPN-сервер не ответил на ICMP Echo за $replyTimeoutMillis мс."
+            if (Os.poll(arrayOf(poll), replyTimeoutMillis) <= 0 ||
+                (poll.revents.toInt() and POLLIN) == 0
+            ) {
+                throw IcmpNoResponseException(
+                    "VPN-сервер не ответил на ICMP Echo за $replyTimeoutMillis мс.",
+                )
             }
             val response = ByteArray(MAX_PACKET_SIZE)
             val length = Os.read(descriptor, response, 0, response.size)
             val elapsedNanos = SystemClock.elapsedRealtimeNanos() - startedAt
-            check(IcmpEchoPacket.isMatchingReply(response, length, ipv6, ECHO_SEQUENCE)) {
-                "VPN-сервер вернул несвязанный ICMP-пакет."
+            if (!IcmpEchoPacket.isMatchingReply(response, length, ipv6, ECHO_SEQUENCE)) {
+                throw IcmpInvalidReplyException("VPN-сервер вернул несвязанный ICMP-пакет.")
             }
             return ((elapsedNanos + NANOS_PER_MILLI / 2) / NANOS_PER_MILLI).coerceAtLeast(0)
         } finally {

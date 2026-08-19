@@ -17,6 +17,7 @@ import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
@@ -91,7 +92,7 @@ internal class AndroidLocalDnsTransport(
                     }
                 },
             )
-            latch.await()
+            awaitDnsCallback(latch, completed, cancellation, context)
         } else {
             val addresses = underlying.getAllByName(domain).filter { address ->
                 (network == "ip4" && address is Inet4Address) ||
@@ -142,10 +143,33 @@ internal class AndroidLocalDnsTransport(
                 }
             },
         )
-        latch.await()
+        awaitDnsCallback(latch, completed, cancellation, context)
+    }
+
+    private fun awaitDnsCallback(
+        latch: CountDownLatch,
+        completed: AtomicBoolean,
+        cancellation: CancellationSignal,
+        context: ExchangeContext,
+    ) {
+        val completedInTime = try {
+            latch.await(DNS_CALLBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            if (completed.compareAndSet(false, true)) {
+                cancellation.cancel()
+                context.errnoCode(OsConstants.EINTR)
+            }
+            return
+        }
+        if (!completedInTime && completed.compareAndSet(false, true)) {
+            cancellation.cancel()
+            context.errnoCode(OsConstants.ETIMEDOUT)
+        }
     }
 
     private companion object {
         val DNS_EXECUTOR = Dispatchers.IO.asExecutor()
+        const val DNS_CALLBACK_TIMEOUT_SECONDS = 10L
     }
 }

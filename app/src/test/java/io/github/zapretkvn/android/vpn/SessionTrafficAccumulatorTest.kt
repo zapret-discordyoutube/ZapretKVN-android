@@ -45,10 +45,8 @@ class SessionTrafficAccumulatorTest {
         accumulator.setStatusStreamActive(10, true)
 
         assertNull(accumulator.updateExternalIp(9, "203.0.113.1"))
-        assertNull(accumulator.updatePing(9, 99))
         assertNull(accumulator.updateTraffic(9, 1, 2, 3, 4))
         assertTrue(accumulator.value.samples.isEmpty())
         assertNull(accumulator.value.externalIp)
-        assertNull(accumulator.value.pingMillis)
     }
 }

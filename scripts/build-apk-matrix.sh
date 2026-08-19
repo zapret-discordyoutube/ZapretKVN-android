@@ -24,6 +24,9 @@ mkdir -p "$OUTPUT_DIR" "$SOURCE_DIR"
 find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.apk' -delete
 
 GRADLE_ARGS=(--stacktrace)
+if [[ -v ZAPRET_DEBUG_VERSION_NAME_SUFFIX ]]; then
+    GRADLE_ARGS+=("-PzapretDebugVersionNameSuffix=$ZAPRET_DEBUG_VERSION_NAME_SUFFIX")
+fi
 if [[ -n "${ZAPRET_SIGNING_STORE_FILE:-}${ZAPRET_SIGNING_STORE_PASSWORD:-}${ZAPRET_SIGNING_KEY_ALIAS:-}${ZAPRET_SIGNING_KEY_PASSWORD:-}" ]]; then
     # Signing credentials are Gradle inputs and must never enter a reusable configuration cache.
     GRADLE_ARGS+=(--no-configuration-cache)

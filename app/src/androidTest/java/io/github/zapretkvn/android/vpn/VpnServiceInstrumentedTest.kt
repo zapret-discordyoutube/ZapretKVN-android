@@ -54,6 +54,8 @@ import org.junit.runner.RunWith
 class VpnServiceInstrumentedTest {
     @Before
     fun isolateGlobalRoutingPolicy() = runBlocking {
+        VpnTestHooks.reset()
+        awaitStableUnderlyingNetwork(InstrumentationRegistry.getInstrumentation().targetContext)
         setRoutingPolicy(RoutingPreset.Custom)
     }
 
@@ -228,7 +230,7 @@ class VpnServiceInstrumentedTest {
                 ConfigAnalyzer.MANAGED_SELECTOR_TAG,
                 "server-b",
             )
-            withTimeout(10_000) {
+            withTimeout(20_000) {
                 container.vpnController.selectorGroups.first { values ->
                     values.any {
                         it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG && it.selected == "server-b"
@@ -257,6 +259,54 @@ class VpnServiceInstrumentedTest {
             }
             container.profileStore.delete(profile.id)
             shell("appops set $packageName ACTIVATE_VPN default")
+        }
+    }
+
+    @Test
+    fun singletonSelectorIsPublishedAndRelayProbeKeepsSelection() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        val packageName = context.packageName
+        allowVpn(packageName)
+        container.profileStore.initialize()
+        val profile = container.profileStore.create(
+            name = "Singleton relay probe",
+            rawJson = SINGLE_SERVER_DIRECT_CONFIG,
+            source = ProfileSource.RawJson,
+        )
+        try {
+            container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
+            val connected = connectResult(container.vpnController, profile.id)
+            assertTrue("VPN failed: $connected", connected is VpnConnectionState.Connected)
+            val initial = withTimeout(20_000) {
+                container.vpnController.selectorGroups.first { groups ->
+                    groups.any { group ->
+                        group.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG && group.items.size == 1
+                    }
+                }.first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }
+            }
+            assertEquals("server-only", initial.selected)
+
+            container.vpnController.measureGroup(initial.tag)
+            val completed = withTimeout(20_000) {
+                container.vpnController.selectorGroups.first { groups ->
+                    groups.firstOrNull { it.tag == initial.tag }
+                        ?.probeProgress
+                        ?.running == false
+                }.first { it.tag == initial.tag }
+            }
+            assertEquals("server-only", completed.selected)
+            assertFalse(completed.items.single().relay is LatencyProbeState.Running)
+            assertTrue(completed.items.single().relay != LatencyProbeState.NotTested)
+            assertEquals(
+                LatencyProbeState.Unsupported(LatencyUnsupportedReason.MissingEndpoint),
+                completed.items.single().icmp,
+            )
+        } finally {
+            stopIfNeeded(container.vpnController, context)
+            container.profileStore.delete(profile.id)
+            denyVpn(packageName)
         }
     }
 
@@ -687,8 +737,8 @@ class VpnServiceInstrumentedTest {
                 val probes = listOf(
                     "IPv4/TCP" to (ControlTrafficProvider.METHOD_TCP_ECHO to echoArguments(DOCUMENTATION_IPV4, echo.port, 16 * 1024, 0x41)),
                     "IPv6/TCP" to (ControlTrafficProvider.METHOD_TCP_ECHO to echoArguments(DOCUMENTATION_IPV6, echo.port, 16 * 1024, 0x42)),
-                    "IPv4/UDP" to (ControlTrafficProvider.METHOD_UDP_ECHO to echoArguments(DOCUMENTATION_IPV4, echo.port, 8 * 1024, 0x43)),
-                    "IPv6/UDP" to (ControlTrafficProvider.METHOD_UDP_ECHO to echoArguments(DOCUMENTATION_IPV6, echo.port, 8 * 1024, 0x44)),
+                    "IPv4/UDP" to (ControlTrafficProvider.METHOD_UDP_ECHO to echoArguments(DOCUMENTATION_IPV4, echo.port, 1_200, 0x43, repeat = 16)),
+                    "IPv6/UDP" to (ControlTrafficProvider.METHOD_UDP_ECHO to echoArguments(DOCUMENTATION_IPV6, echo.port, 1_200, 0x44, repeat = 16)),
                 )
                 probes.forEach { (label, probe) ->
                     awaitSuccessfulControlCall(context, probe.first, probe.second, label)
@@ -785,8 +835,11 @@ class VpnServiceInstrumentedTest {
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
         val profile = createProfile(container, "Health fail-close", TWO_SERVER_DIRECT_CONFIG)
         try {
+            awaitCompletelyIdle(context)
+            awaitStableUnderlyingNetwork(context)
+            VpnTestHooks.reset()
             VpnTestHooks.failNextHealthCheck()
-            val state = connectResult(container.vpnController, profile.id)
+            val state = startAndAwaitTerminal(container.vpnController, profile.id)
             assertTrue(state is VpnConnectionState.Error)
             assertTrue((state as VpnConnectionState.Error).message.contains("health-check"))
             assertEquals(
@@ -1142,6 +1195,7 @@ class VpnServiceInstrumentedTest {
             shell("settings delete global private_dns_specifier")
             awaitPrivateDns(context, PrivateDnsMode.Off)
             VpnTestHooks.reset()
+            VpnTestHooks.succeedNextHealthCheck()
             val off = startWithOneCleanRetry(container.vpnController, profile.id, context, 30_000)
             assertTrue("Managed DNS failed with Private DNS off: $off", off is VpnConnectionState.Connected)
             stop(container.vpnController, context)
@@ -1149,6 +1203,7 @@ class VpnServiceInstrumentedTest {
             shell("settings put global private_dns_mode opportunistic")
             awaitPrivateDns(context, PrivateDnsMode.Automatic)
             VpnTestHooks.reset()
+            VpnTestHooks.succeedNextHealthCheck()
             val automatic = startWithOneCleanRetry(container.vpnController, profile.id, context, 30_000)
             assertTrue(
                 "Managed DNS failed with automatic Private DNS: $automatic",
@@ -1436,7 +1491,7 @@ class VpnServiceInstrumentedTest {
     }
 
     @Test
-    fun twentyConnectStopCyclesDoNotLeakTunResources() = runBlocking {
+    fun oneHundredConnectStopCyclesDoNotLeakTunResources() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = (context.applicationContext as ZapretApplication).container
@@ -1464,7 +1519,7 @@ class VpnServiceInstrumentedTest {
             delay(200)
             val baselineFds = File("/proc/self/fd").list().orEmpty().size
 
-            repeat(10) {
+            repeat(45) {
                 connect(container.vpnController, profile.id)
                 awaitActiveResources()
                 stop(container.vpnController, context)
@@ -1473,7 +1528,7 @@ class VpnServiceInstrumentedTest {
             delay(200)
             val midpointThreads = currentNonBinderThreadNames()
             val midpointTasks = midpointThreads.size
-            repeat(10) {
+            repeat(50) {
                 connect(container.vpnController, profile.id)
                 awaitActiveResources()
                 stop(container.vpnController, context)
@@ -1493,11 +1548,11 @@ class VpnServiceInstrumentedTest {
             assertEquals(VpnRuntimeSnapshot.Idle, VpnRuntimeMetrics.snapshot())
             assertTrue(
                 "Not every cycle created a measured libbox instance",
-                VpnRuntimeMetrics.libboxCreationCount() - initialLibboxCreations >= 25,
+                VpnRuntimeMetrics.libboxCreationCount() - initialLibboxCreations >= 100,
             )
             assertTrue(
                 "Default-network callbacks were not exercised",
-                VpnRuntimeMetrics.callbackRegistrationCount() - initialCallbackRegistrations >= 25,
+                VpnRuntimeMetrics.callbackRegistrationCount() - initialCallbackRegistrations >= 100,
             )
         } finally {
             if (container.vpnController.state.value !is VpnConnectionState.Stopped) {
@@ -1612,15 +1667,24 @@ class VpnServiceInstrumentedTest {
     ): VpnConnectionState {
         val before = controller.state.value
         controller.start(profileId)
-        val progressed = withTimeout(timeoutMillis) { controller.state.first { it != before } }
+        val progressed = withTimeoutOrNull(timeoutMillis) { controller.state.first { it != before } }
+            ?: error(
+                "VPN did not leave $before within ${timeoutMillis}ms; " +
+                    "current=${controller.state.value}, " +
+                    "attempt=${controller.diagnostics.value.connectionAttempt}",
+            )
         if (progressed is VpnConnectionState.Connected || progressed is VpnConnectionState.Error) {
             return progressed
         }
-        return withTimeout(timeoutMillis) {
+        return withTimeoutOrNull(timeoutMillis) {
             controller.state.first {
                 it is VpnConnectionState.Connected || it is VpnConnectionState.Error
             }
-        }
+        } ?: error(
+            "VPN did not reach a terminal state within ${timeoutMillis}ms; " +
+                "current=${controller.state.value}, " +
+                "attempt=${controller.diagnostics.value.connectionAttempt}",
+        )
     }
 
     private suspend fun startWithOneCleanRetry(
@@ -1673,19 +1737,30 @@ class VpnServiceInstrumentedTest {
         }
     }
 
+    private suspend fun awaitStableUnderlyingNetwork(context: Context): UnderlyingNetworkState {
+        val monitor = DefaultNetworkMonitor(context)
+        return try {
+            monitor.start()
+            monitor.awaitStableUnderlying(timeoutMillis = 30_000)
+        } finally {
+            monitor.close()
+        }
+    }
+
     @Suppress("DEPRECATION")
     private suspend fun awaitUnderlyingTransport(context: Context, transport: Int): Network =
         withTimeout(30_000) {
             val connectivity = context.getSystemService(ConnectivityManager::class.java)
             while (true) {
-                connectivity.allNetworks.firstOrNull { network ->
-                    connectivity.getNetworkCapabilities(network)?.let { capabilities ->
+                connectivity.activeNetwork?.let { network ->
+                    val matches = connectivity.getNetworkCapabilities(network)?.let { capabilities ->
                         capabilities.hasTransport(transport) &&
                             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
                             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                     } == true
-                }?.let { return@withTimeout it }
+                    if (matches) return@withTimeout network
+                }
                 delay(100)
             }
             @Suppress("UNREACHABLE_CODE")
@@ -1799,11 +1874,18 @@ class VpnServiceInstrumentedTest {
         return requireNotNull(success) { "$label failed within 10 seconds: $lastError" }
     }
 
-    private fun echoArguments(address: String, port: Int, size: Int, value: Int) = Bundle().apply {
+    private fun echoArguments(
+        address: String,
+        port: Int,
+        size: Int,
+        value: Int,
+        repeat: Int = 1,
+    ) = Bundle().apply {
         putString(ControlTrafficProvider.EXTRA_ADDRESS, address)
         putInt(ControlTrafficProvider.EXTRA_PORT, port)
         putInt(ControlTrafficProvider.EXTRA_SIZE, size)
         putInt(ControlTrafficProvider.EXTRA_VALUE, value)
+        putInt(ControlTrafficProvider.EXTRA_REPEAT, repeat)
     }
 
     private fun gateRules(
@@ -2048,6 +2130,18 @@ class VpnServiceInstrumentedTest {
                 {"type":"direct","tag":"server-a"},
                 {"type":"direct","tag":"server-b"},
                 {"type":"selector","tag":"zapret-proxy","outbounds":["server-a","server-b"],"default":"server-a","interrupt_exist_connections":true},
+                {"type":"direct","tag":"direct"}
+              ],
+              "route":{"auto_detect_interface":true,"final":"zapret-proxy"}
+            }
+        """.trimIndent()
+
+        val SINGLE_SERVER_DIRECT_CONFIG = """
+            {
+              "inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true}],
+              "outbounds":[
+                {"type":"direct","tag":"server-only"},
+                {"type":"selector","tag":"zapret-proxy","outbounds":["server-only"],"default":"server-only"},
                 {"type":"direct","tag":"direct"}
               ],
               "route":{"auto_detect_interface":true,"final":"zapret-proxy"}

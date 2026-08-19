@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.vpn
 
 import android.net.Network
+import android.os.SystemClock
 import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.BootstrapHostOverlay
 import io.github.zapretkvn.android.config.DnsMode
@@ -40,7 +41,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class HealthCheckResult(
     val externalIpProbeAllowed: Boolean,
@@ -57,6 +58,13 @@ internal class VpnDnsHealthException(
     override val failureCode = "DNS-200"
     override val userMessage = message
     override val technicalDetail = (cause as? CodedFailure)?.technicalDetail
+}
+
+internal class VpnHealthTimeoutException : IllegalStateException(), CodedFailure {
+    override val failureCode = "VPN-120"
+    override val userMessage = "Проверка VPN не завершилась за 20 секунд."
+    override val technicalDetail = "health_deadline_ms=20000"
+    override val message: String get() = userMessage
 }
 
 enum class VpnHealthStage(
@@ -114,7 +122,7 @@ class ProxyBootstrapper(
         if (resolved.isSuccess) {
             val addresses = resolved.getOrThrow()
             if (!target.tcpPreflightSupported || firstReachable(underlying, target, addresses) != null) {
-                return PreparedBootstrap(target, addresses, now)
+                return PreparedBootstrap(target, addresses, now, target.overlay(addresses))
             }
             if (target.staleAddressAllowed && lkg?.isFreshAt(now) == true) {
                 val cached = numericAddresses(lkg.addresses)
@@ -170,6 +178,12 @@ class ProxyBootstrapper(
         addresses = addresses,
     )
 
+    private fun ProxyBootstrapTarget.overlay(addresses: List<InetAddress>) = BootstrapHostOverlay(
+        outboundTag = outboundTag,
+        hostname = hostname,
+        addresses = addresses.mapNotNull(InetAddress::getHostAddress).distinct(),
+    )
+
     private companion object {
         const val SOCKET_TIMEOUT_MILLIS = 1_500
         const val MAX_SOCKET_CANDIDATES = 3
@@ -193,6 +207,8 @@ class VpnHealthPipeline(
         mode: DnsMode,
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily = ProxyIpFamily.Unspecified,
+        onNetworkLease: (Long) -> Unit = {},
+        onNetworkLost: () -> Unit = {},
         onStageStarted: (VpnHealthStage) -> Unit = {},
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit = { _, _, _ -> },
     ): HealthCheckResult {
@@ -203,7 +219,11 @@ class VpnHealthPipeline(
                 VpnHealthStageOutcome.Failed,
                 "test_override",
             )
-            error("Тестовая ошибка health-check DNS/HTTPS.")
+            throw HttpsProbeFailure(
+                diagnosticDetail = "test_override",
+                message = "Тестовая ошибка health-check DNS/HTTPS.",
+                cause = null,
+            )
         }
         if (VpnTestHooks.consumeHealthSuccessOverride()) {
             onStageFinished(
@@ -213,23 +233,56 @@ class VpnHealthPipeline(
             )
             return HealthCheckResult(externalIpProbeAllowed = false)
         }
-        return withTimeout(HEALTH_TIMEOUT_MILLIS) {
-            val vpnNetwork = try {
-                vpnNetworks.awaitActive().also(vpnNetworks::requireActive)
-            } catch (error: Throwable) {
-                onStageFinished(
-                    VpnHealthStage.AwaitVpnNetwork,
-                    VpnHealthStageOutcome.Failed,
-                    rootCauseName(error),
-                )
-                throw error
-            }
-            onStageFinished(
-                VpnHealthStage.AwaitVpnNetwork,
-                VpnHealthStageOutcome.Success,
-                "active=true",
-            )
-            if (VpnTestHooks.consumeDnsProbeFailure()) {
+        val healthDeadline = SystemClock.elapsedRealtime() + HEALTH_TIMEOUT_MILLIS
+        return try {
+            withTimeoutOrNull(HEALTH_TIMEOUT_MILLIS) {
+                val lease = try {
+                    vpnNetworks.acquireActive()
+                } catch (error: Throwable) {
+                    onStageFinished(
+                        VpnHealthStage.AwaitVpnNetwork,
+                        VpnHealthStageOutcome.Failed,
+                        rootCauseName(error),
+                    )
+                    throw error
+                }
+                lease.use {
+                    lease.runWhileActive { vpnNetwork ->
+                        vpnNetworks.requireActive(vpnNetwork)
+                        onNetworkLease(vpnNetwork.networkHandle)
+                        onStageFinished(
+                            VpnHealthStage.AwaitVpnNetwork,
+                            VpnHealthStageOutcome.Success,
+                            "active=true leased=true",
+                        )
+                        verifyOnNetwork(
+                            vpnNetwork = vpnNetwork,
+                            mode = mode,
+                            internalDnsServer = internalDnsServer,
+                            proxyIpFamily = proxyIpFamily,
+                            deadlineElapsedRealtimeMillis = healthDeadline,
+                            onStageStarted = onStageStarted,
+                            onStageFinished = onStageFinished,
+                        )
+                    }
+                }
+            } ?: throw VpnHealthTimeoutException()
+        } catch (lost: VpnNetworkLostException) {
+            onNetworkLost()
+            throw lost
+        }
+    }
+
+    private suspend fun verifyOnNetwork(
+        vpnNetwork: Network,
+        mode: DnsMode,
+        internalDnsServer: String,
+        proxyIpFamily: ProxyIpFamily,
+        deadlineElapsedRealtimeMillis: Long,
+        onStageStarted: (VpnHealthStage) -> Unit,
+        onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
+    ): HealthCheckResult {
+        if (VpnTestHooks.consumeDnsProbeFailure()) {
                 val failedStage = if (mode == DnsMode.Automatic || mode == DnsMode.Secure) {
                     VpnHealthStage.DnsUdpProbe
                 } else {
@@ -240,15 +293,15 @@ class VpnHealthPipeline(
                 throw VpnDnsHealthException(
                     "DNS через VPN не отвечает: тестовый внутренний DNS недоступен.",
                 )
-            }
-            if (mode == DnsMode.Automatic || mode == DnsMode.Secure) {
-                rawDnsProbe(
-                    internalDnsServer,
-                    ManagedHealthProbe.endpoints.first().host,
-                    onStageStarted,
-                    onStageFinished,
-                )
-            } else {
+        }
+        if (mode == DnsMode.Automatic || mode == DnsMode.Secure) {
+            rawDnsProbe(
+                internalDnsServer,
+                ManagedHealthProbe.endpoints.first().host,
+                onStageStarted,
+                onStageFinished,
+            )
+        } else {
                 onStageStarted(VpnHealthStage.DnsAndroidProbe)
                 try {
                     val addresses = resolver.resolve(
@@ -270,18 +323,18 @@ class VpnHealthPipeline(
                     )
                     throw dnsFailure(error)
                 }
-            }
-            onStageStarted(VpnHealthStage.HttpsProbe)
-            if (VpnTestHooks.consumeHttpsProbeFailure()) {
+        }
+        onStageStarted(VpnHealthStage.HttpsProbe)
+        if (VpnTestHooks.consumeHttpsProbeFailure()) {
                 onStageFinished(
                     VpnHealthStage.HttpsProbe,
                     VpnHealthStageOutcome.Failed,
                     "test_override",
                 )
                 error("HTTPS-проверка через VPN не прошла: тестовый endpoint недоступен.")
-            }
-            try {
-                val result = httpsProbe(vpnNetwork, proxyIpFamily)
+        }
+        try {
+            val result = httpsProbe(vpnNetwork, proxyIpFamily, deadlineElapsedRealtimeMillis)
                 onStageFinished(
                     VpnHealthStage.HttpsProbe,
                     if (result.rescued) VpnHealthStageOutcome.Recovered else VpnHealthStageOutcome.Success,
@@ -289,16 +342,15 @@ class VpnHealthPipeline(
                         "family=${result.addressFamily.diagnosticName}" +
                         if (result.rescued) " recovered=slow_tunnel" else "",
                 )
-            } catch (error: Throwable) {
+        } catch (error: Throwable) {
                 onStageFinished(
                     VpnHealthStage.HttpsProbe,
                     VpnHealthStageOutcome.Failed,
                     (error as? HttpsProbeFailure)?.diagnosticDetail ?: rootCauseName(error),
                 )
-                throw error
-            }
-            HealthCheckResult(externalIpProbeAllowed = true)
+            throw error
         }
+        return HealthCheckResult(externalIpProbeAllowed = true)
     }
 
     private suspend fun rawDnsProbe(
@@ -306,12 +358,11 @@ class VpnHealthPipeline(
         hostname: String,
         onStageStarted: (VpnHealthStage) -> Unit,
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
-    ) =
-        withContext(Dispatchers.IO) {
+    ) {
             val query = dnsQuery(hostname)
             onStageStarted(VpnHealthStage.DnsUdpProbe)
             val udp = try {
-                udpDns(dnsServer, query)
+                withProbeSockets { register -> udpDns(dnsServer, query, register) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -324,13 +375,20 @@ class VpnHealthPipeline(
             }
             if (udp != null) {
                 try {
-                    val rcode = validateDnsResponse(query, udp)
+                    val validation = DnsHealthResponseValidator.validate(query, udp, allowFallback = true)
+                    if (!validation.needsTcpFallback) {
+                        onStageFinished(
+                            VpnHealthStage.DnsUdpProbe,
+                            VpnHealthStageOutcome.Success,
+                            "response_bytes=${udp.size} rcode=${validation.rcode} answers=${validation.answerCount}",
+                        )
+                        return
+                    }
                     onStageFinished(
                         VpnHealthStage.DnsUdpProbe,
-                        VpnHealthStageOutcome.Success,
-                        "response_bytes=${udp.size} rcode=$rcode",
+                        VpnHealthStageOutcome.Recovered,
+                        "tcp_fallback=${validation.fallbackReason}",
                     )
-                    return@withContext
                 } catch (error: Throwable) {
                     onStageFinished(
                         VpnHealthStage.DnsUdpProbe,
@@ -343,7 +401,7 @@ class VpnHealthPipeline(
 
             onStageStarted(VpnHealthStage.DnsTcpProbe)
             val tcp = try {
-                tcpDns(dnsServer, query)
+                withProbeSockets { register -> tcpDns(dnsServer, query, register) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -355,11 +413,11 @@ class VpnHealthPipeline(
                 throw dnsFailure(error)
             }
             try {
-                val rcode = validateDnsResponse(query, tcp)
+                val validation = DnsHealthResponseValidator.validate(query, tcp, allowFallback = false)
                 onStageFinished(
                     VpnHealthStage.DnsTcpProbe,
                     VpnHealthStageOutcome.Success,
-                    "response_bytes=${tcp.size} rcode=$rcode",
+                    "response_bytes=${tcp.size} rcode=${validation.rcode} answers=${validation.answerCount}",
                 )
             } catch (error: Throwable) {
                 onStageFinished(
@@ -369,7 +427,7 @@ class VpnHealthPipeline(
                 )
                 throw dnsFailure(error)
             }
-        }
+    }
 
     private fun dnsFailure(error: Throwable): VpnDnsHealthException {
         if (error is VpnDnsHealthException) return error
@@ -380,8 +438,13 @@ class VpnHealthPipeline(
         return VpnDnsHealthException("DNS через VPN не отвечает: $detail.", error)
     }
 
-    private fun udpDns(dnsServer: String, query: ByteArray): ByteArray {
+    private fun udpDns(
+        dnsServer: String,
+        query: ByteArray,
+        register: (AutoCloseable) -> Unit,
+    ): ByteArray {
         DatagramSocket().use { socket ->
+            register(socket)
             socket.soTimeout = DNS_TIMEOUT_MILLIS
             val endpoint = InetSocketAddress(InetAddress.getByName(dnsServer), 53)
             socket.send(DatagramPacket(query, query.size, endpoint))
@@ -392,8 +455,13 @@ class VpnHealthPipeline(
         }
     }
 
-    private fun tcpDns(dnsServer: String, query: ByteArray): ByteArray {
+    private fun tcpDns(
+        dnsServer: String,
+        query: ByteArray,
+        register: (AutoCloseable) -> Unit,
+    ): ByteArray {
         Socket().use { socket ->
+            register(socket)
             socket.soTimeout = DNS_TIMEOUT_MILLIS
             socket.connect(InetSocketAddress(InetAddress.getByName(dnsServer), 53), DNS_TIMEOUT_MILLIS)
             DataOutputStream(socket.getOutputStream()).apply {
@@ -408,25 +476,15 @@ class VpnHealthPipeline(
         }
     }
 
-    private fun validateDnsResponse(query: ByteArray, response: ByteArray): Int {
-        if (response.size < 12 || response[0] != query[0] || response[1] != query[1]) {
-            error("DNS через VPN вернул некорректный ответ.")
-        }
-        val flags = ((response[2].toInt() and 0xff) shl 8) or (response[3].toInt() and 0xff)
-        if (flags and 0x8000 == 0 || flags and 0x000f != 0) {
-            error("DNS через VPN вернул ошибку ${flags and 0x000f}.")
-        }
-        return flags and 0x000f
-    }
-
     private suspend fun httpsProbe(
         vpnNetwork: Network,
         proxyIpFamily: ProxyIpFamily,
+        deadlineElapsedRealtimeMillis: Long,
     ): HttpsProbeResult {
         val outcome = HealthProbeRace.firstSuccess(
             candidates = ManagedHealthProbe.endpoints,
             staggerMillis = HTTPS_PROBE_STAGGER_MILLIS,
-            isFatal = { it is VpnHealthAddressFamilyException },
+            isFatal = { false },
         ) { endpoint ->
             httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily)
         }
@@ -436,11 +494,17 @@ class VpnHealthPipeline(
                 status = outcome.value,
                 addressFamily = proxyIpFamily,
             )
-            is HealthProbeRace.Outcome.AllFailed -> rescueSlowTunnel(
-                vpnNetwork = vpnNetwork,
-                proxyIpFamily = proxyIpFamily,
-                failures = outcome.failures,
-            )
+            is HealthProbeRace.Outcome.AllFailed -> {
+                if (outcome.failures.all { it.second is VpnHealthAddressFamilyException }) {
+                    throw outcome.failures.first().second
+                }
+                rescueSlowTunnel(
+                    vpnNetwork = vpnNetwork,
+                    proxyIpFamily = proxyIpFamily,
+                    failures = outcome.failures,
+                    deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
+                )
+            }
         }
     }
 
@@ -453,7 +517,12 @@ class VpnHealthPipeline(
         vpnNetwork: Network,
         proxyIpFamily: ProxyIpFamily,
         failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
+        deadlineElapsedRealtimeMillis: Long,
     ): HttpsProbeResult {
+        val remainingMillis = deadlineElapsedRealtimeMillis - SystemClock.elapsedRealtime()
+        if (remainingMillis < MIN_HTTPS_RESCUE_BUDGET_MILLIS) {
+            throw httpsProbeFailure(failures, null)
+        }
         val rescueEndpoint = ManagedHealthProbe.endpoints.first()
         val rescueError = try {
             return HttpsProbeResult(
@@ -475,19 +544,28 @@ class VpnHealthPipeline(
         } catch (error: Throwable) {
             error
         }
+        throw httpsProbeFailure(failures, rescueEndpoint to rescueError)
+    }
+
+    private fun httpsProbeFailure(
+        failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
+        rescue: Pair<ManagedHealthEndpoint, Throwable>?,
+    ): HttpsProbeFailure {
         val detail = (
             failures.map { (endpoint, error) ->
                 "${endpoint.code}:${httpsFailureReason(error, HTTPS_ENDPOINT_TIMEOUT_MILLIS)}"
-            } + "rescue-${rescueEndpoint.code}:${httpsFailureReason(rescueError, HTTPS_RESCUE_TIMEOUT_MILLIS)}"
+            } + listOfNotNull(rescue?.let { (endpoint, error) ->
+                "rescue-${endpoint.code}:${httpsFailureReason(error, HTTPS_RESCUE_TIMEOUT_MILLIS)}"
+            })
             )
             .joinToString("; ")
             .take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
-        throw HttpsProbeFailure(
+        return HttpsProbeFailure(
             diagnosticDetail = detail,
             message = "HTTPS-проверка через VPN не прошла: $detail. " +
                 "Причиной может быть недоступный или заблокированный сервер, " +
                 "отключённый ключ либо неверные параметры транспорта.",
-            cause = rescueError,
+            cause = rescue?.second ?: failures.lastOrNull()?.second,
         )
     }
 
@@ -756,6 +834,7 @@ class VpnHealthPipeline(
         const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L
         const val HTTPS_RESCUE_TIMEOUT_MILLIS = 8_000
         const val HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS = 5_000L
+        const val MIN_HTTPS_RESCUE_BUDGET_MILLIS = 8_500L
         const val MAX_HTTPS_FAILURE_DETAIL_CHARS = 240
         const val MAX_HTTP_STATUS_LINE_BYTES = 512
         const val MAX_DNS_PACKET = 65_535
@@ -770,6 +849,60 @@ private val ProxyIpFamily.diagnosticName: String
         ProxyIpFamily.DualStack -> "dual"
         ProxyIpFamily.Unspecified -> "resolver"
     }
+
+internal data class DnsResponseValidation(
+    val rcode: Int,
+    val answerCount: Int,
+    val needsTcpFallback: Boolean,
+    val fallbackReason: String?,
+)
+
+internal object DnsHealthResponseValidator {
+    fun validate(
+        query: ByteArray,
+        response: ByteArray,
+        allowFallback: Boolean,
+    ): DnsResponseValidation {
+        if (query.size < DNS_HEADER_BYTES || response.size < DNS_HEADER_BYTES ||
+            response[0] != query[0] || response[1] != query[1]
+        ) {
+            error("DNS через VPN вернул некорректный ответ.")
+        }
+        val flags = unsignedShort(response, 2)
+        val questionCount = unsignedShort(response, 4)
+        val answerCount = unsignedShort(response, 6)
+        if (flags and QR_RESPONSE == 0 || questionCount != 1 || response.size < query.size ||
+            !response.copyOfRange(DNS_HEADER_BYTES, query.size)
+                .contentEquals(query.copyOfRange(DNS_HEADER_BYTES, query.size))
+        ) {
+            error("DNS через VPN вернул ответ на другой запрос.")
+        }
+        val rcode = flags and RCODE_MASK
+        if (rcode != 0) error("DNS через VPN вернул ошибку $rcode.")
+        val truncated = flags and TRUNCATED_RESPONSE != 0
+        if (!allowFallback && (truncated || answerCount == 0)) {
+            error("DNS через VPN вернул пустой или обрезанный TCP-ответ.")
+        }
+        return DnsResponseValidation(
+            rcode = rcode,
+            answerCount = answerCount,
+            needsTcpFallback = truncated || answerCount == 0,
+            fallbackReason = when {
+                truncated -> "truncated"
+                answerCount == 0 -> "empty_answer"
+                else -> null
+            },
+        )
+    }
+
+    private fun unsignedShort(bytes: ByteArray, offset: Int): Int =
+        ((bytes[offset].toInt() and 0xff) shl 8) or (bytes[offset + 1].toInt() and 0xff)
+
+    private const val DNS_HEADER_BYTES = 12
+    private const val QR_RESPONSE = 0x8000
+    private const val TRUNCATED_RESPONSE = 0x0200
+    private const val RCODE_MASK = 0x000f
+}
 
 internal fun selectHealthAddress(
     addresses: List<InetAddress>,
