@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 180
     env:
       RELEASE_TAG: ${{ inputs.tag }}
-      ZAPRET_UPDATE_REPOSITORY: zapretdiscordyoutube/ZapretKVN-android
+      ZAPRET_UPDATE_REPOSITORY: zapretkvn/ZapretKVN-android
       GRADLE_OPTS: >-
         -Dorg.gradle.daemon=false
         -Dorg.gradle.workers.max=1

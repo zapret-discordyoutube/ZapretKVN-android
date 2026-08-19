@@ -28,7 +28,7 @@ class UpdateControllerInstrumentedTest {
         var restored = 0
         val controller = UpdateController(
             context = context,
-            repository = "zapretdiscordyoutube/ZapretKVN-android",
+            repository = "zapretkvn/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource {
@@ -60,7 +60,7 @@ class UpdateControllerInstrumentedTest {
         var checks = 0
         val controller = UpdateController(
             context = context,
-            repository = "zapretdiscordyoutube/ZapretKVN-android",
+            repository = "zapretkvn/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource {
@@ -158,7 +158,7 @@ class UpdateControllerInstrumentedTest {
         val candidate = candidate(bytes)
         val controller = UpdateController(
             context = context,
-            repository = "zapretdiscordyoutube/ZapretKVN-android",
+            repository = "zapretkvn/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource { candidate },
@@ -186,7 +186,7 @@ class UpdateControllerInstrumentedTest {
 
         val cancelling = UpdateController(
             context = context,
-            repository = "zapretdiscordyoutube/ZapretKVN-android",
+            repository = "zapretkvn/ZapretKVN-android",
             currentVersionName = "1.0.0",
             currentVersionCode = 1,
             source = UpdateReleaseSource { candidate },
@@ -226,7 +226,7 @@ class UpdateControllerInstrumentedTest {
         verifier: ApkUpdateVerifier,
     ) = UpdateController(
         context = context,
-        repository = "zapretdiscordyoutube/ZapretKVN-android",
+        repository = "zapretkvn/ZapretKVN-android",
         currentVersionName = "1.0.0",
         currentVersionCode = 1,
         installIntentFactory = AndroidUpdateInstallIntentFactory(context),
@@ -261,7 +261,7 @@ class UpdateControllerInstrumentedTest {
             apkSha256 = sha,
             apkSize = bytes.size.toLong(),
         )
-        val apk = ForgejoAsset(name, "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/apk", bytes.size.toLong(), "sha256:$sha")
+        val apk = ForgejoAsset(name, "https://git.zapret.moe/zapretkvn/ZapretKVN-android/apk", bytes.size.toLong(), "sha256:$sha")
         return UpdateCandidate(
             release = ForgejoRelease(
                 "v1.1.0",

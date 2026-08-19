@@ -14,7 +14,7 @@ SIGNING_FINGERPRINT_FILE="$SIGNING_DIR/certificate-sha256.txt"
 RELEASE_MATRIX_DIR="$PROJECT_ROOT/app/build/outputs/apk/matrix/release"
 OUTPUT_DIR="$PROJECT_ROOT/build/local-release/$TAG"
 STAGING_OUTPUT_DIR="$PROJECT_ROOT/build/local-release/.$TAG.staging"
-RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-zapretdiscordyoutube/ZapretKVN-android}"
+RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-zapretkvn/ZapretKVN-android}"
 FORGEJO_URL="${ZAPRET_FORGEJO_URL:-https://git.zapret.moe}"
 FORGEJO_TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.config/forgejo/zapret-kvn-android-release-token}"
 

@@ -6,7 +6,7 @@
 
 Zapret KVN — быстрый и бережный VPN-клиент для Android на базе `sing-box-extended`. Он позволяет выбрать не только VPN-профиль, но и конкретные приложения и сайты, которым нужен VPN.
 
-### [Получить ключи можно тут](https://t.me/zapretvpns_bot) | [Скачать](https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases) | [Windows](https://git.zapret.moe/zapretdiscordyoutube/zapret-kvn)
+### [Получить ключи можно тут](https://t.me/zapretvpns_bot) | [Скачать](https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases) | [Windows](https://git.zapret.moe/zapretkvn/zapret-kvn)
 
 Обычный VPN-клиент часто отправляет в туннель весь трафик телефона. При подключении
 Zapret KVN передаёт Android список выбранных приложений, и система направляет в TUN
@@ -371,7 +371,7 @@ Android всё равно показывает системный `VpnService`, 
 
 Stable-сборки используют package `io.github.zapretkvn.android` и постоянный production
 key. `0.2.3` обновляет `0.2.1`, `0.2.2` и `0.2.1-beta.30` без потери app-private данных. Ручные
-стабильные сборки публикуются в [Forgejo Releases](https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases), а отладочные APK сохраняются как артефакты Forgejo Actions
+стабильные сборки публикуются в [Forgejo Releases](https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases), а отладочные APK сохраняются как артефакты Forgejo Actions
 как prerelease; у них отдельный package `io.github.zapretkvn.android.debug` и Android
 debug key, поэтому они устанавливаются рядом и не обновляют production-приложение.
 

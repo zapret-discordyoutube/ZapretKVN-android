@@ -116,7 +116,7 @@ class UpdateJsonTest {
               "tag_name":"v1.2.3",
               "name":"Beta 1.2.3",
               "body":"Fixed updater",
-              "html_url":"https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases/tag/v1.2.3",
+              "html_url":"https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases/tag/v1.2.3",
               "published_at":"2026-07-22T20:23:04Z",
               "draft":false,
               "prerelease":true,

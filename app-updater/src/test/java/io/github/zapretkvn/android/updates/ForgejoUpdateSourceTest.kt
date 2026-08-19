@@ -106,9 +106,9 @@ class ForgejoUpdateSourceTest {
     @Test
     fun `only fixed Forgejo https hosts are accepted`() {
         assertEquals(
-            "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases/download/v1/file",
+            "https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file",
             ForgejoHttpsClient.validatedUrl(
-                "https://git.zapret.moe/zapretdiscordyoutube/ZapretKVN-android/releases/download/v1/file",
+                "https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file",
             ),
         )
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("http://git.zapret.moe/file") }
@@ -124,7 +124,7 @@ class ForgejoUpdateSourceTest {
     }
 
     private companion object {
-        const val REPOSITORY = "zapretdiscordyoutube/ZapretKVN-android"
+        const val REPOSITORY = "zapretkvn/ZapretKVN-android"
         const val APPLICATION_ID = "io.github.zapretkvn.android"
         const val LIST = "https://git.zapret.moe/api/v1/repos/$REPOSITORY/releases?limit=20"
         const val METADATA_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/release-metadata.json"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 TAG="${1:-}"
 BUNDLE_DIR="${2:-}"
-RELEASE_REPOSITORY="${3:-${ZAPRET_UPDATE_REPOSITORY:-zapretdiscordyoutube/ZapretKVN-android}}"
+RELEASE_REPOSITORY="${3:-${ZAPRET_UPDATE_REPOSITORY:-zapretkvn/ZapretKVN-android}}"
 FORGEJO_BASE_URL="${ZAPRET_FORGEJO_URL:-https://git.zapret.moe}"
 FORGEJO_API_URL="$FORGEJO_BASE_URL/api/v1"
 TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.config/forgejo/zapret-kvn-android-release-token}"
