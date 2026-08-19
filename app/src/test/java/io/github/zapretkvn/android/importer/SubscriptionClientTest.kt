@@ -46,6 +46,16 @@ class SubscriptionClientTest {
     }
 
     @Test
+    fun `subscription fragment is removed before fetch and persistence`() {
+        assertEquals(
+            "https://sub.example/profile?token=secret",
+            HttpSubscriptionFetcher.validatedUrl(
+                "https://sub.example/profile?token=secret#client-label",
+            ),
+        )
+    }
+
+    @Test
     fun `refresh url is outside profile index and removable`() = runBlocking {
         val root = temporaryFolder.newFolder("subscriptions")
         val store = SubscriptionSourceStore(root, JvmWriter())

@@ -106,6 +106,7 @@ data class ImportPreviewState(
     val serverLabels: List<String>,
     val activityWarning: String?,
     val appendTargets: List<ProfileMetadata>,
+    val importWarnings: List<String> = emptyList(),
     val refreshProfileId: String? = null,
     val refreshProfileName: String? = null,
     val activeRefresh: Boolean = false,
@@ -230,6 +231,7 @@ class ProfilesViewModel(
                     serverLabels = candidate.serverLabels(),
                     activityWarning = importWarnings(update.json),
                     appendTargets = emptyList(),
+                    importWarnings = candidate.importWarnings(),
                     refreshProfileId = profileId,
                     refreshProfileName = stored.metadata.name,
                     activeRefresh = currentVpn is VpnConnectionState.Connected &&
@@ -677,6 +679,7 @@ class ProfilesViewModel(
                     serverLabels = candidate.serverLabels(),
                     activityWarning = importWarnings(json),
                     appendTargets = appendTargets,
+                    importWarnings = candidate.importWarnings(),
                     candidate = candidate,
                     preparedJson = json,
                     sourceUrl = sourceUrl,
@@ -738,6 +741,13 @@ class ProfilesViewModel(
             endpointLabel?.let { "$protocolName · $it" } ?: protocolName,
         )
     }.take(8).map(SecretRedactor::redactInline)
+
+    private fun ImportCandidate.importWarnings(): List<String> = when (this) {
+        is ImportCandidate.Managed -> importWarnings
+        is ImportCandidate.RawJson,
+        is ImportCandidate.WireGuard,
+        -> emptyList()
+    }
 
     private suspend fun requireValid(rawJson: String) {
         when (val result = withContext(Dispatchers.IO) { validator.validate(rawJson) }) {

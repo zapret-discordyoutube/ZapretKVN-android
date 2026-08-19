@@ -255,6 +255,59 @@ class ImportInstrumentedTest {
     }
 
     @Test
+    fun urlImportDropsFragmentAndPreviewsSupportedServersWithSchemeWarning() = runBlocking {
+        val root = File(context.cacheDir, "partial-subscription-${System.nanoTime()}")
+        val testViewModelStore = ViewModelStore()
+        var fetchedUrl: String? = null
+        try {
+            val application = context.applicationContext as ZapretApplication
+            val profileStore = ProfileStore(File(root, "profiles"), LibboxConfigValidator())
+            profileStore.initialize()
+            val viewModel = ViewModelProvider(
+                object : ViewModelStoreOwner {
+                    override val viewModelStore: ViewModelStore = testViewModelStore
+                },
+                ProfilesViewModel.Factory(
+                    store = profileStore,
+                    settingsStore = application.container.uiSettingsStore,
+                    validator = LibboxConfigValidator(),
+                    importReader = AndroidImportReader(context),
+                    subscriptionFetcher = SubscriptionFetcher { url ->
+                        fetchedUrl = url
+                        """
+                            vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One
+                            ssh://user:password@ssh.example:22
+                        """.trimIndent()
+                    },
+                    subscriptionSourceStore = SubscriptionSourceStore(File(root, "subscriptions")),
+                    vpnController = VpnController(context),
+                    bootstrapCache = BootstrapCache(File(root, "network")),
+                    ruleSetAssets = application.container.ruleSetAssetManager,
+                ),
+            )[ProfilesViewModel::class.java]
+
+            viewModel.importUrl("https://subscription.example/profile?token=secret#client-label")
+            val deadline = SystemClock.uptimeMillis() + 10_000
+            while (
+                viewModel.state.value.importPreview == null &&
+                viewModel.state.value.message == null &&
+                SystemClock.uptimeMillis() < deadline
+            ) {
+                SystemClock.sleep(25)
+            }
+
+            val preview = checkNotNull(viewModel.state.value.importPreview)
+            assertEquals("https://subscription.example/profile?token=secret", fetchedUrl)
+            assertEquals(1, preview.serverCount)
+            assertEquals(listOf("Пропущены неподдерживаемые схемы: ssh://."), preview.importWarnings)
+            Libbox.checkConfig(preview.preparedJson)
+        } finally {
+            testViewModelStore.clear()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun commonProtocolBuildersPassLibboxCheckConfig() {
         val servers = listOf(
             ProtocolOutboundBuilders.vless(

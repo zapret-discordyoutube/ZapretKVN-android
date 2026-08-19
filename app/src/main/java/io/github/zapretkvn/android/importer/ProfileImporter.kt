@@ -38,6 +38,7 @@ sealed interface ImportCandidate {
         val servers: List<ManagedServer>,
         override val suggestedName: String,
         override val source: ProfileSource,
+        val importWarnings: List<String> = emptyList(),
     ) : ImportCandidate {
         fun buildJson(): String = if (servers.size == 1) {
             ManagedProfileFactory.single(servers.single())
@@ -92,13 +93,17 @@ object ImportParser {
             )
         }
 
-        val links = extractLinks(text).ifEmpty {
+        val direct = extractLinks(text)
+        val extracted = if (direct.links.isNotEmpty()) {
+            direct
+        } else {
+            if (direct.unsupportedSchemes.isNotEmpty()) throw noSupportedLinks(direct.unsupportedSchemes)
             val decoded = decodeSubscription(text)
-            extractLinks(decoded).ifEmpty {
-                throw ImportException("В подписке нет поддерживаемых ссылок.")
+            extractLinks(decoded).also {
+                if (it.links.isEmpty()) throw noSupportedLinks(it.unsupportedSchemes)
             }
         }
-        val servers = links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
+        val servers = extracted.links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
         return ImportCandidate.Managed(
             servers = servers,
             suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
@@ -111,14 +116,25 @@ object ImportParser {
             } else {
                 ProfileSource.Subscription
             },
+            importWarnings = extracted.unsupportedSchemes.takeIf(List<String>::isNotEmpty)?.let { schemes ->
+                listOf("Пропущены неподдерживаемые схемы: ${schemes.joinToString { "$it://" }}.")
+            }.orEmpty(),
         )
     }
 
-    private fun extractLinks(text: String): List<String> {
-        rejectUnsupportedConfigSchemes(text)
-        val matches = SUPPORTED_SCHEME_PATTERN.findAll(text).toList()
-        return matches.mapIndexed { index, match ->
-            val nextSchemeStart = matches.getOrNull(index + 1)?.range?.first ?: text.length
+    private fun extractLinks(text: String): ExtractedLinks {
+        val configSchemeMatches = URI_SCHEME_PATTERN.findAll(text)
+            .filter { it.groupValues[1].lowercase() !in NON_CONFIG_SCHEMES }
+            .toList()
+        val supportedMatches = configSchemeMatches.filter {
+            it.groupValues[1].lowercase() in SUPPORTED_SCHEME_NAMES
+        }
+        val links = supportedMatches.map { match ->
+            val nextSchemeStart = configSchemeMatches
+                .firstOrNull { it.range.first > match.range.first }
+                ?.range
+                ?.first
+                ?: text.length
             var end = match.range.first
             while (end < nextSchemeStart && !text[end].isLinkBoundary()) {
                 end += 1
@@ -128,16 +144,23 @@ object ImportParser {
                 .takeIf(String::isNotEmpty)
                 ?: throw ImportException("Обнаружена пустая ссылка.")
         }
+        val unsupportedSchemes = configSchemeMatches
+            .map { it.groupValues[1].lowercase() }
+            .filterNot(SUPPORTED_SCHEME_NAMES::contains)
+            .distinct()
+        return ExtractedLinks(links, unsupportedSchemes)
     }
 
-    private fun rejectUnsupportedConfigSchemes(text: String) {
-        URI_SCHEME_PATTERN.findAll(text).forEach { match ->
-            val scheme = match.groupValues[1].lowercase()
-            if (scheme !in SUPPORTED_SCHEME_NAMES && scheme !in NON_CONFIG_SCHEMES) {
-                throw ImportException("Найдена неподдерживаемая схема $scheme://; импорт остановлен.")
+    private fun noSupportedLinks(unsupportedSchemes: List<String>): ImportException = ImportException(
+        buildString {
+            append("В подписке нет поддерживаемых ссылок.")
+            if (unsupportedSchemes.isNotEmpty()) {
+                append(" Неподдерживаемые схемы: ")
+                append(unsupportedSchemes.joinToString { "$it://" })
+                append('.')
             }
-        }
-    }
+        },
+    )
 
     private fun decodeSubscription(text: String): String =
         runCatching { decodeBase64(text.filterNot(Char::isWhitespace)) }.getOrElse {
@@ -159,11 +182,14 @@ object ImportParser {
         "tuic",
     )
     private val NON_CONFIG_SCHEMES = setOf("http", "https", "tg")
-    private val SUPPORTED_SCHEME_PATTERN =
-        Regex("(?i)(?:vless|vmess|trojan|ss|hysteria2|hy2|tuic)://")
     private val URI_SCHEME_PATTERN = Regex("(?i)\\b([a-z][a-z0-9+.-]*)://")
     private val LINK_BOUNDARIES = charArrayOf('"', '\'', '`', '<', '>', '\u200B')
     private val TRAILING_LINK_WRAPPERS = charArrayOf(',', ';', '.', ')', ']', '}')
+
+    private data class ExtractedLinks(
+        val links: List<String>,
+        val unsupportedSchemes: List<String>,
+    )
 }
 
 object ShareLinkParser {

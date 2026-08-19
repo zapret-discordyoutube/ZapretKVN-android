@@ -222,15 +222,32 @@ class ImportParserTest {
     }
 
     @Test
-    fun `unsupported config scheme still fails the whole import`() {
+    fun `unsupported config scheme is reported while supported links remain importable`() {
         val input = """
             Основной: vless://11111111-1111-4111-8111-111111111111@one.example:443
             Резерв: socks://user:password@unknown.example:1080
+            SSH: ssh://user:password@ssh.example:22
         """.trimIndent()
 
-        assertThrows(ImportException::class.java) {
-            ImportParser.parse(input, ProfileSource.Clipboard)
+        val candidate = ImportParser.parse(input, ProfileSource.Clipboard) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+        assertEquals(
+            listOf("Пропущены неподдерживаемые схемы: socks://, ssh://."),
+            candidate.importWarnings,
+        )
+    }
+
+    @Test
+    fun `subscription containing only unsupported schemes still fails clearly`() {
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse("ssh://user:password@ssh.example:22", ProfileSource.Clipboard)
         }
+
+        assertEquals(
+            "В подписке нет поддерживаемых ссылок. Неподдерживаемые схемы: ssh://.",
+            error.message,
+        )
     }
 
     @Test

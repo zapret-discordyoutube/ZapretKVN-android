@@ -84,8 +84,10 @@ class HttpSubscriptionFetcher : SubscriptionFetcher {
             if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrBlank()) {
                 throw ImportException("Поддерживаются только полные HTTP(S) URL подписок.")
             }
-            if (uri.fragment != null) throw ImportException("Fragment в URL подписки не поддерживается.")
-            return uri.toASCIIString()
+            // Fragments are client-side labels and are never sent in an HTTP request.
+            // Drop them before fetching and persisting the refresh source.
+            val fetchUri = if (uri.rawFragment != null) URI(value.substringBefore('#')) else uri
+            return fetchUri.toASCIIString()
         }
 
         private const val TIMEOUT_MILLIS = 15_000

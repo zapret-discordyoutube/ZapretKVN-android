@@ -791,6 +791,9 @@ private fun ImportPreviewDialog(
                 preview.activityWarning?.let {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
+                preview.importWarnings.forEach {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
                 if (preview.selectionChanged) {
                     Text(
                         "Текущий server tag исчез: будет выбран первый доступный сервер.",
