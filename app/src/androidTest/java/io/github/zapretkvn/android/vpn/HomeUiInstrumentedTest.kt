@@ -32,6 +32,7 @@ class HomeUiInstrumentedTest {
         val profile = container.profileStore.create("Daily VPN", PROFILE, ProfileSource.RawJson)
         profileId = profile.id
         container.uiSettingsStore.setActiveProfile(profile.id)
+        container.uiSettingsStore.setHideServerAddresses(true)
         container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
         container.appSelectionStore.replaceBlocklist(emptySet())
         val generation = container.vpnController.nextGeneration()
@@ -92,7 +93,8 @@ class HomeUiInstrumentedTest {
 
         composeRule.onNodeWithText("Moscow").performClick()
         composeRule.onNodeWithText("Серверы").assertExists()
-        composeRule.onAllNodesWithText("VLESS · vpn.example:443").assertCountEquals(2)
+        composeRule.onAllNodesWithText("VLESS · ********").assertCountEquals(2)
+        composeRule.onNodeWithText("vpn.example", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("Проверить оба").assertExists()
         composeRule.onAllNodesWithText("Relay 84 мс").assertCountEquals(2)
     }

@@ -568,6 +568,10 @@ class ProfilesViewModel(
         settingsStore.setRawEditorLineWrap(enabled)
     }
 
+    fun setHideServerAddresses(enabled: Boolean) = operation(markBusy = false) {
+        settingsStore.setHideServerAddresses(enabled)
+    }
+
     fun setDnsMode(mode: DnsMode) = operation(markBusy = false) {
         settingsStore.setDnsMode(mode)
         vpnController.restartIfConnected("Смена режима DNS")

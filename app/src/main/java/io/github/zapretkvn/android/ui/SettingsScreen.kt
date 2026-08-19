@@ -206,6 +206,30 @@ private fun SettingsMain(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = 64.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Скрывать адреса серверов")
+                        Text(
+                            "Включено по умолчанию: endpoint и URL подписок заменяются звёздочками на всех экранах.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = state.settings.hideServerAddresses,
+                        onCheckedChange = viewModel::setHideServerAddresses,
+                        modifier = Modifier
+                            .testTag("hide-server-addresses")
+                            .semantics { contentDescription = "Скрывать адреса серверов" },
+                    )
+                }
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
                         .heightIn(min = 56.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,

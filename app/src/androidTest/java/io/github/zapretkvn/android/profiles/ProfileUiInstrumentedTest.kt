@@ -50,6 +50,7 @@ class ProfileUiInstrumentedTest {
         container.profileStore.initialize()
         container.profileStore.profiles.value.forEach { container.profileStore.delete(it.id) }
         container.uiSettingsStore.setActiveProfile(null)
+        container.uiSettingsStore.setHideServerAddresses(true)
         container.uiSettingsStore.setDnsMode(DnsMode.FromJson)
         container.uiSettingsStore.setDnsOverride(
             DnsOverride.DEFAULT_HOSTNAME,
@@ -69,6 +70,7 @@ class ProfileUiInstrumentedTest {
         resetDiagnostics()
         container.profileStore.profiles.value.forEach { container.profileStore.delete(it.id) }
         container.uiSettingsStore.setActiveProfile(null)
+        container.uiSettingsStore.setHideServerAddresses(true)
         container.uiSettingsStore.setDnsMode(DnsMode.FromJson)
         container.uiSettingsStore.setDnsOverride(
             DnsOverride.DEFAULT_HOSTNAME,
@@ -106,6 +108,7 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithText("Буфер обмена").assertExists()
         composeRule.onNodeWithText("Обновлено:", substring = true).assertExists()
         composeRule.onNodeWithText("JSON").performScrollTo().performClick()
+        composeRule.onNodeWithText("Показать адреса и разрешить редактирование").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             composeRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size >= 2
         }
@@ -124,6 +127,7 @@ class ProfileUiInstrumentedTest {
         composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
         composeRule.onNodeWithText("JSON").performScrollTo().performClick()
+        composeRule.onNodeWithText("Показать адреса и разрешить редактирование").performClick()
         composeRule.onAllNodes(hasSetTextAction())[1].assertTextContains(UPDATED_DIRECT)
     }
 

@@ -70,6 +70,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -149,7 +151,13 @@ fun ZapretApp(
         onDispose { if (homeSelected) onHomeSelected(false) }
     }
     state.editor?.let { editor ->
-        RawEditorScreen(profilesViewModel, editor, state.settings.rawEditorLineWrap, state.busy)
+        RawEditorScreen(
+            profilesViewModel,
+            editor,
+            state.settings.rawEditorLineWrap,
+            state.settings.hideServerAddresses,
+            state.busy,
+        )
         return
     }
     appPickerMode?.let { pickerMode ->
@@ -243,6 +251,7 @@ fun ZapretApp(
                 contentPadding = contentPadding,
                 activeProfile = activeProfile,
                 activeProfileServers = activeProfile?.let { state.serverSummaries[it.id] },
+                hideServerAddresses = state.settings.hideServerAddresses,
                 onOpenServers = {
                     activeProfile?.id?.let(profilesViewModel::openServerPicker)
                 },
@@ -314,6 +323,7 @@ fun ZapretApp(
         ModalBottomSheet(onDismissRequest = profilesViewModel::dismissServerPicker) {
             ProfileServerPickerSheet(
                 picker = picker,
+                hideServerAddresses = state.settings.hideServerAddresses,
                 busy = state.busy,
                 onSelect = profilesViewModel::selectProfileServer,
             )
@@ -324,6 +334,7 @@ fun ZapretApp(
 @Composable
 private fun ProfileServerPickerSheet(
     picker: ProfileServerPickerState,
+    hideServerAddresses: Boolean,
     busy: Boolean,
     onSelect: (String, String) -> Unit,
 ) {
@@ -409,14 +420,20 @@ private fun ProfileServerPickerSheet(
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            option.tag,
+                            ScreenshotPrivacy.serverLabel(option.tag, hideServerAddresses),
                             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         if (option.subtitle.isNotBlank()) {
                             Text(
-                                option.subtitle,
+                                listOfNotNull(
+                                    option.type.uppercase().takeIf(String::isNotBlank),
+                                    ScreenshotPrivacy.serverEndpoint(
+                                        option.endpoint,
+                                        hideServerAddresses,
+                                    ),
+                                ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -619,6 +636,7 @@ private fun ProfilesScreen(
                 items(group.profiles, key = ProfileMetadata::id) { profile ->
                     ProfileCard(
                         profile = profile,
+                        hideServerAddresses = state.settings.hideServerAddresses,
                         active = profile.id == state.settings.activeProfileId,
                         enabled = !state.busy,
                         onSelect = { viewModel.selectProfile(profile.id) },
@@ -667,6 +685,7 @@ private fun ProfilesScreen(
 
     if (urlDialogOpen) {
         UrlImportDialog(
+            hideServerAddresses = state.settings.hideServerAddresses,
             onDismiss = { urlDialogOpen = false },
             onImport = { url ->
                 urlDialogOpen = false
@@ -689,6 +708,7 @@ private fun ProfilesScreen(
     state.importPreview?.let { preview ->
         ImportPreviewDialog(
             preview = preview,
+            hideServerAddresses = state.settings.hideServerAddresses,
             busy = state.busy,
             onDismiss = viewModel::dismissImportPreview,
             onCreate = viewModel::confirmImport,
@@ -726,20 +746,35 @@ private fun ProfilesScreen(
 
 @Composable
 private fun UrlImportDialog(
+    hideServerAddresses: Boolean,
     onDismiss: () -> Unit,
     onImport: (String) -> Unit,
 ) {
     var url by remember { mutableStateOf("") }
+    var revealed by rememberSaveable { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Импорт по URL") },
         text = {
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it.take(4096) },
-                label = { Text("HTTPS URL подписки") },
-                singleLine = true,
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it.take(4096) },
+                    label = { Text("HTTPS URL подписки") },
+                    singleLine = true,
+                    visualTransformation = if (hideServerAddresses && !revealed) {
+                        PasswordVisualTransformation(mask = '*')
+                    } else {
+                        VisualTransformation.None
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (hideServerAddresses) {
+                    TextButton(onClick = { revealed = !revealed }) {
+                        Text(if (revealed) "Скрыть URL" else "Показать URL")
+                    }
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = { onImport(url) }, enabled = url.isNotBlank()) {
@@ -753,6 +788,7 @@ private fun UrlImportDialog(
 @Composable
 private fun ImportPreviewDialog(
     preview: ImportPreviewState,
+    hideServerAddresses: Boolean,
     busy: Boolean,
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit,
@@ -769,13 +805,29 @@ private fun ImportPreviewDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(preview.sourceDescription, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (preview.hasSubscriptionUrl) {
+                        ScreenshotPrivacy.subscriptionSource(
+                            preview.sourceDescription,
+                            hideServerAddresses,
+                        )
+                    } else {
+                        preview.sourceDescription
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     if (preview.serverCount > 0) "Серверов: ${preview.serverCount}" else "Готовый sing-box JSON",
                 )
                 if (preview.serverLabels.isNotEmpty()) {
                     Text(
-                        preview.serverLabels.joinToString(" • "),
+                        if (hideServerAddresses) {
+                            preview.serverLabels.joinToString(" • ") {
+                                ScreenshotPrivacy.serverLabel(it, hidden = true)
+                            }
+                        } else {
+                            preview.serverLabels.joinToString(" • ")
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -879,6 +931,7 @@ private fun ImportPreviewDialog(
 @Composable
 private fun ProfileCard(
     profile: ProfileMetadata,
+    hideServerAddresses: Boolean,
     active: Boolean,
     enabled: Boolean,
     onSelect: () -> Unit,
@@ -936,7 +989,15 @@ private fun ProfileCard(
                 Text(
                     buildString {
                         append("Серверов: ${servers.serverCount}")
-                        servers.selectedLabel?.let { append(" · выбран: $it") }
+                        servers.selectedLabel?.let {
+                            append(" · выбран: ")
+                            append(
+                                ScreenshotPrivacy.serverLabel(
+                                    it,
+                                    hideServerAddresses,
+                                ),
+                            )
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1023,9 +1084,13 @@ private fun RawEditorScreen(
     viewModel: ProfilesViewModel,
     editor: ProfileEditorState,
     lineWrap: Boolean,
+    hideServerAddresses: Boolean,
     busy: Boolean,
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
+    var addressesRevealed by rememberSaveable(editor.profileId, hideServerAddresses) {
+        mutableStateOf(!hideServerAddresses)
+    }
     val requestClose = {
         if (!viewModel.closeEditor()) confirmDiscard = true
     }
@@ -1061,9 +1126,29 @@ private fun RawEditorScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            SelectorControls(editor, viewModel)
+            SelectorControls(editor, viewModel, hideServerAddresses)
+
+            if (hideServerAddresses) {
+                OutlinedButton(onClick = { addressesRevealed = !addressesRevealed }) {
+                    Text(
+                        if (addressesRevealed) {
+                            "Скрыть адреса серверов"
+                        } else {
+                            "Показать адреса и разрешить редактирование"
+                        },
+                    )
+                }
+            }
 
             val horizontalScroll = rememberScrollState()
+            val editorTextVisible = !hideServerAddresses || addressesRevealed
+            val displayedText = remember(editor.text, editorTextVisible) {
+                if (editorTextVisible) {
+                    editor.text
+                } else {
+                    ScreenshotPrivacy.redactServerAddressesInJson(editor.text)
+                }
+            }
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -1071,10 +1156,13 @@ private fun RawEditorScreen(
                     .then(if (lineWrap) Modifier else Modifier.horizontalScroll(horizontalScroll)),
             ) {
                 OutlinedTextField(
-                    value = editor.text,
-                    onValueChange = viewModel::updateEditorText,
+                    value = displayedText,
+                    onValueChange = if (editorTextVisible) viewModel::updateEditorText else ({ _ -> }),
                     textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    label = { Text("sing-box JSON") },
+                    label = {
+                        Text(if (editorTextVisible) "sing-box JSON" else "sing-box JSON · адреса скрыты")
+                    },
+                    readOnly = !editorTextVisible,
                     modifier = Modifier
                         .fillMaxSize()
                         .then(if (lineWrap) Modifier else Modifier.widthIn(min = 1200.dp)),
@@ -1136,7 +1224,11 @@ private fun RawEditorScreen(
 }
 
 @Composable
-private fun SelectorControls(editor: ProfileEditorState, viewModel: ProfilesViewModel) {
+private fun SelectorControls(
+    editor: ProfileEditorState,
+    viewModel: ProfilesViewModel,
+    hideServerAddresses: Boolean,
+) {
     if (editor.selectors.isEmpty()) {
         if (editor.serverTags.isNotEmpty()) {
             OutlinedButton(onClick = viewModel::createManagedSelector) {
@@ -1159,7 +1251,9 @@ private fun SelectorControls(editor: ProfileEditorState, viewModel: ProfilesView
                     FilterChip(
                         selected = selector.default == server,
                         onClick = { viewModel.selectServer(selector.tag, server) },
-                        label = { Text(server) },
+                        label = {
+                            Text(ScreenshotPrivacy.serverLabel(server, hideServerAddresses))
+                        },
                     )
                 }
             }

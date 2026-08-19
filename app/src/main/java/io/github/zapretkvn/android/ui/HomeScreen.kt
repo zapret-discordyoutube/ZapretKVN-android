@@ -68,6 +68,7 @@ internal fun HomeScreen(
     contentPadding: PaddingValues,
     activeProfile: ProfileMetadata?,
     activeProfileServers: ProfileServerSummary?,
+    hideServerAddresses: Boolean,
     onOpenServers: () -> Unit,
     selectedAppCount: Int,
     blockedAppCount: Int,
@@ -117,6 +118,7 @@ internal fun HomeScreen(
                 ) {
                     OfflineServerSummary(
                         summary = activeProfileServers,
+                        hideServerAddresses = hideServerAddresses,
                         onClick = onOpenServers.takeIf { activeProfileServers.switchable },
                     )
                 }
@@ -126,6 +128,7 @@ internal fun HomeScreen(
                         ServerSummary(
                             server = currentServer,
                             pingMillis = sessionStats.pingMillis,
+                            hideServerAddresses = hideServerAddresses,
                             onClick = { serverSheetOpen = true },
                         )
                     } else {
@@ -217,6 +220,7 @@ internal fun HomeScreen(
         ModalBottomSheet(onDismissRequest = { serverSheetOpen = false }) {
             ServerSelectorSheet(
                 groups = selectorGroups,
+                hideServerAddresses = hideServerAddresses,
                 onSelect = { group, item ->
                     onSelectOutbound(connected.profileId, group.tag, item.tag)
                 },
@@ -252,7 +256,12 @@ private fun ConnectionHeader(state: VpnConnectionState) {
 }
 
 @Composable
-private fun ServerSummary(server: RuntimeOutboundItem, pingMillis: Long?, onClick: () -> Unit) {
+private fun ServerSummary(
+    server: RuntimeOutboundItem,
+    pingMillis: Long?,
+    hideServerAddresses: Boolean,
+    onClick: () -> Unit,
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -266,9 +275,17 @@ private fun ServerSummary(server: RuntimeOutboundItem, pingMillis: Long?, onClic
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(server.tag, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    listOfNotNull(server.type.uppercase(), server.endpoint).joinToString(" · "),
+                    ScreenshotPrivacy.serverLabel(server.tag, hideServerAddresses),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOfNotNull(
+                        server.type.uppercase(),
+                        ScreenshotPrivacy.serverEndpoint(server.endpoint, hideServerAddresses),
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
                     maxLines = 1,
@@ -293,7 +310,11 @@ private fun ServerSummary(server: RuntimeOutboundItem, pingMillis: Long?, onClic
 
 /** Выбор сервера до подключения: тот же профиль, но данные берутся из сохранённого JSON. */
 @Composable
-private fun OfflineServerSummary(summary: ProfileServerSummary, onClick: (() -> Unit)?) {
+private fun OfflineServerSummary(
+    summary: ProfileServerSummary,
+    hideServerAddresses: Boolean,
+    onClick: (() -> Unit)?,
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -309,7 +330,9 @@ private fun OfflineServerSummary(summary: ProfileServerSummary, onClick: (() -> 
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    summary.selectedLabel ?: "Сервер не выбран",
+                    summary.selectedLabel?.let {
+                        ScreenshotPrivacy.serverLabel(it, hideServerAddresses)
+                    } ?: "Сервер не выбран",
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -514,6 +537,7 @@ private fun ConnectionAction(
 @Composable
 private fun ServerSelectorSheet(
     groups: List<RuntimeSelectorGroup>,
+    hideServerAddresses: Boolean,
     onSelect: (RuntimeSelectorGroup, RuntimeOutboundItem) -> Unit,
     onMeasureGroup: (String) -> Unit,
 ) {
@@ -557,9 +581,15 @@ private fun ServerSelectorSheet(
                         onClick = if (group.selectable) ({ onSelect(group, item) }) else null,
                     )
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(item.tag, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                         Text(
-                            listOfNotNull(item.type.uppercase(), item.endpoint).joinToString(" · "),
+                            ScreenshotPrivacy.serverLabel(item.tag, hideServerAddresses),
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                        Text(
+                            listOfNotNull(
+                                item.type.uppercase(),
+                                ScreenshotPrivacy.serverEndpoint(item.endpoint, hideServerAddresses),
+                            ).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

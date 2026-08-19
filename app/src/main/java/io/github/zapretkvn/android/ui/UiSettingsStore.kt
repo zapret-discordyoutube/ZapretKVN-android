@@ -33,6 +33,7 @@ data class UiSettings(
     val themeMode: ThemeMode = ThemeMode.System,
     val activeProfileId: String? = null,
     val rawEditorLineWrap: Boolean = false,
+    val hideServerAddresses: Boolean = true,
     val dnsMode: DnsMode = DnsMode.FromJson,
     val proxyIpv4Only: Boolean = true,
     val dnsOverride: DnsOverride = DnsOverride(),
@@ -65,6 +66,7 @@ class UiSettingsStore(
                     ?: ThemeMode.System,
                 activeProfileId = preferences[ACTIVE_PROFILE_ID],
                 rawEditorLineWrap = preferences[RAW_EDITOR_LINE_WRAP] ?: false,
+                hideServerAddresses = preferences[HIDE_SERVER_ADDRESSES] ?: true,
                 dnsMode = preferences[DNS_MODE]
                     ?.let { stored -> DnsMode.entries.firstOrNull { it.name == stored } }
                     ?: DnsMode.FromJson,
@@ -116,6 +118,10 @@ class UiSettingsStore(
 
     suspend fun setRawEditorLineWrap(enabled: Boolean) {
         dataStore.edit { it[RAW_EDITOR_LINE_WRAP] = enabled }
+    }
+
+    suspend fun setHideServerAddresses(enabled: Boolean) {
+        dataStore.edit { it[HIDE_SERVER_ADDRESSES] = enabled }
     }
 
     suspend fun setDnsMode(mode: DnsMode) {
@@ -205,6 +211,7 @@ class UiSettingsStore(
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
         val RAW_EDITOR_LINE_WRAP = booleanPreferencesKey("raw_editor_line_wrap")
+        val HIDE_SERVER_ADDRESSES = booleanPreferencesKey("hide_server_addresses")
         val DNS_MODE = stringPreferencesKey("dns_mode")
         val PROXY_IPV4_ONLY = booleanPreferencesKey("proxy_ipv4_only")
         val DNS_OVERRIDE_ENABLED = booleanPreferencesKey("dns_override_enabled")
