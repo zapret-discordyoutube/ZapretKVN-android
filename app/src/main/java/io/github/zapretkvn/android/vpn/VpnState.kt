@@ -54,8 +54,20 @@ data class RuntimeOutboundItem(
     val tag: String,
     val type: String,
     val endpoint: String?,
+    /** ICMP Echo RTT до адреса endpoint по основной сети Android. */
     val pingMillis: Int?,
     val pingMeasuredAtEpochSeconds: Long?,
+    /** Штатный sing-box URL-test через сам outbound, а не ICMP до адреса сервера. */
+    val relayDelayMillis: Int? = null,
+    val relayTestedAtEpochSeconds: Long? = null,
+)
+
+internal fun RuntimeOutboundItem.withRelayTestResult(
+    testedAtEpochSeconds: Long,
+    delayMillis: Int,
+): RuntimeOutboundItem = copy(
+    relayDelayMillis = delayMillis.takeIf { testedAtEpochSeconds > 0L },
+    relayTestedAtEpochSeconds = testedAtEpochSeconds.takeIf { it > 0L },
 )
 
 data class TrafficSample(

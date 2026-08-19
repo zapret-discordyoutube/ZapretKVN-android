@@ -1300,30 +1300,73 @@ class ZapretVpnService : VpnService() {
             }
             runCatching {
                 require(groupTag.isNotBlank()) { "Группа серверов не выбрана." }
-                val targets = session.groupPingTargets(groupTag, controller.selectorGroups.value)
-                require(targets.isNotEmpty()) { "В группе нет серверов с адресом для ICMP." }
-                val results = session.networkMonitor.runOnStableNetwork { underlying ->
-                    val network = requireNotNull(underlying.network) { "Основная сеть Android недоступна." }
-                    val concurrency = Semaphore(GROUP_PING_CONCURRENCY)
-                    coroutineScope {
-                        targets.map { target ->
-                            async {
-                                concurrency.withPermit {
-                                    target to runCatching { container.icmpPingProbe.measure(network, target) }.getOrNull()
+                val group = controller.selectorGroups.value.firstOrNull { it.tag == groupTag }
+                requireNotNull(group) { "Группа серверов не найдена в sing-box." }
+                require(group.items.isNotEmpty()) { "В группе нет relay для проверки." }
+                val client = requireNotNull(session.client()) {
+                    "Command client sing-box недоступен."
+                }
+                val relayError = try {
+                    withContext(Dispatchers.IO) { client.urlTest(groupTag) }
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    error
+                }
+                val icmpError = try {
+                    val targets = session.groupPingTargets(groupTag, controller.selectorGroups.value)
+                    require(targets.isNotEmpty()) { "В группе нет серверов с адресом для ICMP." }
+                    val results = session.networkMonitor.runOnStableNetwork { underlying ->
+                        val network = requireNotNull(underlying.network) {
+                            "Основная сеть Android недоступна."
+                        }
+                        val concurrency = Semaphore(GROUP_PING_CONCURRENCY)
+                        coroutineScope {
+                            targets.map { target ->
+                                async {
+                                    concurrency.withPermit {
+                                        target to runCatching {
+                                            container.icmpPingProbe.measure(network, target)
+                                        }.getOrNull()
+                                    }
                                 }
-                            }
-                        }.awaitAll()
+                            }.awaitAll()
+                        }
+                    }.value
+                    results.forEach { (target, ping) ->
+                        controller.publishServerPing(session.generation, target.outboundTag, ping)
                     }
-                }.value
-                results.forEach { (target, ping) ->
-                    controller.publishServerPing(session.generation, target.outboundTag, ping)
+                    val selected = session.selectedPingTarget(controller.selectorGroups.value)
+                    results.firstOrNull { it.first.outboundTag == selected?.outboundTag }?.let { (_, ping) ->
+                        controller.publishPing(session.generation, ping)
+                    }
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    error
                 }
-                val selected = session.selectedPingTarget(controller.selectorGroups.value)
-                results.firstOrNull { it.first.outboundTag == selected?.outboundTag }?.let { (_, ping) ->
-                    controller.publishPing(session.generation, ping)
+                if (relayError != null && icmpError != null) {
+                    throw IllegalStateException(
+                        "Обе проверки завершились ошибкой: " +
+                            "relay — ${safeError(relayError).message}; " +
+                            "ICMP — ${safeError(icmpError).message}",
+                        relayError,
+                    ).also { it.addSuppressed(icmpError) }
                 }
+                controller.publishMessage(when {
+                    relayError == null && icmpError == null ->
+                        "Relay URL-test запущен, ICMP измерен."
+                    relayError == null ->
+                        "Relay URL-test запущен; ICMP недоступен: " +
+                            safeError(checkNotNull(icmpError)).message
+                    else ->
+                        "ICMP измерен; relay URL-test недоступен: " +
+                            safeError(relayError).message
+                })
             }.onFailure {
-                controller.publishMessage("Не удалось проверить серверы: ${safeError(it).message}")
+                controller.publishMessage("Не удалось проверить задержки: ${safeError(it).message}")
             }
         }
     }
@@ -2208,7 +2251,7 @@ class ZapretVpnService : VpnService() {
                                     endpoint = description?.endpoint,
                                     pingMillis = null,
                                     pingMeasuredAtEpochSeconds = null,
-                                ),
+                                ).withRelayTestResult(item.urlTestTime, item.urlTestDelay),
                             )
                         }
                     }

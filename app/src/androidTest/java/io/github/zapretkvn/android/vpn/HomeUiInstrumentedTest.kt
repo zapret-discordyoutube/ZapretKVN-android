@@ -54,6 +54,8 @@ class HomeUiInstrumentedTest {
                             endpoint = "vpn.example:443",
                             pingMillis = 42,
                             pingMeasuredAtEpochSeconds = 1,
+                            relayDelayMillis = 84,
+                            relayTestedAtEpochSeconds = 2,
                         ),
                     ),
                 ),
@@ -81,7 +83,9 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("VPN подключён").assertExists()
         composeRule.onNodeWithText("Daily VPN").assertExists()
         composeRule.onNodeWithText("203.0.113.9").assertExists()
-        composeRule.onAllNodesWithText("42 мс").assertCountEquals(2)
+        composeRule.onNodeWithText("42 мс").assertExists()
+        composeRule.onNodeWithText("ICMP 42 мс").assertExists()
+        composeRule.onNodeWithText("Relay 84 мс").assertExists()
         composeRule.onNodeWithText("↓ 8.0 КБ").assertExists()
         composeRule.onNodeWithText("↑ 4.0 КБ").assertExists()
         composeRule.onNodeWithContentDescription("График загрузки и отдачи за последние 60 секунд").assertExists()
@@ -89,7 +93,8 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("Moscow").performClick()
         composeRule.onNodeWithText("Серверы").assertExists()
         composeRule.onAllNodesWithText("VLESS · vpn.example:443").assertCountEquals(2)
-        composeRule.onNodeWithText("Проверить").assertExists()
+        composeRule.onNodeWithText("Проверить оба").assertExists()
+        composeRule.onAllNodesWithText("Relay 84 мс").assertCountEquals(2)
     }
 
     @Test

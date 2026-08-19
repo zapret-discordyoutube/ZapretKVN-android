@@ -217,7 +217,6 @@ internal fun HomeScreen(
         ModalBottomSheet(onDismissRequest = { serverSheetOpen = false }) {
             ServerSelectorSheet(
                 groups = selectorGroups,
-                sessionPingMillis = sessionStats.pingMillis,
                 onSelect = { group, item ->
                     onSelectOutbound(connected.profileId, group.tag, item.tag)
                 },
@@ -276,7 +275,17 @@ private fun ServerSummary(server: RuntimeOutboundItem, pingMillis: Long?, onClic
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(formatPing(pingMillis ?: server.pingMillis?.toLong()), style = MaterialTheme.typography.labelLarge)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    "ICMP ${formatPing(pingMillis ?: server.pingMillis?.toLong())}",
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Text(
+                    "Relay ${formatPing(server.relayDelayMillis?.toLong())}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                )
+            }
             Text("  ›", style = MaterialTheme.typography.titleLarge)
         }
     }
@@ -338,7 +347,7 @@ private fun SessionFacts(stats: VpnSessionStats, connectedAt: Long, onMeasurePin
             modifier = Modifier.weight(1.45f),
         )
         Fact(
-            label = "Пинг",
+            label = "ICMP",
             value = formatPing(stats.pingMillis),
             modifier = Modifier
                 .weight(0.8f)
@@ -505,7 +514,6 @@ private fun ConnectionAction(
 @Composable
 private fun ServerSelectorSheet(
     groups: List<RuntimeSelectorGroup>,
-    sessionPingMillis: Long?,
     onSelect: (RuntimeSelectorGroup, RuntimeOutboundItem) -> Unit,
     onMeasureGroup: (String) -> Unit,
 ) {
@@ -517,7 +525,8 @@ private fun ServerSelectorSheet(
         item {
             Text("Серверы", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             Text(
-                "Пинг хранится только для текущей сессии.",
+                "Показываем два разных измерения: ICMP до endpoint и Relay через штатный " +
+                    "URL-test sing-box. Текущий сервер не переключается; «—» — успешного ответа нет.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -531,7 +540,7 @@ private fun ServerSelectorSheet(
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    TextButton(onClick = { onMeasureGroup(group.tag) }) { Text("Проверить") }
+                    TextButton(onClick = { onMeasureGroup(group.tag) }) { Text("Проверить оба") }
                 }
             }
             items(group.items, key = { "${group.tag}-${it.tag}" }) { item ->
@@ -557,10 +566,17 @@ private fun ServerSelectorSheet(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        formatPing(item.pingMillis?.toLong() ?: sessionPingMillis.takeIf { selected }),
-                        style = MaterialTheme.typography.labelLarge,
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "Relay ${formatPing(item.relayDelayMillis?.toLong())}",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                        Text(
+                            "ICMP ${formatPing(item.pingMillis?.toLong())}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             item(key = "divider-${group.tag}") { HorizontalDivider() }
