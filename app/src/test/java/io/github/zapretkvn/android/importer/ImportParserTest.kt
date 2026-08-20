@@ -249,12 +249,10 @@ class ImportParserTest {
         )
         assertTrue(degraded.importWarnings.any { it.contains("spx") })
 
-        val error = assertThrows(ImportException::class.java) {
-            ShareLinkParser.parse(
-                "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&zzz=1",
-            )
-        }
-        assertTrue(error.message.orEmpty().contains("zzz"))
+        val unknown = ShareLinkParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&zzz=1",
+        )
+        assertTrue(unknown.importWarnings.any { it.contains("zzz") })
     }
 
     @Test
@@ -808,15 +806,37 @@ class ImportParserTest {
         assertTrue(candidate.importWarnings.any { it.contains("проверку сертификата") })
     }
 
+    /**
+     * Панели добавляют собственные параметры быстрее, чем их можно перечислить:
+     * fm и vcn у 3x-ui появились после spx. Незнакомое имя теряется с
+     * предупреждением, а отказ остаётся за проверками, названными поимённо.
+     */
     @Test
-    fun `unknown parameter is still refused`() {
-        assertThrows(ImportException::class.java) {
+    fun `vendor specific parameters do not block the import`() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?security=tls&sni=one.example&fm=%7B%22a%22%3A1%7D&vcn=1&zzz=1#One",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+        val warning = candidate.importWarnings.single { it.contains("не применены") }
+        assertTrue(warning, warning.contains("fm"))
+        assertTrue(warning, warning.contains("vcn"))
+        assertTrue(warning, warning.contains("zzz"))
+    }
+
+    @Test
+    fun `unknown security mode is refused instead of silently dropping tls`() {
+        val error = assertThrows(ImportException::class.java) {
             ImportParser.parse(
-                "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls&zzz=1#One",
+                "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=xtls#One",
                 ProfileSource.Link,
                 "Профиль",
             )
         }
+        assertTrue(error.message.orEmpty().contains("security"))
     }
 
     @Test
