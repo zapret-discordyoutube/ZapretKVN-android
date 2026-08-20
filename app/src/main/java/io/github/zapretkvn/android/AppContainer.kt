@@ -1,12 +1,14 @@
 package io.github.zapretkvn.android
 
 import android.content.Context
+import android.os.Build
 import io.github.zapretkvn.android.config.LibboxConfigValidator
 import io.github.zapretkvn.android.diagnostics.DiagnosticExporter
 import io.github.zapretkvn.android.diagnostics.AppCrashStore
 import io.github.zapretkvn.android.vpn.BootstrapCache
 import io.github.zapretkvn.android.vpn.BootstrapResolver
 import io.github.zapretkvn.android.importer.AndroidImportReader
+import io.github.zapretkvn.android.importer.DeviceIdentity
 import io.github.zapretkvn.android.importer.HttpSubscriptionFetcher
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.profiles.ProfileStore
@@ -45,7 +47,15 @@ class AppContainer(
     )
     val uiSettingsStore = UiSettingsStore(appContext)
     val importReader = AndroidImportReader(appContext)
-    val subscriptionFetcher = HttpSubscriptionFetcher()
+    val subscriptionFetcher = HttpSubscriptionFetcher(
+        device = DeviceIdentity(
+            os = "Android",
+            osVersion = Build.VERSION.RELEASE.orEmpty(),
+            model = Build.MODEL.orEmpty(),
+            locale = java.util.Locale.getDefault().toLanguageTag(),
+        ),
+        appVersion = BuildConfig.VERSION_NAME,
+    )
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
     )

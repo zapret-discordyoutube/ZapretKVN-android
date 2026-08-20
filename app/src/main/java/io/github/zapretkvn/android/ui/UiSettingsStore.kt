@@ -18,8 +18,10 @@ import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.NetworkAutomationSettings
 import io.github.zapretkvn.android.vpn.TrustedWifiName
 import java.io.IOException
+import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 enum class ThemeMode {
@@ -207,6 +209,23 @@ class UiSettingsStore(
         }
     }
 
+    /**
+     * Постоянный идентификатор этой установки для панелей, считающих устройства
+     * по `X-HWID`. Создаётся при первом обращении и дальше не меняется: ротация
+     * выглядела бы для провайдера новым устройством при каждом обновлении.
+     */
+    suspend fun subscriptionDeviceId(): String {
+        dataStore.data.first()[SUBSCRIPTION_DEVICE_ID]?.takeIf(String::isNotBlank)?.let { return it }
+        val generated = UUID.randomUUID().toString().uppercase()
+        var resolved = generated
+        dataStore.edit { preferences ->
+            val stored = preferences[SUBSCRIPTION_DEVICE_ID]
+            if (stored.isNullOrBlank()) preferences[SUBSCRIPTION_DEVICE_ID] = generated
+            else resolved = stored
+        }
+        return resolved
+    }
+
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
@@ -233,6 +252,7 @@ class UiSettingsStore(
             booleanPreferencesKey("network_automation_trusted_wifi")
         val NETWORK_AUTOMATION_TRUSTED_SSIDS =
             stringSetPreferencesKey("network_automation_trusted_ssids")
+        val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
     }
 }
 

@@ -23,8 +23,10 @@ import io.github.zapretkvn.android.config.LibboxConfigValidator
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ProfileSource
 import io.github.zapretkvn.android.profiles.ProfileStore
+import io.github.zapretkvn.android.profiles.ProfilesUiState
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.profiles.ProtocolOutboundBuilders
+import io.github.zapretkvn.android.profiles.SubscriptionIdentityInput
 import io.github.zapretkvn.android.profiles.TlsSettings
 import io.github.zapretkvn.android.profiles.TransportSettings
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
@@ -272,8 +274,8 @@ class ImportInstrumentedTest {
                     settingsStore = application.container.uiSettingsStore,
                     validator = LibboxConfigValidator(),
                     importReader = AndroidImportReader(context),
-                    subscriptionFetcher = SubscriptionFetcher { url ->
-                        fetchedUrl = url
+                    subscriptionFetcher = SubscriptionFetcher { source ->
+                        fetchedUrl = source.url
                         """
                             vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One
                             ssh://user:password@ssh.example:22
@@ -458,6 +460,67 @@ class ImportInstrumentedTest {
     }
 
     @Test
+    fun subscriptionIdentitySettingsSurviveSaveAndReload() = runBlocking {
+        val root = File(context.cacheDir, "identity-instrumented-${System.nanoTime()}")
+        val testViewModelStore = ViewModelStore()
+        try {
+            val profileStore = ProfileStore(File(root, "profiles"), LibboxConfigValidator())
+            profileStore.initialize()
+            val metadata = profileStore.create("Subscribed", VALID_DIRECT, ProfileSource.Subscription)
+            val sourceStore = SubscriptionSourceStore(File(root, "subscriptions"))
+            sourceStore.put(
+                metadata.id,
+                SubscriptionSource("https://subscription.example/profile?token=secret"),
+            )
+            val application = context.applicationContext as ZapretApplication
+            val viewModel = ViewModelProvider(
+                object : ViewModelStoreOwner {
+                    override val viewModelStore: ViewModelStore = testViewModelStore
+                },
+                ProfilesViewModel.Factory(
+                    store = profileStore,
+                    settingsStore = application.container.uiSettingsStore,
+                    validator = LibboxConfigValidator(),
+                    importReader = AndroidImportReader(context),
+                    subscriptionFetcher = SubscriptionFetcher { error("Unexpected fetch") },
+                    subscriptionSourceStore = sourceStore,
+                    vpnController = VpnController(context),
+                    bootstrapCache = BootstrapCache(File(root, "network")),
+                    ruleSetAssets = application.container.ruleSetAssetManager,
+                ),
+            )[ProfilesViewModel::class.java]
+
+            fun awaitState(predicate: (ProfilesUiState) -> Boolean) {
+                val deadline = SystemClock.uptimeMillis() + 10_000
+                while (!predicate(viewModel.state.value) && SystemClock.uptimeMillis() < deadline) {
+                    SystemClock.sleep(25)
+                }
+            }
+
+            viewModel.openSubscriptionSettings(metadata.id)
+            awaitState { it.subscriptionSettings != null || it.message != null }
+            val opened = checkNotNull(viewModel.state.value.subscriptionSettings)
+            assertEquals("https://subscription.example/profile?token=secret", opened.url)
+            assertTrue(opened.installationHwid.isNotBlank())
+
+            // Пустой HWID означает постоянный идентификатор установки, а не отключение заголовка.
+            viewModel.saveSubscriptionSettings(
+                SubscriptionIdentityInput(SubscriptionClientProfile.Happ, sendHwid = true, hwid = ""),
+            )
+            awaitState { it.subscriptionSettings == null }
+
+            val stored = checkNotNull(sourceStore.get(metadata.id))
+            assertEquals(SubscriptionClientProfile.Happ, stored.clientProfile)
+            assertTrue(stored.sendHwid)
+            assertEquals(opened.installationHwid, stored.hwid)
+            assertEquals("https://subscription.example/profile?token=secret", stored.url)
+        } finally {
+            testViewModelStore.clear()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun malformedManualRefreshNeverChangesStoredProfile() = runBlocking {
         val root = File(context.cacheDir, "refresh-instrumented-${System.nanoTime()}")
         val testViewModelStore = ViewModelStore()
@@ -466,7 +529,10 @@ class ImportInstrumentedTest {
             profileStore.initialize()
             val metadata = profileStore.create("Existing", VALID_DIRECT, ProfileSource.Subscription)
             val sourceStore = SubscriptionSourceStore(File(root, "subscriptions"))
-            sourceStore.put(metadata.id, "https://subscription.example/profile?token=secret")
+            sourceStore.put(
+                metadata.id,
+                SubscriptionSource("https://subscription.example/profile?token=secret"),
+            )
             val application = context.applicationContext as ZapretApplication
             val owner = object : ViewModelStoreOwner {
                 override val viewModelStore: ViewModelStore = testViewModelStore

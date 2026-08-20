@@ -17,7 +17,10 @@ import io.github.zapretkvn.android.importer.ImportException
 import io.github.zapretkvn.android.importer.ImportParser
 import io.github.zapretkvn.android.importer.ImportedConfigActivityScanner
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.importer.SubscriptionClientProfile
 import io.github.zapretkvn.android.importer.SubscriptionFetcher
+import io.github.zapretkvn.android.importer.SubscriptionIdentity
+import io.github.zapretkvn.android.importer.SubscriptionSource
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
@@ -79,7 +82,25 @@ data class ProfilesUiState(
     val refreshableProfileIds: Set<String> = emptySet(),
     val serverSummaries: Map<String, ProfileServerSummary> = emptyMap(),
     val serverPicker: ProfileServerPickerState? = null,
+    val subscriptionSettings: SubscriptionSettingsState? = null,
     val initialized: Boolean = false,
+)
+
+/** Настройки идентификации подписки, редактируемые пользователем. */
+data class SubscriptionIdentityInput(
+    val clientProfile: SubscriptionClientProfile? = null,
+    val sendHwid: Boolean = false,
+    val hwid: String = "",
+)
+
+data class SubscriptionSettingsState(
+    val profileId: String,
+    val profileName: String,
+    val url: String,
+    val clientProfile: SubscriptionClientProfile,
+    val sendHwid: Boolean,
+    val hwid: String,
+    val installationHwid: String,
 )
 
 data class ProfileServerPickerState(
@@ -113,7 +134,7 @@ data class ImportPreviewState(
     val selectionChanged: Boolean = false,
     internal val candidate: ImportCandidate,
     internal val preparedJson: String,
-    internal val sourceUrl: String? = null,
+    internal val source: SubscriptionSource? = null,
 ) {
     val isSingleManaged: Boolean
         get() = candidate is ImportCandidate.Managed && candidate.servers.size == 1
@@ -125,7 +146,7 @@ data class ImportPreviewState(
 
     val splitSupported: Boolean get() = splittableServerCount in 2..MAX_SPLIT_PROFILES
 
-    val hasSubscriptionUrl: Boolean get() = sourceUrl != null
+    val hasSubscriptionUrl: Boolean get() = source != null
 }
 
 class ProfilesViewModel(
@@ -192,23 +213,49 @@ class ProfilesViewModel(
         preview(contents, ProfileSource.Qr, "Профиль из QR", "QR-код")
     }
 
-    fun importUrl(url: String) = operation {
-        val validatedUrl = HttpSubscriptionFetcher.validatedUrl(url)
-        val raw = withContext(Dispatchers.IO) { subscriptionFetcher.fetch(validatedUrl) }
-        preview(
-            raw = raw,
-            source = ProfileSource.Url,
-            suggestedName = "Подписка",
-            sourceDescription = SecretRedactor.redactInline(validatedUrl),
-            sourceUrl = validatedUrl,
+    fun importUrl(url: String, identity: SubscriptionIdentityInput = SubscriptionIdentityInput()) =
+        operation {
+            val subscription = resolveSubscription(url, identity)
+            val raw = withContext(Dispatchers.IO) { subscriptionFetcher.fetch(subscription) }
+            preview(
+                raw = raw,
+                source = ProfileSource.Url,
+                suggestedName = "Подписка",
+                sourceDescription = SecretRedactor.redactInline(subscription.url),
+                subscriptionSource = subscription,
+            )
+        }
+
+    /** Пустой HWID означает постоянный идентификатор этой установки. */
+    private suspend fun resolveSubscription(
+        url: String,
+        identity: SubscriptionIdentityInput,
+    ): SubscriptionSource {
+        // Расшифровка happ://crypt* — RSA-4096, поэтому не на главном потоке.
+        val resolved = withContext(Dispatchers.Default) { SubscriptionIdentity.resolveSource(url) }
+        val profile = identity.clientProfile
+            ?: resolved.profileHint
+            ?: SubscriptionClientProfile.Zapret
+        val hwid = if (identity.sendHwid) {
+            SubscriptionIdentity.validateHwid(
+                identity.hwid.ifBlank { settingsStore.subscriptionDeviceId() },
+            )
+        } else {
+            ""
+        }
+        return SubscriptionSource(
+            url = resolved.url,
+            clientProfile = profile,
+            sendHwid = identity.sendHwid,
+            hwid = hwid,
         )
     }
 
     fun refreshSubscription(profileId: String) = operation {
-        val sourceUrl = subscriptionSourceStore.get(profileId)
+        val subscription = subscriptionSourceStore.get(profileId)
             ?: throw ImportException("Для этого профиля не сохранён URL ручного обновления.")
         val stored = store.read(profileId)
-        val raw = withContext(Dispatchers.IO) { subscriptionFetcher.fetch(sourceUrl) }
+        val raw = withContext(Dispatchers.IO) { subscriptionFetcher.fetch(subscription) }
         val candidate = withContext(Dispatchers.Default) {
             ImportParser.parse(raw, ProfileSource.Url, stored.metadata.name)
         }
@@ -226,7 +273,7 @@ class ProfilesViewModel(
             it.copy(
                 importPreview = ImportPreviewState(
                     suggestedName = stored.metadata.name,
-                    sourceDescription = SecretRedactor.redactInline(sourceUrl),
+                    sourceDescription = SecretRedactor.redactInline(subscription.url),
                     serverCount = candidate.serverCount(),
                     serverLabels = candidate.serverLabels(),
                     activityWarning = importWarnings(update.json),
@@ -239,9 +286,47 @@ class ProfilesViewModel(
                     selectionChanged = update.selectionChanged,
                     candidate = candidate,
                     preparedJson = update.json,
-                    sourceUrl = sourceUrl,
+                    source = subscription,
                 ),
                 message = null,
+            )
+        }
+    }
+
+    fun openSubscriptionSettings(profileId: String) = operation {
+        val subscription = subscriptionSourceStore.get(profileId)
+            ?: throw ImportException("Для этого профиля не сохранён URL ручного обновления.")
+        val name = mutableState.value.profiles.firstOrNull { it.id == profileId }?.name.orEmpty()
+        val installationHwid = settingsStore.subscriptionDeviceId()
+        mutableState.update {
+            it.copy(
+                subscriptionSettings = SubscriptionSettingsState(
+                    profileId = profileId,
+                    profileName = name,
+                    url = subscription.url,
+                    clientProfile = subscription.clientProfile,
+                    sendHwid = subscription.sendHwid,
+                    hwid = subscription.hwid,
+                    installationHwid = installationHwid,
+                ),
+                message = null,
+            )
+        }
+    }
+
+    fun closeSubscriptionSettings() {
+        mutableState.update { it.copy(subscriptionSettings = null) }
+    }
+
+    fun saveSubscriptionSettings(identity: SubscriptionIdentityInput) = operation {
+        val current = mutableState.value.subscriptionSettings
+            ?: throw ImportException("Настройки подписки уже закрыты.")
+        val subscription = resolveSubscription(current.url, identity)
+        subscriptionSourceStore.put(current.profileId, subscription)
+        mutableState.update {
+            it.copy(
+                subscriptionSettings = null,
+                message = "Настройки подписки сохранены.",
             )
         }
     }
@@ -251,7 +336,7 @@ class ProfilesViewModel(
             ?.takeUnless { it.isRefresh }
             ?: throw ImportException("Предпросмотр импорта уже закрыт.")
         val metadata = store.create(name, pending.preparedJson, pending.candidate.source)
-        pending.sourceUrl?.let { subscriptionSourceStore.put(metadata.id, it) }
+        pending.source?.let { subscriptionSourceStore.put(metadata.id, it) }
         if (mutableState.value.settings.activeProfileId == null) {
             settingsStore.setActiveProfile(metadata.id)
             settingsStore.setDnsMode(
@@ -262,7 +347,7 @@ class ProfilesViewModel(
             it.copy(
                 importPreview = null,
                 importCompletion = ImportCompletion(metadata.id, metadata.name),
-                refreshableProfileIds = if (pending.sourceUrl != null) {
+                refreshableProfileIds = if (pending.source != null) {
                     it.refreshableProfileIds + metadata.id
                 } else {
                     it.refreshableProfileIds
@@ -641,7 +726,7 @@ class ProfilesViewModel(
         source: ProfileSource,
         suggestedName: String,
         sourceDescription: String,
-        sourceUrl: String? = null,
+        subscriptionSource: SubscriptionSource? = null,
     ) {
         val candidate = withContext(Dispatchers.Default) {
             ImportParser.parse(raw, source, suggestedName)
@@ -686,7 +771,7 @@ class ProfilesViewModel(
                     importWarnings = candidate.importWarnings(),
                     candidate = candidate,
                     preparedJson = json,
-                    sourceUrl = sourceUrl,
+                    source = subscriptionSource,
                 ),
                 message = null,
             )
