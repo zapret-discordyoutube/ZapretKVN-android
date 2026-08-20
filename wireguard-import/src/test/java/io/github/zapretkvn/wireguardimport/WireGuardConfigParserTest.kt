@@ -55,6 +55,49 @@ class WireGuardConfigParserTest {
     }
 
     @Test
+    fun `amneziawg 3 fields map to the amnezia object`() {
+        val result = WireGuardConfigParser.parse(AWG3_CONF)
+        val root = Json.parseToJsonElement(result.json) as JsonObject
+        val endpoint = (root["endpoints"] as JsonArray).single() as JsonObject
+        val amnezia = endpoint["amnezia"] as JsonObject
+
+        assertEquals("AmneziaWG 3.0", result.protocolName)
+        assertEquals(TEST_HEADER_PROTECTION_KEY, amnezia.string("header_protection_key"))
+        assertEquals("0-96", amnezia.string("content_padding_addition"))
+        assertEquals("120-180", amnezia.string("rekey_after_time"))
+        assertEquals("5", amnezia["rekey_timeout"].content())
+        assertEquals("600", amnezia["reject_after_time"].content())
+        assertEquals("25", amnezia["keepalive_timeout"].content())
+        assertEquals("20-30", amnezia.string("max_handshake_attempts"))
+        // Поля второго поколения из того же конфига не потеряны.
+        assertEquals("4", amnezia["jc"].content())
+    }
+
+    @Test
+    fun `amneziawg 3 values are strictly validated`() {
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(
+                AWG3_CONF.replace(TEST_HEADER_PROTECTION_KEY, "not-base64")
+            )
+        }
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(
+                AWG3_CONF.replace(TEST_HEADER_PROTECTION_KEY, "QUJD")
+            )
+        }
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(
+                AWG3_CONF.replace("ContentPaddingAddition = 0-96", "ContentPaddingAddition = 96-0")
+            )
+        }
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(
+                AWG3_CONF.replace("RekeyTimeout = 5", "RekeyTimeout = 4294967296")
+            )
+        }
+    }
+
+    @Test
     fun `unsupported behavior and malformed cryptographic material fail closed`() {
         assertThrows(WireGuardImportException::class.java) {
             WireGuardConfigParser.parse(WIREGUARD_CONF.replace("[Peer]", "PostUp = curl bad.example\n[Peer]"))
@@ -109,6 +152,21 @@ class WireGuardConfigParserTest {
             AllowedIPs = 0.0.0.0/0
             PersistentKeepalive = 25
         """
+
+        const val TEST_HEADER_PROTECTION_KEY = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWY="
+
+        val AWG3_CONF = AWG2_CONF.replace(
+            "[Peer]",
+            """HeaderProtectionKey = $TEST_HEADER_PROTECTION_KEY
+            ContentPaddingAddition = 0-96
+            RekeyAfterTime = 120-180
+            RekeyTimeout = 5
+            RejectAfterTime = 600
+            KeepaliveTimeout = 25
+            MaxHandshakeAttempts = 20-30
+
+            [Peer]""",
+        )
 
         const val AWG2_CONF = """
             [Interface]

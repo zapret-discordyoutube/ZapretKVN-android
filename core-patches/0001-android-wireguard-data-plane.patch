@@ -1,37 +1,38 @@
 diff --git a/go.mod b/go.mod
-index 5dde5da8..4469711f 100644
+index 3fc14517..cd45c90f 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -27,7 +27,9 @@ require (
- 	github.com/libdns/alidns v1.0.6
+@@ -31,6 +31,7 @@ require (
  	github.com/libdns/cloudflare v0.2.2
  	github.com/logrusorgru/aurora v2.0.3+incompatible
-+	github.com/metacubex/amneziawg-go v0.0.0-20260612143004-19b4f1cdd5ec
  	github.com/metacubex/utls v1.8.4
 +	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f
  	github.com/mholt/acmez/v3 v3.1.6
  	github.com/miekg/dns v1.1.72
  	github.com/openai/openai-go/v3 v3.26.0
-@@ -86,6 +88,7 @@ require (
- 	github.com/dustin/go-humanize v1.0.1 // indirect
- 	github.com/google/uuid v1.6.0 // indirect
- 	github.com/lib/pq v1.10.9 // indirect
-+	github.com/metacubex/randv2 v0.2.0 // indirect
- 	github.com/moby/term v0.5.2 // indirect
- 	github.com/ncruces/go-strftime v1.0.0 // indirect
- 	github.com/opencontainers/image-spec v1.1.1 // indirect
+@@ -136,6 +137,7 @@ require (
+ 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
+ 	github.com/ameshkov/dnscrypt/v2 v2.4.0
+ 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
++	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814
+ 	github.com/andybalholm/brotli v1.2.1 // indirect
+ 	github.com/caddyserver/zerossl v0.1.5 // indirect
+ 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 diff --git a/go.sum b/go.sum
-index e0e83587..8c68d35e 100644
+index 8538998b..670efe28 100644
 --- a/go.sum
 +++ b/go.sum
-@@ -223,8 +223,14 @@ github.com/mdlayher/netlink v1.9.0 h1:G8+GLq2x3v4D4MVIqDdNUhTUC7TKiCy/6MDkmItfKc
- github.com/mdlayher/netlink v1.9.0/go.mod h1:YBnl5BXsCoRuwBjKKlZ+aYmEoq0r12FDA/3JC+94KDg=
- github.com/mdlayher/socket v0.5.1 h1:VZaqt6RkGkt2OE9l3GcC6nZkqD3xKeQLyfleW/uBcos=
+@@ -22,6 +22,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V
+ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
+ github.com/ameshkov/dnsstamps v1.0.3 h1:Srzik+J9mivH1alRACTbys2xOxs0lRH9qnTA7Y1OYVo=
+ github.com/ameshkov/dnsstamps v1.0.3/go.mod h1:Ii3eUu73dx4Vw5O4wjzmT5+lkCwovjzaEZZ4gKyIH5A=
++github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 h1:l2AhBD+sFycU8Im81n/bZORMxW7fWtlZJEuJ4Hh0+z0=
++github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814/go.mod h1:YoPc6qcOZqD7TXZ1xpedD8Sx3aSKsxN05ZqEFmXDNHk=
+ github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
+ github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
+ github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAfT7CoSYSac11PY=
+@@ -252,6 +254,8 @@ github.com/mdlayher/socket v0.5.1 h1:VZaqt6RkGkt2OE9l3GcC6nZkqD3xKeQLyfleW/uBcos
  github.com/mdlayher/socket v0.5.1/go.mod h1:TjPLHI1UgwEv5J1B5q0zTZq12A/6H7nKmtTanQE37IQ=
-+github.com/metacubex/amneziawg-go v0.0.0-20260612143004-19b4f1cdd5ec h1:nRHevF7PmvDKjkYPjQCU7NUfVrr3Sry4QOPxpqoyo8U=
-+github.com/metacubex/amneziawg-go v0.0.0-20260612143004-19b4f1cdd5ec/go.mod h1:MsM/5czONyXMJ3PRr5DbQ4O/BxzAnJWOIcJdLzW6qHY=
-+github.com/metacubex/randv2 v0.2.0 h1:uP38uBvV2SxYfLj53kuvAjbND4RUDfFJjwr4UigMiLs=
-+github.com/metacubex/randv2 v0.2.0/go.mod h1:kFi2SzrQ5WuneuoLLCMkABtiBu6VRrMrWFqSPyj2cxY=
  github.com/metacubex/utls v1.8.4 h1:HmL9nUApDdWSkgUyodfwF6hSjtiwCGGdyhaSpEejKpg=
  github.com/metacubex/utls v1.8.4/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 +github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f h1:FGBPRb1zUabhPhDrlKEjQ9lgIwQ6cHL4x8M9lrERhbk=
@@ -39,11 +40,29 @@ index e0e83587..8c68d35e 100644
  github.com/mholt/acmez/v3 v3.1.6 h1:eGVQNObP0pBN4sxqrXeg7MYqTOWyoiYpQqITVWlrevk=
  github.com/mholt/acmez/v3 v3.1.6/go.mod h1:5nTPosTGosLxF3+LU4ygbgMRFDhbAVpqMI4+a4aHLBY=
  github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
+@@ -547,6 +551,8 @@ go.opentelemetry.io/otel/sdk/metric v1.44.0 h1:3LlKgI+VjbVsjNRFZJZAJ30WjXC5VkNRk
+ go.opentelemetry.io/otel/sdk/metric v1.44.0/go.mod h1:5B5pMARnXxKhltooO4xUuCBorl65a4EpnTalObqOigA=
+ go.opentelemetry.io/otel/trace v1.44.0 h1:jxF5CsGYCe74MCRx2X4g7WsY/VBKRqqpNvXlX/6gtIk=
+ go.opentelemetry.io/otel/trace v1.44.0/go.mod h1:oLl1jrMQAVo6v3GAggN+1VH9VIz9iUSvW53sW1Q8PIE=
++go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
++go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
+ go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+ go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+ go.uber.org/mock v0.5.2 h1:LbtPTcP8A5k9WPXj54PPPbjcI4Y6lhyOZXn+VS7wNko=
+@@ -668,6 +674,8 @@ gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
+ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
++gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489 h1:ze1vwAdliUAr68RQ5NtufWaXaOg8WUO2OACzEV+TNdE=
++gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489/go.mod h1:10sU+Uh5KKNv1+2x2A0Gvzt8FjD3ASIhorV3YsauXhk=
+ honnef.co/go/tools v0.0.0-20190102054323-c2f93a96b099/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
+ honnef.co/go/tools v0.0.0-20190523083050-ea95bdfd59fc/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
+ howett.net/plist v1.0.1 h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM=
 diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
-index b20f4580..f0915281 100644
+index 9a4a7d9d..ef5b7e04 100644
 --- a/protocol/wireguard/endpoint.go
 +++ b/protocol/wireguard/endpoint.go
-@@ -304,7 +304,7 @@ func (w *Endpoint) PreferredAddress(address netip.Addr) bool {
+@@ -307,7 +307,7 @@ func (w *Endpoint) PreferredAddress(address netip.Addr) bool {
  	if !w.started.Load() {
  		return false
  	}
@@ -52,168 +71,12 @@ index b20f4580..f0915281 100644
  }
  
  func (w *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
-index a875cf64..15ab7879 100644
---- a/transport/wireguard/endpoint.go
-+++ b/transport/wireguard/endpoint.go
-@@ -8,11 +8,10 @@ import (
- 	"net"
- 	"net/netip"
- 	"os"
--	"reflect"
-+	"runtime"
- 	"strconv"
- 	"strings"
- 	"time"
--	"unsafe"
- 
- 	"github.com/sagernet/sing-box/adapter"
- 	"github.com/sagernet/sing-box/common/dialer"
-@@ -37,8 +36,7 @@ type Endpoint struct {
- 	allowedAddress []netip.Prefix
- 	tunDevice      Device
- 	natDevice      NatDevice
--	device         *device.Device
--	allowedIPs     *device.AllowedIPs
-+	device         wireGuardEngine
- 	pause          pause.Manager
- 	pauseCallback  *list.Element[pause.Callback]
- }
-@@ -182,8 +180,15 @@ func (e *Endpoint) Start(resolve bool) error {
- 	} else {
- 		deviceInput = e.tunDevice
- 	}
--	wgDevice := device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
--	e.tunDevice.SetDevice(wgDevice)
-+	var wgDevice wireGuardEngine
-+	if runtime.GOOS == "android" && !e.options.System {
-+		androidBind := NewAndroidClientBind(e.options.Context, e.options.Logger, e.options.Dialer, e.peers)
-+		wgDevice = NewAndroidWireGuardEngine(deviceInput, androidBind, logger, e.options.Amnezia, e.options.Workers)
-+		e.options.Logger.Info("wireguard engine: android split data-plane")
-+	} else {
-+		wgDevice = device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
-+		e.tunDevice.SetDevice(wgDevice.(*device.Device))
-+	}
- 	var ipcConf strings.Builder
- 	ipcConf.WriteString(e.ipcConf)
- 	if e.options.Amnezia != nil {
-@@ -256,12 +261,14 @@ func (e *Endpoint) Start(resolve bool) error {
- 		wgDevice.Close()
- 		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
- 	}
-+	if androidEngine, isAndroidEngine := wgDevice.(*androidWireGuardEngine); isAndroidEngine {
-+		androidEngine.activate()
-+	}
- 	e.device = wgDevice
- 	e.pause = service.FromContext[pause.Manager](e.options.Context)
- 	if e.pause != nil {
- 		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
- 	}
--	e.allowedIPs = (*device.AllowedIPs)(unsafe.Pointer(reflect.Indirect(reflect.ValueOf(wgDevice)).FieldByName("allowedips").UnsafeAddr()))
- 	return nil
- }
- 
-@@ -292,11 +299,10 @@ func (e *Endpoint) Close() error {
- 	return nil
- }
- 
--func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
--	if e.allowedIPs == nil {
--		return nil
--	}
--	return e.allowedIPs.Lookup(address.AsSlice())
-+func (e *Endpoint) Contains(address netip.Addr) bool {
-+	return common.Any(e.allowedAddress, func(prefix netip.Prefix) bool {
-+		return prefix.Contains(address)
-+	})
- }
- 
- func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-diff --git a/transport/wireguard/android_engine.go b/transport/wireguard/android_engine.go
-new file mode 100644
-index 00000000..6c5d0f5a
---- /dev/null
-+++ b/transport/wireguard/android_engine.go
-@@ -0,0 +1,73 @@
-+package wireguard
-+
-+import (
-+	"sync"
-+
-+	"github.com/metacubex/amneziawg-go/device"
-+	metaConn "github.com/metacubex/wireguard-go/conn"
-+	metaDevice "github.com/metacubex/wireguard-go/device"
-+	metaTun "github.com/metacubex/wireguard-go/tun"
-+	sagerDevice "github.com/sagernet/wireguard-go/device"
-+)
-+
-+// wireGuardEngine is the common lifecycle shared by the pinned sing-box
-+// engine and the Android vanilla/Amnezia engines. Keeping it here avoids a
-+// second Android TUN or a local proxy hop.
-+type wireGuardEngine interface {
-+	IpcSet(string) error
-+	Up() error
-+	Down() error
-+	Close()
-+	DisableSomeRoamingForBrokenMobileSemantics()
-+}
-+
-+func NewAndroidWireGuardEngine(
-+	tunDevice Device,
-+	bind metaConn.Bind,
-+	logger *sagerDevice.Logger,
-+	amnezia *AmneziaOptions,
-+	workers int,
-+) wireGuardEngine {
-+	adapter := newAndroidTunAdapter(tunDevice)
-+	metaLogger := &metaDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf}
-+	if amnezia != nil {
-+		engine := device.NewDevice(adapter, bind, metaLogger, workers)
-+		engine.DisableSomeRoamingForBrokenMobileSemantics()
-+		return &androidWireGuardEngine{wireGuardEngine: engine, tun: adapter}
-+	}
-+	engine := metaDevice.NewDevice(adapter, bind, metaLogger, workers)
-+	engine.DisableSomeRoamingForBrokenMobileSemantics()
-+	return &androidWireGuardEngine{wireGuardEngine: engine, tun: adapter}
-+}
-+
-+type androidWireGuardEngine struct {
-+	wireGuardEngine
-+	tun *androidTunAdapter
-+}
-+
-+func (e *androidWireGuardEngine) activate() {
-+	e.tun.events <- metaTun.EventUp
-+}
-+
-+type androidTunAdapter struct {
-+	Device
-+	events chan metaTun.Event
-+	close  sync.Once
-+}
-+
-+func newAndroidTunAdapter(device Device) *androidTunAdapter {
-+	return &androidTunAdapter{Device: device, events: make(chan metaTun.Event, 1)}
-+}
-+
-+func (a *androidTunAdapter) Events() <-chan metaTun.Event {
-+	return a.events
-+}
-+
-+func (a *androidTunAdapter) Close() error {
-+	var err error
-+	a.close.Do(func() {
-+		close(a.events)
-+		err = a.Device.Close()
-+	})
-+	return err
-+}
 diff --git a/transport/wireguard/android_client_bind.go b/transport/wireguard/android_client_bind.go
 new file mode 100644
-index 00000000..6e13be2c
+index 00000000..5c151c82
 --- /dev/null
 +++ b/transport/wireguard/android_client_bind.go
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,231 @@
 +package wireguard
 +
 +import (
@@ -224,6 +87,7 @@ index 00000000..6e13be2c
 +	"sync/atomic"
 +	"time"
 +
++	awgConn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
 +	metaConn "github.com/metacubex/wireguard-go/conn"
 +	"github.com/sagernet/sing/common/bufio"
 +	E "github.com/sagernet/sing/common/exceptions"
@@ -291,6 +155,14 @@ index 00000000..6e13be2c
 +}
 +
 +func (b *AndroidClientBind) receive(packets [][]byte, sizes []int, endpoints []metaConn.Endpoint) (int, error) {
++	return b.receiveCore(packets, sizes, func(index int, endpoint androidEndpoint) {
++		endpoints[index] = endpoint
++	})
++}
++
++// receiveCore is engine-agnostic: the vanilla metacubex bind and the official
++// Amnezia bind wrap it with their own endpoint slice types.
++func (b *AndroidClientBind) receiveCore(packets [][]byte, sizes []int, setEndpoint func(int, androidEndpoint)) (int, error) {
 +	conn, err := b.connect()
 +	if err != nil {
 +		if b.closed.Load() {
@@ -311,7 +183,7 @@ index 00000000..6e13be2c
 +		return 0, nil
 +	}
 +	sizes[0] = n
-+	endpoints[0] = androidEndpoint(M.SocksaddrFromNet(address).Unwrap().AddrPort())
++	setEndpoint(0, androidEndpoint(M.SocksaddrFromNet(address).Unwrap().AddrPort()))
 +	return 1, nil
 +}
 +
@@ -334,11 +206,14 @@ index 00000000..6e13be2c
 +func (b *AndroidClientBind) SetMark(uint32) error { return nil }
 +
 +func (b *AndroidClientBind) Send(buffers [][]byte, endpoint metaConn.Endpoint) error {
++	return b.sendCore(buffers, netip.AddrPort(endpoint.(androidEndpoint)))
++}
++
++func (b *AndroidClientBind) sendCore(buffers [][]byte, destination netip.AddrPort) error {
 +	conn, err := b.connect()
 +	if err != nil {
 +		return err
 +	}
-+	destination := netip.AddrPort(endpoint.(androidEndpoint))
 +	for _, buffer := range buffers {
 +		if _, err = conn.WriteTo(buffer, net.UDPAddrFromAddrPort(destination)); err != nil {
 +			b.dropConn(conn)
@@ -381,6 +256,46 @@ index 00000000..6e13be2c
 +		b.conn = nil
 +	}
 +}
++
++var _ awgConn.Bind = androidAmneziaBind{}
++
++// androidAmneziaBind exposes the same protected-dialer bind to the official
++// amnezia-vpn/amneziawg-go v3 engine. Go cannot let one type implement two
++// structurally identical Bind interfaces from different packages, so this
++// thin wrapper only converts the package-typed slices.
++type androidAmneziaBind struct {
++	bind *AndroidClientBind
++}
++
++func (b androidAmneziaBind) Open(port uint16) ([]awgConn.ReceiveFunc, uint16, error) {
++	_, actualPort, err := b.bind.Open(port)
++	if err != nil {
++		return nil, 0, err
++	}
++	receive := func(packets [][]byte, sizes []int, endpoints []awgConn.Endpoint) (int, error) {
++		return b.bind.receiveCore(packets, sizes, func(index int, endpoint androidEndpoint) {
++			endpoints[index] = endpoint
++		})
++	}
++	return []awgConn.ReceiveFunc{receive}, actualPort, nil
++}
++
++func (b androidAmneziaBind) Close() error        { return b.bind.Close() }
++func (b androidAmneziaBind) SetMark(mark uint32) error { return b.bind.SetMark(mark) }
++
++func (b androidAmneziaBind) Send(buffers [][]byte, endpoint awgConn.Endpoint) error {
++	return b.bind.sendCore(buffers, netip.AddrPort(endpoint.(androidEndpoint)))
++}
++
++func (b androidAmneziaBind) ParseEndpoint(value string) (awgConn.Endpoint, error) {
++	address, err := netip.ParseAddrPort(value)
++	return androidEndpoint(address), err
++}
++
++func (b androidAmneziaBind) BatchSize() int { return 1 }
++
++var _ metaConn.Endpoint = androidEndpoint{}
++var _ awgConn.Endpoint = androidEndpoint{}
 +
 +type androidEndpoint netip.AddrPort
 +
@@ -529,3 +444,208 @@ index 00000000..5a835582
 +
 +func (a testAddress) Network() string { return "udp" }
 +func (a testAddress) String() string  { return string(a) }
+diff --git a/transport/wireguard/android_engine.go b/transport/wireguard/android_engine.go
+new file mode 100644
+index 00000000..29b5f639
+--- /dev/null
++++ b/transport/wireguard/android_engine.go
+@@ -0,0 +1,122 @@
++package wireguard
++
++import (
++	"sync"
++
++	awgDevice "github.com/amnezia-vpn/amneziawg-go/v3/device"
++	awgTun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
++	metaDevice "github.com/metacubex/wireguard-go/device"
++	metaTun "github.com/metacubex/wireguard-go/tun"
++	sagerDevice "github.com/sagernet/wireguard-go/device"
++)
++
++// wireGuardEngine is the common lifecycle shared by the pinned sing-box
++// engine and the Android vanilla/Amnezia engines. Keeping it here avoids a
++// second Android TUN or a local proxy hop.
++type wireGuardEngine interface {
++	IpcSet(string) error
++	Up() error
++	Down() error
++	Close()
++	DisableSomeRoamingForBrokenMobileSemantics()
++}
++
++// NewAndroidWireGuardEngine keeps the split data plane: vanilla WireGuard
++// runs on metacubex/wireguard-go, while every AmneziaWG generation
++// (1.5/2.0/3.0) runs on the official amnezia-vpn/amneziawg-go v3 engine —
++// the same protocol line as the server fleet, including AWG 3.0 header
++// protection and content padding delivered over the same UAPI keys the
++// pinned core writes.
++func NewAndroidWireGuardEngine(
++	tunDevice Device,
++	bind *AndroidClientBind,
++	logger *sagerDevice.Logger,
++	useAmnezia bool,
++	workers int,
++) wireGuardEngine {
++	if useAmnezia {
++		adapter := newAndroidAmneziaTunAdapter(tunDevice)
++		engine := awgDevice.NewDevice(
++			adapter,
++			androidAmneziaBind{bind: bind},
++			&awgDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf},
++		)
++		engine.DisableSomeRoamingForBrokenMobileSemantics()
++		return &androidAmneziaEngine{Device: engine, tun: adapter}
++	}
++	adapter := newAndroidTunAdapter(tunDevice)
++	metaLogger := &metaDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf}
++	engine := metaDevice.NewDevice(adapter, bind, metaLogger, workers)
++	engine.DisableSomeRoamingForBrokenMobileSemantics()
++	return &androidWireGuardEngine{wireGuardEngine: engine, tun: adapter}
++}
++
++// androidEngineActivator marks engines whose adapter must observe EventUp
++// after IpcSet, mirroring the platform TUN lifecycle.
++type androidEngineActivator interface {
++	activate()
++}
++
++type androidWireGuardEngine struct {
++	wireGuardEngine
++	tun *androidTunAdapter
++}
++
++func (e *androidWireGuardEngine) activate() {
++	e.tun.events <- metaTun.EventUp
++}
++
++type androidAmneziaEngine struct {
++	*awgDevice.Device
++	tun *androidAmneziaTunAdapter
++}
++
++func (e *androidAmneziaEngine) activate() {
++	e.tun.events <- awgTun.EventUp
++}
++
++type androidTunAdapter struct {
++	Device
++	events chan metaTun.Event
++	close  sync.Once
++}
++
++func newAndroidTunAdapter(device Device) *androidTunAdapter {
++	return &androidTunAdapter{Device: device, events: make(chan metaTun.Event, 1)}
++}
++
++func (a *androidTunAdapter) Events() <-chan metaTun.Event {
++	return a.events
++}
++
++func (a *androidTunAdapter) Close() error {
++	var err error
++	a.close.Do(func() {
++		close(a.events)
++		err = a.Device.Close()
++	})
++	return err
++}
++
++type androidAmneziaTunAdapter struct {
++	Device
++	events chan awgTun.Event
++	close  sync.Once
++}
++
++func newAndroidAmneziaTunAdapter(device Device) *androidAmneziaTunAdapter {
++	return &androidAmneziaTunAdapter{Device: device, events: make(chan awgTun.Event, 1)}
++}
++
++func (a *androidAmneziaTunAdapter) Events() <-chan awgTun.Event {
++	return a.events
++}
++
++func (a *androidAmneziaTunAdapter) Close() error {
++	var err error
++	a.close.Do(func() {
++		close(a.events)
++		err = a.Device.Close()
++	})
++	return err
++}
+diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
+index 648d73f2..358832a1 100644
+--- a/transport/wireguard/endpoint.go
++++ b/transport/wireguard/endpoint.go
+@@ -8,11 +8,10 @@ import (
+ 	"net"
+ 	"net/netip"
+ 	"os"
+-	"reflect"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"time"
+-	"unsafe"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/common/dialer"
+@@ -37,8 +36,7 @@ type Endpoint struct {
+ 	allowedAddress []netip.Prefix
+ 	tunDevice      Device
+ 	natDevice      NatDevice
+-	device         *device.Device
+-	allowedIPs     *device.AllowedIPs
++	device         wireGuardEngine
+ 	pause          pause.Manager
+ 	pauseCallback  *list.Element[pause.Callback]
+ }
+@@ -182,8 +180,15 @@ func (e *Endpoint) Start(resolve bool) error {
+ 	} else {
+ 		deviceInput = e.tunDevice
+ 	}
+-	wgDevice := device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
+-	e.tunDevice.SetDevice(wgDevice)
++	var wgDevice wireGuardEngine
++	if runtime.GOOS == "android" && !e.options.System {
++		androidBind := NewAndroidClientBind(e.options.Context, e.options.Logger, e.options.Dialer, e.peers)
++		wgDevice = NewAndroidWireGuardEngine(deviceInput, androidBind, logger, e.options.Amnezia != nil, e.options.Workers)
++		e.options.Logger.Info("wireguard engine: android split data-plane")
++	} else {
++		wgDevice = device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
++		e.tunDevice.SetDevice(wgDevice.(*device.Device))
++	}
+ 	var ipcConf strings.Builder
+ 	ipcConf.WriteString(e.ipcConf)
+ 	if e.options.Amnezia != nil {
+@@ -269,12 +274,14 @@ func (e *Endpoint) Start(resolve bool) error {
+ 		wgDevice.Close()
+ 		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
+ 	}
++	if activator, isAndroidEngine := wgDevice.(androidEngineActivator); isAndroidEngine {
++		activator.activate()
++	}
+ 	e.device = wgDevice
+ 	e.pause = service.FromContext[pause.Manager](e.options.Context)
+ 	if e.pause != nil {
+ 		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
+ 	}
+-	e.allowedIPs = (*device.AllowedIPs)(unsafe.Pointer(reflect.Indirect(reflect.ValueOf(wgDevice)).FieldByName("allowedips").UnsafeAddr()))
+ 	return nil
+ }
+ 
+@@ -305,11 +312,10 @@ func (e *Endpoint) Close() error {
+ 	return nil
+ }
+ 
+-func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
+-	if e.allowedIPs == nil {
+-		return nil
+-	}
+-	return e.allowedIPs.Lookup(address.AsSlice())
++func (e *Endpoint) Contains(address netip.Addr) bool {
++	return common.Any(e.allowedAddress, func(prefix netip.Prefix) bool {
++		return prefix.Contains(address)
++	})
+ }
+ 
+ func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {

@@ -68,8 +68,10 @@ object WireGuardConfigParser {
             dnsServers = dnsServers,
             allowedPrefixes = allowedPrefixes,
         )
+        val awg3 = amnezia?.keys?.any { it in AWG3_JSON_KEYS } == true
         val awg2 = amnezia?.keys?.any { it in AWG2_KEYS } == true
         val protocol = when {
+            awg3 -> "AmneziaWG 3.0"
             awg2 -> "AmneziaWG 2.0"
             amnezia != null -> "AmneziaWG"
             else -> "WireGuard"
@@ -188,6 +190,15 @@ object WireGuardConfigParser {
                 }
                 validateObfuscationChain(value, key.uppercase())
                 result[key] = JsonPrimitive(value)
+            }
+        }
+        values.single(AWG3_HEADER_PROTECTION_KEY)?.let { raw ->
+            result["header_protection_key"] =
+                JsonPrimitive(canonicalKey(raw, "HeaderProtectionKey"))
+        }
+        AWG3_RANGE_KEYS.forEach { (iniKey, jsonKey) ->
+            values.single(iniKey)?.value?.takeIf(String::isNotBlank)?.let { value ->
+                result[jsonKey] = parseHeaderRange(value, checkNotNull(AWG3_CONF_NAMES[iniKey]))
             }
         }
         return result.takeIf { it.isNotEmpty() }
@@ -565,13 +576,36 @@ object WireGuardConfigParser {
     private val AWG_INTEGER_KEYS = setOf("jc", "jmin", "jmax", "s1", "s2", "s3", "s4")
     private val AWG_HEADER_KEYS = setOf("h1", "h2", "h3", "h4")
     private val AWG2_KEYS = setOf("i1", "i2", "i3", "i4", "i5")
+
+    // AWG 3.0: ini-ключ (нижний регистр) -> поле объекта amnezia sing-box
+    // extended 2.6.x. HeaderProtectionKey обязан совпадать с сервером, поэтому
+    // молчаливый пропуск этих строк означал мёртвый туннель без ошибки.
+    private const val AWG3_HEADER_PROTECTION_KEY = "headerprotectionkey"
+    private val AWG3_RANGE_KEYS = linkedMapOf(
+        "contentpaddingaddition" to "content_padding_addition",
+        "rekeyaftertime" to "rekey_after_time",
+        "rekeytimeout" to "rekey_timeout",
+        "rejectaftertime" to "reject_after_time",
+        "keepalivetimeout" to "keepalive_timeout",
+        "maxhandshakeattempts" to "max_handshake_attempts",
+    )
+    private val AWG3_CONF_NAMES = mapOf(
+        "contentpaddingaddition" to "ContentPaddingAddition",
+        "rekeyaftertime" to "RekeyAfterTime",
+        "rekeytimeout" to "RekeyTimeout",
+        "rejectaftertime" to "RejectAfterTime",
+        "keepalivetimeout" to "KeepaliveTimeout",
+        "maxhandshakeattempts" to "MaxHandshakeAttempts",
+    )
+    private val AWG3_JSON_KEYS = setOf("header_protection_key") + AWG3_RANGE_KEYS.values
     private val SUPPORTED_INTERFACE_KEYS = setOf(
         "address",
         "dns",
         "listenport",
         "mtu",
         "privatekey",
-    ) + AWG_INTEGER_KEYS + AWG_HEADER_KEYS + AWG2_KEYS
+        AWG3_HEADER_PROTECTION_KEY,
+    ) + AWG_INTEGER_KEYS + AWG_HEADER_KEYS + AWG2_KEYS + AWG3_RANGE_KEYS.keys
     private val SUPPORTED_PEER_KEYS = setOf(
         "allowedips",
         "endpoint",

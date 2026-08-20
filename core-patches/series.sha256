@@ -1,2 +1,2 @@
-9f51f588bea76b108509359bec825c22d8d68f6f78b68cf191cf1f512bda22e8  core-patches/0001-android-wireguard-data-plane.patch
-8ea4a4c5e44b54aab693af2059877ffc6963e7194bef7a40be20730ca3a24be7  core-patches/0002-read-only-relay-delay-probe.patch
+e1c2014d9429ccba2a44a378cb300eadad06a3f43088a3dba33b95a93e26f423  core-patches/0001-android-wireguard-data-plane.patch
+fc7f6e86454ca547b4920dfd8d605cedf5dab11fd8c1bfcc6d122b144f08a8d0  core-patches/0002-read-only-relay-delay-probe.patch
