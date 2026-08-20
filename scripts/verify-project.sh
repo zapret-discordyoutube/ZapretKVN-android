@@ -23,10 +23,15 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -x "$PROJECT_ROOT/scripts/create-test-bundle.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/verify-test-bundle.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/publish-forgejo-test.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/check-libbox-fingerprint.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/ensure-libbox.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-libbox-fingerprint.sh" ]]
+grep -Fq 'scripts/ensure-libbox.sh' "$PROJECT_ROOT/app/build.gradle.kts"
 [[ -f "$PROJECT_ROOT/release.properties" ]]
 source "$PROJECT_ROOT/core.properties"
 source "$PROJECT_ROOT/scripts/core-patchset.sh"
 verify_core_patchset "$PROJECT_ROOT"
+"$PROJECT_ROOT/scripts/test-libbox-fingerprint.sh"
 [[ -f "$PROJECT_ROOT/scripts/gate8-performance-summary.jq" ]]
 
 RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/release-verify.yml"

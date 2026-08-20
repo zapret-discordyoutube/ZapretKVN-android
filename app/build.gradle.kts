@@ -1,5 +1,6 @@
-import java.security.MessageDigest
 import java.util.Properties
+import javax.inject.Inject
+import org.gradle.process.ExecOperations
 
 plugins {
     id("com.android.application")
@@ -14,7 +15,6 @@ val coreCommit = coreProperties.getProperty("CORE_COMMIT")
 val corePatchFile = coreProperties.getProperty("CORE_PATCH_FILE")
 val corePatchSha256 = coreProperties.getProperty("CORE_PATCH_SHA256")
 val libboxAar = layout.projectDirectory.file("libs/libbox.aar").asFile
-val libboxMetadata = layout.projectDirectory.file("libs/libbox.properties").asFile
 val appVersionCode = providers.gradleProperty("zapretVersionCode")
     .orElse(providers.environmentVariable("ZAPRET_VERSION_CODE"))
     .orElse("200099")
@@ -186,56 +186,48 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
 
-val verifyPinnedLibbox by tasks.registering {
-    group = "verification"
-    description = "Fails when the pinned libbox AAR has not been built."
-    inputs.files(libboxAar, libboxMetadata)
-    inputs.property("expectedCoreTag", coreTag)
-    inputs.property("expectedCoreCommit", coreCommit)
-    inputs.property("expectedCorePatchFile", corePatchFile)
-    inputs.property("expectedCorePatchSha256", corePatchSha256)
-    doLast {
-        val aar = inputs.files.single { it.name == "libbox.aar" }
-        val metadataFile = inputs.files.single { it.name == "libbox.properties" }
-        check(aar.isFile && aar.length() > 0L) {
-            "Missing app/libs/libbox.aar. Run scripts/build-core.sh first."
-        }
-        check(metadataFile.isFile) {
-            "Missing app/libs/libbox.properties. Run scripts/build-core.sh first."
-        }
+// The fingerprint comparison and the rebuild live in scripts/check-libbox-fingerprint.sh
+// and scripts/ensure-libbox.sh, shared with the shell tooling and covered by
+// scripts/test-libbox-fingerprint.sh. A silent fallback to a stale AAR is forbidden.
+abstract class EnsurePinnedLibboxTask : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
 
-        val metadata = Properties().apply {
-            metadataFile.inputStream().use { load(it) }
-        }
-        check(metadata.getProperty("CORE_TAG") == inputs.properties["expectedCoreTag"]) {
-            "libbox tag does not match core.properties. Rebuild the core."
-        }
-        check(metadata.getProperty("CORE_COMMIT") == inputs.properties["expectedCoreCommit"]) {
-            "libbox commit does not match core.properties. Rebuild the core."
-        }
-        check(metadata.getProperty("CORE_PATCH_FILE") == inputs.properties["expectedCorePatchFile"]) {
-            "libbox patch file does not match core.properties. Rebuild the core."
-        }
-        check(metadata.getProperty("CORE_PATCH_SHA256") == inputs.properties["expectedCorePatchSha256"]) {
-            "libbox patch hash does not match core.properties. Rebuild the core."
-        }
+    @get:Internal
+    abstract val repositoryRoot: DirectoryProperty
 
-        val digest = MessageDigest.getInstance("SHA-256")
-        aar.inputStream().buffered().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
+    @TaskAction
+    fun ensure() {
+        val root = repositoryRoot.get().asFile
+        val script = root.resolve("scripts/ensure-libbox.sh")
+        check(script.isFile) { "Missing $script" }
+        val result = try {
+            execOperations.exec {
+                workingDir(root)
+                commandLine("bash", script.absolutePath, root.absolutePath)
+                isIgnoreExitValue = true
             }
+        } catch (failure: Exception) {
+            throw GradleException("Could not run $script; bash is required to verify libbox.aar", failure)
         }
-        val actualSha256 = digest.digest().joinToString("") { "%02x".format(it) }
-        check(metadata.getProperty("LIBBOX_SHA256") == actualSha256) {
-            "libbox SHA-256 does not match its build metadata. Rebuild the core."
+        if (result.exitValue != 0) {
+            throw GradleException(
+                "app/libs/libbox.aar does not match the pinned core fingerprint " +
+                    "(core.properties + core-patches/series.sha256) and was not rebuilt " +
+                    "automatically. See the messages above and run scripts/build-core.sh.",
+            )
         }
     }
 }
 
+val ensurePinnedLibbox by tasks.registering(EnsurePinnedLibboxTask::class) {
+    group = "verification"
+    description =
+        "Verifies libbox.aar against the pinned core fingerprint and rebuilds a stale core."
+    repositoryRoot.set(rootProject.layout.projectDirectory)
+    outputs.upToDateWhen { false }
+}
+
 tasks.named("preBuild").configure {
-    dependsOn(verifyPinnedLibbox)
+    dependsOn(ensurePinnedLibbox)
 }
