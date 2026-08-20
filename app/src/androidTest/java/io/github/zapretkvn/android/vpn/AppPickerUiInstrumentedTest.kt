@@ -50,6 +50,9 @@ class AppPickerUiInstrumentedTest {
         }
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.onNodeWithText("Выбрать приложения").performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag("show-system-apps").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("show-system-apps").performClick()
         composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
         composeRule.waitUntil(timeoutMillis = 20_000) {
@@ -105,6 +108,9 @@ class AppPickerUiInstrumentedTest {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.onNodeWithText("Блокировка приложений: список пуст").assertExists()
         composeRule.onNodeWithText("Блокировать приложения").performClick()
+        composeRule.waitUntil(timeoutMillis = 20_000) {
+            composeRule.onAllNodesWithTag("show-system-apps").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithTag("show-system-apps").performClick()
         composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
         composeRule.waitUntil(timeoutMillis = 20_000) {

@@ -99,16 +99,19 @@ jq -n \
 cat > "$OUTPUT_DIR/RELEASE_NOTES.md" <<EOF
 # Zapret KVN $ZAPRET_VERSION_NAME
 
-Emulator-only test build with honest, independent latency diagnostics.
+Emulator-only architectural connectivity test build.
 
-- Added **Relay HTTPS** measurement through each concrete sing-box outbound without
-  changing selector history, selection, or active connections.
-- Added separate **ICMP** Echo RTT to every endpoint over Android's underlying network.
-- Added cancellable single-flight queues, separate progress, five-minute freshness,
-  and stale-result protection across VPN sessions and network changes.
-- Singleton selectors are visible; nested groups are reported as unsupported and can
-  be opened separately.
-- Rebuilt pinned libbox from the ordered, SHA-256-verified core patch manifest.
+- Serialized VPN lifecycle commands by connection generation, with bounded cleanup,
+  stale-callback isolation, network-loss leases, and fail-close DNS/HTTPS health gates.
+- Added runtime-only bootstrap host overlays from fresh pre-VPN DNS without changing
+  endpoint hostnames, TLS/Reality identity, HTTP Host, or stored profiles.
+- Added strict UDP DNS validation with TCP fallback, monotonic startup budgets, typed
+  cancellation/failure causes, and diagnostic report schema v5.
+- Preserved supported transport fields through canonical imports and reject unsupported
+  fields explicitly instead of dropping them silently.
+- Separated selector subscription and command clients, and restored package-name routing
+  on Android 8/8.1 by mapping procfs socket owners through PackageManager.
+- Includes independent Relay HTTPS and ICMP latency diagnostics from the pinned core.
 
 - Not a Stable or Beta-updater release.
 - Not for F-Droid or Telegram distribution.

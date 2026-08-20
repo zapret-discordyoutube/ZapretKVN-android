@@ -585,6 +585,12 @@ class ZapretVpnService : VpnService() {
             )
             resources.attachClient(groupClient)
             groupClient.connect()
+            val selectorClient = Libbox.newCommandClient(
+                object : BaseClientHandler() {},
+                CommandClientOptions().apply { addCommand(Libbox.CommandGroup) },
+            )
+            resources.attachSelectorClient(selectorClient)
+            selectorClient.connect()
             check(token == controller.currentGeneration()) { "Запуск отменён." }
             reconcileSelectorSelection(groupClient, runtimeJson)
             check(token == controller.currentGeneration()) { "Запуск отменён." }
@@ -1227,8 +1233,12 @@ class ZapretVpnService : VpnService() {
         outboundTag: String,
         startId: Int,
     ) {
-        trackLifecycleJob(serviceScope.launch {
+        val expectedGeneration = controller.currentGeneration()
+        serviceScope.launch {
             serviceLock.withLock {
+                if (expectedGeneration != controller.currentGeneration() || stopInProgress.get()) {
+                    return@withLock
+                }
                 val session = activeSession
                 if (session == null || session.profileId != profileId) {
                     // Восстановление здесь бессмысленно: сессии нет, а не сети.
@@ -1289,7 +1299,7 @@ class ZapretVpnService : VpnService() {
                     showForeground(ForegroundNotificationState.Connected)
                 }
             }
-        })
+        }
     }
 
     private fun requestGroupPing(profileId: String, groupTag: String, startId: Int) {
@@ -1390,8 +1400,8 @@ class ZapretVpnService : VpnService() {
         val candidate = ConfigAnalyzer.selectServer(stored.json, groupTag, outboundTag)
         withContext(Dispatchers.Default) { Libbox.checkConfig(candidate) }
         container.profileStore.update(session.profileId, candidate)
-        val client = session.client()
-            ?: throw RuntimeSwitchException(IllegalStateException("Клиент selector-группы уже закрыт."))
+        val client = session.selectorClient()
+            ?: throw RuntimeSwitchException(IllegalStateException("Клиент управления selector уже закрыт."))
         try {
             withContext(Dispatchers.IO) {
                 client.selectOutbound(groupTag, outboundTag)
@@ -1779,6 +1789,7 @@ class ZapretVpnService : VpnService() {
         @Volatile private var platform: AndroidPlatformAdapter? = null
         @Volatile private var server: CommandServer? = null
         @Volatile private var client: CommandClient? = null
+        @Volatile private var selectorClient: CommandClient? = null
         private var networkObserver: AutoCloseable? = null
         private var statusObserver: Job? = null
         private var diagnosticsObserver: Job? = null
@@ -1855,7 +1866,21 @@ class ZapretVpnService : VpnService() {
             }
         }
 
-        fun client(): CommandClient? = client
+        fun attachSelectorClient(candidate: CommandClient) {
+            val accepted = synchronized(resourceLock) {
+                if (closing.get()) false else {
+                    check(selectorClient == null)
+                    selectorClient = candidate
+                    true
+                }
+            }
+            if (!accepted) {
+                runCatching { candidate.disconnect() }
+                throw CancellationException("Клиент управления selector отменён.")
+            }
+        }
+
+        fun selectorClient(): CommandClient? = selectorClient
 
         fun attachNetworkObserver(candidate: AutoCloseable) {
             val accepted = synchronized(resourceLock) {
@@ -2022,6 +2047,10 @@ class ZapretVpnService : VpnService() {
                         client.also { client = null }
                     }
                     runCatching { current?.disconnect() }
+                    val selector = synchronized(resourceLock) {
+                        selectorClient.also { selectorClient = null }
+                    }
+                    runCatching { selector?.disconnect() }
                 }
                 timedStopStage("close_libbox_service", "Остановка сервиса libbox") {
                     runCatching { server?.closeService() }.getOrThrow()

@@ -218,11 +218,15 @@ class VpnServiceInstrumentedTest {
             val firstNetwork = waitForVpnNetwork(context)
             assertNotNull(firstNetwork)
 
-            val groups = withTimeout(20_000) {
+            val groups = withTimeoutOrNull(20_000) {
                 container.vpnController.selectorGroups.first { values ->
                     values.any { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }
                 }
-            }
+            } ?: error(
+                "Selector groups were not published; state=${container.vpnController.state.value}, " +
+                    "groups=${container.vpnController.selectorGroups.value}, " +
+                    "attempt=${container.vpnController.diagnostics.value.connectionAttempt}",
+            )
             assertEquals("server-a", groups.first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }.selected)
 
             container.vpnController.selectOutbound(
@@ -230,12 +234,18 @@ class VpnServiceInstrumentedTest {
                 ConfigAnalyzer.MANAGED_SELECTOR_TAG,
                 "server-b",
             )
-            withTimeout(20_000) {
+            val selected = withTimeoutOrNull(20_000) {
                 container.vpnController.selectorGroups.first { values ->
                     values.any {
                         it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG && it.selected == "server-b"
                     }
                 }
+            }
+            checkNotNull(selected) {
+                "Selector command did not publish server-b; " +
+                    "state=${container.vpnController.state.value}, " +
+                    "groups=${container.vpnController.selectorGroups.value}, " +
+                    "attempt=${container.vpnController.diagnostics.value.connectionAttempt}"
             }
             val afterSwitch = container.vpnController.state.value
             assertTrue(afterSwitch is VpnConnectionState.Connected)

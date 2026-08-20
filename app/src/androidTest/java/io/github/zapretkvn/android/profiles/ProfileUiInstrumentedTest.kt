@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -154,7 +155,11 @@ class ProfileUiInstrumentedTest {
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching { composeRule.onNodeWithText("Серверы").fetchSemanticsNode() }.isSuccess
         }
-        composeRule.onNodeWithText("Серверов: 2", substring = true).assertExists()
+        assertTrue(
+            composeRule.onAllNodesWithText("Серверов: 2", substring = true)
+                .fetchSemanticsNodes()
+                .isNotEmpty(),
+        )
         composeRule.onNodeWithText("Серверы").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {
@@ -258,21 +263,17 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithTag("vpn-hiding-mtu-Normalize1500")
             .performScrollTo()
             .performClick()
-        val persisted = runBlocking {
-            withTimeoutOrNull(5_000) {
-                container.uiSettingsStore.settings.first { settings ->
-                    settings.vpnHiding.let { options ->
+        composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
+            runBlocking {
+                container.uiSettingsStore.settings.first().vpnHiding.let { options ->
                     options.neutralSessionName &&
                         options.tunMtuMode == TunMtuMode.Normalize1500
-                    }
                 }
             }
         }
-        assertTrue(
-            "VPN hiding options were not persisted: " +
-                runBlocking { container.uiSettingsStore.settings.first().vpnHiding },
-            persisted != null,
-        )
+        val persisted = runBlocking { container.uiSettingsStore.settings.first().vpnHiding }
+        assertTrue("VPN hiding options were not persisted: $persisted", persisted.neutralSessionName)
+        assertEquals(TunMtuMode.Normalize1500, persisted.tunMtuMode)
     }
 
     @Test

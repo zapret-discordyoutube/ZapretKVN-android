@@ -7,6 +7,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.os.SystemClock
 import android.system.OsConstants
 import io.nekohasekai.libbox.ConnectionOwner
 import io.nekohasekai.libbox.InterfaceUpdateListener
@@ -18,10 +19,13 @@ import io.nekohasekai.libbox.PlatformInterface
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
+import java.io.File
 import java.net.DatagramSocket
 import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import io.nekohasekai.libbox.NetworkInterface as BoxNetworkInterface
 
@@ -153,7 +157,11 @@ internal class AndroidPlatformAdapter(
         return descriptor.fd
     }
 
-    override fun useProcFS(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+    // libbox's procfs shortcut returns only a UID and therefore loses Android
+    // package names. Package-based route/DNS rules would silently stop matching
+    // on API 26-28, so keep ownership resolution in the platform adapter where
+    // the UID can be mapped through PackageManager.
+    override fun useProcFS(): Boolean = false
 
     @SuppressLint("NewApi")
     override fun findConnectionOwner(
@@ -163,16 +171,18 @@ internal class AndroidPlatformAdapter(
         destinationAddress: String,
         destinationPort: Int,
     ): ConnectionOwner {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            "Android API ниже 29 должен использовать procfs для поиска процесса."
+        val uid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            connectivity.getConnectionOwnerUid(
+                ipProtocol,
+                InetSocketAddress(sourceAddress, sourcePort),
+                InetSocketAddress(destinationAddress, destinationPort),
+            )
+        } else {
+            AndroidProcfsConnectionOwner.findUid(ipProtocol, sourceAddress, sourcePort)
         }
-        val uid = connectivity.getConnectionOwnerUid(
-            ipProtocol,
-            InetSocketAddress(sourceAddress, sourcePort),
-            InetSocketAddress(destinationAddress, destinationPort),
-        )
         check(uid != Process.INVALID_UID) { "Android не нашёл владельца соединения." }
         val packages = service.packageManager.getPackagesForUid(uid).orEmpty().toList()
+        check(packages.isNotEmpty()) { "Android не сопоставил владельца соединения с приложением." }
         return ConnectionOwner().apply {
             userId = uid
             userName = packages.firstOrNull().orEmpty()
@@ -285,4 +295,66 @@ internal class AndroidPlatformAdapter(
         const val MIN_MTU = 1280
         const val MAX_MTU = 9000
     }
+}
+
+internal object AndroidProcfsConnectionOwner {
+    fun findUid(ipProtocol: Int, sourceAddress: String, sourcePort: Int): Int {
+        val protocol = when (ipProtocol) {
+            OsConstants.IPPROTO_TCP -> "tcp"
+            OsConstants.IPPROTO_UDP -> "udp"
+            else -> return Process.INVALID_UID
+        }
+        val localKeys = localKeys(sourceAddress, sourcePort)
+        if (localKeys.isEmpty()) return Process.INVALID_UID
+        repeat(LOOKUP_ATTEMPTS) { attempt ->
+            for (path in listOf("/proc/net/$protocol", "/proc/net/${protocol}6")) {
+                val uid = runCatching {
+                    File(path).useLines { lines -> parseUid(lines, localKeys) }
+                }.getOrNull()
+                if (uid != null) return uid
+            }
+            if (attempt + 1 < LOOKUP_ATTEMPTS) SystemClock.sleep(LOOKUP_RETRY_MILLIS)
+        }
+        return Process.INVALID_UID
+    }
+
+    internal fun parseUid(lines: Sequence<String>, localKeys: Set<String>): Int? {
+        lines.drop(1).forEach { line ->
+            val fields = line.trim().split(Regex("\\s+"))
+            if (fields.size > UID_COLUMN && fields[LOCAL_ADDRESS_COLUMN].uppercase(Locale.ROOT) in localKeys) {
+                return fields[UID_COLUMN].toIntOrNull()
+            }
+        }
+        return null
+    }
+
+    internal fun localKeys(sourceAddress: String, sourcePort: Int): Set<String> {
+        if (sourcePort !in 1..0xffff) return emptySet()
+        val address = runCatching {
+            InetAddress.getByName(sourceAddress.substringBefore('%')).address
+        }.getOrNull() ?: return emptySet()
+        val port = sourcePort.toString(16).padStart(4, '0').uppercase(Locale.ROOT)
+        val addresses = buildList {
+            add(address)
+            if (address.size == 4) {
+                add(ByteArray(16).apply {
+                    this[10] = 0xff.toByte()
+                    this[11] = 0xff.toByte()
+                    address.copyInto(this, destinationOffset = 12)
+                })
+            }
+        }
+        return addresses.mapTo(linkedSetOf()) { bytes ->
+            bytes.asList()
+                .chunked(4)
+                .flatMap { it.reversed() }
+                .joinToString(separator = "") { byte -> "%02X".format(byte.toInt() and 0xff) } +
+                ":$port"
+        }
+    }
+
+    private const val LOCAL_ADDRESS_COLUMN = 1
+    private const val UID_COLUMN = 7
+    private const val LOOKUP_ATTEMPTS = 3
+    private const val LOOKUP_RETRY_MILLIS = 2L
 }
