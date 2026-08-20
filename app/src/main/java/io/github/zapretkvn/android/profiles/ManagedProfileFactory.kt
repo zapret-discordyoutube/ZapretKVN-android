@@ -15,6 +15,8 @@ data class ManagedServer(
     val displayName: String,
     val identityKey: String,
     val outbound: JsonObject,
+    /** Параметры ссылки, которые протокол выполнить не может и которые названы в preview. */
+    val importWarnings: List<String> = emptyList(),
 )
 
 data class TlsSettings(
@@ -130,6 +132,7 @@ object ProtocolOutboundBuilders {
         password: String,
         tls: TlsSettings = TlsSettings(enabled = true, serverName = server),
         obfsPassword: String? = null,
+        obfsType: String? = null,
         upMbps: Int? = null,
         downMbps: Int? = null,
     ): ManagedServer = ManagedServer(
@@ -144,14 +147,14 @@ object ProtocolOutboundBuilders {
                 put(
                     "obfs",
                     buildJsonObject {
-                        put("type", "salamander")
+                        put("type", obfsType?.takeIf(String::isNotBlank) ?: "salamander")
                         put("password", value)
                     },
                 )
             }
             upMbps?.takeIf { it > 0 }?.let { put("up_mbps", it) }
             downMbps?.takeIf { it > 0 }?.let { put("down_mbps", it) }
-            putTls(tls)
+            putTls(tls, allowTcpOnlyTlsFeatures = false)
         },
     )
 
@@ -179,7 +182,7 @@ object ProtocolOutboundBuilders {
             udpRelayMode?.takeIf(String::isNotBlank)?.let { put("udp_relay_mode", it) }
             if (zeroRttHandshake) put("zero_rtt_handshake", true)
             heartbeat?.takeIf(String::isNotBlank)?.let { put("heartbeat", it) }
-            putTls(tls)
+            putTls(tls, allowTcpOnlyTlsFeatures = false)
         },
     )
 
@@ -200,7 +203,16 @@ object ProtocolOutboundBuilders {
         transport?.xhttpOptions?.toString().orEmpty(),
     ).joinToString("|")
 
-    private fun kotlinx.serialization.json.JsonObjectBuilder.putTls(settings: TlsSettings) {
+    /**
+     * QUIC-протоколы не могут исполнить uTLS и REALITY: рукопожатие идёт внутри
+     * quic-go, а не поверх net.Conn. Ядро принимает такой конфиг на проверке, но
+     * затем рвёт каждое соединение с "unsupported usage for uTLS", поэтому поля
+     * не доходят до QUIC-аутбаундов физически, а не только по договорённости.
+     */
+    private fun kotlinx.serialization.json.JsonObjectBuilder.putTls(
+        settings: TlsSettings,
+        allowTcpOnlyTlsFeatures: Boolean = true,
+    ) {
         if (!settings.enabled) return
         put(
             "tls",
@@ -208,7 +220,9 @@ object ProtocolOutboundBuilders {
                 put("enabled", true)
                 settings.serverName?.takeIf(String::isNotBlank)?.let { put("server_name", it) }
                 if (settings.insecure) put("insecure", true)
-                settings.utlsFingerprint?.takeIf(String::isNotBlank)?.let { fingerprint ->
+                settings.utlsFingerprint
+                    ?.takeIf { allowTcpOnlyTlsFeatures && it.isNotBlank() }
+                    ?.let { fingerprint ->
                     put(
                         "utls",
                         buildJsonObject {
@@ -217,7 +231,9 @@ object ProtocolOutboundBuilders {
                         },
                     )
                 }
-                settings.realityPublicKey?.takeIf(String::isNotBlank)?.let { publicKey ->
+                settings.realityPublicKey
+                    ?.takeIf { allowTcpOnlyTlsFeatures && it.isNotBlank() }
+                    ?.let { publicKey ->
                     put(
                         "reality",
                         buildJsonObject {

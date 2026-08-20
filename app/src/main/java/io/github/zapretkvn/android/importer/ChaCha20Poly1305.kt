@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.importer
 
 import java.math.BigInteger
+import java.security.MessageDigest
 
 /**
  * AEAD ChaCha20-Poly1305 по RFC 8439.
@@ -37,7 +38,8 @@ internal object ChaCha20Poly1305 {
         val tag = ciphertextWithTag.copyOfRange(ciphertextWithTag.size - TAG_SIZE, ciphertextWithTag.size)
         val macKey = chacha20Block(key, nonce, counter = 0).copyOf(KEY_SIZE)
         val expected = poly1305(macKey, macData(aad, ciphertext))
-        if (!expected.contentEquals(tag)) throw AuthenticationException()
+        // Сравнение за постоянное время: contentEquals выходит на первом различии.
+        if (!MessageDigest.isEqual(expected, tag)) throw AuthenticationException()
         return chacha20(key, nonce, ciphertext, initialCounter = 1)
     }
 

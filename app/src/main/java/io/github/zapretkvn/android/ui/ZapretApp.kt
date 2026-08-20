@@ -765,7 +765,8 @@ private fun UrlImportDialog(
 ) {
     var url by remember { mutableStateOf("") }
     var revealed by rememberSaveable { mutableStateOf(false) }
-    var clientProfile by rememberSaveable { mutableStateOf(SubscriptionClientProfile.Zapret) }
+    // null — профиль ещё не выбран: его подскажет сама ссылка (happ://add и подобные).
+    var clientProfile by rememberSaveable { mutableStateOf<SubscriptionClientProfile?>(null) }
     var sendHwid by rememberSaveable { mutableStateOf(false) }
     var hwid by rememberSaveable { mutableStateOf("") }
     AlertDialog(
@@ -807,6 +808,7 @@ private fun UrlImportDialog(
                     hwid = hwid,
                     onHwid = { hwid = it },
                     hideSecrets = hideServerAddresses,
+                    autoOption = true,
                 )
             }
         },
@@ -835,7 +837,9 @@ private fun SubscriptionSettingsDialog(
     onDismiss: () -> Unit,
     onSave: (SubscriptionIdentityInput) -> Unit,
 ) {
-    var clientProfile by remember(settings) { mutableStateOf(settings.clientProfile) }
+    var clientProfile by remember(settings) {
+        mutableStateOf<SubscriptionClientProfile?>(settings.clientProfile)
+    }
     var sendHwid by remember(settings) { mutableStateOf(settings.sendHwid) }
     var hwid by remember(settings) { mutableStateOf(settings.hwid) }
     AlertDialog(
@@ -882,13 +886,14 @@ private fun SubscriptionSettingsDialog(
  */
 @Composable
 private fun SubscriptionIdentityFields(
-    clientProfile: SubscriptionClientProfile,
-    onClientProfile: (SubscriptionClientProfile) -> Unit,
+    clientProfile: SubscriptionClientProfile?,
+    onClientProfile: (SubscriptionClientProfile?) -> Unit,
     sendHwid: Boolean,
     onSendHwid: (Boolean) -> Unit,
     hwid: String,
     onHwid: (String) -> Unit,
     hideSecrets: Boolean,
+    autoOption: Boolean = false,
 ) {
     var hwidRevealed by rememberSaveable { mutableStateOf(false) }
     Text(
@@ -900,6 +905,13 @@ private fun SubscriptionIdentityFields(
         modifier = Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        if (autoOption) {
+            FilterChip(
+                selected = clientProfile == null,
+                onClick = { onClientProfile(null) },
+                label = { Text("Из ссылки") },
+            )
+        }
         SubscriptionClientProfile.entries.forEach { profile ->
             FilterChip(
                 selected = profile == clientProfile,

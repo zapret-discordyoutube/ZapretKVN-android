@@ -50,6 +50,10 @@ object SubscriptionIdentity {
 
     private const val LEGACY_USER_AGENT = "Zapret-KVN-Android"
 
+    private val PRINTABLE_ASCII = 0x20..0x7e
+
+    private val PANEL_HWID = Regex("[A-Za-z0-9=-]{10,64}")
+
     private val WRAPPED_SOURCE_PREFIXES = linkedMapOf(
         "happ://add/" to SubscriptionClientProfile.Happ,
         "incy://add/" to SubscriptionClientProfile.Incy,
@@ -61,14 +65,29 @@ object SubscriptionIdentity {
 
     private val BASE64_ALPHABET = Regex("[A-Za-z0-9_+/=-]+")
 
+    /**
+     * HTTP-заголовок на Android собирает OkHttp и отвергает всё вне печатного ASCII,
+     * причём его исключение печатает само значение. Поэтому проверка здесь строже
+     * эталонной: непригодный HWID отбивается своим текстом, без утечки значения.
+     */
     fun validateHwid(value: String): String {
         val text = value.trim()
         if (text.isEmpty()) throw ImportException("HWID не задан.")
-        if (text.length > MAX_HWID_LENGTH || text.any { it.code < 32 || it.code == 127 }) {
-            throw ImportException("HWID содержит недопустимые символы или слишком длинный.")
+        if (text.codePointCount(0, text.length) > MAX_HWID_LENGTH) {
+            throw ImportException("HWID длиннее $MAX_HWID_LENGTH символов.")
+        }
+        if (text.any { it.code !in PRINTABLE_ASCII }) {
+            throw ImportException(
+                "HWID может содержать только печатные символы ASCII без пробелов по краям.",
+            )
         }
         return text
     }
+
+    /** Привести платформенное значение к тому, что примет заголовок. */
+    fun headerSafeValue(value: String, fallback: String): String =
+        value.trim().filter { it.code in PRINTABLE_ASCII }.take(MAX_HWID_LENGTH)
+            .ifBlank { fallback }
 
     fun defaultUserAgent(appVersion: String): String =
         if (appVersion.isBlank()) LEGACY_USER_AGENT else "ZapretKVN/$appVersion"
@@ -86,6 +105,12 @@ object SubscriptionIdentity {
         SubscriptionClientProfile.Zapret, SubscriptionClientProfile.Custom -> LEGACY_USER_AGENT
     }
 
+    /**
+     * Имитация клиента должна совпадать с оригиналом, а не быть похожей: панели
+     * матчат запрос правилами по заголовкам, и лишний заголовок отличает подделку
+     * не хуже отсутствующего. Набор Happ снят с реального клиента — там нет ни
+     * `Accept`, ни `X-App-Version`, а локаль короткая (`ru`, не `ru-RU`).
+     */
     fun requestHeaders(
         source: SubscriptionSource,
         device: DeviceIdentity,
@@ -93,34 +118,61 @@ object SubscriptionIdentity {
     ): Map<String, String> {
         val profile = source.clientProfile
         val headers = linkedMapOf(
-            "Accept" to "application/json, text/plain, */*",
             "User-Agent" to safeHeaderValue(
                 source.userAgent.trim().ifEmpty { userAgent(profile, device, appVersion) },
                 "User-Agent",
             ),
         )
-        if (profile in EMULATED_PROFILES) {
-            headers["Accept"] = "*/*"
-            headers["X-App-Version"] = appVersionOf(profile, appVersion)
-        }
-        if (profile == SubscriptionClientProfile.Incy) {
-            headers["X-Client"] = "INCY"
-            headers["X-Device-Locale"] = safeHeaderValue(device.locale, "X-Device-Locale")
+        when (profile) {
+            SubscriptionClientProfile.Happ -> Unit
+            SubscriptionClientProfile.Incy -> {
+                headers["Accept"] = "*/*"
+                headers["X-App-Version"] = appVersionOf(profile, appVersion)
+                headers["X-Client"] = "INCY"
+                headers["X-Device-Locale"] = safeHeaderValue(device.locale, "X-Device-Locale")
+            }
+            SubscriptionClientProfile.V2RayTun -> {
+                headers["Accept"] = "*/*"
+                headers["X-App-Version"] = appVersionOf(profile, appVersion)
+            }
+            SubscriptionClientProfile.Zapret, SubscriptionClientProfile.Custom ->
+                headers["Accept"] = "application/json, text/plain, */*"
         }
         if (source.sendHwid) {
             val hwid = validateHwid(source.hwid)
-            headers["X-HWID"] = safeHeaderValue(hwid, "X-HWID")
-            headers["X-Device-OS"] = safeHeaderValue(device.os.ifBlank { "Android" }, "X-Device-OS")
-            headers["X-Ver-OS"] = safeHeaderValue(device.osVersion.ifBlank { "Android" }, "X-Ver-OS")
+            // Регистр имён повторяет оригинальный клиент: HTTP/1.1 его не различает,
+            // но промежуточные прокси и правила панелей сравнивают строки как есть.
+            val hwidHeader = if (profile == SubscriptionClientProfile.Happ) "X-Hwid" else "X-HWID"
+            val osHeader = if (profile == SubscriptionClientProfile.Happ) "X-Device-Os" else "X-Device-OS"
+            val verHeader = if (profile == SubscriptionClientProfile.Happ) "X-Ver-Os" else "X-Ver-OS"
+            headers[hwidHeader] = safeHeaderValue(hwid, hwidHeader)
+            headers[osHeader] = safeHeaderValue(device.os.ifBlank { "Android" }, osHeader)
+            headers[verHeader] = safeHeaderValue(device.osVersion.ifBlank { "Android" }, verHeader)
             headers["X-Device-Model"] =
                 safeHeaderValue(device.model.ifBlank { "Android" }, "X-Device-Model")
-            if (profile == SubscriptionClientProfile.Incy) headers["X-Device-ID"] = hwid
+            if (profile == SubscriptionClientProfile.Incy) {
+                headers["X-Device-ID"] = safeHeaderValue(hwid, "X-Device-ID")
+            }
             if (profile == SubscriptionClientProfile.Happ) {
-                headers["X-Device-Locale"] = safeHeaderValue(device.locale, "X-Device-Locale")
+                headers["X-Device-Locale"] =
+                    safeHeaderValue(shortLocale(device.locale), "X-Device-Locale")
             }
         }
         return headers
     }
+
+    /** Happ передаёт только язык: `ru`, а не `ru-RU`. */
+    private fun shortLocale(locale: String): String =
+        locale.substringBefore('-').substringBefore('_').ifBlank { "ru" }
+
+    /**
+     * Панели с лимитом устройств принимают идентификатор по образцу Happ:
+     * латиница, цифры, `-` и `=`, от 10 до 64 символов. Более длинный или
+     * содержащий иные символы заголовок панель молча игнорирует, и лимит
+     * устройств перестаёт работать вместо явной ошибки.
+     */
+    fun isPanelCompatibleHwid(value: String): Boolean =
+        PANEL_HWID.matches(value.trim())
 
     /**
      * Панели с лимитом устройств отвечают обычным 404 и называют причину отдельным
@@ -216,7 +268,7 @@ object SubscriptionIdentity {
 
     private fun safeHeaderValue(value: String, name: String): String {
         val text = value.trim()
-        if (text.isEmpty() || text.any { it == '\r' || it == '\n' }) {
+        if (text.isEmpty() || text.any { it.code !in PRINTABLE_ASCII }) {
             throw ImportException("$name содержит недопустимое значение.")
         }
         return text

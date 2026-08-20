@@ -28,6 +28,26 @@ class SubscriptionIdentityTest {
     }
 
     @Test
+    fun `panel compatible hwid follows the happ format`() {
+        // Панели принимают идентификатор только по этому образцу, иначе молча
+        // игнорируют заголовок и лимит устройств перестаёт работать.
+        assertTrue(SubscriptionIdentity.isPanelCompatibleHwid("6F1B0A2C-1111-4222-8333-444455556666"))
+        assertTrue(SubscriptionIdentity.isPanelCompatibleHwid("aBc123XyZ0"))
+        assertFalse(SubscriptionIdentity.isPanelCompatibleHwid("short"))
+        assertFalse(SubscriptionIdentity.isPanelCompatibleHwid("has spaces inside"))
+    }
+
+    @Test
+    fun `non ascii hwid is refused before the request is built`() {
+        // OkHttp печатает значение в тексте своего исключения, поэтому проверка
+        // обязана сработать раньше и не пропустить значение наружу.
+        val error = assertThrows(ImportException::class.java) {
+            SubscriptionIdentity.validateHwid("устройство-1")
+        }
+        assertFalse(error.message.orEmpty().contains("устройство"))
+    }
+
+    @Test
     fun `hwid headers describe the device`() {
         val source = SubscriptionSource(
             url = "https://sub.example/profile",
@@ -55,10 +75,15 @@ class SubscriptionIdentityTest {
             device,
             APP_VERSION,
         )
+        // Набор снят с реального клиента: ни Accept, ни X-App-Version он не шлёт,
+        // локаль короткая, а имена заголовков — в его собственном регистре.
         assertEquals("Happ/3.13.0", happ["User-Agent"])
-        assertEquals("3.13.0", happ["X-App-Version"])
-        assertEquals("*/*", happ["Accept"])
-        assertEquals("ru-RU", happ["X-Device-Locale"])
+        assertNull(happ["X-App-Version"])
+        assertNull(happ["Accept"])
+        assertEquals("ru", happ["X-Device-Locale"])
+        assertEquals("device-1", happ["X-Hwid"])
+        assertEquals("Android", happ["X-Device-Os"])
+        assertEquals("14", happ["X-Ver-Os"])
         assertNull(happ["X-Device-ID"])
 
         val incy = SubscriptionIdentity.requestHeaders(

@@ -10,6 +10,7 @@ import io.github.zapretkvn.android.vpn.BootstrapResolver
 import io.github.zapretkvn.android.importer.AndroidImportReader
 import io.github.zapretkvn.android.importer.DeviceIdentity
 import io.github.zapretkvn.android.importer.HttpSubscriptionFetcher
+import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.profiles.ProfileStore
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
@@ -50,9 +51,13 @@ class AppContainer(
     val subscriptionFetcher = HttpSubscriptionFetcher(
         device = DeviceIdentity(
             os = "Android",
-            osVersion = Build.VERSION.RELEASE.orEmpty(),
-            model = Build.MODEL.orEmpty(),
-            locale = java.util.Locale.getDefault().toLanguageTag(),
+            // Отдельные OEM пишут в эти поля не-ASCII, а заголовок такое не принимает.
+            osVersion = SubscriptionIdentity.headerSafeValue(Build.VERSION.RELEASE.orEmpty(), "Android"),
+            model = SubscriptionIdentity.headerSafeValue(Build.MODEL.orEmpty(), "Android"),
+            locale = SubscriptionIdentity.headerSafeValue(
+                java.util.Locale.getDefault().toLanguageTag(),
+                "ru-RU",
+            ),
         ),
         appVersion = BuildConfig.VERSION_NAME,
     )

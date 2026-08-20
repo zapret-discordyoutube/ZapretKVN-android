@@ -65,7 +65,9 @@ internal object HappCrypt {
 
     private fun decryptCrypt1to4(payload: String, ordinal: Int): String {
         val key = loadKey(
-            keys.generations.getOrNull(ordinal)
+            // Индекс поколения, а не позиция в списке: пропуск строки в таблице
+            // иначе расшифровывал бы ссылку соседним ключом.
+            keys.generations[ordinal]
                 ?: throw ImportException("Ключ Happ для этого поколения отсутствует."),
         )
         val ciphertext = decodeLooseBase64(payload)
@@ -251,7 +253,7 @@ internal object HappCrypt {
     }
 
     private data class HappKeyTable(
-        val generations: List<String>,
+        val generations: Map<Int, String>,
         val crypt5: Map<String, String>,
     )
 
@@ -260,7 +262,7 @@ internal object HappCrypt {
         // разрешается по пакету класса и после обфускации не нашёл бы ресурс.
         val stream = HappCrypt::class.java.getResourceAsStream(KEYS_RESOURCE)
             ?: throw ImportException("Ключи Happ не найдены в сборке.")
-        val generations = sortedMapOf<Int, String>()
+        val generations = linkedMapOf<Int, String>()
         val crypt5 = linkedMapOf<String, String>()
         stream.bufferedReader(Charsets.UTF_8).useLines { lines ->
             lines.forEach { line ->
@@ -274,6 +276,6 @@ internal object HappCrypt {
                 }
             }
         }
-        return HappKeyTable(generations.values.toList(), crypt5)
+        return HappKeyTable(generations, crypt5)
     }
 }

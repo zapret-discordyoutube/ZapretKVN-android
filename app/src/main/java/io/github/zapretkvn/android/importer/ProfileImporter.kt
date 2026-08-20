@@ -60,6 +60,9 @@ sealed interface ImportCandidate {
 
 class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/** Больше предупреждений пользователь всё равно не прочитает перед подтверждением. */
+private const val MAX_IMPORT_WARNINGS = 8
+
 object ImportParser {
     fun parse(
         input: String,
@@ -121,10 +124,30 @@ object ImportParser {
             } else {
                 ProfileSource.Subscription
             },
-            importWarnings = extracted.unsupportedSchemes.takeIf(List<String>::isNotEmpty)?.let { schemes ->
-                listOf("Пропущены неподдерживаемые схемы: ${schemes.joinToString { "$it://" }}.")
-            }.orEmpty(),
+            importWarnings = collectWarnings(servers, extracted.unsupportedSchemes),
         )
+    }
+
+    /**
+     * Предупреждения серверов доходят до preview вместе с пропущенными схемами.
+     * Одинаковые строки от сотни серверов подписки схлопываются: иначе список
+     * вытеснит кнопки подтверждения и будет прокручен мимо.
+     */
+    private fun collectWarnings(
+        servers: List<ManagedServer>,
+        unsupportedSchemes: List<String> = emptyList(),
+    ): List<String> {
+        val schemes = unsupportedSchemes.takeIf(List<String>::isNotEmpty)?.let { list ->
+            listOf("Пропущены неподдерживаемые схемы: ${list.joinToString { "$it://" }}.")
+        }.orEmpty()
+        val perServer = servers.flatMap(ManagedServer::importWarnings)
+        val counted = perServer.groupingBy { it }.eachCount()
+        return schemes + counted.entries
+            .sortedByDescending { it.value }
+            .map { (warning, count) ->
+                if (count > 1) "$warning (серверов: $count)" else warning
+            }
+            .take(MAX_IMPORT_WARNINGS)
     }
 
     private fun parseJsonCandidates(
@@ -157,6 +180,7 @@ object ImportParser {
             servers = servers,
             suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
             source = if (servers.size == 1) source else ProfileSource.Subscription,
+            importWarnings = collectWarnings(servers),
         )
     }
 
@@ -254,7 +278,8 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectUnknownParameters(query, VLESS_QUERY_KEYS, "VLESS")
+        val warnings = classifyParameters(query, VLESS_QUERY_KEYS, VLESS_IGNORABLE_KEYS, "VLESS") +
+            rejectHeaderObfuscation(query, "VLESS")
         val name = displayName(uri, "VLESS ${index + 1}")
         val uuid = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В VLESS отсутствует UUID.")
@@ -267,7 +292,7 @@ object ShareLinkParser {
             flow = normalizeVlessFlow(query["flow"]),
             tls = tls(query, host),
             transport = transport(query),
-        )
+        ).withWarnings(warnings + insecureWarning(query))
     }
 
     private fun normalizeVlessFlow(flow: String?): String? = when (
@@ -284,7 +309,8 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectUnknownParameters(query, TROJAN_QUERY_KEYS, "Trojan")
+        val warnings = classifyParameters(query, TROJAN_QUERY_KEYS, TROJAN_IGNORABLE_KEYS, "Trojan") +
+            rejectHeaderObfuscation(query, "Trojan")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В Trojan отсутствует пароль.")
         return ProtocolOutboundBuilders.trojan(
@@ -294,7 +320,7 @@ object ShareLinkParser {
             password = password,
             tls = tls(query, host, defaultEnabled = true),
             transport = transport(query),
-        )
+        ).withWarnings(warnings + insecureWarning(query))
     }
 
     private fun parseVmess(link: String, index: Int): ManagedServer {
@@ -304,7 +330,7 @@ object ShareLinkParser {
         val host = data.text("add") ?: throw ImportException("В VMess отсутствует сервер.")
         val port = data.number("port") ?: 443
         val uuid = data.text("id") ?: throw ImportException("В VMess отсутствует UUID.")
-        rejectUnknownFields(data, VMESS_FIELDS, "VMess")
+        val warnings = classifyFields(data, VMESS_FIELDS, VMESS_IGNORABLE_FIELDS, "VMess")
         val network = data.text("net").orEmpty()
         val transport = when (network) {
             "", "tcp" -> null
@@ -336,7 +362,7 @@ object ShareLinkParser {
             tls = TlsSettings(
                 enabled = tlsEnabled,
                 serverName = data.text("sni") ?: host,
-                insecure = data.text("allowInsecure") == "1",
+                insecure = data.boolean("allowInsecure"),
                 utlsFingerprint = data.text("fp"),
                 realityPublicKey = data.text("pbk"),
                 realityShortId = data.text("sid"),
@@ -346,7 +372,7 @@ object ShareLinkParser {
                     .filter(String::isNotBlank),
             ),
             transport = transport,
-        )
+        ).withWarnings(warnings)
     }
 
     private fun parseShadowsocks(link: String, index: Int): ManagedServer {
@@ -355,12 +381,17 @@ object ShareLinkParser {
         val beforeFragment = body.substringBefore('#')
         val rawQuery = beforeFragment.substringAfter('?', "")
         val shadowQuery = rawQuery.split('&').filter(String::isNotBlank).associate { part ->
-            decode(part.substringBefore('=')) to decode(part.substringAfter('=', ""))
+            canonicalKey(decode(part.substringBefore('='))) to decode(part.substringAfter('=', ""))
         }
-        if (shadowQuery.keys.any { it.equals("plugin", true) }) {
+        if ("plugin" in shadowQuery) {
             throw ImportException("Shadowsocks plugin в URI пока не поддерживается.")
         }
-        rejectUnknownParameters(shadowQuery, emptySet(), "Shadowsocks")
+        val warnings = classifyParameters(
+            shadowQuery,
+            SHADOWSOCKS_QUERY_KEYS,
+            SHADOWSOCKS_IGNORABLE_KEYS,
+            "Shadowsocks",
+        ) + rejectForeignTransport(shadowQuery, "Shadowsocks")
         val withoutFragment = beforeFragment.substringBefore('?')
         val expanded = if ('@' in withoutFragment) withoutFragment else decodeBase64(withoutFragment)
         val credentialPart = expanded.substringBeforeLast('@')
@@ -391,13 +422,25 @@ object ShareLinkParser {
         val uri = URI(normalized)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectUnknownParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2")
+        rejectCertificatePinning(query, "Hysteria2")
+        rejectImpossibleTlsOptOut(query, "Hysteria2")
+        val warnings = classifyParameters(
+            query,
+            HYSTERIA2_QUERY_KEYS,
+            HYSTERIA2_IGNORABLE_KEYS,
+            "Hysteria2",
+        )
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: query["auth"]?.takeIf(String::isNotBlank)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
         val obfsType = query["obfs"]?.lowercase()
-        if (obfsType != null && obfsType !in setOf("none", "salamander")) {
+        if (obfsType != null && obfsType !in setOf("none", "plain", "salamander", "gecko")) {
             throw ImportException("Hysteria2 obfs '$obfsType' пока не поддерживается.")
+        }
+        val obfsPassword = query["obfspassword"]
+        if (obfsType in setOf("salamander", "gecko") && obfsPassword.isNullOrBlank()) {
+            // Без пароля salamander не согласуется: сервер молча отвергал бы каждый пакет.
+            throw ImportException("Hysteria2 obfs '$obfsType' требует obfs-password.")
         }
         return ProtocolOutboundBuilders.hysteria2(
             displayName = displayName(uri, "Hysteria2 ${index + 1}"),
@@ -407,24 +450,23 @@ object ShareLinkParser {
             tls = TlsSettings(
                 enabled = true,
                 serverName = query["sni"] ?: query["peer"] ?: host,
-                insecure = query.boolean("insecure") || query.boolean("allowInsecure"),
+                insecure = query.boolean("insecure"),
                 alpn = query.csv("alpn"),
             ),
-            obfsPassword = if (obfsType == "salamander") {
-                query["obfs-password"] ?: query["obfs_password"]
-            } else {
-                null
-            },
-            upMbps = query["upmbps"]?.toIntOrNull(),
-            downMbps = query["downmbps"]?.toIntOrNull(),
-        )
+            obfsPassword = obfsPassword.takeIf { obfsType in setOf("salamander", "gecko") },
+            obfsType = obfsType.takeIf { it in setOf("salamander", "gecko") },
+            upMbps = query.mbps("up"),
+            downMbps = query.mbps("down"),
+        ).withWarnings(warnings + insecureWarning(query))
     }
 
     private fun parseTuic(link: String, index: Int): ManagedServer {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectUnknownParameters(query, TUIC_QUERY_KEYS, "TUIC")
+        rejectCertificatePinning(query, "TUIC")
+        rejectImpossibleTlsOptOut(query, "TUIC")
+        val warnings = classifyParameters(query, TUIC_QUERY_KEYS, TUIC_IGNORABLE_KEYS, "TUIC")
         val credentials = decode(uri.rawUserInfo)
         val uuid = credentials.substringBefore(':').takeIf(String::isNotBlank)
             ?: throw ImportException("В TUIC отсутствует UUID.")
@@ -436,9 +478,9 @@ object ShareLinkParser {
             serverPort = requirePort(uri, 443),
             uuid = uuid,
             password = password,
-            congestionControl = query["congestion_control"] ?: query["congestion-control"],
-            udpRelayMode = query["udp_relay_mode"] ?: query["udp-relay-mode"],
-            zeroRttHandshake = query.boolean("zero_rtt_handshake") || query.boolean("zero-rtt-handshake"),
+            congestionControl = query["congestioncontrol"],
+            udpRelayMode = query["udprelaymode"],
+            zeroRttHandshake = query.boolean("zerortthandshake"),
             heartbeat = query["heartbeat"],
             tls = TlsSettings(
                 enabled = true,
@@ -465,11 +507,11 @@ object ShareLinkParser {
         val enabled = defaultEnabled || security == "tls" || security == "reality"
         return TlsSettings(
             enabled = enabled,
-            serverName = query["sni"] ?: query["serverName"] ?: if (enabled) host else null,
-            insecure = query["allowInsecure"] == "1",
+            serverName = query["sni"] ?: if (enabled) host else null,
+            insecure = query.boolean("insecure"),
             utlsFingerprint = query["fp"],
-            realityPublicKey = query["pbk"] ?: query["publicKey"],
-            realityShortId = query["sid"] ?: query["shortId"],
+            realityPublicKey = query["pbk"],
+            realityShortId = query["sid"],
             alpn = query.csv("alpn"),
         )
     }
@@ -487,7 +529,7 @@ object ShareLinkParser {
         )
         "grpc" -> TransportSettings(
             type = type,
-            serviceName = query["serviceName"] ?: query["service_name"],
+            serviceName = query["servicename"],
         )
         "xhttp" -> TransportSettings(
             type = type,
@@ -504,39 +546,141 @@ object ShareLinkParser {
         .split('&')
         .filter(String::isNotBlank)
         .associate { part ->
-            val key = decode(part.substringBefore('='))
+            val key = canonicalKey(decode(part.substringBefore('=')))
             val value = decode(part.substringAfter('=', ""))
             key to value
         }
 
-    private fun rejectUnknownParameters(
+    /**
+     * Панели пишут одно и то же имя по-разному: `allowInsecure`, `allow_insecure`,
+     * `skip-cert-verify`. Классифицировать нужно смысл, а не написание, поэтому имя
+     * сводится к нижнему регистру без разделителей и затем к каноническому синониму.
+     */
+    private fun canonicalKey(raw: String): String {
+        val normalized = raw.trim().lowercase().filterNot { it == '-' || it == '_' }
+        return KEY_ALIASES[normalized] ?: normalized
+    }
+
+    /**
+     * Вердикт по параметру определяет его класс, а не знакомство парсера с именем.
+     *
+     * Исполнимое переносится в конфигурацию; неисполнимое, но безопасное — теряется
+     * с поимённым предупреждением в preview; всё остальное по-прежнему отклоняется,
+     * потому что неизвестное имя означает неизвестный класс.
+     */
+    private fun classifyParameters(
         query: Map<String, String>,
-        supported: Set<String>,
+        executable: Set<String>,
+        ignorable: Set<String>,
         protocol: String,
-    ) {
-        val unknown = query.keys.filterNot(supported::contains).sorted()
+    ): List<String> {
+        val unknown = query.keys.filterNot { it in executable || it in ignorable }.sorted()
         if (unknown.isNotEmpty()) {
             throw ImportException(
                 "$protocol содержит неподдерживаемые параметры: ${unknown.joinToString()}.",
             )
         }
+        val dropped = query.keys.filter { it in ignorable && it !in executable }.sorted()
+        return if (dropped.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(
+                "$protocol: параметры не переносятся в sing-box и не применены — " +
+                    "${dropped.joinToString()}.",
+            )
+        }
     }
 
-    private fun rejectUnknownFields(
+    /**
+     * Пиннинг сертификата усиливает проверку, и перевести его нельзя: hysteria2 пинит
+     * весь сертификат, а sing-box — публичный ключ. Молчаливая потеря вернула бы
+     * обычную проверку по CA, поэтому такая ссылка отклоняется отдельным сообщением.
+     */
+    private fun rejectCertificatePinning(query: Map<String, String>, protocol: String) {
+        if (query["pinsha256"].isNullOrBlank()) return
+        throw ImportException(
+            "$protocol закрепляет сертификат (pinSHA256): sing-box закрепляет только " +
+                "публичный ключ, поэтому ссылку нельзя перенести без потери проверки.",
+        )
+    }
+
+    /**
+     * VMess-payload — чужой формат, который переводится в sing-box, а не сохраняется
+     * как есть, поэтому к его полям применяется то же правило классов, что и к query.
+     */
+    private fun classifyFields(
         data: JsonObject,
-        supported: Set<String>,
+        executable: Set<String>,
+        ignorable: Set<String>,
         protocol: String,
-    ) {
-        val unknown = data.keys.filterNot(supported::contains).sorted()
+    ): List<String> {
+        val keys = data.keys.map { it.lowercase() }
+        val unknown = keys.filterNot { it in executable || it in ignorable }.sorted()
         if (unknown.isNotEmpty()) {
             throw ImportException(
                 "$protocol содержит неподдерживаемые поля: ${unknown.joinToString()}.",
+            )
+        }
+        val dropped = keys.filter { it in ignorable && it !in executable }.sorted()
+        return if (dropped.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(
+                "$protocol: поля не переносятся в sing-box и не применены — " +
+                    "${dropped.joinToString()}.",
             )
         }
     }
 
     private fun displayName(uri: URI, fallback: String): String =
         decode(uri.rawFragment.orEmpty()).ifBlank { fallback }
+
+    /** Скорость в ссылке пишут и числом, и строкой вида "100 Mbps". */
+    private fun Map<String, String>.mbps(key: String): Int? = this[key]
+        ?.trim()
+        ?.takeWhile(Char::isDigit)
+        ?.toIntOrNull()
+
+    /** Ссылка ослабляет проверку сертификата — это нельзя применить беззвучно. */
+    private fun insecureWarning(query: Map<String, String>): List<String> =
+        if (query.boolean("insecure")) {
+            listOf("Ссылка отключает проверку сертификата сервера.")
+        } else {
+            emptyList()
+        }
+
+    /**
+     * `headerType=none` — пустая операция, а любой другой тип меняет вид трафика
+     * на проводе, и подключение с ним не встанет: sing-box такой обфускации не имеет.
+     */
+    private fun rejectHeaderObfuscation(query: Map<String, String>, protocol: String): List<String> {
+        val header = query["headertype"]?.lowercase()?.takeIf(String::isNotBlank) ?: return emptyList()
+        if (header == "none") return emptyList()
+        throw ImportException("$protocol с обфускацией заголовком '$header' не поддерживается.")
+    }
+
+    /**
+     * У QUIC-протоколов TLS обязателен, поэтому `security=tls` — тавтология и шум.
+     * А `security=none` описывает соединение, которого не бывает: такую ссылку
+     * молча импортировать нельзя — она обещает не то, что произойдёт.
+     */
+    private fun rejectImpossibleTlsOptOut(query: Map<String, String>, protocol: String) {
+        val security = query["security"]?.lowercase()?.takeIf(String::isNotBlank) ?: return
+        if (security == "tls") return
+        throw ImportException(
+            "$protocol работает только поверх TLS, а ссылка объявляет security='$security'.",
+        )
+    }
+
+    /** У Shadowsocks `type` задаёт транспорт, а не косметику: чужой транспорт не молчим. */
+    private fun rejectForeignTransport(query: Map<String, String>, protocol: String): List<String> {
+        val type = query["type"]?.lowercase()?.takeIf(String::isNotBlank) ?: return emptyList()
+        if (type == "tcp") return emptyList()
+        throw ImportException("$protocol transport '$type' пока не поддерживается.")
+    }
+
+    private fun ManagedServer.withWarnings(warnings: List<String>): ManagedServer =
+        if (warnings.isEmpty()) this else copy(importWarnings = (importWarnings + warnings).distinct())
 
     private fun Map<String, String>.boolean(key: String): Boolean =
         this[key]?.lowercase() in setOf("1", "true", "yes", "on")
@@ -555,36 +699,106 @@ object ShareLinkParser {
         else -> throw ImportException("В ссылке отсутствует корректный порт.")
     }
 
-    private fun JsonObject.text(key: String): String? =
-        (this[key] as? JsonPrimitive)?.contentOrNull
+    /** Генераторы пишут ключи VMess и `allowInsecure`, и `allowinsecure`. */
+    private fun JsonObject.text(key: String): String? {
+        val entry = this[key] ?: entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value
+        return (entry as? JsonPrimitive)?.contentOrNull
+    }
+
+    /** Генераторы пишут флаги и строкой, и числом, и булевым литералом. */
+    private fun JsonObject.boolean(key: String): Boolean =
+        text(key)?.lowercase() in setOf("1", "true", "yes", "on")
 
     private fun JsonObject.number(key: String): Int? {
-        val primitive = this[key] as? JsonPrimitive ?: return null
+        val entry = this[key] ?: entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value
+        val primitive = entry as? JsonPrimitive ?: return null
         return primitive.intOrNull ?: primitive.contentOrNull?.toIntOrNull()
     }
 
     private val XHTTP_MODES = setOf("auto", "packet-up", "stream-up", "stream-one")
+
+    /** Синонимы приводятся к одному имени, чтобы класс не зависел от написания. */
+    private val KEY_ALIASES = mapOf(
+        "servername" to "sni",
+        "peer" to "sni",
+        "allowinsecure" to "insecure",
+        "skipcertverify" to "insecure",
+        "publickey" to "pbk",
+        "shortid" to "sid",
+        "fingerprint" to "fp",
+        "spiderx" to "spx",
+        "upmbps" to "up",
+        "upbps" to "up",
+        "downmbps" to "down",
+        "downbps" to "down",
+        "obfspassword" to "obfspassword",
+        "congestioncontroller" to "congestioncontrol",
+        "heartbeatinterval" to "heartbeat",
+        "reducertt" to "zerortthandshake",
+        "tcpfastopen" to "tfo",
+        "fastopen" to "tfo",
+        "mport" to "ports",
+        "pinsha256" to "pinsha256",
+    )
+
     private val TRANSPORT_QUERY_KEYS = setOf(
-        "type", "path", "host", "serviceName", "service_name", "mode", "extra",
+        "type", "path", "host", "servicename", "mode", "extra",
     )
     private val TLS_QUERY_KEYS = setOf(
-        "security", "sni", "serverName", "allowInsecure", "fp", "pbk", "publicKey",
-        "sid", "shortId", "alpn",
+        "security", "sni", "insecure", "fp", "pbk", "sid", "alpn",
     )
-    private val VLESS_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS + setOf("flow", "encryption")
-    private val TROJAN_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS
+
+    /**
+     * Параметры чужих реализаций, которые sing-box выполнить не может, но их потеря
+     * не меняет ни шифрование, ни то, кому клиент доверяет. Список расширяется только
+     * по реальному образцу ссылки и вместе с тестом.
+     */
+    private val TCP_IGNORABLE_KEYS = setOf(
+        // spiderX — путь для сканеров REALITY на стороне Xray, у sing-box его нет.
+        "spx",
+        "packetencoding",
+        "authority",
+        "mux",
+        "remarks",
+        "remark",
+        "tfo",
+    )
+    private val VLESS_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS +
+        setOf("flow", "encryption", "headertype")
+    private val VLESS_IGNORABLE_KEYS = TCP_IGNORABLE_KEYS
+    private val TROJAN_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS + setOf("headertype")
+    private val TROJAN_IGNORABLE_KEYS = TCP_IGNORABLE_KEYS + setOf("encryption", "plugin")
+    private val SHADOWSOCKS_QUERY_KEYS = setOf("type")
+    private val SHADOWSOCKS_IGNORABLE_KEYS = setOf("outline", "prefix", "remarks", "remark", "tfo")
     private val HYSTERIA2_QUERY_KEYS = setOf(
-        "auth", "sni", "peer", "insecure", "allowInsecure", "alpn", "obfs",
-        "obfs-password", "obfs_password", "upmbps", "downmbps",
+        "auth", "sni", "insecure", "alpn", "obfs", "obfspassword", "up", "down",
+    )
+
+    /**
+     * `security=tls` для Hysteria2 — тавтология: TLS там обязателен. `fp` неисполним:
+     * uTLS подменяет ClientHello в TCP-потоке, а рукопожатие QUIC идёт внутри ядра,
+     * и sing-box по умолчанию уже имитирует QUIC-профиль Chrome.
+     */
+    private val HYSTERIA2_IGNORABLE_KEYS = setOf(
+        "security", "fp", "ports", "hopinterval", "tfo", "vcn", "pcs", "fm", "udp", "dns",
     )
     private val TUIC_QUERY_KEYS = setOf(
-        "sni", "allow_insecure", "allowInsecure", "insecure", "alpn",
-        "congestion_control", "congestion-control", "udp_relay_mode", "udp-relay-mode",
-        "zero_rtt_handshake", "zero-rtt-handshake", "heartbeat",
+        "sni", "insecure", "alpn", "congestioncontrol", "udprelaymode",
+        "zerortthandshake", "heartbeat",
+    )
+    private val TUIC_IGNORABLE_KEYS = setOf(
+        "security", "fp", "tfo", "disablesni", "udpoverstream", "requesttimeout",
+        "maxudprelaypacketsize", "token", "version", "ip",
+    )
+    /** Метки и настройки чужих клиентов: смысла для sing-box не имеют. */
+    private val VMESS_IGNORABLE_FIELDS = setOf(
+        "spx", "mode", "security", "headertype", "servicename", "remark", "remarks",
+        "class", "mux", "protocol", "obfs", "obfsparam", "tag", "skipcertverify", "sockopt",
+        "fingerprint", "packetencoding", "tfo",
     )
     private val VMESS_FIELDS = setOf(
         "v", "ps", "add", "port", "id", "aid", "scy", "net", "path", "host", "type",
-        "extra", "tls", "sni", "allowInsecure", "fp", "alpn", "pbk", "sid",
+        "extra", "tls", "sni", "allowinsecure", "fp", "alpn", "pbk", "sid",
     )
 
 }

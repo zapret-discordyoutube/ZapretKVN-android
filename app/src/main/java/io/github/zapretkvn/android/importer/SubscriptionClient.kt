@@ -29,8 +29,8 @@ class HttpSubscriptionFetcher(
     private val appVersion: String = "",
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
-        val headers = SubscriptionIdentity.requestHeaders(source, device, appVersion)
         var current = validatedUrl(source.url)
+        val origin = URI(current).host.orEmpty()
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
             val connection = (URL(current).openConnection() as? HttpURLConnection)
                 ?: throw ImportException("URL подписки не является HTTP(S).")
@@ -39,7 +39,12 @@ class HttpSubscriptionFetcher(
                 connection.connectTimeout = TIMEOUT_MILLIS
                 connection.readTimeout = TIMEOUT_MILLIS
                 connection.useCaches = false
-                headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+                // Идентификатор устройства принадлежит только исходному провайдеру:
+                // на редиректе к чужому хосту он снимается, как браузеры снимают Authorization.
+                val sameOrigin = URI(current).host.orEmpty().equals(origin, ignoreCase = true)
+                val effective = if (sameOrigin) source else source.copy(sendHwid = false, hwid = "")
+                SubscriptionIdentity.requestHeaders(effective, device, appVersion)
+                    .forEach { (name, value) -> connection.setRequestProperty(name, value) }
                 val status = connection.responseCode
                 if (status in REDIRECT_CODES) {
                     if (redirectIndex == MAX_REDIRECTS) {
@@ -47,7 +52,11 @@ class HttpSubscriptionFetcher(
                     }
                     val location = connection.getHeaderField("Location")
                         ?: throw ImportException("Сервер вернул перенаправление без адреса.")
-                    val next = validatedUrl(URI(current).resolve(location).toString())
+                    val next = runCatching { URI(current).resolve(location).toString() }
+                        .map(::validatedUrl)
+                        .getOrElse {
+                            throw ImportException("Сервер вернул некорректный адрес перенаправления.")
+                        }
                     if (current.startsWith("https://", true) && next.startsWith("http://", true)) {
                         throw ImportException("Переход подписки с HTTPS на HTTP запрещён.")
                     }

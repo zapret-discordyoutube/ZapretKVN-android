@@ -832,7 +832,9 @@ class ProfilesViewModel(
     }.take(8).map(SecretRedactor::redactInline)
 
     private fun ImportCandidate.importWarnings(): List<String> = when (this) {
-        is ImportCandidate.Managed -> importWarnings
+        // Предупреждение показывается рядом с адресами и метками, поэтому проходит
+        // ту же редакцию: в тексте могут оказаться значения параметров ссылки.
+        is ImportCandidate.Managed -> importWarnings.map(SecretRedactor::redactInline)
         is ImportCandidate.RawJson,
         is ImportCandidate.WireGuard,
         -> emptyList()

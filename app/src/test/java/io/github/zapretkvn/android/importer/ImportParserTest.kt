@@ -242,12 +242,19 @@ class ImportParserTest {
         val shadowsocks = ShareLinkParser.parse("ss://$ssCredentials@ss.example#SS").outbound
         assertEquals("8388", (shadowsocks["server_port"] as JsonPrimitive).content)
 
+        // spx не переносится в sing-box, но и не мешает: ссылка импортируется
+        // с предупреждением, а отказ остаётся для параметров неизвестного класса.
+        val degraded = ShareLinkParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&spx=%2F",
+        )
+        assertTrue(degraded.importWarnings.any { it.contains("spx") })
+
         val error = assertThrows(ImportException::class.java) {
             ShareLinkParser.parse(
-                "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&spx=%2F",
+                "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&zzz=1",
             )
         }
-        assertTrue(error.message.orEmpty().contains("spx"))
+        assertTrue(error.message.orEmpty().contains("zzz"))
     }
 
     @Test
@@ -731,6 +738,155 @@ class ImportParserTest {
         uuid = "11111111-1111-4111-8111-111111111111",
         tls = TlsSettings(enabled = true, serverName = host),
     )
+
+
+    // Ссылки ниже — реальный выхлоп панелей Marzban, Remnawave, 3x-ui и Hiddify.
+
+    @Test
+    fun `reality link with spx and headerType imports`() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?security=reality&sni=example.org&fp=chrome&pbk=abc&sid=ff&spx=%2F" +
+                "&type=tcp&headerType=none&flow=xtls-rprx-vision#One",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+        assertTrue(candidate.importWarnings.any { it.contains("spx") })
+    }
+
+    @Test
+    fun `hysteria2 link with fp and security imports without applying utls`() {
+        val candidate = ImportParser.parse(
+            "hysteria2://secret@one.example:8443?alpn=h3&fp=chrome&security=tls&sni=example.org#Hy2",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        val outbound = candidate.servers.single().outbound
+        val tls = outbound["tls"] as JsonObject
+        assertEquals(null, tls["utls"])
+        assertTrue(candidate.importWarnings.any { it.contains("fp") })
+    }
+
+    @Test
+    fun `hysteria2 rejects a link that claims TLS is off`() {
+        assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "hysteria2://secret@one.example:8443?security=none#Hy2",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+    }
+
+    @Test
+    fun `certificate pinning is refused with its own message`() {
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "hysteria2://secret@one.example:8443?pinSHA256=deadbeef#Hy2",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+        assertTrue(error.message.orEmpty().contains("публичный ключ"))
+    }
+
+    @Test
+    fun `parameter names are matched by meaning not spelling`() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?security=tls&SNI=example.org&allow_insecure=1&Fingerprint=chrome#One",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        val tls = candidate.servers.single().outbound["tls"] as JsonObject
+        assertEquals("example.org", (tls["server_name"] as JsonPrimitive).content)
+        assertEquals("true", (tls["insecure"] as JsonPrimitive).content)
+        assertTrue(candidate.importWarnings.any { it.contains("проверку сертификата") })
+    }
+
+    @Test
+    fun `unknown parameter is still refused`() {
+        assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls&zzz=1#One",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+    }
+
+    @Test
+    fun `header obfuscation is refused because it changes the wire format`() {
+        assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                    "?security=tls&type=tcp&headerType=http#One",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+    }
+
+    @Test
+    fun `shadowsocks accepts a plain tcp marker and refuses a foreign transport`() {
+        val candidate = ImportParser.parse(
+            "ss://YWVzLTI1Ni1nY206c2VjcmV0@one.example:8388?type=tcp#SS",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+        assertEquals(1, candidate.servers.size)
+
+        assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "ss://YWVzLTI1Ni1nY206c2VjcmV0@one.example:8388?type=ws#SS",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+    }
+
+    @Test
+    fun `salamander without a password is refused instead of building a dead server`() {
+        assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "hysteria2://secret@one.example:8443?obfs=salamander#Hy2",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+    }
+
+    @Test
+    fun `bandwidth hints survive their unit suffix`() {
+        val candidate = ImportParser.parse(
+            "hysteria2://secret@one.example:8443?up=100%20Mbps&down=200#Hy2",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        val outbound = candidate.servers.single().outbound
+        assertEquals("100", (outbound["up_mbps"] as JsonPrimitive).content)
+        assertEquals("200", (outbound["down_mbps"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `repeated warnings are collapsed with a count`() {
+        val link = "vless://11111111-1111-4111-8111-111111111111@%s:443" +
+            "?security=tls&sni=example.org&spx=%%2F#%s"
+        val candidate = ImportParser.parse(
+            (1..3).joinToString("\n") { link.format("host$it.example", "S$it") },
+            ProfileSource.Subscription,
+            "Подписка",
+        ) as ImportCandidate.Managed
+
+        assertEquals(3, candidate.servers.size)
+        val warning = candidate.importWarnings.single { it.contains("spx") }
+        assertTrue(warning, warning.contains("серверов: 3"))
+    }
 
     private fun JsonObject.string(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull
