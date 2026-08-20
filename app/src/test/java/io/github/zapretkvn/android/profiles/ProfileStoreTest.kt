@@ -110,6 +110,56 @@ class ProfileStoreTest {
         assertFalse(File(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json.atomic").exists())
     }
 
+    @Test
+    fun `batch reconciles updates additions and removals in one index`() = runBlocking {
+        val store = store(JvmAtomicWriter())
+        store.initialize()
+        val first = store.create("First", OLD_JSON, ProfileSource.Link)
+        val secondId = "11111111111111111111111111111111"
+        store.applyBatch(
+            updates = emptyMap(),
+            creates = listOf(ProfileBatchCreate(secondId, "Second", OLD_JSON, ProfileSource.Link)),
+            deletes = emptySet(),
+        )
+        val thirdId = "22222222222222222222222222222222"
+
+        val result = store.applyBatch(
+            updates = mapOf(first.id to NEW_JSON),
+            creates = listOf(ProfileBatchCreate(thirdId, "Third", NEW_JSON, ProfileSource.Link)),
+            deletes = setOf(secondId),
+        )
+
+        assertEquals(listOf(first.id, thirdId), store.profiles.value.map(ProfileMetadata::id))
+        assertEquals(NEW_JSON, store.read(first.id).json)
+        assertEquals(listOf(thirdId), result.created.map(ProfileMetadata::id))
+        assertTrue(runCatching { store.read(secondId) }.isFailure)
+    }
+
+    @Test
+    fun `invalid batch changes nothing`() = runBlocking {
+        val store = store(JvmAtomicWriter())
+        store.initialize()
+        val first = store.create("First", OLD_JSON, ProfileSource.Link)
+
+        runCatching {
+            store.applyBatch(
+                updates = mapOf(first.id to "{broken"),
+                creates = listOf(
+                    ProfileBatchCreate(
+                        "11111111111111111111111111111111",
+                        "Second",
+                        NEW_JSON,
+                        ProfileSource.Link,
+                    ),
+                ),
+                deletes = emptySet(),
+            )
+        }.onSuccess { throw AssertionError("Batch must fail") }
+
+        assertEquals(listOf(first.id), store.profiles.value.map(ProfileMetadata::id))
+        assertEquals(OLD_JSON, store.read(first.id).json)
+    }
+
     private fun store(
         writer: AtomicProfileWriter,
         root: File = temporaryFolder.newFolder("profiles-${System.nanoTime()}"),

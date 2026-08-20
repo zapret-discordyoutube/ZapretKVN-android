@@ -38,6 +38,7 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -560,6 +561,80 @@ class ImportInstrumentedTest {
 
             assertTrue(viewModel.state.value.message != null)
             assertEquals(VALID_DIRECT, profileStore.read(metadata.id).json)
+        } finally {
+            testViewModelStore.clear()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun splitSubscriptionRefreshRotatesCredentialsAndReconcilesMembers() = runBlocking {
+        val root = File(context.cacheDir, "split-refresh-${System.nanoTime()}")
+        val testViewModelStore = ViewModelStore()
+        try {
+            val profileStore = ProfileStore(File(root, "profiles"), LibboxConfigValidator())
+            profileStore.initialize()
+            val oldOne = vless("One", "one.example")
+            val oldTwo = vless("Two", "two.example")
+            val first = profileStore.create("One", ManagedProfileFactory.single(oldOne), ProfileSource.Link)
+            val second = profileStore.create("Two", ManagedProfileFactory.single(oldTwo), ProfileSource.Link)
+            val source = SubscriptionSource("https://subscription.example/profile?token=secret")
+            val sourceStore = SubscriptionSourceStore(File(root, "subscriptions"))
+            val keys = ManagedProfileFactory.stableMemberKeys(listOf(oldOne, oldTwo))
+            val known = keys.toSet()
+            sourceStore.replaceSplitGroup(
+                "group-1",
+                mapOf(
+                    first.id to SubscriptionBinding(source, "group-1", keys[0], "Servers", known),
+                    second.id to SubscriptionBinding(source, "group-1", keys[1], "Servers", known),
+                ),
+            )
+            val refreshedLinks = listOf(
+                "vless://22222222-2222-4222-8222-222222222222@one.example:443?security=tls#One",
+                "vless://33333333-3333-4333-8333-333333333333@three.example:443?security=tls#Three",
+            ).joinToString("\n")
+            val application = context.applicationContext as ZapretApplication
+            val viewModel = ViewModelProvider(
+                object : ViewModelStoreOwner {
+                    override val viewModelStore: ViewModelStore = testViewModelStore
+                },
+                ProfilesViewModel.Factory(
+                    store = profileStore,
+                    settingsStore = application.container.uiSettingsStore,
+                    validator = LibboxConfigValidator(),
+                    importReader = AndroidImportReader(context),
+                    subscriptionFetcher = SubscriptionFetcher { refreshedLinks },
+                    subscriptionSourceStore = sourceStore,
+                    vpnController = VpnController(context),
+                    bootstrapCache = BootstrapCache(File(root, "network")),
+                    ruleSetAssets = application.container.ruleSetAssetManager,
+                ),
+            )[ProfilesViewModel::class.java]
+
+            fun awaitState(predicate: (ProfilesUiState) -> Boolean) {
+                val deadline = SystemClock.uptimeMillis() + 15_000
+                while (!predicate(viewModel.state.value) && SystemClock.uptimeMillis() < deadline) {
+                    SystemClock.sleep(25)
+                }
+            }
+
+            awaitState(ProfilesUiState::initialized)
+            viewModel.refreshSubscription(first.id)
+            awaitState { it.importPreview?.splitRefreshSummary != null || it.message != null }
+            val summary = checkNotNull(viewModel.state.value.importPreview?.splitRefreshSummary)
+            assertEquals(1, summary.updated)
+            assertEquals(1, summary.added)
+            assertEquals(1, summary.removed)
+
+            viewModel.confirmRefresh(restartConnected = false)
+            awaitState { !it.busy && it.importPreview == null }
+
+            val profiles = profileStore.profiles.value
+            assertEquals(2, profiles.size)
+            assertTrue(profiles.any { it.id == first.id })
+            assertFalse(profiles.any { it.id == second.id })
+            assertTrue(profileStore.read(first.id).json.contains("22222222-2222-4222-8222-222222222222"))
+            assertEquals(2, sourceStore.splitGroup(first.id).size)
         } finally {
             testViewModelStore.clear()
             root.deleteRecursively()

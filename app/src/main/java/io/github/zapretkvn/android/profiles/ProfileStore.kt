@@ -15,6 +15,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+data class ProfileBatchCreate(
+    val id: String,
+    val name: String,
+    val rawJson: String,
+    val source: ProfileSource,
+)
+
+data class ProfileBatchResult(val created: List<ProfileMetadata>)
+
 class ProfileStore(
     private val root: File,
     private val validator: ConfigValidator,
@@ -97,6 +106,67 @@ class ProfileStore(
                 throw error
             }
             mutableProfiles.value = updated
+        }
+    }
+
+    /**
+     * Applies a subscription reconciliation as one index commit. Profile files written before
+     * that commit are rolled back if any validation or write fails.
+     */
+    suspend fun applyBatch(
+        updates: Map<String, String>,
+        creates: List<ProfileBatchCreate>,
+        deletes: Set<String>,
+    ): ProfileBatchResult = io {
+        mutex.withLock {
+            require(updates.keys.intersect(deletes).isEmpty()) { "Профиль нельзя обновить и удалить." }
+            require(creates.map { it.id }.distinct().size == creates.size) { "Повторяющийся id профиля." }
+            updates.values.forEach(::requireValid)
+            creates.forEach { requireValid(it.rawJson) }
+
+            val index = readIndexOrCreate()
+            val indexedIds = index.map(ProfileMetadata::id).toSet()
+            if (!indexedIds.containsAll(updates.keys + deletes)) {
+                throw ProfileStoreException("Один из профилей группы не найден.")
+            }
+            if (creates.any { !it.id.matches(ID_PATTERN) || it.id in indexedIds }) {
+                throw ProfileStoreException("Некорректный или занятый id нового профиля.")
+            }
+
+            val now = clock()
+            val createdMetadata = creates.map {
+                ProfileMetadata(it.id, normalizeName(it.name), it.source, now, now)
+            }
+            val finalIndex = index
+                .filterNot { it.id in deletes }
+                .map { metadata ->
+                    if (metadata.id in updates) metadata.copy(updatedAtEpochMillis = now) else metadata
+                } + createdMetadata
+
+            val writtenUpdates = mutableListOf<File>()
+            val writtenCreates = mutableListOf<File>()
+            try {
+                updates.forEach { (id, rawJson) ->
+                    val file = profileFile(id)
+                    recoverMissingProfile(file)
+                    if (!file.isFile) throw ProfileStoreException("Файл профиля отсутствует.")
+                    writer.writeProfile(file, rawJson.toByteArray(Charsets.UTF_8))
+                    writtenUpdates += file
+                }
+                creates.forEach { create ->
+                    val file = profileFile(create.id)
+                    writer.writeProfile(file, create.rawJson.toByteArray(Charsets.UTF_8))
+                    writtenCreates += file
+                }
+                writeIndex(finalIndex)
+            } catch (error: Throwable) {
+                writtenUpdates.asReversed().forEach(writer::rollbackProfile)
+                writtenCreates.forEach(::deleteProfileFamily)
+                throw storeError("Не удалось синхронизировать профили подписки.", error)
+            }
+            deletes.forEach { deleteProfileFamily(profileFile(it)) }
+            mutableProfiles.value = finalIndex
+            ProfileBatchResult(createdMetadata)
         }
     }
 

@@ -1025,6 +1025,23 @@ private fun ImportPreviewDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                preview.splitRefreshSummary?.let { summary ->
+                    Text(
+                        "Раздельные профили: ${summary.updated} обновится, " +
+                            "${summary.added} добавится, ${summary.removed} удалится.",
+                        color = if (summary.removed > 0) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    if (summary.connectedProfileRemoved) {
+                        Text(
+                            "Подключённый сервер удалён из подписки: после обновления VPN будет отключён.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
                 if (preview.activeRefresh) {
                     Text(
                         "Профиль сейчас подключён. Перезапуск возможен только отдельным подтверждением ниже.",
@@ -1038,7 +1055,8 @@ private fun ImportPreviewDialog(
                             "Один профиль-группа даёт переключение сервера прямо в приложении. " +
                                 "Отдельные профили удобны, когда у серверов разные маршруты и настройки" +
                                 if (preview.hasSubscriptionUrl) {
-                                    "; обновляться по ссылке подписки они не будут."
+                                    "; они сохранят индивидуальные маршруты и будут синхронизироваться " +
+                                        "вместе по ссылке подписки."
                                 } else {
                                     "."
                                 }
@@ -1067,11 +1085,19 @@ private fun ImportPreviewDialog(
                 Column(horizontalAlignment = Alignment.End) {
                     if (preview.activeRefresh) {
                         TextButton(onClick = { onRefresh(true) }, enabled = !busy) {
-                            Text("Сохранить и переподключить")
+                            Text(
+                                if (preview.splitRefreshSummary?.connectedProfileRemoved == true) {
+                                    "Обновить и отключить"
+                                } else {
+                                    "Сохранить и переподключить"
+                                },
+                            )
                         }
                     }
-                    TextButton(onClick = { onRefresh(false) }, enabled = !busy) {
-                        Text(if (preview.activeRefresh) "Сохранить без перезапуска" else "Обновить")
+                    if (preview.splitRefreshSummary?.connectedProfileRemoved != true) {
+                        TextButton(onClick = { onRefresh(false) }, enabled = !busy) {
+                            Text(if (preview.activeRefresh) "Сохранить без перезапуска" else "Обновить")
+                        }
                     }
                 }
             } else {

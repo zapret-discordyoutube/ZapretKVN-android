@@ -12,9 +12,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
@@ -116,6 +118,20 @@ class HttpSubscriptionFetcher(
     }
 }
 
+/**
+ * A refresh binding may describe either one ordinary profile or one member of a split
+ * subscription. Split metadata lets the updater reconcile the whole group after a single fetch.
+ */
+data class SubscriptionBinding(
+    val source: SubscriptionSource,
+    val splitGroupId: String? = null,
+    val splitMemberKey: String? = null,
+    val splitBaseName: String? = null,
+    val knownMemberKeys: Set<String> = emptySet(),
+) {
+    val isSplit: Boolean get() = splitGroupId != null && splitMemberKey != null
+}
+
 /** Stores refresh URLs outside profiles/index.json, which remains credentials-free UI metadata. */
 class SubscriptionSourceStore(
     private val root: File,
@@ -124,7 +140,38 @@ class SubscriptionSourceStore(
     private val mutex = Mutex()
 
     suspend fun get(profileId: String): SubscriptionSource? = withContext(Dispatchers.IO) {
+        mutex.withLock { read()[profileId]?.source }
+    }
+
+    suspend fun binding(profileId: String): SubscriptionBinding? = withContext(Dispatchers.IO) {
         mutex.withLock { read()[profileId] }
+    }
+
+    suspend fun splitGroup(profileId: String): Map<String, SubscriptionBinding> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val entries = read()
+                val groupId = entries[profileId]?.splitGroupId ?: return@withLock emptyMap()
+                entries.filterValues { it.splitGroupId == groupId }
+            }
+        }
+
+    /** Atomically replaces every binding in a split group. An empty map removes the group. */
+    suspend fun replaceSplitGroup(
+        groupId: String,
+        bindings: Map<String, SubscriptionBinding>,
+    ) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            require(groupId.isNotBlank()) { "Пустой id группы подписки." }
+            require(bindings.values.all { it.splitGroupId == groupId && it.isSplit }) {
+                "Некорректная группа подписки."
+            }
+            val entries = read().filterValues { it.splitGroupId != groupId }.toMutableMap()
+            bindings.forEach { (profileId, binding) ->
+                entries[profileId] = binding.normalized()
+            }
+            write(entries)
+        }
     }
 
     suspend fun ids(): Set<String> = withContext(Dispatchers.IO) {
@@ -134,10 +181,16 @@ class SubscriptionSourceStore(
     suspend fun put(profileId: String, source: SubscriptionSource) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val entries = read().toMutableMap()
-            entries[profileId] = source.copy(
-                url = HttpSubscriptionFetcher.validatedUrl(source.url),
-                hwid = if (source.sendHwid) SubscriptionIdentity.validateHwid(source.hwid) else "",
-            )
+            val normalized = source.normalized()
+            val existing = entries[profileId]
+            if (existing?.isSplit == true) {
+                entries.replaceAll { _, binding ->
+                    if (binding.splitGroupId == existing.splitGroupId) binding.copy(source = normalized)
+                    else binding
+                }
+            } else {
+                entries[profileId] = SubscriptionBinding(normalized)
+            }
             write(entries)
         }
     }
@@ -157,7 +210,7 @@ class SubscriptionSourceStore(
         }
     }
 
-    private fun read(): Map<String, SubscriptionSource> {
+    private fun read(): Map<String, SubscriptionBinding> {
         if (!file.isFile) return emptyMap()
         return try {
             val rootObject = JsonConfig.parse(file.readText(Charsets.UTF_8)) as? JsonObject
@@ -171,29 +224,51 @@ class SubscriptionSourceStore(
     }
 
     /** Записи до появления настроек идентификации хранились одной строкой URL. */
-    private fun parseEntry(value: JsonElement): SubscriptionSource? = when (value) {
-        is JsonPrimitive -> value.contentOrNull?.let(::SubscriptionSource)
+    private fun parseEntry(value: JsonElement): SubscriptionBinding? = when (value) {
+        is JsonPrimitive -> value.contentOrNull?.let { SubscriptionBinding(SubscriptionSource(it)) }
         is JsonObject -> value.string(URL_KEY)?.let { url ->
-            SubscriptionSource(
+            val source = SubscriptionSource(
                 url = url,
                 clientProfile = SubscriptionClientProfile.parse(value.string(CLIENT_PROFILE_KEY)),
                 sendHwid = value.boolean(SEND_HWID_KEY),
                 hwid = value.string(HWID_KEY).orEmpty(),
                 userAgent = value.string(USER_AGENT_KEY).orEmpty(),
             )
+            val groupId = value.string(SPLIT_GROUP_KEY)
+            val memberKey = value.string(SPLIT_MEMBER_KEY)
+            SubscriptionBinding(
+                source = source,
+                splitGroupId = groupId?.takeIf { memberKey != null },
+                splitMemberKey = memberKey?.takeIf { groupId != null },
+                splitBaseName = value.string(SPLIT_BASE_NAME_KEY),
+                knownMemberKeys = value.stringSet(KNOWN_MEMBERS_KEY),
+            )
         }
         else -> null
     }
 
-    private fun write(entries: Map<String, SubscriptionSource>) {
+    private fun write(entries: Map<String, SubscriptionBinding>) {
         val json = buildJsonObject {
-            entries.toSortedMap().forEach { (id, source) ->
+            entries.toSortedMap().forEach { (id, binding) ->
+                val source = binding.source
                 putJsonObject(id) {
                     put(URL_KEY, source.url)
                     put(CLIENT_PROFILE_KEY, source.clientProfile.id)
                     put(SEND_HWID_KEY, source.sendHwid)
                     if (source.sendHwid && source.hwid.isNotBlank()) put(HWID_KEY, source.hwid)
                     if (source.userAgent.isNotBlank()) put(USER_AGENT_KEY, source.userAgent)
+                    if (binding.isSplit) {
+                        put(SPLIT_GROUP_KEY, binding.splitGroupId!!)
+                        put(SPLIT_MEMBER_KEY, binding.splitMemberKey!!)
+                        binding.splitBaseName?.takeIf(String::isNotBlank)
+                            ?.let { put(SPLIT_BASE_NAME_KEY, it) }
+                        put(
+                            KNOWN_MEMBERS_KEY,
+                            buildJsonArray {
+                                binding.knownMemberKeys.sorted().forEach { add(JsonPrimitive(it)) }
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -206,6 +281,21 @@ class SubscriptionSourceStore(
     private fun JsonObject.boolean(key: String): Boolean =
         (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false
 
+    private fun JsonObject.stringSet(key: String): Set<String> =
+        (this[key] as? JsonArray).orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }
+            .toSet()
+
+    private fun SubscriptionSource.normalized(): SubscriptionSource = copy(
+        url = HttpSubscriptionFetcher.validatedUrl(url),
+        hwid = if (sendHwid) SubscriptionIdentity.validateHwid(hwid) else "",
+    )
+
+    private fun SubscriptionBinding.normalized(): SubscriptionBinding = copy(
+        source = source.normalized(),
+        knownMemberKeys = knownMemberKeys.filter(String::isNotBlank).toSet(),
+    )
+
     private val file: File get() = File(root, "index.json")
 
     private companion object {
@@ -214,5 +304,9 @@ class SubscriptionSourceStore(
         const val SEND_HWID_KEY = "send_hwid"
         const val HWID_KEY = "hwid"
         const val USER_AGENT_KEY = "user_agent"
+        const val SPLIT_GROUP_KEY = "split_group"
+        const val SPLIT_MEMBER_KEY = "split_member"
+        const val SPLIT_BASE_NAME_KEY = "split_base_name"
+        const val KNOWN_MEMBERS_KEY = "known_members"
     }
 }

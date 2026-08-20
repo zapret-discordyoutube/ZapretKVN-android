@@ -353,6 +353,27 @@ object ManagedProfileFactory {
             TaggedServer(tag, server.outbound.withTag(tag))
         }
 
+    /**
+     * Stable, credential-free identities for members of a split subscription. Credentials and
+     * obfuscation passwords may rotate without turning an existing profile into a new one.
+     */
+    fun stableMemberKeys(servers: List<ManagedServer>): List<String> {
+        val occurrences = mutableMapOf<String, Int>()
+        return servers.map { server ->
+            val occurrence = occurrences.getOrDefault(server.identityKey, 0).also {
+                occurrences[server.identityKey] = it + 1
+            }
+            if (occurrence == 0) {
+                fullHash(server.identityKey)
+            } else {
+                fullHash(
+                    "${server.identityKey}|duplicate|" +
+                        "${SecretRedactor.redactInline(server.displayName)}|$occurrence",
+                )
+            }
+        }
+    }
+
     private fun JsonObject.withTag(tag: String): JsonObject {
         val result = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()
         this["type"]?.let { result["type"] = it }
@@ -380,4 +401,9 @@ object ManagedProfileFactory {
         val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
         return bytes.take(4).joinToString("") { "%02x".format(it) }
     }
+
+    private fun fullHash(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 }

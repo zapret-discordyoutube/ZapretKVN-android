@@ -18,6 +18,7 @@ import io.github.zapretkvn.android.importer.ImportParser
 import io.github.zapretkvn.android.importer.ImportedConfigActivityScanner
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.importer.SubscriptionClientProfile
+import io.github.zapretkvn.android.importer.SubscriptionBinding
 import io.github.zapretkvn.android.importer.SubscriptionFetcher
 import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSource
@@ -34,6 +35,7 @@ import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.BootstrapCache
 import io.github.zapretkvn.android.vpn.VpnConnectionState
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -117,6 +119,32 @@ data class ImportCompletion(
     val profileName: String,
 )
 
+data class SplitRefreshSummary(
+    val updated: Int,
+    val added: Int,
+    val removed: Int,
+    val connectedProfileRemoved: Boolean,
+)
+
+data class SplitRefreshAddition(
+    val name: String,
+    val json: String,
+    val memberKey: String,
+)
+
+data class SplitRefreshPlan(
+    val groupId: String,
+    val source: SubscriptionSource,
+    val baseName: String,
+    val previousBindings: Map<String, SubscriptionBinding>,
+    val updatedJson: Map<String, String>,
+    val additions: List<SplitRefreshAddition>,
+    val removedProfileIds: Set<String>,
+    val knownMemberKeys: Set<String>,
+    val memberKeysByProfileId: Map<String, String>,
+    val connectedProfileId: String?,
+)
+
 /** Верхняя граница разложения подписки: дальше список профилей перестаёт быть управляемым. */
 internal const val MAX_SPLIT_PROFILES = 200
 
@@ -132,9 +160,11 @@ data class ImportPreviewState(
     val refreshProfileName: String? = null,
     val activeRefresh: Boolean = false,
     val selectionChanged: Boolean = false,
+    val splitRefreshSummary: SplitRefreshSummary? = null,
     internal val candidate: ImportCandidate,
     internal val preparedJson: String,
     internal val source: SubscriptionSource? = null,
+    internal val splitRefreshPlan: SplitRefreshPlan? = null,
 ) {
     val isSingleManaged: Boolean
         get() = candidate is ImportCandidate.Managed && candidate.servers.size == 1
@@ -252,12 +282,17 @@ class ProfilesViewModel(
     }
 
     fun refreshSubscription(profileId: String) = operation {
-        val subscription = subscriptionSourceStore.get(profileId)
+        val binding = subscriptionSourceStore.binding(profileId)
             ?: throw ImportException("Для этого профиля не сохранён URL ручного обновления.")
+        val subscription = binding.source
         val stored = store.read(profileId)
         val raw = withContext(Dispatchers.IO) { subscriptionFetcher.fetch(subscription) }
         val candidate = withContext(Dispatchers.Default) {
             ImportParser.parse(raw, ProfileSource.Url, stored.metadata.name)
+        }
+        if (binding.isSplit) {
+            previewSplitRefresh(profileId, binding, subscription, candidate)
+            return@operation
         }
         val candidateJson = candidate.toJson()
         val update = when {
@@ -393,6 +428,21 @@ class ProfilesViewModel(
             prepared.forEachIndexed { index, json ->
                 created += store.create(names[index], json, ProfileSource.Link)
             }
+            pending.source?.let { source ->
+                val groupId = newId()
+                val keys = ManagedProfileFactory.stableMemberKeys(servers)
+                val knownKeys = keys.toSet()
+                val bindings = created.mapIndexed { index, profile ->
+                    profile.id to SubscriptionBinding(
+                        source = source,
+                        splitGroupId = groupId,
+                        splitMemberKey = keys[index],
+                        splitBaseName = baseName.trim().ifBlank { "Подписка" },
+                        knownMemberKeys = knownKeys,
+                    )
+                }.toMap()
+                subscriptionSourceStore.replaceSplitGroup(groupId, bindings)
+            }
         } catch (error: Throwable) {
             created.forEach { profile -> runCatching { store.delete(profile.id) } }
             throw error
@@ -406,6 +456,11 @@ class ProfilesViewModel(
             it.copy(
                 importPreview = null,
                 importCompletion = ImportCompletion(first.id, first.name),
+                refreshableProfileIds = if (pending.source != null) {
+                    it.refreshableProfileIds + created.map(ProfileMetadata::id)
+                } else {
+                    it.refreshableProfileIds
+                },
             )
         }
         showMessage("Создано профилей: ${created.size}. Подключение не запускалось.")
@@ -428,6 +483,10 @@ class ProfilesViewModel(
         val pending = mutableState.value.importPreview
             ?.takeIf { it.isRefresh }
             ?: throw ImportException("Предпросмотр обновления уже закрыт.")
+        pending.splitRefreshPlan?.let { plan ->
+            confirmSplitRefresh(pending, plan, restartConnected)
+            return@operation
+        }
         val profileId = checkNotNull(pending.refreshProfileId)
         store.update(profileId, pending.preparedJson)
         mutableState.update { it.copy(importPreview = null) }
@@ -720,6 +779,196 @@ class ProfilesViewModel(
     fun consumeMessage() {
         mutableState.update { it.copy(message = null) }
     }
+
+    private suspend fun previewSplitRefresh(
+        profileId: String,
+        binding: SubscriptionBinding,
+        subscription: SubscriptionSource,
+        candidate: ImportCandidate,
+    ) {
+        val managed = candidate as? ImportCandidate.Managed
+            ?: throw ImportException("Раздельная подписка должна возвращать список серверных ссылок.")
+        val groupId = checkNotNull(binding.splitGroupId)
+        val group = subscriptionSourceStore.splitGroup(profileId)
+        if (group.isEmpty()) throw ImportException("Группа раздельной подписки повреждена.")
+
+        val freshKeys = ManagedProfileFactory.stableMemberKeys(managed.servers)
+        val freshByKey = freshKeys.zip(managed.servers).toMap()
+        val existingByKey = group.entries.associate { (id, item) ->
+            checkNotNull(item.splitMemberKey) to id
+        }
+        val oldKnownKeys = group.values.flatMap { it.knownMemberKeys }.toSet()
+            .ifEmpty { existingByKey.keys }
+        val survivingIds = existingByKey
+            .filterKeys(freshByKey::containsKey)
+            .values
+            .toSet()
+        val removedIds = group.keys - survivingIds
+        val baseName = group.values.firstNotNullOfOrNull(SubscriptionBinding::splitBaseName)
+            ?.takeIf(String::isNotBlank)
+            ?: "Подписка"
+        val allNames = SplitProfileNaming.names(managed.servers.map(ManagedServer::displayName), baseName)
+        val installed = withContext(Dispatchers.IO) { ruleSetAssets.ensureInstalled() }
+
+        val updates = linkedMapOf<String, String>()
+        val additions = mutableListOf<SplitRefreshAddition>()
+        val retainedMemberKeys = linkedMapOf<String, String>()
+        freshKeys.forEachIndexed { index, key ->
+            val server = managed.servers[index]
+            val existingId = existingByKey[key]
+            when {
+                existingId != null -> {
+                    val stored = store.read(existingId)
+                    val refreshed = ManagedProfileEditor.refreshServers(stored.json, listOf(server)).json
+                    requireValid(refreshed)
+                    updates[existingId] = refreshed
+                    retainedMemberKeys[existingId] = key
+                }
+                key !in oldKnownKeys -> {
+                    val json = withContext(Dispatchers.Default) {
+                        RoutingConfigEditor.apply(
+                            ManagedProfileFactory.single(server),
+                            RoutingPreset.RussiaDirect,
+                            emptyList(),
+                            installed,
+                        ).json
+                    }
+                    requireValid(json)
+                    additions += SplitRefreshAddition(allNames[index], json, key)
+                }
+                // The key was known but has no bound profile: the user deleted it intentionally.
+                else -> Unit
+            }
+        }
+
+        val connectedId = (vpnController.state.value as? VpnConnectionState.Connected)?.profileId
+            ?.takeIf(group::containsKey)
+        val plan = SplitRefreshPlan(
+            groupId = groupId,
+            source = subscription,
+            baseName = baseName,
+            previousBindings = group,
+            updatedJson = updates,
+            additions = additions,
+            removedProfileIds = removedIds,
+            knownMemberKeys = freshKeys.toSet(),
+            memberKeysByProfileId = retainedMemberKeys,
+            connectedProfileId = connectedId,
+        )
+        mutableState.update {
+            it.copy(
+                importPreview = ImportPreviewState(
+                    suggestedName = baseName,
+                    sourceDescription = SecretRedactor.redactInline(subscription.url),
+                    serverCount = managed.servers.size,
+                    serverLabels = candidate.serverLabels(),
+                    activityWarning = null,
+                    appendTargets = emptyList(),
+                    importWarnings = candidate.importWarnings(),
+                    refreshProfileId = profileId,
+                    refreshProfileName = it.profiles.firstOrNull { profile -> profile.id == profileId }?.name,
+                    activeRefresh = connectedId != null,
+                    splitRefreshSummary = SplitRefreshSummary(
+                        updated = updates.size,
+                        added = additions.size,
+                        removed = removedIds.size,
+                        connectedProfileRemoved = connectedId in removedIds,
+                    ),
+                    candidate = candidate,
+                    preparedJson = updates.values.firstOrNull()
+                        ?: additions.firstOrNull()?.json
+                        ?: ManagedProfileFactory.single(managed.servers.first()),
+                    source = subscription,
+                    splitRefreshPlan = plan,
+                ),
+                message = null,
+            )
+        }
+    }
+
+    private suspend fun confirmSplitRefresh(
+        pending: ImportPreviewState,
+        plan: SplitRefreshPlan,
+        restartConnected: Boolean,
+    ) {
+        val connectedBefore = (vpnController.state.value as? VpnConnectionState.Connected)?.profileId
+            ?.takeIf(plan.previousBindings::containsKey)
+        if (connectedBefore in plan.removedProfileIds && !restartConnected) {
+            throw ImportException("Подключённый удаляемый профиль нужно сначала отключить.")
+        }
+        val creates = plan.additions.map { addition ->
+            ProfileBatchCreate(newId(), addition.name, addition.json, ProfileSource.Link)
+        }
+        val newBindings = buildMap {
+            plan.memberKeysByProfileId.forEach { (profileId, memberKey) ->
+                put(
+                    profileId,
+                    SubscriptionBinding(
+                        source = plan.source,
+                        splitGroupId = plan.groupId,
+                        splitMemberKey = memberKey,
+                        splitBaseName = plan.baseName,
+                        knownMemberKeys = plan.knownMemberKeys,
+                    ),
+                )
+            }
+            creates.zip(plan.additions).forEach { (create, addition) ->
+                put(
+                    create.id,
+                    SubscriptionBinding(
+                        source = plan.source,
+                        splitGroupId = plan.groupId,
+                        splitMemberKey = addition.memberKey,
+                        splitBaseName = plan.baseName,
+                        knownMemberKeys = plan.knownMemberKeys,
+                    ),
+                )
+            }
+        }
+
+        // Source metadata is committed first and restored if the profile transaction fails.
+        subscriptionSourceStore.replaceSplitGroup(plan.groupId, newBindings)
+        try {
+            store.applyBatch(plan.updatedJson, creates, plan.removedProfileIds)
+        } catch (error: Throwable) {
+            runCatching { subscriptionSourceStore.replaceSplitGroup(plan.groupId, plan.previousBindings) }
+            throw error
+        }
+        plan.removedProfileIds.forEach { bootstrapCache.removeProfile(it) }
+        val createdIds = creates.map(ProfileBatchCreate::id).toSet()
+        val survivingIds = plan.memberKeysByProfileId.keys
+        mutableState.update {
+            it.copy(
+                importPreview = null,
+                refreshableProfileIds =
+                    (it.refreshableProfileIds - plan.removedProfileIds) + survivingIds + createdIds,
+                serverSummaries = it.serverSummaries - plan.removedProfileIds,
+            )
+        }
+        if (mutableState.value.settings.activeProfileId in plan.removedProfileIds) {
+            settingsStore.setActiveProfile((survivingIds + createdIds).firstOrNull())
+        }
+
+        val connectedStillNow = connectedBefore?.let(::isConnectedTo) == true
+        when {
+            restartConnected && connectedBefore in plan.removedProfileIds && connectedStillNow -> {
+                vpnController.stop()
+                showMessage("Группа подписки обновлена; удалённый подключённый профиль отключается.")
+            }
+            restartConnected && connectedBefore != null && connectedStillNow -> {
+                vpnController.restartIfConnected("Группа подписки обновлена пользователем")
+                showMessage("Группа подписки обновлена; VPN контролируемо перезапущен.")
+            }
+            restartConnected && pending.activeRefresh ->
+                showMessage("Группа подписки обновлена; VPN уже отключён.")
+            else -> showMessage(
+                "Группа подписки обновлена: ${plan.updatedJson.size} обновлено, " +
+                    "${creates.size} добавлено, ${plan.removedProfileIds.size} удалено.",
+            )
+        }
+    }
+
+    private fun newId(): String = UUID.randomUUID().toString().replace("-", "")
 
     private suspend fun preview(
         raw: String,

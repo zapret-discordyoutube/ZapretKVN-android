@@ -196,6 +196,55 @@ class SubscriptionClientTest {
         assertFalse(File(root, "index.json").readText().contains("device-42"))
     }
 
+    @Test
+    fun `split group survives round trip and identity settings update every member`() = runBlocking {
+        val root = temporaryFolder.newFolder("split-subscriptions")
+        val store = SubscriptionSourceStore(root, JvmWriter())
+        val firstId = "0123456789abcdef0123456789abcdef"
+        val secondId = "fedcba9876543210fedcba9876543210"
+        val source = SubscriptionSource("https://sub.example/profile")
+        val known = setOf("server-a", "server-b")
+        val bindings = mapOf(
+            firstId to SubscriptionBinding(source, "group-1", "server-a", "My sub", known),
+            secondId to SubscriptionBinding(source, "group-1", "server-b", "My sub", known),
+        )
+
+        store.replaceSplitGroup("group-1", bindings)
+        val reopened = SubscriptionSourceStore(root, JvmWriter())
+
+        assertEquals(bindings, reopened.splitGroup(firstId))
+        reopened.put(
+            firstId,
+            source.copy(clientProfile = SubscriptionClientProfile.Happ, sendHwid = true, hwid = "new-device"),
+        )
+        assertTrue(reopened.splitGroup(secondId).values.all {
+            it.source.clientProfile == SubscriptionClientProfile.Happ && it.source.hwid == "new-device"
+        })
+    }
+
+    @Test
+    fun `retaining profiles removes deleted split binding but preserves known members`() = runBlocking {
+        val root = temporaryFolder.newFolder("split-deletion")
+        val store = SubscriptionSourceStore(root, JvmWriter())
+        val firstId = "0123456789abcdef0123456789abcdef"
+        val secondId = "fedcba9876543210fedcba9876543210"
+        val source = SubscriptionSource("https://sub.example/profile")
+        val known = setOf("server-a", "server-b")
+        store.replaceSplitGroup(
+            "group-1",
+            mapOf(
+                firstId to SubscriptionBinding(source, "group-1", "server-a", "My sub", known),
+                secondId to SubscriptionBinding(source, "group-1", "server-b", "My sub", known),
+            ),
+        )
+
+        store.retain(setOf(firstId))
+
+        val group = store.splitGroup(firstId)
+        assertEquals(setOf(firstId), group.keys)
+        assertEquals(known, group.getValue(firstId).knownMemberKeys)
+    }
+
     private class JvmWriter : AtomicProfileWriter {
         override fun writeAtomic(target: File, bytes: ByteArray) {
             target.parentFile?.mkdirs()

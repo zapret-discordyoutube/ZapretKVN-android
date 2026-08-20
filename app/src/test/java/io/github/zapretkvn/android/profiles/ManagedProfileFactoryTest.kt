@@ -65,6 +65,31 @@ class ManagedProfileFactoryTest {
     }
 
     @Test
+    fun `split member key ignores rotated credentials but changes with endpoint`() {
+        val old = vless("Server", "one.example", "11111111-1111-4111-8111-111111111111")
+        val rotated = vless("Renamed", "one.example", "22222222-2222-4222-8222-222222222222")
+        val moved = vless("Server", "two.example", "11111111-1111-4111-8111-111111111111")
+
+        assertEquals(
+            ManagedProfileFactory.stableMemberKeys(listOf(old)),
+            ManagedProfileFactory.stableMemberKeys(listOf(rotated)),
+        )
+        assertFalse(
+            ManagedProfileFactory.stableMemberKeys(listOf(old)) ==
+                ManagedProfileFactory.stableMemberKeys(listOf(moved)),
+        )
+    }
+
+    @Test
+    fun `duplicate split members get distinct stable keys`() {
+        val duplicate = vless("Same", "one.example")
+        val keys = ManagedProfileFactory.stableMemberKeys(listOf(duplicate, duplicate))
+
+        assertEquals(2, keys.distinct().size)
+        assertEquals(keys, ManagedProfileFactory.stableMemberKeys(listOf(duplicate, duplicate)))
+    }
+
+    @Test
     fun `base64 subscription creates one selector with all links`() {
         val links = listOf(
             "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One",
