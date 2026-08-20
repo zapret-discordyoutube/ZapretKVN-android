@@ -779,6 +779,23 @@ class ImportParserTest {
         }
     }
 
+    /**
+     * Реальная подписка из восьми серверов: у последнего пин стоит рядом с
+     * insecure, и отказ отнимал у пользователя рабочий сервер, ничего не защищая.
+     */
+    @Test
+    fun `pinning next to insecure keeps the server and warns`() {
+        val candidate = ImportParser.parse(
+            "hysteria2://secret@one.example:8443" +
+                "?insecure=1&pinSHA256=0E%3AD6%3A04&obfs=salamander&obfs-password=pw&sni=one.example#Hy2",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+        assertTrue(candidate.importWarnings.any { it.contains("pinSHA256") })
+    }
+
     @Test
     fun `certificate pinning is refused with its own message`() {
         val error = assertThrows(ImportException::class.java) {

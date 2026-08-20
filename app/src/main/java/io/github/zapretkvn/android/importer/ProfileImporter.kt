@@ -418,9 +418,9 @@ object ShareLinkParser {
         val uri = URI(normalized)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectCertificatePinning(query, "Hysteria2")
         rejectImpossibleTlsOptOut(query, "Hysteria2")
-        val warnings = classifyParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2")
+        val warnings = classifyParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2") +
+            rejectCertificatePinning(query, "Hysteria2")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: query["auth"]?.takeIf(String::isNotBlank)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
@@ -455,9 +455,9 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        rejectCertificatePinning(query, "TUIC")
         rejectImpossibleTlsOptOut(query, "TUIC")
-        val warnings = classifyParameters(query, TUIC_QUERY_KEYS, "TUIC")
+        val warnings = classifyParameters(query, TUIC_QUERY_KEYS, "TUIC") +
+            rejectCertificatePinning(query, "TUIC")
         val credentials = decode(uri.rawUserInfo)
         val uuid = credentials.substringBefore(':').takeIf(String::isNotBlank)
             ?: throw ImportException("В TUIC отсутствует UUID.")
@@ -588,12 +588,25 @@ object ShareLinkParser {
     }
 
     /**
-     * Пиннинг сертификата усиливает проверку, и перевести его нельзя: hysteria2 пинит
-     * весь сертификат, а sing-box — публичный ключ. Молчаливая потеря вернула бы
-     * обычную проверку по CA, поэтому такая ссылка отклоняется отдельным сообщением.
+     * Пиннинг сертификата перевести нельзя: hysteria2 закрепляет весь сертификат,
+     * а sing-box — только публичный ключ.
+     *
+     * Когда пин стоит рядом с `insecure`, проверка сертификата отключена самой
+     * ссылкой, и пин уже ничего не добавляет: отказ отнял бы у пользователя
+     * рабочий сервер, ничего не защитив. Пин без `insecure` — другое дело: там он
+     * единственная аутентификация сервера, и потерять его молча нельзя.
      */
-    private fun rejectCertificatePinning(query: Map<String, String>, protocol: String) {
-        if (query["pinsha256"].isNullOrBlank()) return
+    private fun rejectCertificatePinning(
+        query: Map<String, String>,
+        protocol: String,
+    ): List<String> {
+        if (query["pinsha256"].isNullOrBlank()) return emptyList()
+        if (query.boolean("insecure")) {
+            return listOf(
+                "$protocol: закрепление сертификата (pinSHA256) не перенесено, " +
+                    "проверка сертификата отключена самой ссылкой.",
+            )
+        }
         throw ImportException(
             "$protocol закрепляет сертификат (pinSHA256): sing-box закрепляет только " +
                 "публичный ключ, поэтому ссылку нельзя перенести без потери проверки.",
