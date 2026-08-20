@@ -43,7 +43,10 @@ git fetch origin main
 git show-ref --verify --quiet "refs/tags/$TAG"
 [[ "$(git rev-list -n 1 "$TAG")" == "$(git rev-parse HEAD)" ]]
 
-remote_tag="$(git ls-remote origin "refs/tags/$TAG" | awk 'NR == 1 {print $1}')"
+remote_tag="$({
+    git ls-remote origin "refs/tags/$TAG^{}"
+    git ls-remote origin "refs/tags/$TAG"
+} | awk 'NR == 1 {print $1}')"
 if [[ -z "$remote_tag" ]]; then
     git push origin "refs/tags/$TAG"
 elif [[ "$remote_tag" != "$(git rev-parse HEAD)" ]]; then
