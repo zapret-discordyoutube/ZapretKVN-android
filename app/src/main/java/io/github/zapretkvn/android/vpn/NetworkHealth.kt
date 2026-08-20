@@ -326,28 +326,28 @@ class VpnHealthPipeline(
         }
         onStageStarted(VpnHealthStage.HttpsProbe)
         if (VpnTestHooks.consumeHttpsProbeFailure()) {
-                onStageFinished(
-                    VpnHealthStage.HttpsProbe,
-                    VpnHealthStageOutcome.Failed,
-                    "test_override",
-                )
-                error("HTTPS-проверка через VPN не прошла: тестовый endpoint недоступен.")
+            onStageFinished(
+                VpnHealthStage.HttpsProbe,
+                VpnHealthStageOutcome.Failed,
+                "test_override",
+            )
+            error("HTTPS-проверка через VPN не прошла: тестовый endpoint недоступен.")
         }
         try {
             val result = httpsProbe(vpnNetwork, proxyIpFamily, deadlineElapsedRealtimeMillis)
-                onStageFinished(
-                    VpnHealthStage.HttpsProbe,
-                    if (result.rescued) VpnHealthStageOutcome.Recovered else VpnHealthStageOutcome.Success,
-                    "endpoint=${result.endpoint.code} status=${result.status} " +
-                        "family=${result.addressFamily.diagnosticName}" +
-                        if (result.rescued) " recovered=slow_tunnel" else "",
-                )
+            onStageFinished(
+                VpnHealthStage.HttpsProbe,
+                if (result.rescued) VpnHealthStageOutcome.Recovered else VpnHealthStageOutcome.Success,
+                "endpoint=${result.endpoint.code} status=${result.status} " +
+                    "family=${result.addressFamily.diagnosticName}" +
+                    if (result.rescued) " recovered=slow_tunnel" else "",
+            )
         } catch (error: Throwable) {
-                onStageFinished(
-                    VpnHealthStage.HttpsProbe,
-                    VpnHealthStageOutcome.Failed,
-                    (error as? HttpsProbeFailure)?.diagnosticDetail ?: rootCauseName(error),
-                )
+            onStageFinished(
+                VpnHealthStage.HttpsProbe,
+                VpnHealthStageOutcome.Failed,
+                (error as? HttpsProbeFailure)?.diagnosticDetail ?: rootCauseName(error),
+            )
             throw error
         }
         return HealthCheckResult(externalIpProbeAllowed = true)
