@@ -105,6 +105,13 @@ class DiagnosticExporter(
                     put("tag", BuildConfig.CORE_TAG)
                     put("revision", BuildConfig.CORE_COMMIT)
                     put("patch_sha256", BuildConfig.CORE_PATCH_SHA256)
+                    put(
+                        "hysteria2",
+                        buildJsonObject {
+                            put("tag", BuildConfig.HYSTERIA_CORE_TAG)
+                            put("revision", BuildConfig.HYSTERIA_CORE_COMMIT)
+                        },
+                    )
                 },
             )
             put(

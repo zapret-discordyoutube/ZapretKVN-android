@@ -14,6 +14,8 @@ val coreTag = coreProperties.getProperty("CORE_TAG")
 val coreCommit = coreProperties.getProperty("CORE_COMMIT")
 val corePatchFile = coreProperties.getProperty("CORE_PATCH_FILE")
 val corePatchSha256 = coreProperties.getProperty("CORE_PATCH_SHA256")
+val hysteriaCoreTag = coreProperties.getProperty("HYSTERIA_CORE_TAG")
+val hysteriaCoreCommit = coreProperties.getProperty("HYSTERIA_CORE_COMMIT")
 val libboxAar = layout.projectDirectory.file("libs/libbox.aar").asFile
 val appVersionCode = providers.gradleProperty("zapretVersionCode")
     .orElse(providers.environmentVariable("ZAPRET_VERSION_CODE"))
@@ -93,6 +95,8 @@ android {
             "\"$coreCommit\"",
         )
         buildConfigField("String", "CORE_PATCH_SHA256", "\"$corePatchSha256\"")
+        buildConfigField("String", "HYSTERIA_CORE_TAG", "\"$hysteriaCoreTag\"")
+        buildConfigField("String", "HYSTERIA_CORE_COMMIT", "\"$hysteriaCoreCommit\"")
     }
 
     signingConfigs {

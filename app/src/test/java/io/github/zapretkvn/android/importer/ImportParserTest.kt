@@ -779,33 +779,28 @@ class ImportParserTest {
         }
     }
 
-    /**
-     * Реальная подписка из восьми серверов: у последнего пин стоит рядом с
-     * insecure, и отказ отнимал у пользователя рабочий сервер, ничего не защищая.
-     */
     @Test
-    fun `pinning next to insecure keeps the server and warns`() {
+    fun `pinning next to insecure keeps full certificate pin`() {
+        val pin = (0 until 32).joinToString(":") { "%02X".format(it) }
         val candidate = ImportParser.parse(
             "hysteria2://secret@one.example:8443" +
-                "?insecure=1&pinSHA256=0E%3AD6%3A04&obfs=salamander&obfs-password=pw&sni=one.example#Hy2",
+                "?insecure=1&pinSHA256=${URLEncoder.encode(pin, StandardCharsets.UTF_8)}" +
+                "&obfs=salamander&obfs-password=pw&sni=one.example#Hy2",
             ProfileSource.Link,
             "Профиль",
         ) as ImportCandidate.Managed
 
-        assertEquals(1, candidate.servers.size)
-        assertTrue(candidate.importWarnings.any { it.contains("pinSHA256") })
+        val outbound = candidate.servers.single().outbound
+        assertEquals((0 until 32).joinToString("") { "%02x".format(it) }, outbound.string("certificate_sha256"))
+        assertTrue(candidate.importWarnings.any { it.contains("проверку сертификата") })
     }
 
     @Test
-    fun `certificate pinning is refused with its own message`() {
+    fun `malformed certificate pin is refused`() {
         val error = assertThrows(ImportException::class.java) {
-            ImportParser.parse(
-                "hysteria2://secret@one.example:8443?pinSHA256=deadbeef#Hy2",
-                ProfileSource.Link,
-                "Профиль",
-            )
+            ImportParser.parse("hysteria2://secret@one.example:8443?pinSHA256=deadbeef#Hy2", ProfileSource.Link)
         }
-        assertTrue(error.message.orEmpty().contains("публичный ключ"))
+        assertTrue(error.message.orEmpty().contains("32 байта"))
     }
 
     @Test
@@ -895,6 +890,38 @@ class ImportParserTest {
                 "Профиль",
             )
         }
+    }
+
+    @Test
+    fun `gecko is preserved for the official embedded core`() {
+        val candidate = ImportParser.parse(
+            "hysteria2://Abc_-123@one.example:8443?obfs=gecko&obfs-password=cover#Gecko",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed
+        val outbound = candidate.servers.single().outbound
+        val obfs = outbound["obfs"] as JsonObject
+        assertEquals("Abc_-123", outbound.string("password"))
+        assertEquals("gecko", obfs.string("type"))
+        assertEquals("cover", obfs.string("password"))
+    }
+
+    @Test
+    fun `hysteria2 official port union ipv6 ech and percent encoded name are preserved`() {
+        val candidate = ImportParser.parse(
+            "hy2://user%3Apass@[2001:db8::1]:443,20000-20002" +
+                "?obfs=gecko&obfs-password=cover&hop-interval=15s&ECH=AAECAw#Synthetic%20HY2",
+            ProfileSource.Subscription,
+        ) as ImportCandidate.Managed
+        val server = candidate.servers.single()
+        val outbound = server.outbound
+        assertEquals("Synthetic HY2", server.displayName)
+        assertEquals("2001:db8::1", outbound.string("server"))
+        assertEquals("443", (outbound["server_port"] as JsonPrimitive).content)
+        assertEquals("user:pass", outbound.string("password"))
+        assertEquals("15s", outbound.string("hop_interval"))
+        assertEquals(2, (outbound["server_ports"] as JsonArray).size)
+        val tls = outbound["tls"] as JsonObject
+        assertTrue((tls["ech"] as JsonObject).string("config").orEmpty().contains("BEGIN ECH CONFIGS"))
     }
 
     @Test

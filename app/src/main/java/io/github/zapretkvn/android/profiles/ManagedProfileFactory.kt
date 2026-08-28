@@ -27,6 +27,7 @@ data class TlsSettings(
     val realityPublicKey: String? = null,
     val realityShortId: String? = null,
     val alpn: List<String> = emptyList(),
+    val echConfigPem: String? = null,
 )
 
 data class TransportSettings(
@@ -135,6 +136,11 @@ object ProtocolOutboundBuilders {
         obfsType: String? = null,
         upMbps: Int? = null,
         downMbps: Int? = null,
+        serverPorts: List<String> = emptyList(),
+        hopInterval: String? = null,
+        certificateSha256: String? = null,
+        obfsMinPacketSize: Int? = null,
+        obfsMaxPacketSize: Int? = null,
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("hysteria2", server, serverPort, null),
@@ -149,11 +155,18 @@ object ProtocolOutboundBuilders {
                     buildJsonObject {
                         put("type", obfsType?.takeIf(String::isNotBlank) ?: "salamander")
                         put("password", value)
+                        obfsMinPacketSize?.takeIf { it > 0 }?.let { put("min_packet_size", it) }
+                        obfsMaxPacketSize?.takeIf { it > 0 }?.let { put("max_packet_size", it) }
                     },
                 )
             }
             upMbps?.takeIf { it > 0 }?.let { put("up_mbps", it) }
             downMbps?.takeIf { it > 0 }?.let { put("down_mbps", it) }
+            if (serverPorts.isNotEmpty()) {
+                put("server_ports", JsonArray(serverPorts.map(::JsonPrimitive)))
+            }
+            hopInterval?.takeIf(String::isNotBlank)?.let { put("hop_interval", it) }
+            certificateSha256?.takeIf(String::isNotBlank)?.let { put("certificate_sha256", it) }
             putTls(tls, allowTcpOnlyTlsFeatures = false)
         },
     )
@@ -247,6 +260,15 @@ object ProtocolOutboundBuilders {
                 }
                 if (settings.alpn.isNotEmpty()) {
                     put("alpn", JsonArray(settings.alpn.map(::JsonPrimitive)))
+                }
+                settings.echConfigPem?.takeIf(String::isNotBlank)?.let { pem ->
+                    put(
+                        "ech",
+                        buildJsonObject {
+                            put("enabled", true)
+                            put("config", pem)
+                        },
+                    )
                 }
             },
         )

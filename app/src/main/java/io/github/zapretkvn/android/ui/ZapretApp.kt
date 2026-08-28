@@ -499,9 +499,13 @@ private fun ProfilesScreen(
     var renameTarget by remember { mutableStateOf<ProfileMetadata?>(null) }
     var urlDialogOpen by remember { mutableStateOf(false) }
     var cameraDenied by remember { mutableStateOf(false) }
+    var qrSourceDialogOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importDocument)
+    }
+    val qrImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(viewModel::importQrImage)
     }
     val qrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.takeIf(String::isNotBlank)?.let(viewModel::importQr)
@@ -584,7 +588,7 @@ private fun ProfilesScreen(
                             modifier = Modifier.weight(1f),
                         ) { Text("URL") }
                         OutlinedButton(
-                            onClick = requestQr,
+                            onClick = { qrSourceDialogOpen = true },
                             enabled = !state.busy,
                             modifier = Modifier.weight(1f),
                         ) { Text("QR") }
@@ -688,11 +692,46 @@ private fun ProfilesScreen(
 
     if (urlDialogOpen) {
         UrlImportDialog(
+            initialUrl = "",
             hideServerAddresses = state.settings.hideServerAddresses,
             onDismiss = { urlDialogOpen = false },
             onImport = { url, identity ->
                 urlDialogOpen = false
                 viewModel.importUrl(url, identity)
+            },
+        )
+    }
+
+    state.qrSubscriptionUrl?.let { qrUrl ->
+        UrlImportDialog(
+            initialUrl = qrUrl,
+            title = "Подписка из QR",
+            hideServerAddresses = state.settings.hideServerAddresses,
+            onDismiss = viewModel::closeQrSubscription,
+            onImport = viewModel::importQrSubscription,
+        )
+    }
+
+    if (qrSourceDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { qrSourceDialogOpen = false },
+            title = { Text("Считать QR-код") },
+            text = { Text("Выберите камеру или изображение из галереи.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        qrSourceDialogOpen = false
+                        requestQr()
+                    },
+                ) { Text("Камера") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        qrSourceDialogOpen = false
+                        qrImageLauncher.launch(arrayOf("image/*"))
+                    },
+                ) { Text("Галерея") }
             },
         )
     }
@@ -759,11 +798,13 @@ private fun ProfilesScreen(
 
 @Composable
 private fun UrlImportDialog(
+    initialUrl: String,
+    title: String = "Импорт по URL",
     hideServerAddresses: Boolean,
     onDismiss: () -> Unit,
     onImport: (String, SubscriptionIdentityInput) -> Unit,
 ) {
-    var url by remember { mutableStateOf("") }
+    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
     var revealed by rememberSaveable { mutableStateOf(false) }
     // null — профиль ещё не выбран: его подскажет сама ссылка (happ://add и подобные).
     var clientProfile by rememberSaveable { mutableStateOf<SubscriptionClientProfile?>(null) }
@@ -771,7 +812,7 @@ private fun UrlImportDialog(
     var hwid by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Импорт по URL") },
+        title = { Text(title) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),

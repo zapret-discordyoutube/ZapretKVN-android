@@ -144,6 +144,17 @@ for expected_module in "$ANDROID_WIREGUARD_GO" "$ANDROID_AMNEZIAWG_GO"; do
     fi
 done
 
+hysteria_module_version="${HYSTERIA_CORE_TAG#app/}"
+for hysteria_module in github.com/apernet/hysteria/core/v2 github.com/apernet/hysteria/extras/v2; do
+    module_json="$(go mod download -json "$hysteria_module@$hysteria_module_version")"
+    actual_version="$(jq -r '.Version' <<< "$module_json")"
+    actual_commit="$(jq -r '.Origin.Hash' <<< "$module_json")"
+    if [[ "$actual_version" != "$hysteria_module_version" || "$actual_commit" != "$HYSTERIA_CORE_COMMIT" ]]; then
+        echo "Hysteria module mismatch: $hysteria_module is $actual_version@$actual_commit" >&2
+        exit 1
+    fi
+done
+
 # The host-only verifier does not need naive/Cronet. Android libbox below is still
 # built by the pinned upstream builder with its complete Android tag set.
 CORE_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_trusttunnel,with_openvpn,with_sudoku,with_snell,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
@@ -214,6 +225,8 @@ cat > "$OUTPUT_DIR/core-build-metadata.json" <<EOF
   "commit": "$CORE_COMMIT",
   "patch_file": "$CORE_PATCH_FILE",
   "patch_sha256": "$CORE_PATCH_SHA256",
+  "hysteria_core_tag": "$HYSTERIA_CORE_TAG",
+  "hysteria_core_commit": "$HYSTERIA_CORE_COMMIT",
   "android_wireguard_go": "$ANDROID_WIREGUARD_GO",
   "android_amneziawg_go": "$ANDROID_AMNEZIAWG_GO",
   "go": "$GO_VERSION",
@@ -230,6 +243,8 @@ CORE_TAG=$CORE_TAG
 CORE_COMMIT=$CORE_COMMIT
 CORE_PATCH_FILE=$CORE_PATCH_FILE
 CORE_PATCH_SHA256=$CORE_PATCH_SHA256
+HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG
+HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT
 ANDROID_WIREGUARD_GO=$ANDROID_WIREGUARD_GO
 ANDROID_AMNEZIAWG_GO=$ANDROID_AMNEZIAWG_GO
 LIBBOX_SHA256=$LIBBOX_SHA256

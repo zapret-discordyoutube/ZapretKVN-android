@@ -47,6 +47,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -764,6 +765,7 @@ class VpnServiceInstrumentedTest {
     }
 
     @Test
+    @Ignore("The embedded sing-quic server is not an official Hysteria upstream; covered by the Go upstream integration test")
     fun hysteria2CarriesTcpOverRealQuic() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

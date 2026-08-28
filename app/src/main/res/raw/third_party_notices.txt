@@ -3,9 +3,9 @@
 ## sing-box-extended
 
 - Source: <https://github.com/shtorm-7/sing-box-extended>
-- Pinned commit: `ff11f007ec798136a5de258f947a4f34011a37ea`
+- Pinned commit: `e8f6936480b7fa9738911e3e7fc2ec0d8a634a88`
 - Android patchset manifest: `core-patches/series.sha256`
-- Patchset manifest SHA-256: `9ed4cdc263f5ea5b6413d3bc55068f5f8bca7dc0132e0ecb91f96818f5dcf441`
+- Patchset manifest SHA-256: `4345b98b1ee1d3a619b5e90c3a8a550dc7a2e1638f5795ad4c4db1b5b44b5d30`
 - License: GNU General Public License version 3 or later.
 - Copyright: 2022 nekohasekai and contributors.
 
@@ -17,10 +17,47 @@ also retained as an application raw resource and as a CI core artifact.
 The patch is applied only after verifying the pinned checkout and patch hash,
 is recorded separately from the upstream revision, and is reversed after compilation.
 
+## Hysteria core and extras
+
+- Source: <https://github.com/HyNetworks/hysteria>
+- Pinned tag: `app/v2.12.2`
+- Pinned commit: `619a6f856b69fb7ee6a7a379e810e68b84004605`
+- Modules: `github.com/apernet/hysteria/core/v2@v2.12.2` and
+  `github.com/apernet/hysteria/extras/v2@v2.12.2`.
+- License: MIT.
+- Copyright: 2023 Toby.
+
+The official client is linked into the common `libbox.so` and uses the sing-box
+Android packet dialer. It does not create a sidecar process, local SOCKS proxy,
+or second TUN.
+
+```text
+Copyright 2023 Toby
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+
 ## Android WireGuard data-plane
 
 - Vanilla engine: <https://github.com/MetaCubeX/wireguard-go>, commit represented by module version `v0.0.0-20250820062549-a6cecdd7f57f`.
-- AmneziaWG engine: <https://github.com/MetaCubeX/amneziawg-go>, commit represented by module version `v0.0.0-20260612143004-19b4f1cdd5ec`.
+- AmneziaWG engine: <https://github.com/amnezia-vpn/amneziawg-go>, version `v3.1.20260814`.
 - License: MIT for both modules; their complete license text is reproduced below.
 
 ```text

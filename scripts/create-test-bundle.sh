@@ -73,6 +73,8 @@ jq -n \
     --arg core_tag "$CORE_TAG" \
     --arg core_commit "$CORE_COMMIT" \
     --arg core_patch_sha256 "$CORE_PATCH_SHA256" \
+    --arg hysteria_core_tag "$HYSTERIA_CORE_TAG" \
+    --arg hysteria_core_commit "$HYSTERIA_CORE_COMMIT" \
     --arg tested_apis "$TESTED_APIS" \
     --arg test_status "$TEST_STATUS" \
     --arg signer_sha256 "$signer_sha256" \
@@ -88,6 +90,8 @@ jq -n \
         version_code:$version_code,
         source_commit:$source_commit,
         core_tag:$core_tag,
+        hysteria_core_tag:$hysteria_core_tag,
+        hysteria_core_commit:$hysteria_core_commit,
         core_commit:$core_commit,
         core_patch_sha256:$core_patch_sha256,
         tested_emulator_apis:$tested_apis,
@@ -99,19 +103,13 @@ jq -n \
 cat > "$OUTPUT_DIR/RELEASE_NOTES.md" <<EOF
 # Zapret KVN $ZAPRET_VERSION_NAME
 
-Emulator-only architectural connectivity test build.
+Host/emulator-verified Hysteria2 and QR subscription test build.
 
-- Serialized VPN lifecycle commands by connection generation, with bounded cleanup,
-  stale-callback isolation, network-loss leases, and fail-close DNS/HTTPS health gates.
-- Added runtime-only bootstrap host overlays from fresh pre-VPN DNS without changing
-  endpoint hostnames, TLS/Reality identity, HTTP Host, or stored profiles.
-- Added strict UDP DNS validation with TCP fallback, monotonic startup budgets, typed
-  cancellation/failure causes, and diagnostic report schema v5.
-- Preserved supported transport fields through canonical imports and reject unsupported
-  fields explicitly instead of dropping them silently.
-- Separated selector subscription and command clients, and restored package-name routing
-  on Android 8/8.1 by mapping procfs socket owners through PackageManager.
-- Includes independent Relay HTTPS and ICMP latency diagnostics from the pinned core.
+- Embeds official Hysteria core/extras app/v2.12.2 for plain, Salamander and Gecko.
+- Preserves certificate SHA-256 pinning, ECH, port hopping and Android-protected sockets.
+- Adds direct configuration QR and subscription/deep-link QR import from camera or gallery.
+- Subscription QR results open identity/HWID settings before the first network request.
+- Uses synthetic test credentials only; Gecko is not confirmed on a physical Android device.
 
 - Not a Stable or Beta-updater release.
 - Not for F-Droid or Telegram distribution.

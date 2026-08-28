@@ -7,16 +7,21 @@ import android.content.Intent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.SystemClock
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.core.content.FileProvider
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.journeyapps.barcodescanner.ScanContract
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.config.LibboxConfigValidator
@@ -311,6 +316,58 @@ class ImportInstrumentedTest {
     }
 
     @Test
+    fun qrSubscriptionOpensIdentityFormBeforeAnyNetworkRequest() = runBlocking {
+        val root = File(context.cacheDir, "qr-subscription-${System.nanoTime()}")
+        val testViewModelStore = ViewModelStore()
+        var fetchCount = 0
+        try {
+            val application = context.applicationContext as ZapretApplication
+            val profileStore = ProfileStore(File(root, "profiles"), LibboxConfigValidator())
+            profileStore.initialize()
+            val viewModel = ViewModelProvider(
+                object : ViewModelStoreOwner {
+                    override val viewModelStore: ViewModelStore = testViewModelStore
+                },
+                ProfilesViewModel.Factory(
+                    store = profileStore,
+                    settingsStore = application.container.uiSettingsStore,
+                    validator = LibboxConfigValidator(),
+                    importReader = AndroidImportReader(context),
+                    subscriptionFetcher = SubscriptionFetcher {
+                        fetchCount++
+                        "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One"
+                    },
+                    subscriptionSourceStore = SubscriptionSourceStore(File(root, "subscriptions")),
+                    vpnController = VpnController(context),
+                    bootstrapCache = BootstrapCache(File(root, "network")),
+                    ruleSetAssets = application.container.ruleSetAssetManager,
+                ),
+            )[ProfilesViewModel::class.java]
+
+            val source = "https://subscription.example/profile?token=synthetic"
+            viewModel.importQr(source)
+            val formDeadline = SystemClock.uptimeMillis() + 10_000
+            while (viewModel.state.value.qrSubscriptionUrl == null && SystemClock.uptimeMillis() < formDeadline) {
+                SystemClock.sleep(25)
+            }
+            assertEquals(source, viewModel.state.value.qrSubscriptionUrl)
+            assertEquals(0, fetchCount)
+            assertEquals(null, viewModel.state.value.importPreview)
+
+            viewModel.importQrSubscription(source, SubscriptionIdentityInput())
+            val previewDeadline = SystemClock.uptimeMillis() + 10_000
+            while (viewModel.state.value.importPreview == null && SystemClock.uptimeMillis() < previewDeadline) {
+                SystemClock.sleep(25)
+            }
+            assertEquals(1, fetchCount)
+            assertEquals(1, checkNotNull(viewModel.state.value.importPreview).serverCount)
+        } finally {
+            testViewModelStore.clear()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun commonProtocolBuildersPassLibboxCheckConfig() {
         val servers = listOf(
             ProtocolOutboundBuilders.vless(
@@ -346,6 +403,11 @@ class ImportInstrumentedTest {
                 server = "hy.example",
                 serverPort = 443,
                 password = "test-password",
+                obfsType = "gecko",
+                obfsPassword = "synthetic-cover",
+                serverPorts = listOf("443", "20000-20002"),
+                hopInterval = "15s",
+                certificateSha256 = "00".repeat(32),
             ),
             ProtocolOutboundBuilders.tuic(
                 displayName = "TUIC",
@@ -365,7 +427,8 @@ class ImportInstrumentedTest {
         val links = listOf(
             "vless://11111111-1111-4111-8111-111111111111@vless.example:443?security=tls#VLESS",
             "trojan://secret@trojan.example:443?sni=trojan.example#Trojan",
-            "hy2://secret@hy.example:443?sni=hy.example#HY2",
+            "hy2://secret@hy.example:443,20000-20002?sni=hy.example" +
+                "&obfs=gecko&obfs-password=synthetic&pinSHA256=${"00".repeat(32)}#HY2",
             "tuic://33333333-3333-4333-8333-333333333333:secret@tuic.example:443?sni=tuic.example#TUIC",
         ).joinToString("\n")
         val candidate = ImportParser.parse(links, ProfileSource.Clipboard) as ImportCandidate.Managed
@@ -441,6 +504,28 @@ class ImportInstrumentedTest {
 
         assertEquals(QrCaptureActivity::class.java.name, intent.component?.className)
         assertTrue(Manifest.permission.CAMERA in permissions)
+    }
+
+    @Test
+    fun galleryQrDecoderRequiresAndReturnsOneQrPayload() {
+        val value = "hysteria2://synthetic@192.0.2.10:443?obfs=gecko&obfs-password=cover#Gallery"
+        val matrix = QRCodeWriter().encode(value, BarcodeFormat.QR_CODE, 512, 512)
+        val bitmap = Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888)
+        for (y in 0 until 512) {
+            for (x in 0 until 512) {
+                bitmap.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+            }
+        }
+        val file = File(context.cacheDir, "diagnostics/qr-${System.nanoTime()}.png")
+        file.parentFile?.mkdirs()
+        try {
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            assertEquals(value, AndroidImportReader(context).readSingleQrImage(uri))
+        } finally {
+            bitmap.recycle()
+            file.delete()
+        }
     }
 
     @Test

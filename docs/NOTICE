@@ -12,5 +12,6 @@ GPL-3.0-or-later.
 No trademark rights in the Zapret KVN name, app icon, logo, or branding are
 granted. Forks must not imply that they are official or endorsed releases.
 
-Release builds include sing-box-extended from the exact source revision and the
-separately hashed Android patch recorded in core.properties and build metadata.
+Release builds include sing-box-extended and the official Hysteria core/extras
+from their exact source revisions, plus the separately hashed Android patchset
+recorded in core.properties and build metadata.

@@ -49,6 +49,8 @@ jq -e \
     --arg core_tag "$CORE_TAG" \
     --arg core_commit "$CORE_COMMIT" \
     --arg core_patch_sha256 "$CORE_PATCH_SHA256" \
+    --arg hysteria_core_tag "$HYSTERIA_CORE_TAG" \
+    --arg hysteria_core_commit "$HYSTERIA_CORE_COMMIT" \
     --arg source_commit "$(git -C "$PROJECT_ROOT" rev-parse HEAD)" \
     '
       .schema == 1 and .channel == "test" and .emulator_only == true
@@ -58,6 +60,8 @@ jq -e \
       and .version_name == $version_name and .version_code == $version_code
       and .core_tag == $core_tag and .core_commit == $core_commit
       and .core_patch_sha256 == $core_patch_sha256
+      and .hysteria_core_tag == $hysteria_core_tag
+      and .hysteria_core_commit == $hysteria_core_commit
       and .source_commit == $source_commit
       and ([.artifacts[].abi] | sort) == ["arm64-v8a","armeabi-v7a"]
       and (.artifacts | length) == 2

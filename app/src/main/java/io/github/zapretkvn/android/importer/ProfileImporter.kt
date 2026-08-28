@@ -2,8 +2,13 @@ package io.github.zapretkvn.android.importer
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.google.zxing.BinaryBitmap
+import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.common.HybridBinarizer
+import com.google.zxing.multi.qrcode.QRCodeMultiReader
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ManagedServer
@@ -62,6 +67,8 @@ class ImportException(message: String, cause: Throwable? = null) : Exception(mes
 
 /** Больше предупреждений пользователь всё равно не прочитает перед подтверждением. */
 private const val MAX_IMPORT_WARNINGS = 8
+private val HYSTERIA2_SUPPORTED_OBFS_TYPES = setOf("none", "plain", "salamander", "gecko")
+private val HYSTERIA2_PASSWORD_OBFS_TYPES = setOf("salamander", "gecko")
 
 object ImportParser {
     fun parse(
@@ -410,45 +417,119 @@ object ShareLinkParser {
     }
 
     private fun parseHysteria2(link: String, index: Int): ManagedServer {
-        val normalized = if (link.startsWith("hy2://", true)) {
-            "hysteria2://" + link.substringAfter("://")
-        } else {
-            link
-        }
-        val uri = URI(normalized)
-        val host = requireHost(uri)
-        val query = query(uri)
+        val uri = parseHysteria2Uri(link)
+        val host = uri.host
+        val query = uri.query
         rejectImpossibleTlsOptOut(query, "Hysteria2")
-        val warnings = classifyParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2") +
-            rejectCertificatePinning(query, "Hysteria2")
+        val warnings = classifyParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: query["auth"]?.takeIf(String::isNotBlank)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
         val obfsType = query["obfs"]?.lowercase()
-        if (obfsType != null && obfsType !in setOf("none", "plain", "salamander", "gecko")) {
-            throw ImportException("Hysteria2 obfs '$obfsType' пока не поддерживается.")
+        if (obfsType != null && obfsType !in HYSTERIA2_SUPPORTED_OBFS_TYPES) {
+            throw ImportException(
+                "Hysteria2 obfs '$obfsType' не поддерживается официальным встроенным ядром.",
+            )
         }
         val obfsPassword = query["obfspassword"]
-        if (obfsType in setOf("salamander", "gecko") && obfsPassword.isNullOrBlank()) {
-            // Без пароля salamander не согласуется: сервер молча отвергал бы каждый пакет.
+        if (obfsType in HYSTERIA2_PASSWORD_OBFS_TYPES && obfsPassword.isNullOrBlank()) {
+            // Без пароля Salamander/Gecko не согласуется: сервер отвергал бы каждый пакет.
             throw ImportException("Hysteria2 obfs '$obfsType' требует obfs-password.")
         }
         return ProtocolOutboundBuilders.hysteria2(
-            displayName = displayName(uri, "Hysteria2 ${index + 1}"),
+            displayName = decode(uri.rawFragment).ifBlank { "Hysteria2 ${index + 1}" },
             server = host,
-            serverPort = requirePort(uri, 443),
+            serverPort = uri.firstPort,
             password = password,
             tls = TlsSettings(
                 enabled = true,
                 serverName = query["sni"] ?: query["peer"] ?: host,
                 insecure = query.boolean("insecure"),
-                alpn = query.csv("alpn"),
+                echConfigPem = query["ech"]?.takeIf(String::isNotBlank)?.let(::echConfigPem),
             ),
-            obfsPassword = obfsPassword.takeIf { obfsType in setOf("salamander", "gecko") },
-            obfsType = obfsType.takeIf { it in setOf("salamander", "gecko") },
+            obfsPassword = obfsPassword.takeIf { obfsType in HYSTERIA2_PASSWORD_OBFS_TYPES },
+            obfsType = obfsType.takeIf { it in HYSTERIA2_PASSWORD_OBFS_TYPES },
             upMbps = query.mbps("up"),
             downMbps = query.mbps("down"),
+            serverPorts = uri.serverPorts,
+            hopInterval = query["hopinterval"],
+            certificateSha256 = query["pinsha256"]?.let(::normalizeCertificatePin),
+            obfsMinPacketSize = query["minpacketsize"]?.toIntOrNull(),
+            obfsMaxPacketSize = query["maxpacketsize"]?.toIntOrNull(),
         ).withWarnings(warnings + insecureWarning(query))
+    }
+
+    private data class Hysteria2Uri(
+        val rawUserInfo: String,
+        val host: String,
+        val firstPort: Int,
+        val serverPorts: List<String>,
+        val query: Map<String, String>,
+        val rawFragment: String,
+    )
+
+    /** java.net.URI rejects the official port-union authority (443,2000-3000). */
+    private fun parseHysteria2Uri(link: String): Hysteria2Uri {
+        val body = link.substringAfter("://", "")
+        if (body.isBlank()) throw ImportException("Некорректная Hysteria2 ссылка.")
+        val rawFragment = body.substringAfter('#', "")
+        val beforeFragment = body.substringBefore('#')
+        val rawQuery = beforeFragment.substringAfter('?', "")
+        val authority = beforeFragment.substringBefore('?').substringBefore('/').trim()
+        val at = authority.lastIndexOf('@')
+        val rawUserInfo = if (at >= 0) authority.substring(0, at) else ""
+        val hostPort = if (at >= 0) authority.substring(at + 1) else authority
+        val (host, portUnion) = if (hostPort.startsWith('[')) {
+            val close = hostPort.indexOf(']')
+            if (close <= 1) throw ImportException("В Hysteria2 отсутствует корректный IPv6-сервер.")
+            hostPort.substring(1, close) to hostPort.substring(close + 1).removePrefix(":")
+        } else {
+            val colon = hostPort.lastIndexOf(':')
+            if (colon < 0) hostPort to "443" else hostPort.substring(0, colon) to hostPort.substring(colon + 1)
+        }
+        if (host.isBlank()) throw ImportException("В Hysteria2 отсутствует сервер.")
+        val ports = portUnion.ifBlank { "443" }.split(',').map(String::trim)
+        val firstPort = ports.first().substringBefore('-').toIntOrNull()
+            ?.takeIf { it in 1..65535 }
+            ?: throw ImportException("В Hysteria2 отсутствует корректный порт.")
+        ports.forEach { part ->
+            val pieces = part.split('-')
+            val bounds = pieces.map(String::toIntOrNull)
+            if (pieces.size !in 1..2 || bounds.any { it == null || it !in 1..65535 } ||
+                bounds.size == 2 && requireNotNull(bounds[0]) > requireNotNull(bounds[1])
+            ) {
+                throw ImportException("Hysteria2 содержит некорректный диапазон портов '$part'.")
+            }
+        }
+        val parsedQuery = rawQuery.split('&').filter(String::isNotBlank).associate { part ->
+            canonicalKey(decode(part.substringBefore('='))) to decode(part.substringAfter('=', ""))
+        }
+        return Hysteria2Uri(
+            rawUserInfo = rawUserInfo,
+            host = host,
+            firstPort = firstPort,
+            serverPorts = ports.takeIf { it.size > 1 || '-' in it.single() }.orEmpty(),
+            query = parsedQuery,
+            rawFragment = rawFragment,
+        )
+    }
+
+    private fun normalizeCertificatePin(value: String): String {
+        val normalized = value.trim().lowercase().replace(":", "").replace("-", "")
+        if (normalized.length != 64 || normalized.any { it !in "0123456789abcdef" }) {
+            throw ImportException("Hysteria2 pinSHA256 должен содержать ровно 32 байта SHA-256.")
+        }
+        return normalized
+    }
+
+    private fun echConfigPem(value: String): String {
+        val compact = value.filterNot(Char::isWhitespace)
+        val decoded = runCatching { Base64.getUrlDecoder().decode(compact) }
+            .recoverCatching { Base64.getDecoder().decode(compact) }
+            .getOrElse { throw ImportException("Hysteria2 ECH содержит некорректный base64.", it) }
+        if (decoded.isEmpty()) throw ImportException("Hysteria2 ECH пуст.")
+        val encoded = Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(decoded)
+        return "-----BEGIN ECH CONFIGS-----\n$encoded\n-----END ECH CONFIGS-----"
     }
 
     private fun parseTuic(link: String, index: Int): ManagedServer {
@@ -756,7 +837,8 @@ object ShareLinkParser {
     private val TROJAN_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS + setOf("headertype")
     private val SHADOWSOCKS_QUERY_KEYS = setOf("type")
     private val HYSTERIA2_QUERY_KEYS = setOf(
-        "auth", "sni", "insecure", "alpn", "obfs", "obfspassword", "up", "down",
+        "auth", "sni", "insecure", "obfs", "obfspassword", "up", "down",
+        "pinsha256", "ech", "hopinterval", "minpacketsize", "maxpacketsize",
     )
 
     private val TUIC_QUERY_KEYS = setOf(
@@ -815,6 +897,40 @@ class AndroidImportReader(private val context: Context) {
         return text
     }
 
+    fun readSingleQrImage(uri: Uri): String {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val boundsStream = context.contentResolver.openInputStream(uri)
+            ?: throw ImportException("Не удалось открыть выбранное изображение.")
+        boundsStream.use { BitmapFactory.decodeStream(it, null, options) }
+        if (options.outWidth <= 0 || options.outHeight <= 0) {
+            throw ImportException("Выбранный файл не является изображением.")
+        }
+        var sample = 1
+        while (options.outWidth / sample > MAX_QR_IMAGE_SIDE || options.outHeight / sample > MAX_QR_IMAGE_SIDE) {
+            sample *= 2
+        }
+        val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+            BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: throw ImportException("Не удалось декодировать изображение.")
+        return try {
+            val pixels = IntArray(bitmap.width * bitmap.height)
+            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+            val binary = BinaryBitmap(
+                HybridBinarizer(RGBLuminanceSource(bitmap.width, bitmap.height, pixels)),
+            )
+            val values = runCatching { QRCodeMultiReader().decodeMultiple(binary).map { it.text.trim() } }
+                .getOrDefault(emptyList())
+                .filter(String::isNotBlank)
+            when (values.size) {
+                1 -> values.single()
+                0 -> throw ImportException("На изображении не найден корректный QR-код.")
+                else -> throw ImportException("На изображении должен быть ровно один QR-код.")
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     fun documentDisplayName(uri: Uri): String? = runCatching {
         context.contentResolver.query(
             uri,
@@ -838,6 +954,7 @@ class AndroidImportReader(private val context: Context) {
     private companion object {
         const val MAX_IMPORT_BYTES = 4 * 1024 * 1024
         const val MAX_DISPLAY_NAME_LENGTH = 160
+        const val MAX_QR_IMAGE_SIDE = 2048
     }
 }
 

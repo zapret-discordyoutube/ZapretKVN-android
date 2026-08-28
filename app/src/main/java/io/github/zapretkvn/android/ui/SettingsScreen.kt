@@ -1044,6 +1044,11 @@ private fun DiagnosticsSettings(
                 Text("Zapret KVN ${BuildConfig.VERSION_NAME}")
                 Text("Core ${BuildConfig.CORE_TAG} · ${BuildConfig.CORE_COMMIT.take(12)}")
                 Text(
+                    "Hysteria ${BuildConfig.HYSTERIA_CORE_TAG} · " +
+                        BuildConfig.HYSTERIA_CORE_COMMIT.take(12),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
                     "Android patch ${BuildConfig.CORE_PATCH_SHA256.take(12)}",
                     style = MaterialTheme.typography.bodySmall,
                 )

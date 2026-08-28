@@ -85,6 +85,7 @@ data class ProfilesUiState(
     val serverSummaries: Map<String, ProfileServerSummary> = emptyMap(),
     val serverPicker: ProfileServerPickerState? = null,
     val subscriptionSettings: SubscriptionSettingsState? = null,
+    val qrSubscriptionUrl: String? = null,
     val initialized: Boolean = false,
 )
 
@@ -240,7 +241,33 @@ class ProfilesViewModel(
     }
 
     fun importQr(contents: String) = operation {
-        preview(contents, ProfileSource.Qr, "Профиль из QR", "QR-код")
+        handleQrContents(contents, "QR-код")
+    }
+
+    fun importQrImage(uri: Uri) = operation {
+        val contents = withContext(Dispatchers.IO) { importReader.readSingleQrImage(uri) }
+        handleQrContents(contents, "QR-код из галереи")
+    }
+
+    private suspend fun handleQrContents(contents: String, sourceDescription: String) {
+        val value = contents.trim()
+        val isSubscription = withContext(Dispatchers.Default) {
+            runCatching { SubscriptionIdentity.resolveSource(value) }.isSuccess
+        }
+        if (isSubscription) {
+            mutableState.update { it.copy(qrSubscriptionUrl = value, message = null) }
+        } else {
+            preview(value, ProfileSource.Qr, "Профиль из QR", sourceDescription)
+        }
+    }
+
+    fun closeQrSubscription() {
+        mutableState.update { it.copy(qrSubscriptionUrl = null) }
+    }
+
+    fun importQrSubscription(url: String, identity: SubscriptionIdentityInput) {
+        closeQrSubscription()
+        importUrl(url, identity)
     }
 
     fun importUrl(url: String, identity: SubscriptionIdentityInput = SubscriptionIdentityInput()) =
