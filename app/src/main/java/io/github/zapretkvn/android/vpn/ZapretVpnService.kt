@@ -16,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.R
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.config.DnsMode
@@ -51,7 +52,6 @@ import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.SystemProxyStatus
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -605,7 +605,12 @@ class ZapretVpnService : VpnService() {
             // when health verification fails and the session is closed immediately.
             controller.startConnectionDiagnosticStage(token, "core_log", "Снимок bounded core-лога")
             resources.openLogClient(controller)
-            resources.openFailureLogClient(::onHysteriaCoreLogs)
+            if (resources.hasHysteriaOutbounds()) {
+                resources.openFailureLogClient(
+                    onLogs = ::onHysteriaCoreLogs,
+                    onUnavailable = ::onHysteriaFailureObserverUnavailable,
+                )
+            }
             controller.startConnectionDiagnosticStage(token, "group_client", "Чтение selector-групп")
             val groupClient = Libbox.newCommandClient(
                 GroupClientHandler(
@@ -669,7 +674,11 @@ class ZapretVpnService : VpnService() {
             check(token == controller.currentGeneration()) { "Запуск отменён." }
             controller.startConnectionDiagnosticStage(token, "finalize", "Финализация сессии")
             container.proxyBootstrapper.recordSuccess(profileId, preparedBootstrap)
+            resources.requireFailureLogClient()
             check(activatePendingSession(resources, token)) { "Запуск отменён." }
+            // Close the pending→active race: a disconnect between the first
+            // readiness check and publication must still fail startup.
+            resources.requireFailureLogClient()
             resetRecoveryCounters()
             synchronized(restartScheduleLock) { networkChangeSinceElapsed = 0L }
             resources.attachNetworkObserver(networkMonitor.observe { state ->
@@ -719,8 +728,17 @@ class ZapretVpnService : VpnService() {
                 hysteriaTransitionCoordinator.onSessionReady()
             }
             showForeground(ForegroundNotificationState.Connected)
+            if (VpnTestHooks.consumeHysteriaFailureObserverDisconnect()) {
+                serviceScope.launch {
+                    delay(100)
+                    resources.simulateFailureLogDisconnect()
+                }
+            }
             VpnTestHooks.consumeHysteriaFailure()?.let { failure ->
-                onHysteriaFailure(token, failure)
+                resources.currentFailureEvent(
+                    failure,
+                    SystemClock.elapsedRealtime(),
+                )?.let(::onHysteriaFailure)
             }
         }
     }
@@ -1463,15 +1481,21 @@ class ZapretVpnService : VpnService() {
     }
 
     private fun onHysteriaCoreLogs(generation: Long, messages: List<String>) {
-        val failure = messages.asSequence()
-            .mapNotNull(HysteriaFailureClassifier::classifyRuntime)
-            .firstOrNull()
+        val session = activeSession
+            ?.takeIf { it.generation == generation }
             ?: return
-        onHysteriaFailure(generation, failure)
+        HysteriaFailureLogParser.first(messages)
+            ?.let { tagged ->
+                session.failureEvent(
+                    outboundTag = tagged.outboundTag,
+                    failure = tagged.failureCode,
+                    observedAtMonotonic = SystemClock.elapsedRealtime(),
+                )
+            }
+            ?.let(::onHysteriaFailure)
     }
 
-    private fun onHysteriaFailure(generation: Long, failure: HysteriaFailureCode) {
-        val failureStartedAt = SystemClock.elapsedRealtime()
+    private fun onHysteriaFailureObserverUnavailable(generation: Long) {
         serviceScope.launch {
             serviceLock.withLock {
                 val session = activeSession
@@ -1483,7 +1507,36 @@ class ZapretVpnService : VpnService() {
                 ) {
                     return@withLock
                 }
-                val failedTag = session.selectedOutboundTag() ?: return@withLock
+                hysteriaStateReducer.fail(
+                    generation,
+                    HysteriaFailureCode.LOCAL_CONTROL_PLANE_UNAVAILABLE,
+                    automaticSwitch = false,
+                )
+                terminateHysteriaSession(
+                    session,
+                    HysteriaFailureCode.LOCAL_CONTROL_PLANE_UNAVAILABLE,
+                    "Hysteria2: потерян обязательный канал контроля runtime.",
+                )
+            }
+        }
+    }
+
+    private fun onHysteriaFailure(event: HysteriaFailureEvent) {
+        val failureStartedAt = event.observedAtMonotonic
+        serviceScope.launch {
+            serviceLock.withLock {
+                val session = activeSession
+                if (
+                    session == null ||
+                    !session.isCurrentFailureEvent(event) ||
+                    event.sessionGeneration != controller.currentGeneration() ||
+                    stopInProgress.get()
+                ) {
+                    return@withLock
+                }
+                val generation = event.sessionGeneration
+                val failedTag = event.outboundTag
+                val failure = event.failureCode
                 if (session.outboundType(failedTag) != "hysteria2") return@withLock
                 if (failure in HYSTERIA_SECURITY_FAILURES) {
                     hysteriaStateReducer.fail(generation, failure, automaticSwitch = false)
@@ -1491,29 +1544,47 @@ class ZapretVpnService : VpnService() {
                     return@withLock
                 }
                 if (failure !in AUTOMATIC_HYSTERIA_SWITCH_FAILURES) return@withLock
-                if (hysteriaTransitionCoordinator.automaticAttempted()) return@withLock
 
                 val stored = container.profileStore.read(session.profileId)
                 val plan = hysteriaProfilePlan(stored.json, session.primaryGroupTag)
-                    ?: return@withLock
-                val replacement = hysteriaTransitionCoordinator.chooseReplacement(
+                if (plan == null) {
+                    hysteriaStateReducer.fail(generation, failure, automaticSwitch = false)
+                    hysteriaStateReducer.terminal(
+                        generation,
+                        HysteriaFailureCode.TARGET_RUNTIME_INCOMPATIBLE,
+                    )
+                    terminateHysteriaSession(
+                        session,
+                        HysteriaFailureCode.TARGET_RUNTIME_INCOMPATIBLE,
+                        "Hysteria2: активный target нельзя безопасно восстановить.",
+                    )
+                    return@withLock
+                }
+                val replacementOutcome = hysteriaTransitionCoordinator.chooseReplacement(
                     failedId = failedTag,
                     failure = failure,
                     orderedTargets = plan.targets,
                 )
-                if (replacement == null) {
-                    if (!hysteriaTransitionCoordinator.automaticAttempted()) return@withLock
-                    hysteriaStateReducer.fail(generation, failure, automaticSwitch = false)
-                    hysteriaStateReducer.terminal(
-                        generation,
-                        HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
-                    )
-                    terminateHysteriaSession(
-                        session,
-                        HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
-                        "Hysteria2: совместимый резервный сервер не найден.",
-                    )
-                    return@withLock
+                val replacement = when (replacementOutcome) {
+                    is HysteriaReplacementOutcome.Candidate -> replacementOutcome.target
+                    HysteriaReplacementOutcome.NoCompatibleTarget -> {
+                        hysteriaStateReducer.fail(generation, failure, automaticSwitch = false)
+                        hysteriaStateReducer.terminal(
+                            generation,
+                            HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
+                        )
+                        terminateHysteriaSession(
+                            session,
+                            HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
+                            "Hysteria2: совместимый резервный сервер не найден.",
+                        )
+                        return@withLock
+                    }
+                    HysteriaReplacementOutcome.StaleFailureIgnored,
+                    HysteriaReplacementOutcome.TransitionAlreadyInFlight,
+                    HysteriaReplacementOutcome.FailureAlreadyHandled,
+                    HysteriaReplacementOutcome.FailureNotRecoverable,
+                    -> return@withLock
                 }
 
                 hysteriaStateReducer.fail(generation, failure, automaticSwitch = true)
@@ -1839,7 +1910,7 @@ class ZapretVpnService : VpnService() {
         failureCode: HysteriaFailureCode,
     ): Boolean {
         if (hysteriaTransitionCoordinator.automaticAttempted()) return false
-        val replacement = hysteriaTransitionCoordinator.chooseReplacement(
+        val replacementOutcome = hysteriaTransitionCoordinator.chooseReplacement(
             failedId = plan.currentTag,
             failure = failureCode,
             orderedTargets = plan.targets,
@@ -1847,12 +1918,20 @@ class ZapretVpnService : VpnService() {
         )
         hysteriaStateReducer.begin(token, plan.currentTag, plan.targets.map { it.id }.toSet())
         hysteriaStateReducer.fail(token, failureCode, automaticSwitch = true)
-        if (replacement == null) {
-            hysteriaStateReducer.terminal(
-                token,
-                HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
-            )
-            return false
+        val replacement = when (replacementOutcome) {
+            is HysteriaReplacementOutcome.Candidate -> replacementOutcome.target
+            HysteriaReplacementOutcome.NoCompatibleTarget -> {
+                hysteriaStateReducer.terminal(
+                    token,
+                    HysteriaFailureCode.NO_COMPATIBLE_FALLBACK,
+                )
+                return false
+            }
+            HysteriaReplacementOutcome.StaleFailureIgnored,
+            HysteriaReplacementOutcome.TransitionAlreadyInFlight,
+            HysteriaReplacementOutcome.FailureAlreadyHandled,
+            HysteriaReplacementOutcome.FailureNotRecoverable,
+            -> return false
         }
         hysteriaStateReducer.advance(token, HysteriaRuntimeState.PREPARING_REPLACEMENT)
         val candidate = try {
@@ -2328,7 +2407,13 @@ class ZapretVpnService : VpnService() {
         private var logClient: CommandClient? = null
         private var logClientCounted = false
         private var failureLogClient: CommandClient? = null
+        private val failureLogAvailable = AtomicBoolean(false)
+        @Volatile private var failureLogUnavailableCallback: (() -> Unit)? = null
         @Volatile private var selectedOutboundTag: String? = initialSelectedOutboundTag
+        private val hysteriaTargetFence = HysteriaTargetGenerationFence(
+            generation,
+            initialSelectedOutboundTag,
+        )
         @Volatile private var stopDiagnosticGeneration = Long.MIN_VALUE
         private val pingTargetResolver = ServerPingTargetResolver(
             outboundDescriptions,
@@ -2354,6 +2439,25 @@ class ZapretVpnService : VpnService() {
 
         fun selectedOutboundTag(): String? = selectedOutboundTag
 
+        fun failureEvent(
+            outboundTag: String,
+            failure: HysteriaFailureCode,
+            observedAtMonotonic: Long,
+        ): HysteriaFailureEvent? = hysteriaTargetFence.event(
+            outboundTag,
+            failure,
+            observedAtMonotonic,
+        )
+
+        fun currentFailureEvent(
+            failure: HysteriaFailureCode,
+            observedAtMonotonic: Long,
+        ): HysteriaFailureEvent? =
+            hysteriaTargetFence.currentEvent(failure, observedAtMonotonic)
+
+        fun isCurrentFailureEvent(event: HysteriaFailureEvent): Boolean =
+            hysteriaTargetFence.accepts(event)
+
         fun primarySelectorTargets(): List<String> = selectorGroups
             .firstOrNull { it.tag == primaryGroupTag }
             ?.outbounds
@@ -2361,8 +2465,13 @@ class ZapretVpnService : VpnService() {
 
         fun outboundType(tag: String): String? = outboundDescriptions[tag]?.type
 
+        fun hasHysteriaOutbounds(): Boolean =
+            outboundDescriptions.values.any { it.type == "hysteria2" }
+
         fun commitSelection(groupTag: String, outboundTag: String) {
-            if (groupTag == primaryGroupTag) selectedOutboundTag = outboundTag
+            if (groupTag != primaryGroupTag) return
+            hysteriaTargetFence.commit(outboundTag)
+            selectedOutboundTag = outboundTag
         }
 
         fun attachPlatform(candidate: AndroidPlatformAdapter) {
@@ -2564,21 +2673,58 @@ class ZapretVpnService : VpnService() {
         }
 
         @Synchronized
-        fun openFailureLogClient(onLogs: (Long, List<String>) -> Unit) {
+        fun openFailureLogClient(
+            onLogs: (Long, List<String>) -> Unit,
+            onUnavailable: (Long) -> Unit,
+        ) {
             if (closing.get() || failureLogClient != null) return
+            if (VpnTestHooks.consumeHysteriaFailureObserverConnectFailure()) {
+                throw HysteriaControlPlaneUnavailableException()
+            }
+            failureLogUnavailableCallback = { onUnavailable(generation) }
             val candidate = Libbox.newCommandClient(
-                HysteriaFailureLogClientHandler(generation, onLogs),
+                HysteriaFailureLogClientHandler(
+                    generation = generation,
+                    onLogs = onLogs,
+                    onConnected = { failureLogAvailable.set(true) },
+                    onDisconnected = {
+                        val wasAvailable = failureLogAvailable.getAndSet(false)
+                        if (wasAvailable && !closing.get()) failureLogUnavailableCallback?.invoke()
+                    },
+                ),
                 CommandClientOptions().apply { addCommand(Libbox.CommandLog) },
             )
             try {
                 candidate.connect()
                 if (closing.get()) {
                     runCatching { candidate.disconnect() }
-                    return
+                    throw CancellationException("Подключение failure-log client отменено.")
+                }
+                if (!failureLogAvailable.get()) {
+                    throw HysteriaControlPlaneUnavailableException()
                 }
                 failureLogClient = candidate
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                failureLogAvailable.set(false)
                 runCatching { candidate.disconnect() }
+                if (error is CancellationException) throw error
+                if (error is HysteriaControlPlaneUnavailableException) throw error
+                throw HysteriaControlPlaneUnavailableException(error)
+            }
+        }
+
+        fun requireFailureLogClient() {
+            if (!hasHysteriaOutbounds()) return
+            if (closing.get()) throw CancellationException("VPN-сессия уже закрывается.")
+            if (failureLogClient == null || !failureLogAvailable.get()) {
+                throw HysteriaControlPlaneUnavailableException()
+            }
+        }
+
+        fun simulateFailureLogDisconnect() {
+            if (!BuildConfig.DEBUG || closing.get()) return
+            if (failureLogAvailable.getAndSet(false)) {
+                failureLogUnavailableCallback?.invoke()
             }
         }
 
@@ -2609,6 +2755,8 @@ class ZapretVpnService : VpnService() {
                     val failureClient = synchronized(resourceLock) {
                         failureLogClient.also { failureLogClient = null }
                     }
+                    failureLogAvailable.set(false)
+                    failureLogUnavailableCallback = null
                     runCatching { failureClient?.disconnect() }
                     val current = synchronized(resourceLock) {
                         client.also { client = null }
@@ -2689,6 +2837,17 @@ class ZapretVpnService : VpnService() {
         override val technicalDetail = "timeout_ms=$CONNECTION_START_TIMEOUT_MILLIS"
     }
 
+    private class HysteriaControlPlaneUnavailableException(
+        cause: Throwable? = null,
+    ) : IllegalStateException(
+        "Не удалось подключить обязательный канал контроля Hysteria2 runtime.",
+        cause,
+    ), CodedFailure {
+        override val failureCode = HysteriaFailureCode.LOCAL_CONTROL_PLANE_UNAVAILABLE.name
+        override val userMessage = checkNotNull(message)
+        override val technicalDetail = "hysteria_failure=$failureCode"
+    }
+
     private class ServerHandler(
         private val service: ZapretVpnService,
     ) : CommandServerHandler {
@@ -2762,7 +2921,13 @@ class ZapretVpnService : VpnService() {
     private class HysteriaFailureLogClientHandler(
         private val generation: Long,
         private val onLogs: (Long, List<String>) -> Unit,
+        private val onConnected: () -> Unit,
+        private val onDisconnected: () -> Unit,
     ) : BaseClientHandler() {
+        override fun connected() = onConnected()
+
+        override fun disconnected(message: String) = onDisconnected()
+
         override fun writeLogs(messageList: LogIterator) {
             val messages = ArrayList<String>(MAX_FAILURE_LOG_BATCH_LINES)
             while (messageList.hasNext()) {

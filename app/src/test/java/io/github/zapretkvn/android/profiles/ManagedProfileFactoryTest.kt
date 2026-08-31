@@ -12,6 +12,7 @@ import kotlinx.serialization.json.boolean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ManagedProfileFactoryTest {
@@ -105,6 +106,49 @@ class ManagedProfileFactoryTest {
         assertFalse(server.identityKey.contains("secret"))
         assertFalse(ManagedProfileFactory.stableTags(listOf(server)).single().contains("secret"))
         assertFalse(ManagedProfileFactory.stableMemberKeys(listOf(server)).single().contains("secret"))
+    }
+
+    @Test
+    fun `shared hysteria auth remains one-to-one across reorder and pin rotation`() {
+        fun server(name: String, endpoint: String, pin: String) =
+            ProtocolOutboundBuilders.hysteria2(
+                displayName = name,
+                server = endpoint,
+                serverPort = 443,
+                password = "shared-auth",
+                tls = TlsSettings(enabled = true, serverName = "$endpoint-sni"),
+                certificateSha256 = pin,
+                uri = "hy2://shared-auth@$endpoint:443?sni=$endpoint-sni&pinSHA256=$pin#$name",
+            )
+
+        val first = server("Same", "one.example", "11".repeat(32))
+        val second = server("Same", "two.example", "22".repeat(32))
+        val rotated = server("Renamed", "one.example", "33".repeat(32))
+        val originalKeys = ManagedProfileFactory.stableMemberKeys(listOf(first, second))
+        val reorderedKeys = ManagedProfileFactory.stableMemberKeys(listOf(second, rotated))
+
+        assertEquals(originalKeys[0], reorderedKeys[1])
+        assertEquals(originalKeys[1], reorderedKeys[0])
+        assertEquals(
+            ManagedProfileFactory.stableTags(listOf(first, second))[0],
+            ManagedProfileFactory.stableTags(listOf(rotated.copy(displayName = "Same"), second))[0],
+        )
+        assertFalse(originalKeys.any { it.contains("shared-auth") })
+    }
+
+    @Test
+    fun `indistinguishable shared-auth hysteria members are rejected explicitly`() {
+        val duplicate = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Same",
+            server = "same.example",
+            serverPort = 443,
+            password = "shared-auth",
+            uri = "hy2://shared-auth@same.example:443#Same",
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            ManagedProfileFactory.stableMemberKeys(listOf(duplicate, duplicate))
+        }
     }
 
     @Test

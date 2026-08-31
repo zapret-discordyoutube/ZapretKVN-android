@@ -405,10 +405,12 @@ object ManagedProfileFactory {
         return servers.mapIndexed { index, server ->
             val base = bases[index]
             val requiresSuffix = counts.getValue(base) > 1 || base in used
-            var candidate = if (requiresSuffix) "$base-${shortHash(server.identityKey)}" else base
+            val tagIdentity = stableTagIdentity(server)
+            var candidate = if (requiresSuffix) "$base-${shortHash(tagIdentity)}" else base
             var collision = 2
             while (!used.add(candidate)) {
-                candidate = "$base-${shortHash("${server.identityKey}|$index|$collision")}"
+                val collisionIdentity = "$tagIdentity|${server.identityKey}|$collision"
+                candidate = "$base-${shortHash(collisionIdentity)}"
                 collision++
             }
             candidate
@@ -422,14 +424,20 @@ object ManagedProfileFactory {
 
     /**
      * Stable identities for members of a split subscription. Runtime identity and refresh identity
-     * are deliberately separate: an imported Hysteria2 URI keeps its exact publication fingerprint
-     * for tags/config, while the secret-safe credential identity lets pin, SNI, endpoint and obfs
-     * publication changes update the existing logical profile atomically.
+     * are deliberately separate. A unique Hysteria credential survives publication changes; when
+     * one credential is shared, endpoint/SNI aliases provide order-independent one-to-one matching.
+     * An ambiguous group is rejected or reconciled as explicit remove/add instead of being rebound
+     * to whichever member happens to appear first.
      */
     fun stableMemberKeys(servers: List<ManagedServer>): List<String> {
         val occurrences = mutableMapOf<String, Int>()
-        return servers.map { server ->
+        val identityCounts = servers.groupingBy(ManagedServer::refreshIdentityKey).eachCount()
+        val keys = servers.map { server ->
             val identity = server.refreshIdentityKey
+            if (isHysteriaCredentialIdentity(identity) && identityCounts.getValue(identity) > 1) {
+                return@map hysteria2EndpointMemberKey(server)
+                    ?: fullHash("$identity|exact|${server.identityKey}")
+            }
             val occurrence = occurrences.getOrDefault(identity, 0).also {
                 occurrences[identity] = it + 1
             }
@@ -442,7 +450,48 @@ object ManagedProfileFactory {
                 )
             }
         }
+        require(keys.size == keys.toSet().size) {
+            "Hysteria2 subscription contains indistinguishable duplicate servers."
+        }
+        return keys
     }
+
+    internal data class Hysteria2ReconciliationAliases(
+        val credentialKey: String,
+        val aliases: Set<String>,
+    )
+
+    internal fun hysteria2ReconciliationAliases(
+        server: ManagedServer,
+    ): Hysteria2ReconciliationAliases? {
+        if (server.outbound.string("type") != "hysteria2") return null
+        val password = server.outbound.string("password")?.takeIf(String::isNotEmpty) ?: return null
+        return hysteria2Aliases(
+            credentialIdentity = ProtocolOutboundBuilders.hysteria2CredentialIdentity(password),
+            server = server.outbound.string("server").orEmpty(),
+            port = server.outbound.int("server_port"),
+            sni = server.outbound.objectValue("tls")?.string("server_name").orEmpty(),
+        )
+    }
+
+    internal fun migratedHysteria2MemberAliases(
+        rawJson: String,
+    ): Hysteria2ReconciliationAliases? = runCatching {
+        val root = JsonConfig.parse(rawJson) as? JsonObject ?: return@runCatching null
+        val outbound = (root["outbounds"] as? JsonArray)
+            .orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .singleOrNull { it.string("type") == "hysteria2" }
+            ?: return@runCatching null
+        val password = outbound.string("password")?.takeIf(String::isNotEmpty)
+            ?: return@runCatching null
+        hysteria2Aliases(
+            credentialIdentity = ProtocolOutboundBuilders.hysteria2CredentialIdentity(password),
+            server = outbound.string("server").orEmpty(),
+            port = outbound.int("server_port"),
+            sni = outbound.objectValue("tls")?.string("server_name").orEmpty(),
+        )
+    }.getOrNull()
 
     /**
      * One-time compatibility alias for split profiles created before Hysteria2 gained a distinct
@@ -463,6 +512,40 @@ object ManagedProfileFactory {
             ?: return@runCatching null
         fullHash(ProtocolOutboundBuilders.hysteria2CredentialIdentity(password))
     }.getOrNull()
+
+    private fun hysteria2Aliases(
+        credentialIdentity: String,
+        server: String,
+        port: Int,
+        sni: String,
+    ): Hysteria2ReconciliationAliases {
+        val credentialKey = fullHash(credentialIdentity)
+        val endpoint = "${server.trim().lowercase()}|$port|${sni.trim().lowercase()}"
+        val aliases = buildSet {
+            add(fullHash("$credentialIdentity|endpoint|$endpoint"))
+            if (sni.isNotBlank()) {
+                add(fullHash("$credentialIdentity|sni|${sni.trim().lowercase()}"))
+            }
+        }
+        return Hysteria2ReconciliationAliases(credentialKey, aliases)
+    }
+
+    private fun hysteria2EndpointMemberKey(server: ManagedServer): String? =
+        hysteria2ReconciliationAliases(server)?.aliases?.firstOrNull()
+
+    private fun stableTagIdentity(server: ManagedServer): String =
+        hysteria2EndpointMemberKey(server) ?: server.identityKey
+
+    private fun isHysteriaCredentialIdentity(value: String): Boolean =
+        value.startsWith("hysteria2|credential-sha256:")
+
+    private fun JsonObject.string(key: String): String? =
+        (this[key] as? JsonPrimitive)?.content
+
+    private fun JsonObject.int(key: String): Int =
+        (this[key] as? JsonPrimitive)?.content?.toIntOrNull() ?: 0
+
+    private fun JsonObject.objectValue(key: String): JsonObject? = this[key] as? JsonObject
 
     private fun JsonObject.withTag(tag: String): JsonObject {
         val result = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()

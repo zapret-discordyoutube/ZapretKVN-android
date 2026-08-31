@@ -44,6 +44,30 @@
       "expected": {"valid": false, "obfs_kind": "none", "tls_kind": "ca", "endpoint_kind": "dns", "requirements": ["raw_uri_required"], "failure": "LOCAL_CONFIG_INVALID", "windows_execution": "unsupported", "windows_switch": "unsupported", "android_execution": "unsupported", "android_switch": "unsupported", "windows_native_pool": false, "android_native_pool": false}
     },
     {
+      "id": "duplicate_known_query",
+      "uri": "hy2://fixture-auth@duplicate.example.test:443/?sni=one.example&sni=two.example#Duplicate",
+      "metadata": {},
+      "expected": {"valid": false, "obfs_kind": "none", "tls_kind": "ca", "endpoint_kind": "dns", "requirements": ["raw_uri_required"], "failure": "LOCAL_CONFIG_INVALID", "windows_execution": "unsupported", "windows_switch": "unsupported", "android_execution": "unsupported", "android_switch": "unsupported", "windows_native_pool": false, "android_native_pool": false}
+    },
+    {
+      "id": "duplicate_alias_query",
+      "uri": "hy2://fixture-auth@duplicate-alias.example.test:443/?sni=one.example&peer=two.example#DuplicateAlias",
+      "metadata": {},
+      "expected": {"valid": false, "obfs_kind": "none", "tls_kind": "ca", "endpoint_kind": "dns", "requirements": ["raw_uri_required"], "failure": "LOCAL_CONFIG_INVALID", "windows_execution": "unsupported", "windows_switch": "unsupported", "android_execution": "unsupported", "android_switch": "unsupported", "windows_native_pool": false, "android_native_pool": false}
+    },
+    {
+      "id": "unbracketed_ipv6",
+      "uri": "hy2://fixture-auth@2001:db8::10:443/#UnbracketedIPv6",
+      "metadata": {},
+      "expected": {"valid": false, "obfs_kind": "none", "tls_kind": "ca", "endpoint_kind": "dns", "requirements": ["raw_uri_required"], "failure": "LOCAL_CONFIG_INVALID", "windows_execution": "unsupported", "windows_switch": "unsupported", "android_execution": "unsupported", "android_switch": "unsupported", "windows_native_pool": false, "android_native_pool": false}
+    },
+    {
+      "id": "malformed_percent_encoding",
+      "uri": "hy2://fixture-auth@encoding.example.test:443/?sni=bad%GG.example#MalformedEncoding",
+      "metadata": {},
+      "expected": {"valid": false, "obfs_kind": "none", "tls_kind": "ca", "endpoint_kind": "dns", "requirements": ["raw_uri_required"], "failure": "LOCAL_CONFIG_INVALID", "windows_execution": "unsupported", "windows_switch": "unsupported", "android_execution": "unsupported", "android_switch": "unsupported", "windows_native_pool": false, "android_native_pool": false}
+    },
+    {
       "id": "ipv6_endpoint",
       "uri": "hy2://fixture-auth@[2001:db8::10]:443/?pinSHA256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee#IPv6",
       "metadata": {},

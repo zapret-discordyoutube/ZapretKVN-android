@@ -46,21 +46,19 @@ class HysteriaTransitionInstrumentedTest {
 
         reducer.begin(8, "old", targets.map { it.id }.toSet())
         reducer.advance(8, HysteriaRuntimeState.READY)
-        assertEquals(
-            "replacement",
-            coordinator.chooseReplacement(
+        val selected = coordinator.chooseReplacement(
                 "old",
                 HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
                 targets,
-            )?.id,
-        )
+            ) as HysteriaReplacementOutcome.Candidate
+        assertEquals("replacement", selected.target.id)
         reducer.fail(8, HysteriaFailureCode.TARGET_NETWORK_TIMEOUT, automaticSwitch = true)
         reducer.advance(8, HysteriaRuntimeState.PREPARING_REPLACEMENT)
         reducer.advance(8, HysteriaRuntimeState.REPLACEMENT_READY)
         coordinator.failReplacement()
 
         assertEquals(
-            null,
+            HysteriaReplacementOutcome.FailureAlreadyHandled,
             coordinator.chooseReplacement(
                 "old",
                 HysteriaFailureCode.TARGET_CONNECTION_REFUSED,
@@ -125,6 +123,83 @@ class HysteriaTransitionInstrumentedTest {
             } as VpnConnectionState.Error
             assertEquals(HysteriaFailureCode.TRANSITION_DEADLINE_EXCEEDED.name, failure.code)
             assertEquals(originalTag, selectedTag(container, profile.id))
+            awaitIdle(context)
+        } finally {
+            cleanupVpn(context, container, profile.id)
+        }
+    }
+
+    @Test
+    fun activeProductionFailureWithoutReplacementIsTerminal() = runBlocking {
+        val server = productionPair().first()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        val testPackage = instrumentation.context.packageName
+
+        prepareVpn(context, container, testPackage)
+        val profile = container.profileStore.create(
+            "Hysteria no compatible fallback",
+            ManagedProfileFactory.single(server),
+            ProfileSource.Subscription,
+        )
+        try {
+            VpnTestHooks.reportNextHysteriaFailure(HysteriaFailureCode.TARGET_NETWORK_TIMEOUT)
+            assertTrue(startAndAwaitTerminal(container.vpnController, profile.id) is VpnConnectionState.Connected)
+            val failure = withTimeout(20_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Error }
+            } as VpnConnectionState.Error
+            assertEquals(HysteriaFailureCode.NO_COMPATIBLE_FALLBACK.name, failure.code)
+            awaitIdle(context)
+        } finally {
+            cleanupVpn(context, container, profile.id)
+        }
+    }
+
+    @Test
+    fun failureObserverConnectFailurePreventsConnected() = runBlocking {
+        val server = productionPair().first()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+
+        prepareVpn(context, container, instrumentation.context.packageName)
+        val profile = container.profileStore.create(
+            "Hysteria observer startup failure",
+            ManagedProfileFactory.single(server),
+            ProfileSource.Subscription,
+        )
+        try {
+            VpnTestHooks.failNextHysteriaFailureObserverConnect()
+            val failure = startAndAwaitTerminal(container.vpnController, profile.id)
+                as VpnConnectionState.Error
+            assertEquals(HysteriaFailureCode.LOCAL_CONTROL_PLANE_UNAVAILABLE.name, failure.code)
+            awaitIdle(context)
+        } finally {
+            cleanupVpn(context, container, profile.id)
+        }
+    }
+
+    @Test
+    fun failureObserverDisconnectAfterConnectedIsTerminal() = runBlocking {
+        val server = productionPair().first()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+
+        prepareVpn(context, container, instrumentation.context.packageName)
+        val profile = container.profileStore.create(
+            "Hysteria observer runtime failure",
+            ManagedProfileFactory.single(server),
+            ProfileSource.Subscription,
+        )
+        try {
+            VpnTestHooks.disconnectNextHysteriaFailureObserverAfterConnected()
+            assertTrue(startAndAwaitTerminal(container.vpnController, profile.id) is VpnConnectionState.Connected)
+            val failure = withTimeout(20_000) {
+                container.vpnController.state.first { it is VpnConnectionState.Error }
+            } as VpnConnectionState.Error
+            assertEquals(HysteriaFailureCode.LOCAL_CONTROL_PLANE_UNAVAILABLE.name, failure.code)
             awaitIdle(context)
         } finally {
             cleanupVpn(context, container, profile.id)

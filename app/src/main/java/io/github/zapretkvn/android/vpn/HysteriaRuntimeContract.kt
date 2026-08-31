@@ -93,10 +93,28 @@ internal object HysteriaCapabilityClassifier {
     private val ipv4Pattern = Regex("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$")
     private val trueValues = setOf("1", "true", "yes", "on", "t")
     private val falseValues = setOf("0", "false", "no", "off", "f", "")
+    private val malformedPercentPattern = Regex("%(?![0-9a-fA-F]{2})")
+    private val knownQueryKeys = setOf(
+        "auth",
+        "sni",
+        "insecure",
+        "obfs",
+        "obfspassword",
+        "up",
+        "down",
+        "pinsha256",
+        "ech",
+        "hopinterval",
+        "minpacketsize",
+        "maxpacketsize",
+    )
 
     fun classify(rawUri: String): HysteriaCapability {
         if (rawUri.isBlank() || rawUri.any { it.isWhitespace() || it.isISOControl() }) {
             return invalid("Hysteria2 URI contains whitespace or a control character")
+        }
+        if (malformedPercentPattern.containsMatchIn(rawUri)) {
+            return invalid("Hysteria2 URI has invalid percent encoding")
         }
         val scheme = rawUri.substringBefore(':').lowercase(Locale.ROOT)
         if (scheme !in setOf("hy2", "hysteria2") || !rawUri.startsWith("$scheme://", true)) {
@@ -118,6 +136,9 @@ internal object HysteriaCapabilityClassifier {
             val suffix = authority.substring(closing + 1)
             portUnion = suffix.removePrefix(":").ifBlank { "443" }
         } else {
+            if (authority.count { it == ':' } > 1) {
+                return invalid("Hysteria2 URI requires brackets around IPv6 server")
+            }
             val colon = authority.lastIndexOf(':')
             host = decode(if (colon < 0) authority else authority.substring(0, colon))
             portUnion = if (colon < 0) "443" else authority.substring(colon + 1).ifBlank { "443" }
@@ -144,6 +165,9 @@ internal object HysteriaCapabilityClassifier {
                 val value = decode(item.substringAfter('=', ""))
                 if ((key + value).any(Char::isISOControl)) {
                     return invalid("Hysteria2 URI query contains a control character")
+                }
+                if (key in knownQueryKeys && key in query) {
+                    return invalid("Hysteria2 URI repeats a known query parameter")
                 }
                 query[key] = value
             }
@@ -220,15 +244,16 @@ internal object HysteriaCapabilityClassifier {
     private fun canonicalQueryKey(raw: String): String {
         val normalized = raw.trim().lowercase(Locale.ROOT).filterNot { it == '-' || it == '_' }
         return when (normalized) {
-            "peer" -> "sni"
+            "servername", "peer" -> "sni"
             "allowinsecure", "skipcertverify" -> "insecure"
+            "upmbps", "upbps" -> "up"
+            "downmbps", "downbps" -> "down"
             else -> normalized
         }
     }
 
-    private fun decode(value: String): String = runCatching {
+    private fun decode(value: String): String =
         URLDecoder.decode(value, StandardCharsets.UTF_8.name())
-    }.getOrDefault(value)
 }
 
 internal object HysteriaFailureClassifier {
@@ -386,6 +411,95 @@ internal data class HysteriaFallbackTarget(
     val maintenance: Boolean = false,
 )
 
+internal data class HysteriaFailureEvent(
+    val sessionGeneration: Long,
+    val targetGeneration: Long,
+    val outboundTag: String,
+    val failureCode: HysteriaFailureCode,
+    val observedAtMonotonic: Long,
+)
+
+internal data class HysteriaTaggedFailure(
+    val outboundTag: String,
+    val failureCode: HysteriaFailureCode,
+)
+
+internal object HysteriaFailureLogParser {
+    private val outboundTagPattern =
+        Regex("outbound/(?:hysteria2|hy2)\\[([^]\\r\\n]+)]", RegexOption.IGNORE_CASE)
+
+    fun first(messages: List<String>): HysteriaTaggedFailure? = messages.asSequence()
+        .mapNotNull { message ->
+            val failure = HysteriaFailureClassifier.classifyRuntime(message)
+                ?: return@mapNotNull null
+            val outboundTag = outboundTagPattern.find(message)
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.takeIf(String::isNotBlank)
+                ?: return@mapNotNull null
+            HysteriaTaggedFailure(outboundTag, failure)
+        }
+        .firstOrNull()
+}
+
+internal class HysteriaTargetGenerationFence(
+    private val sessionGeneration: Long,
+    initialOutboundTag: String?,
+) {
+    @Volatile private var selectedOutboundTag = initialOutboundTag
+    @Volatile private var selectedTargetGeneration = if (initialOutboundTag == null) 0L else 1L
+    private val targetGenerations = mutableMapOf<String, Long>().apply {
+        initialOutboundTag?.let { put(it, selectedTargetGeneration) }
+    }
+
+    @Synchronized
+    fun commit(outboundTag: String) {
+        val nextGeneration = selectedTargetGeneration + 1L
+        selectedTargetGeneration = nextGeneration
+        targetGenerations[outboundTag] = nextGeneration
+        selectedOutboundTag = outboundTag
+    }
+
+    @Synchronized
+    fun event(
+        outboundTag: String,
+        failure: HysteriaFailureCode,
+        observedAtMonotonic: Long,
+    ): HysteriaFailureEvent? {
+        val targetGeneration = targetGenerations[outboundTag] ?: return null
+        return HysteriaFailureEvent(
+            sessionGeneration = sessionGeneration,
+            targetGeneration = targetGeneration,
+            outboundTag = outboundTag,
+            failureCode = failure,
+            observedAtMonotonic = observedAtMonotonic,
+        )
+    }
+
+    @Synchronized
+    fun currentEvent(
+        failure: HysteriaFailureCode,
+        observedAtMonotonic: Long,
+    ): HysteriaFailureEvent? = selectedOutboundTag?.let { tag ->
+        event(tag, failure, observedAtMonotonic)
+    }
+
+    @Synchronized
+    fun accepts(event: HysteriaFailureEvent): Boolean =
+        event.sessionGeneration == sessionGeneration &&
+            event.outboundTag == selectedOutboundTag &&
+            event.targetGeneration == selectedTargetGeneration
+}
+
+internal sealed interface HysteriaReplacementOutcome {
+    data class Candidate(val target: HysteriaFallbackTarget) : HysteriaReplacementOutcome
+    data object NoCompatibleTarget : HysteriaReplacementOutcome
+    data object StaleFailureIgnored : HysteriaReplacementOutcome
+    data object TransitionAlreadyInFlight : HysteriaReplacementOutcome
+    data object FailureAlreadyHandled : HysteriaReplacementOutcome
+    data object FailureNotRecoverable : HysteriaReplacementOutcome
+}
+
 internal class HysteriaTransitionCoordinator(
     private val monotonicMillis: () -> Long,
     private val cooldownMillis: Long = 300_000,
@@ -402,17 +516,19 @@ internal class HysteriaTransitionCoordinator(
         failure: HysteriaFailureCode,
         orderedTargets: List<HysteriaFallbackTarget>,
         ignoreStaleLogFence: Boolean = false,
-    ): HysteriaFallbackTarget? {
-        if (failure !in AUTOMATIC_HYSTERIA_SWITCH_FAILURES || replacementInFlight || replacementAttempted) {
-            return null
+    ): HysteriaReplacementOutcome {
+        if (failure !in AUTOMATIC_HYSTERIA_SWITCH_FAILURES) {
+            return HysteriaReplacementOutcome.FailureNotRecoverable
         }
+        if (replacementInFlight) return HysteriaReplacementOutcome.TransitionAlreadyInFlight
+        if (replacementAttempted) return HysteriaReplacementOutcome.FailureAlreadyHandled
         val now = monotonicMillis()
         if (
             !ignoreStaleLogFence &&
             lastCommitAt != Long.MIN_VALUE &&
             now - lastCommitAt < STALE_LOG_FENCE_MILLIS
         ) {
-            return null
+            return HysteriaReplacementOutcome.StaleFailureIgnored
         }
         val replacement = orderedTargets.firstOrNull { target ->
             target.id != failedId &&
@@ -420,12 +536,13 @@ internal class HysteriaTransitionCoordinator(
                 target.capability.valid &&
                 target.capability.executionKind == HysteriaExecutionKind.Native &&
                 cooldownUntil.getOrDefault(target.id, 0) <= now
-        } ?: return null
+        }
         failureEpisodeId++
         replacementAttempted = true
-        replacementInFlight = true
         cooldownUntil[failedId] = now + cooldownMillis
-        return replacement
+        if (replacement == null) return HysteriaReplacementOutcome.NoCompatibleTarget
+        replacementInFlight = true
+        return HysteriaReplacementOutcome.Candidate(replacement)
     }
 
     fun commitReplacement() {

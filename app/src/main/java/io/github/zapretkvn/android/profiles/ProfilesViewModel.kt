@@ -820,27 +820,42 @@ class ProfilesViewModel(
         if (group.isEmpty()) throw ImportException("Группа раздельной подписки повреждена.")
 
         val freshKeys = ManagedProfileFactory.stableMemberKeys(managed.servers)
-        val freshByKey = freshKeys.zip(managed.servers).toMap()
-        val existingByKey = linkedMapOf<String, String>()
-        group.forEach { (id, item) ->
-            existingByKey[checkNotNull(item.splitMemberKey)] = id
+        val directOwners = group.entries.groupBy { checkNotNull(it.value.splitMemberKey) }
+        val existingByKey = directOwners.mapNotNull { (key, owners) ->
+            owners.singleOrNull()?.let { key to it.key }
+        }.toMap()
+        val storedById = group.keys.associateWith { id -> store.read(id) }
+        val migratedAliases = storedById.mapValues { (_, stored) ->
+            ManagedProfileFactory.migratedHysteria2MemberAliases(stored.json)
         }
-        // Android versions before the logical Hysteria2 identity fix keyed split members by the
-        // entire URI fingerprint. Recover a credential-only, secret-safe alias from the stored
-        // single-server profile so the first refresh migrates in place instead of delete/create.
-        group.keys.forEach { id ->
-            val stored = store.read(id)
-            ManagedProfileFactory.migratedHysteria2MemberKey(stored.json)?.let { migratedKey ->
-                existingByKey.putIfAbsent(migratedKey, id)
+        val credentialOwners = migratedAliases.entries
+            .mapNotNull { (id, aliases) -> aliases?.credentialKey?.let { it to id } }
+            .groupBy({ it.first }, { it.second })
+        val existingAliasOwners = linkedMapOf<String, MutableSet<String>>()
+        migratedAliases.forEach { (id, aliases) ->
+            if (aliases == null) return@forEach
+            aliases.aliases.forEach { alias ->
+                existingAliasOwners.getOrPut(alias, ::linkedSetOf).add(id)
+            }
+            if (credentialOwners[aliases.credentialKey]?.size == 1) {
+                existingAliasOwners.getOrPut(aliases.credentialKey, ::linkedSetOf).add(id)
+            }
+        }
+        val existingByAlias = existingAliasOwners.mapNotNull { (alias, owners) ->
+            owners.singleOrNull()?.let { alias to it }
+        }.toMap()
+        val freshAliases = managed.servers.map { server ->
+            ManagedProfileFactory.hysteria2ReconciliationAliases(server)?.let { aliases ->
+                aliases.aliases + aliases.credentialKey
+            }.orEmpty()
+        }
+        val freshAliasOwners = buildMap<String, MutableSet<Int>> {
+            freshAliases.forEachIndexed { index, aliases ->
+                aliases.forEach { alias -> getOrPut(alias, ::linkedSetOf).add(index) }
             }
         }
         val oldKnownKeys = group.values.flatMap { it.knownMemberKeys }.toSet()
             .ifEmpty { existingByKey.keys }
-        val survivingIds = existingByKey
-            .filterKeys(freshByKey::containsKey)
-            .values
-            .toSet()
-        val removedIds = group.keys - survivingIds
         val baseName = group.values.firstNotNullOfOrNull(SubscriptionBinding::splitBaseName)
             ?.takeIf(String::isNotBlank)
             ?: "Подписка"
@@ -850,12 +865,18 @@ class ProfilesViewModel(
         val updates = linkedMapOf<String, String>()
         val additions = mutableListOf<SplitRefreshAddition>()
         val retainedMemberKeys = linkedMapOf<String, String>()
+        val claimedExistingIds = mutableSetOf<String>()
         freshKeys.forEachIndexed { index, key ->
             val server = managed.servers[index]
             val existingId = existingByKey[key]
+                ?.takeIf(claimedExistingIds::add)
+                ?: freshAliases[index].asSequence()
+                    .filter { alias -> freshAliasOwners[alias]?.size == 1 }
+                    .mapNotNull(existingByAlias::get)
+                    .firstOrNull(claimedExistingIds::add)
             when {
                 existingId != null -> {
-                    val stored = store.read(existingId)
+                    val stored = checkNotNull(storedById[existingId])
                     val refreshed = ManagedProfileEditor.refreshServers(stored.json, listOf(server)).json
                     requireValid(refreshed)
                     updates[existingId] = refreshed
@@ -877,6 +898,8 @@ class ProfilesViewModel(
                 else -> Unit
             }
         }
+        val survivingIds = retainedMemberKeys.keys
+        val removedIds = group.keys - survivingIds
 
         val connectedId = (vpnController.state.value as? VpnConnectionState.Connected)?.profileId
             ?.takeIf(group::containsKey)
