@@ -1258,7 +1258,7 @@ private fun ProfileCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (refreshable) {
-                    TextButton(onClick = onRefresh, enabled = enabled) { Text("Обновить") }
+                    TextButton(onClick = onRefresh, enabled = enabled) { Text("Обновить без кэша") }
                     TextButton(onClick = onSubscriptionSettings, enabled = enabled) {
                         Text("Подписка")
                     }

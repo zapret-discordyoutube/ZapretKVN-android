@@ -135,6 +135,31 @@ class ManagedProfileFactoryTest {
     }
 
     @Test
+    fun `legacy hysteria split key migrates to credential identity without exposing secret`() {
+        val secret = "migration-secret"
+        val fresh = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Hysteria",
+            server = "new.example",
+            serverPort = 8443,
+            password = secret,
+            uri = "hy2://migration-secret@new.example:8443?sni=tls.example#Hysteria",
+        )
+        val stored = ManagedProfileFactory.single(
+            ProtocolOutboundBuilders.hysteria2(
+                displayName = "Hysteria",
+                server = "old.example",
+                serverPort = 443,
+                password = secret,
+                uri = "hy2://migration-secret@old.example:443?sni=old.example#Hysteria",
+            ),
+        )
+
+        val migrated = ManagedProfileFactory.migratedHysteria2MemberKey(stored)
+        assertEquals(ManagedProfileFactory.stableMemberKeys(listOf(fresh)).single(), migrated)
+        assertFalse(checkNotNull(migrated).contains(secret))
+    }
+
+    @Test
     fun `base64 subscription creates one selector with all links`() {
         val links = listOf(
             "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One",

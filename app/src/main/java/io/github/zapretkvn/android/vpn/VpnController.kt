@@ -174,7 +174,7 @@ class VpnController(
             val fallbackCode = DiagnosticFailureClassifier.classify(message).supportCode
             state.copy(
                 message = message,
-                code = sanitizeSupportCode(state.code).ifBlank { fallbackCode },
+                code = VpnFailureCodeSanitizer.sanitize(state.code).ifBlank { fallbackCode },
                 technicalDetail = state.technicalDetail
                     ?.let { sanitizeDiagnosticText(it, 240) }
                     ?.takeIf(String::isNotBlank),
@@ -226,7 +226,7 @@ class VpnController(
             generation,
             failure.copy(
                 message = message,
-                code = sanitizeSupportCode(failure.code).ifBlank {
+                code = VpnFailureCodeSanitizer.sanitize(failure.code).ifBlank {
                     DiagnosticFailureClassifier.classify(message).supportCode
                 },
                 technicalDetail = failure.technicalDetail
@@ -1043,16 +1043,20 @@ class VpnController(
             .trim()
             .take(maxLength)
 
-    private fun sanitizeSupportCode(value: String): String = value
-        .trim()
-        .uppercase()
-        .takeIf { it.matches(SUPPORT_CODE) }
-        .orEmpty()
-
     private companion object {
         const val MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS = 160
         val ANSI_ESCAPE = Regex("\u001B(?:\\[[0-?]*[ -/]*[@-~]|[@-_])")
         val NEW_LINES = Regex("[\\r\\n]+")
-        val SUPPORT_CODE = Regex("[A-Z]{2,5}-\\d{3}")
     }
+}
+
+internal object VpnFailureCodeSanitizer {
+    private val supportCode = Regex("[A-Z]{2,5}-\\d{3}")
+    private val hysteriaCodes = HysteriaFailureCode.entries.mapTo(mutableSetOf()) { it.name }
+
+    fun sanitize(value: String): String = value
+        .trim()
+        .uppercase()
+        .takeIf { it.matches(supportCode) || it in hysteriaCodes }
+        .orEmpty()
 }

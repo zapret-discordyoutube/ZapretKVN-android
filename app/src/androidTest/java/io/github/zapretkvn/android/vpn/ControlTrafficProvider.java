@@ -15,6 +15,8 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.Arrays;
 
 public final class ControlTrafficProvider extends ContentProvider {
@@ -23,6 +25,7 @@ public final class ControlTrafficProvider extends ContentProvider {
     public static final String METHOD_TCP_ECHO = "tcp-echo";
     public static final String METHOD_TCP_BULK = "tcp-bulk";
     public static final String METHOD_UDP_ECHO = "udp-echo";
+    public static final String METHOD_HTTPS = "https-generate-204";
     public static final String METHOD_REVOKE_START = "revoke-start";
     public static final String METHOD_REVOKE_STOP = "revoke-stop";
     public static final String RESULT_UID = "uid";
@@ -61,6 +64,9 @@ public final class ControlTrafficProvider extends ContentProvider {
                     break;
                 case METHOD_UDP_ECHO:
                     udpEcho(requireExtras(extras));
+                    break;
+                case METHOD_HTTPS:
+                    httpsGenerate204();
                     break;
                 case METHOD_REVOKE_START:
                     providerContext().startForegroundService(
@@ -199,6 +205,21 @@ public final class ControlTrafficProvider extends ContentProvider {
             } catch (java.io.IOException ignored) {
                 // A successful TCP connect is sufficient for the direct-path assertion.
             }
+        }
+    }
+
+    /** Real DNS, TLS and HTTP from the independently selected test-APK UID. */
+    private void httpsGenerate204() throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(
+                "https://cp.cloudflare.com/generate_204").openConnection();
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(TIMEOUT_MILLIS);
+        connection.setReadTimeout(TIMEOUT_MILLIS);
+        try {
+            int status = connection.getResponseCode();
+            if (status != 204) throw new IllegalStateException("Unexpected HTTPS status: " + status);
+        } finally {
+            connection.disconnect();
         }
     }
 

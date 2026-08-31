@@ -10,9 +10,14 @@ object SecretRedactor {
     const val MASK = "•••"
 
     fun redact(text: String): String {
-        val jsonRedacted = runCatching {
-            JsonConfig.format(redactElement(JsonConfig.parse(text)))
-        }.getOrNull()
+        val first = text.firstOrNull { !it.isWhitespace() }
+        val jsonRedacted = if (first == '{' || first == '[') {
+            runCatching {
+                JsonConfig.format(redactElement(JsonConfig.parse(text)))
+            }.getOrNull()
+        } else {
+            null
+        }
         return redactInline(jsonRedacted ?: text)
     }
 

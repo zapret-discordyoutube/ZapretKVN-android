@@ -40,6 +40,9 @@ class HttpSubscriptionFetcher(
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = TIMEOUT_MILLIS
                 connection.readTimeout = TIMEOUT_MILLIS
+                // Subscription snapshots and HTTP validators are intentionally not cached.
+                // Every user refresh is an unconditional fetch, so a parser/runtime revision can
+                // never strand an old partially parsed body behind a newly stored ETag.
                 connection.useCaches = false
                 // Идентификатор устройства принадлежит только исходному провайдеру:
                 // на редиректе к чужому хосту он снимается, как браузеры снимают Authorization.

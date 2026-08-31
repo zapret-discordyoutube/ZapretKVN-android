@@ -20,6 +20,7 @@ import io.github.zapretkvn.wireguardimport.WireGuardConfigParser
 import io.github.zapretkvn.wireguardimport.WireGuardImportException
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.math.BigDecimal
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -67,8 +68,15 @@ class ImportException(message: String, cause: Throwable? = null) : Exception(mes
 
 /** Больше предупреждений пользователь всё равно не прочитает перед подтверждением. */
 private const val MAX_IMPORT_WARNINGS = 8
+private const val HYSTERIA2_MAX_PACKET_SIZE = 2048
 private val HYSTERIA2_SUPPORTED_OBFS_TYPES = setOf("none", "plain", "salamander", "gecko")
 private val HYSTERIA2_PASSWORD_OBFS_TYPES = setOf("salamander", "gecko")
+private val HYSTERIA2_DURATION = Regex(
+    "[-+]?(?:(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:ns|us|µs|μs|ms|s|m|h))+",
+)
+private val HYSTERIA2_DURATION_PART = Regex(
+    "(\\d+(?:\\.\\d*)?|\\.\\d+)(ns|us|µs|μs|ms|s|m|h)",
+)
 
 object ImportParser {
     fun parse(
@@ -78,6 +86,12 @@ object ImportParser {
     ): ImportCandidate {
         val text = input.removePrefix("\uFEFF").trim()
         if (text.isEmpty()) throw ImportException("Источник импорта пуст.")
+        if (URI_SCHEME_PATTERN.find(text)?.range?.first == 0 &&
+            source in setOf(ProfileSource.Link, ProfileSource.Qr) &&
+            text.any { it.isWhitespace() || it.isISOControl() }
+        ) {
+            throw ImportException("Ссылка содержит управляющий символ или пробел.")
+        }
         if (WireGuardConfigParser.looksLikeConfig(text)) {
             val wireGuard = try {
                 WireGuardConfigParser.parse(text)
@@ -422,41 +436,62 @@ object ShareLinkParser {
         val query = uri.query
         rejectImpossibleTlsOptOut(query, "Hysteria2")
         val warnings = classifyPreservedHysteria2Parameters(query)
-        val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
-            ?: query["auth"]?.takeIf(String::isNotBlank)
+        val password = decodeHysteria2Component(uri.rawUserInfo, "authentication")
+            .takeIf(String::isNotEmpty)
+            ?: query["auth"]?.takeIf(String::isNotEmpty)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
-        val obfsType = query["obfs"]?.lowercase()
+        val obfsType = query["obfs"]?.trim()?.lowercase()?.takeIf(String::isNotBlank)
         if (obfsType != null && obfsType !in HYSTERIA2_SUPPORTED_OBFS_TYPES) {
             throw ImportException(
                 "Hysteria2 obfs '$obfsType' не поддерживается официальным встроенным ядром.",
             )
         }
         val obfsPassword = query["obfspassword"]
-        if (obfsType in HYSTERIA2_PASSWORD_OBFS_TYPES && obfsPassword.isNullOrBlank()) {
+        if (obfsType in HYSTERIA2_PASSWORD_OBFS_TYPES && obfsPassword.isNullOrEmpty()) {
             // Без пароля Salamander/Gecko не согласуется: сервер отвергал бы каждый пакет.
             throw ImportException("Hysteria2 obfs '$obfsType' требует obfs-password.")
         }
+        val certificatePin = query["pinsha256"]
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::normalizeCertificatePin)
+        val insecure = query.boolean("insecure")
+        if (insecure && certificatePin == null) {
+            throw ImportException("Hysteria2 запрещает insecure без точного pinSHA256.")
+        }
+        val hopInterval = normalizeHysteria2HopInterval(query["hopinterval"])
+        val minPacketSize = parseHysteria2PacketSize(query["minpacketsize"])
+        val maxPacketSize = parseHysteria2PacketSize(query["maxpacketsize"])
+        if (minPacketSize != null && maxPacketSize != null && minPacketSize > maxPacketSize) {
+            throw ImportException("Hysteria2 содержит некорректный диапазон размера пакета.")
+        }
+        if (maxPacketSize != null && maxPacketSize > HYSTERIA2_MAX_PACKET_SIZE) {
+            throw ImportException("Hysteria2 maxPacketSize превышает 2048 байт.")
+        }
+        if ((minPacketSize != null || maxPacketSize != null) && obfsType != "gecko") {
+            throw ImportException("Hysteria2 min/max packet size допустимы только для Gecko.")
+        }
         return ProtocolOutboundBuilders.hysteria2(
-            displayName = decode(uri.rawFragment).ifBlank { "Hysteria2 ${index + 1}" },
+            displayName = decodeHysteria2Component(uri.rawFragment, "display name")
+                .ifBlank { "Hysteria2 ${index + 1}" },
             server = host,
             serverPort = uri.firstPort,
             password = password,
             uri = uri.rawUri,
             tls = TlsSettings(
                 enabled = true,
-                serverName = query["sni"] ?: query["peer"] ?: host,
-                insecure = query.boolean("insecure"),
-                echConfigPem = query["ech"]?.takeIf(String::isNotBlank)?.let(::echConfigPem),
+                serverName = query["sni"]?.takeIf(String::isNotEmpty) ?: host,
+                insecure = insecure,
+                echConfigPem = query["ech"]?.takeIf(String::isNotEmpty)?.let(::echConfigPem),
             ),
             obfsPassword = obfsPassword.takeIf { obfsType in HYSTERIA2_PASSWORD_OBFS_TYPES },
             obfsType = obfsType.takeIf { it in HYSTERIA2_PASSWORD_OBFS_TYPES },
-            upMbps = query.mbps("up"),
-            downMbps = query.mbps("down"),
+            upMbps = parseHysteria2Mbps(query["up"], "up"),
+            downMbps = parseHysteria2Mbps(query["down"], "down"),
             serverPorts = uri.serverPorts,
-            hopInterval = query["hopinterval"],
-            certificateSha256 = query["pinsha256"]?.let(::normalizeCertificatePin),
-            obfsMinPacketSize = query["minpacketsize"]?.toIntOrNull(),
-            obfsMaxPacketSize = query["maxpacketsize"]?.toIntOrNull(),
+            hopInterval = hopInterval,
+            certificateSha256 = certificatePin,
+            obfsMinPacketSize = minPacketSize,
+            obfsMaxPacketSize = maxPacketSize,
         ).withWarnings(warnings + insecureWarning(query))
     }
 
@@ -472,11 +507,15 @@ object ShareLinkParser {
 
     /** java.net.URI rejects the official port-union authority (443,2000-3000). */
     private fun parseHysteria2Uri(link: String): Hysteria2Uri {
+        if (link.any { it.isWhitespace() || it.isISOControl() }) {
+            throw ImportException("Hysteria2 URI содержит управляющий символ или пробел.")
+        }
         val body = link.substringAfter("://", "")
         if (body.isBlank()) throw ImportException("Некорректная Hysteria2 ссылка.")
         val rawFragment = body.substringAfter('#', "")
         val beforeFragment = body.substringBefore('#')
         val rawQuery = beforeFragment.substringAfter('?', "")
+        if (';' in rawQuery) throw ImportException("Hysteria2 URI содержит некорректный query separator.")
         val authority = beforeFragment.substringBefore('?').substringBefore('/').trim()
         val at = authority.lastIndexOf('@')
         val rawUserInfo = if (at >= 0) authority.substring(0, at) else ""
@@ -484,37 +523,154 @@ object ShareLinkParser {
         val (host, portUnion) = if (hostPort.startsWith('[')) {
             val close = hostPort.indexOf(']')
             if (close <= 1) throw ImportException("В Hysteria2 отсутствует корректный IPv6-сервер.")
-            hostPort.substring(1, close) to hostPort.substring(close + 1).removePrefix(":")
+            val remainder = hostPort.substring(close + 1)
+            if (remainder == ":" || remainder.isNotEmpty() && !remainder.startsWith(':')) {
+                throw ImportException("Hysteria2 содержит некорректный IPv6-порт.")
+            }
+            hostPort.substring(1, close) to remainder.removePrefix(":").ifBlank { "443" }
         } else {
-            val colon = hostPort.lastIndexOf(':')
-            if (colon < 0) hostPort to "443" else hostPort.substring(0, colon) to hostPort.substring(colon + 1)
-        }
-        if (host.isBlank()) throw ImportException("В Hysteria2 отсутствует сервер.")
-        val ports = portUnion.ifBlank { "443" }.split(',').map(String::trim)
-        val firstPort = ports.first().substringBefore('-').toIntOrNull()
-            ?.takeIf { it in 1..65535 }
-            ?: throw ImportException("В Hysteria2 отсутствует корректный порт.")
-        ports.forEach { part ->
-            val pieces = part.split('-')
-            val bounds = pieces.map(String::toIntOrNull)
-            if (pieces.size !in 1..2 || bounds.any { it == null || it !in 1..65535 } ||
-                bounds.size == 2 && requireNotNull(bounds[0]) > requireNotNull(bounds[1])
-            ) {
-                throw ImportException("Hysteria2 содержит некорректный диапазон портов '$part'.")
+            val colon = hostPort.indexOf(':')
+            if (colon < 0) {
+                hostPort to "443"
+            } else {
+                if (colon == 0 || colon == hostPort.lastIndex) {
+                    throw ImportException("В Hysteria2 отсутствует корректный сервер или порт.")
+                }
+                hostPort.substring(0, colon) to hostPort.substring(colon + 1)
             }
         }
-        val parsedQuery = rawQuery.split('&').filter(String::isNotBlank).associate { part ->
-            canonicalKey(decode(part.substringBefore('='))) to decode(part.substringAfter('=', ""))
+        val decodedHost = decodeHysteria2Component(host, "server")
+        if (decodedHost.isBlank()) throw ImportException("В Hysteria2 отсутствует сервер.")
+        val ports = parseHysteria2Ports(portUnion)
+        val parsedQuery = linkedMapOf<String, String>()
+        rawQuery.split('&').filter(String::isNotBlank).forEach { part ->
+            val key = canonicalKey(decodeHysteria2QueryComponent(part.substringBefore('='), "query key"))
+            val value = decodeHysteria2QueryComponent(part.substringAfter('=', ""), "query value")
+            if (key in HYSTERIA2_QUERY_KEYS && key in parsedQuery) {
+                throw ImportException("Hysteria2 URI неоднозначно повторяет параметр '$key'.")
+            }
+            parsedQuery[key] = value
         }
         return Hysteria2Uri(
             rawUri = link,
             rawUserInfo = rawUserInfo,
-            host = host,
-            firstPort = firstPort,
-            serverPorts = ports.takeIf { it.size > 1 || '-' in it.single() }.orEmpty(),
+            host = decodedHost,
+            firstPort = ports.firstPort,
+            serverPorts = ports.serverPorts,
             query = parsedQuery,
             rawFragment = rawFragment,
         )
+    }
+
+    private fun decodeHysteria2Component(value: String, field: String): String =
+        decodeHysteria2(value, field, query = false)
+
+    private fun decodeHysteria2QueryComponent(value: String, field: String): String =
+        decodeHysteria2(value, field, query = true)
+
+    private fun decodeHysteria2(value: String, field: String, query: Boolean): String =
+        try {
+            URLDecoder.decode(
+                if (query) value else value.replace("+", "%2B"),
+                StandardCharsets.UTF_8.name(),
+            )
+        } catch (error: IllegalArgumentException) {
+            throw ImportException("Hysteria2 URI содержит некорректную кодировку в поле $field.", error)
+        }.also { decoded ->
+            if (decoded.any { it.isISOControl() }) {
+                throw ImportException("Hysteria2 URI содержит управляющий символ в поле $field.")
+            }
+        }
+
+    private data class Hysteria2Ports(val firstPort: Int, val serverPorts: List<String>)
+
+    private fun parseHysteria2Ports(value: String): Hysteria2Ports {
+        val normalized = value.ifBlank { "443" }.split(',').map { rawPart ->
+            val part = rawPart.trim()
+            if (part.isEmpty()) throw ImportException("Hysteria2 содержит пустой UDP-порт.")
+            val separator = if (':' in part) ':' else '-'
+            if (separator == ':' && part.count { it == ':' } != 1) {
+                throw ImportException("IPv6-адрес Hysteria2 должен быть заключён в квадратные скобки.")
+            }
+            val bounds = part.split(separator).map(String::trim)
+            if (bounds.size !in 1..2) {
+                throw ImportException("Hysteria2 содержит некорректный диапазон портов '$part'.")
+            }
+            val start = bounds[0].toIntOrNull()?.takeIf { it in 1..65535 }
+            val end = if (bounds.size == 2) {
+                bounds[1].toIntOrNull()?.takeIf { it in 1..65535 }
+            } else {
+                start
+            }
+            if (start == null || end == null || start > end) {
+                throw ImportException("Hysteria2 содержит некорректный диапазон портов '$part'.")
+            }
+            if (start == end) start.toString() else "$start-$end"
+        }
+        val firstPort = normalized.first().substringBefore('-').toInt()
+        return Hysteria2Ports(
+            firstPort,
+            normalized.takeIf { it.size > 1 || '-' in it.single() }.orEmpty(),
+        )
+    }
+
+    private fun parseHysteria2Mbps(value: String?, field: String): Int? {
+        if (value == null || value.isEmpty()) return null
+        if (value.isBlank()) throw ImportException("Hysteria2 содержит некорректную скорость $field.")
+        val fields = value.trim().split(Regex("\\s+"))
+        if (fields.size !in 1..2) throw ImportException("Hysteria2 содержит некорректную скорость $field.")
+        val amount = fields[0].toLongOrNull()?.takeIf { it >= 0 }
+            ?: throw ImportException("Hysteria2 содержит некорректную скорость $field.")
+        val (factor, divisor) = when (fields.getOrElse(1) { "mbps" }.lowercase()) {
+            "bps", "b/s" -> 1L to 1_000_000L
+            "kbps", "kb/s" -> 1L to 1_000L
+            "mbps", "mb/s" -> 1L to 1L
+            "gbps", "gb/s" -> 1_000L to 1L
+            "tbps", "tb/s" -> 1_000_000L to 1L
+            else -> throw ImportException("Hysteria2 содержит неизвестную единицу скорости $field.")
+        }
+        if (amount > Int.MAX_VALUE.toLong() / factor) {
+            throw ImportException("Hysteria2 содержит слишком большую скорость $field.")
+        }
+        return (amount * factor / divisor).toInt()
+    }
+
+    private fun normalizeHysteria2HopInterval(value: String?): String? {
+        val interval = value?.takeIf(String::isNotEmpty) ?: return null
+        interval.toLongOrNull()?.let { seconds ->
+            if (seconds !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
+                throw ImportException("Hysteria2 hopInterval не помещается в общий Android ABI-контракт.")
+            }
+            return if (seconds == 0L) null else "${seconds}s"
+        }
+        if (!HYSTERIA2_DURATION.matches(interval)) {
+            throw ImportException("Hysteria2 содержит некорректный hopInterval.")
+        }
+        val unsigned = interval.removePrefix("-").removePrefix("+")
+        val nanoseconds = HYSTERIA2_DURATION_PART.findAll(unsigned).fold(BigDecimal.ZERO) { total, match ->
+            val amount = match.groupValues[1].toBigDecimal()
+            val multiplier = when (match.groupValues[2]) {
+                "ns" -> BigDecimal.ONE
+                "us", "µs", "μs" -> BigDecimal("1000")
+                "ms" -> BigDecimal("1000000")
+                "s" -> BigDecimal("1000000000")
+                "m" -> BigDecimal("60000000000")
+                "h" -> BigDecimal("3600000000000")
+                else -> error("Duration regex and unit table diverged")
+            }
+            total + amount * multiplier
+        }
+        if (nanoseconds > BigDecimal(Long.MAX_VALUE)) {
+            throw ImportException("Hysteria2 содержит слишком большой hopInterval.")
+        }
+        return interval.takeIf { nanoseconds >= BigDecimal.ONE }
+    }
+
+    private fun parseHysteria2PacketSize(value: String?): Int? {
+        val text = value?.trim()?.takeIf(String::isNotBlank) ?: return null
+        val size = text.toIntOrNull()?.takeIf { it >= 0 }
+            ?: throw ImportException("Hysteria2 содержит некорректный размер пакета.")
+        return size.takeIf { it != 0 }
     }
 
     private fun normalizeCertificatePin(value: String): String {
@@ -531,7 +687,7 @@ object ShareLinkParser {
             .recoverCatching { Base64.getDecoder().decode(compact) }
             .getOrElse { throw ImportException("Hysteria2 ECH содержит некорректный base64.", it) }
         if (decoded.isEmpty()) throw ImportException("Hysteria2 ECH пуст.")
-        val encoded = Base64.getMimeEncoder(64, "\n".toByteArray()).encodeToString(decoded)
+        val encoded = Base64.getEncoder().encodeToString(decoded)
         return "-----BEGIN ECH CONFIGS-----\n$encoded\n-----END ECH CONFIGS-----"
     }
 
@@ -741,12 +897,6 @@ object ShareLinkParser {
     private fun displayName(uri: URI, fallback: String): String =
         decode(uri.rawFragment.orEmpty()).ifBlank { fallback }
 
-    /** Скорость в ссылке пишут и числом, и строкой вида "100 Mbps". */
-    private fun Map<String, String>.mbps(key: String): Int? = this[key]
-        ?.trim()
-        ?.takeWhile(Char::isDigit)
-        ?.toIntOrNull()
-
     /** Ссылка ослабляет проверку сертификата — это нельзя применить беззвучно. */
     private fun insecureWarning(query: Map<String, String>): List<String> =
         if (query.boolean("insecure")) {
@@ -789,7 +939,7 @@ object ShareLinkParser {
         if (warnings.isEmpty()) this else copy(importWarnings = (importWarnings + warnings).distinct())
 
     private fun Map<String, String>.boolean(key: String): Boolean =
-        this[key]?.lowercase() in setOf("1", "true", "yes", "on")
+        this[key]?.trim()?.lowercase() in setOf("1", "true", "yes", "on")
 
     private fun Map<String, String>.csv(key: String): List<String> =
         this[key].orEmpty().split(',').map(String::trim).filter(String::isNotBlank)

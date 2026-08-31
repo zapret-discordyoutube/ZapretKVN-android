@@ -821,8 +821,18 @@ class ProfilesViewModel(
 
         val freshKeys = ManagedProfileFactory.stableMemberKeys(managed.servers)
         val freshByKey = freshKeys.zip(managed.servers).toMap()
-        val existingByKey = group.entries.associate { (id, item) ->
-            checkNotNull(item.splitMemberKey) to id
+        val existingByKey = linkedMapOf<String, String>()
+        group.forEach { (id, item) ->
+            existingByKey[checkNotNull(item.splitMemberKey)] = id
+        }
+        // Android versions before the logical Hysteria2 identity fix keyed split members by the
+        // entire URI fingerprint. Recover a credential-only, secret-safe alias from the stored
+        // single-server profile so the first refresh migrates in place instead of delete/create.
+        group.keys.forEach { id ->
+            val stored = store.read(id)
+            ManagedProfileFactory.migratedHysteria2MemberKey(stored.json)?.let { migratedKey ->
+                existingByKey.putIfAbsent(migratedKey, id)
+            }
         }
         val oldKnownKeys = group.values.flatMap { it.knownMemberKeys }.toSet()
             .ifEmpty { existingByKey.keys }

@@ -14,6 +14,12 @@ import kotlinx.serialization.json.put
 data class ManagedServer(
     val displayName: String,
     val identityKey: String,
+    /**
+     * Identity used only to reconcile members of a refreshed split subscription.
+     * It may deliberately outlive a transport/publication change, while [identityKey]
+     * continues to distinguish the exact runtime outbound and its stable tag.
+     */
+    val refreshIdentityKey: String = identityKey,
     val outbound: JsonObject,
     /** Параметры ссылки, которые протокол выполнить не может и которые названы в preview. */
     val importWarnings: List<String> = emptyList(),
@@ -146,13 +152,16 @@ object ProtocolOutboundBuilders {
         displayName = displayName,
         identityKey = identity("hysteria2", server, serverPort, null) +
             uri?.takeIf(String::isNotBlank)?.let { "|uri-sha256:${uriFingerprint(it)}" }.orEmpty(),
+        refreshIdentityKey = uri?.takeIf(String::isNotBlank)
+            ?.let { hysteria2CredentialIdentity(password) }
+            ?: identity("hysteria2", server, serverPort, null),
         outbound = buildJsonObject {
             put("type", "hysteria2")
             put("server", server)
             put("server_port", serverPort)
             put("password", password)
             uri?.takeIf(String::isNotBlank)?.let { put("uri", it) }
-            obfsPassword?.takeIf(String::isNotBlank)?.let { value ->
+            obfsPassword?.takeIf(String::isNotEmpty)?.let { value ->
                 put(
                     "obfs",
                     buildJsonObject {
@@ -313,6 +322,12 @@ object ProtocolOutboundBuilders {
             .digest(authoritativeUri(uri).toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
+    /** Raw credential values never enter persistent member identities or diagnostics. */
+    internal fun hysteria2CredentialIdentity(password: String): String =
+        "hysteria2|credential-sha256:" + MessageDigest.getInstance("SHA-256")
+            .digest(password.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
     private fun authoritativeUri(uri: String): String {
         val text = uri.trim()
         val separator = text.indexOf(':')
@@ -406,27 +421,48 @@ object ManagedProfileFactory {
         }
 
     /**
-     * Stable identities for members of a split subscription. Legacy builders stay credential-free
-     * so their passwords may rotate without turning an existing profile into a new one. Imported
-     * Hysteria2 URI members intentionally include the URI fingerprint: a pin or opaque parameter
-     * change is a new transport member, while the URI value itself never enters the key.
+     * Stable identities for members of a split subscription. Runtime identity and refresh identity
+     * are deliberately separate: an imported Hysteria2 URI keeps its exact publication fingerprint
+     * for tags/config, while the secret-safe credential identity lets pin, SNI, endpoint and obfs
+     * publication changes update the existing logical profile atomically.
      */
     fun stableMemberKeys(servers: List<ManagedServer>): List<String> {
         val occurrences = mutableMapOf<String, Int>()
         return servers.map { server ->
-            val occurrence = occurrences.getOrDefault(server.identityKey, 0).also {
-                occurrences[server.identityKey] = it + 1
+            val identity = server.refreshIdentityKey
+            val occurrence = occurrences.getOrDefault(identity, 0).also {
+                occurrences[identity] = it + 1
             }
             if (occurrence == 0) {
-                fullHash(server.identityKey)
+                fullHash(identity)
             } else {
                 fullHash(
-                    "${server.identityKey}|duplicate|" +
+                    "$identity|duplicate|" +
                         "${SecretRedactor.redactInline(server.displayName)}|$occurrence",
                 )
             }
         }
     }
+
+    /**
+     * One-time compatibility alias for split profiles created before Hysteria2 gained a distinct
+     * logical refresh identity. The returned value is a double SHA-256 identity and contains no
+     * recoverable credential material.
+     */
+    fun migratedHysteria2MemberKey(rawJson: String): String? = runCatching {
+        val root = JsonConfig.parse(rawJson) as? JsonObject ?: return@runCatching null
+        val hysteriaOutbounds = (root["outbounds"] as? JsonArray)
+            .orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .filter { (it["type"] as? JsonPrimitive)?.content == "hysteria2" }
+        val password = hysteriaOutbounds.singleOrNull()
+            ?.get("password")
+            ?.let { it as? JsonPrimitive }
+            ?.content
+            ?.takeIf(String::isNotEmpty)
+            ?: return@runCatching null
+        fullHash(ProtocolOutboundBuilders.hysteria2CredentialIdentity(password))
+    }.getOrNull()
 
     private fun JsonObject.withTag(tag: String): JsonObject {
         val result = linkedMapOf<String, kotlinx.serialization.json.JsonElement>()

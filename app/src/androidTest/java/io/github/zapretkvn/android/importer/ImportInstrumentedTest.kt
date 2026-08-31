@@ -41,6 +41,7 @@ import io.github.zapretkvn.android.vpn.BootstrapCache
 import io.github.zapretkvn.android.vpn.VpnController
 import io.nekohasekai.libbox.Libbox
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -724,6 +725,116 @@ class ImportInstrumentedTest {
             assertFalse(profiles.any { it.id == second.id })
             assertTrue(profileStore.read(first.id).json.contains("22222222-2222-4222-8222-222222222222"))
             assertEquals(2, sourceStore.splitGroup(first.id).size)
+        } finally {
+            testViewModelStore.clear()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun splitHysteriaPublicationRefreshMigratesLegacyIdentityAndPreservesProfileId() = runBlocking {
+        val root = File(context.cacheDir, "split-hysteria-refresh-${System.nanoTime()}")
+        val testViewModelStore = ViewModelStore()
+        val credential = "stable-synthetic-auth"
+        val oldPin = "00".repeat(32)
+        val freshPin = "11".repeat(32)
+        try {
+            val profileStore = ProfileStore(File(root, "profiles"), LibboxConfigValidator())
+            profileStore.initialize()
+            val oldLink = "hy2://$credential@old.example:443?insecure=1&pinSHA256=$oldPin&" +
+                "sni=old-tls.example&obfs=gecko&obfs-password=cover#Hysteria"
+            val freshLink = "hysteria2://$credential@192.0.2.44:8443?insecure=1&pinSHA256=$freshPin&" +
+                "sni=fresh-tls.example&obfs=gecko&obfs-password=cover#Hysteria"
+            val oldServer = (ImportParser.parse(oldLink, ProfileSource.Subscription) as ImportCandidate.Managed)
+                .servers.single()
+            val peer = vless("Peer", "peer.example")
+            val first = profileStore.create(
+                "Hysteria",
+                ManagedProfileFactory.single(oldServer),
+                ProfileSource.Link,
+            )
+            val second = profileStore.create(
+                "Peer",
+                ManagedProfileFactory.single(peer),
+                ProfileSource.Link,
+            )
+            val source = SubscriptionSource("https://subscription.example/profile?token=secret")
+            val sourceStore = SubscriptionSourceStore(File(root, "subscriptions"))
+            val peerKey = ManagedProfileFactory.stableMemberKeys(listOf(peer)).single()
+            val legacyHysteriaKey = MessageDigest.getInstance("SHA-256")
+                .digest(oldServer.identityKey.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+            val known = setOf(legacyHysteriaKey, peerKey)
+            sourceStore.replaceSplitGroup(
+                "group-hysteria",
+                mapOf(
+                    first.id to SubscriptionBinding(
+                        source,
+                        "group-hysteria",
+                        legacyHysteriaKey,
+                        "Servers",
+                        known,
+                    ),
+                    second.id to SubscriptionBinding(
+                        source,
+                        "group-hysteria",
+                        peerKey,
+                        "Servers",
+                        known,
+                    ),
+                ),
+            )
+            val refreshedLinks = listOf(
+                freshLink,
+                "vless://22222222-2222-4222-8222-222222222222@peer.example:443?security=tls#Peer",
+            ).joinToString("\n")
+            val application = context.applicationContext as ZapretApplication
+            val viewModel = ViewModelProvider(
+                object : ViewModelStoreOwner {
+                    override val viewModelStore: ViewModelStore = testViewModelStore
+                },
+                ProfilesViewModel.Factory(
+                    store = profileStore,
+                    settingsStore = application.container.uiSettingsStore,
+                    validator = LibboxConfigValidator(),
+                    importReader = AndroidImportReader(context),
+                    subscriptionFetcher = SubscriptionFetcher { refreshedLinks },
+                    subscriptionSourceStore = sourceStore,
+                    vpnController = VpnController(context),
+                    bootstrapCache = BootstrapCache(File(root, "network")),
+                    ruleSetAssets = application.container.ruleSetAssetManager,
+                ),
+            )[ProfilesViewModel::class.java]
+
+            fun awaitState(predicate: (ProfilesUiState) -> Boolean) {
+                val deadline = SystemClock.uptimeMillis() + 15_000
+                while (!predicate(viewModel.state.value) && SystemClock.uptimeMillis() < deadline) {
+                    SystemClock.sleep(25)
+                }
+            }
+
+            awaitState(ProfilesUiState::initialized)
+            viewModel.refreshSubscription(first.id)
+            awaitState { it.importPreview?.splitRefreshSummary != null || it.message != null }
+            val summary = checkNotNull(viewModel.state.value.importPreview?.splitRefreshSummary)
+            assertEquals(2, summary.updated)
+            assertEquals(0, summary.added)
+            assertEquals(0, summary.removed)
+
+            viewModel.confirmRefresh(restartConnected = false)
+            awaitState { !it.busy && it.importPreview == null }
+
+            assertEquals(setOf(first.id, second.id), profileStore.profiles.value.map { it.id }.toSet())
+            val refreshed = profileStore.read(first.id).json
+            assertTrue(refreshed.contains(freshPin))
+            assertFalse(refreshed.contains(oldPin))
+            assertTrue(refreshed.contains("fresh-tls.example"))
+            assertTrue(refreshed.contains("\"insecure\": true"))
+            assertTrue(refreshed.contains("\"type\": \"gecko\""))
+            val expectedKey = ManagedProfileFactory.stableMemberKeys(
+                (ImportParser.parse(freshLink, ProfileSource.Subscription) as ImportCandidate.Managed).servers,
+            ).single()
+            assertEquals(expectedKey, sourceStore.binding(first.id)?.splitMemberKey)
         } finally {
             testViewModelStore.clear()
             root.deleteRecursively()

@@ -297,6 +297,32 @@ class ImportParserTest {
     }
 
     @Test
+    fun `mixed hysteria vless and unsupported tunnel schemes import partially`() {
+        val pin = "ef".repeat(32)
+        val input = listOf(
+            "hysteria2://secret@hy.example:443?insecure=1&pinSHA256=$pin#HY2",
+            "vless://11111111-1111-4111-8111-111111111111@vless.example:443?security=tls#VLESS",
+            "wireguard://unsupported-subscription-entry",
+            "awg://unsupported-subscription-entry",
+            "ssh://unsupported-subscription-entry",
+        ).joinToString("\n")
+
+        val candidate = ImportParser.parse(
+            input,
+            ProfileSource.Subscription,
+        ) as ImportCandidate.Managed
+
+        assertEquals(
+            listOf("hysteria2", "vless"),
+            candidate.servers.map { it.outbound.string("type") },
+        )
+        val warning = candidate.importWarnings.single { it.contains("неподдерживаемые схемы") }
+        assertTrue(warning.contains("wireguard://"))
+        assertTrue(warning.contains("awg://"))
+        assertTrue(warning.contains("ssh://"))
+    }
+
+    @Test
     fun `subscription containing only unsupported schemes still fails clearly`() {
         val error = assertThrows(ImportException::class.java) {
             ImportParser.parse("ssh://user:password@ssh.example:22", ProfileSource.Clipboard)
@@ -804,6 +830,147 @@ class ImportParserTest {
     }
 
     @Test
+    fun `hysteria2 insecure without pin is refused fail closed`() {
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "hysteria2://secret@one.example:8443?insecure=1&sni=one.example#Hy2",
+                ProfileSource.Link,
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("insecure"))
+        assertTrue(error.message.orEmpty().contains("pinSHA256"))
+    }
+
+    @Test
+    fun `hysteria2 pin without insecure remains valid and preserved`() {
+        val pin = "ab".repeat(32)
+        val candidate = ImportParser.parse(
+            "hysteria2://secret@one.example:8443?pinSHA256=$pin&sni=one.example#Hy2",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed
+        val outbound = candidate.servers.single().outbound
+        val tls = outbound["tls"] as JsonObject
+
+        assertEquals(pin, outbound.string("certificate_sha256"))
+        assertFalse("insecure" in tls)
+    }
+
+    @Test
+    fun `hysteria2 stored and runtime transport fields stay identical`() {
+        val pin = "cd".repeat(32)
+        val uri = "hysteria2://user%3Apass@192.0.2.10:443,20000-20002" +
+            "?sni=edge.example&insecure=1&pinSHA256=$pin" +
+            "&obfs=gecko&obfs-password=cover&hop-interval=15s#Gecko"
+        val candidate = ImportParser.parse(uri, ProfileSource.Link) as ImportCandidate.Managed
+        val stored = candidate.buildJson()
+        val storedOutbound = ((JsonConfig.parse(stored) as JsonObject)["outbounds"] as JsonArray)
+            .map { it as JsonObject }
+            .single { it.string("type") == "hysteria2" }
+        val runtime = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Android),
+        ) as RuntimeConfigResult.Ready
+        val runtimeOutbound = ((JsonConfig.parse(runtime.json) as JsonObject)["outbounds"] as JsonArray)
+            .map { it as JsonObject }
+            .single { it.string("type") == "hysteria2" }
+
+        assertEquals(storedOutbound, runtimeOutbound)
+        assertEquals(uri, runtimeOutbound.string("uri"))
+        assertEquals(pin, runtimeOutbound.string("certificate_sha256"))
+        assertEquals(
+            "true",
+            ((runtimeOutbound["tls"] as JsonObject)["insecure"] as JsonPrimitive).content,
+        )
+        assertEquals("gecko", (runtimeOutbound["obfs"] as JsonObject).string("type"))
+        assertEquals(2, (runtimeOutbound["server_ports"] as JsonArray).size)
+    }
+
+    @Test
+    fun `hysteria2 kotlin model matches exact core uri dialect`() {
+        val uri = "hy2://edge.example:443,20000:20002?auth=user+pass&up=2+Gbps&" +
+            "down=2000000+bps&hop-interval=15&obfs=gecko&obfs-password=cover+key&" +
+            "min-packet-size=64&max-packet-size=128#Exact"
+        val server = (ImportParser.parse(uri, ProfileSource.Link) as ImportCandidate.Managed)
+            .servers.single()
+        val outbound = server.outbound
+        val obfs = outbound["obfs"] as JsonObject
+
+        assertEquals("user pass", outbound.string("password"))
+        assertEquals("2000", (outbound["up_mbps"] as JsonPrimitive).content)
+        assertEquals("2", (outbound["down_mbps"] as JsonPrimitive).content)
+        assertEquals("15s", outbound.string("hop_interval"))
+        assertEquals(
+            listOf("443", "20000-20002"),
+            (outbound["server_ports"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+        assertEquals("cover key", obfs.string("password"))
+        assertEquals("64", (obfs["min_packet_size"] as JsonPrimitive).content)
+        assertEquals("128", (obfs["max_packet_size"] as JsonPrimitive).content)
+    }
+
+    @Test
+    fun `hysteria2 rejects fields the exact core cannot execute`() {
+        listOf(
+            "hy2://secret@2001:db8::1",
+            "hy2://secret@edge.example:443?hop-interval=tomorrow",
+            "hy2://secret@edge.example:443?up=100Mbps",
+            "hy2://secret@edge.example:443?obfs=salamander&obfs-password=x&min-packet-size=64",
+            "hy2://secret@edge.example:443?obfs=gecko&obfs-password=x&max-packet-size=2049",
+            "hy2://secret@edge.example:443?sni=one.example;peer=two.example",
+            "hy2://secret@edge.example:443?sni=%GG",
+        ).forEach { uri ->
+            assertThrows("Unexpectedly accepted $uri", ImportException::class.java) {
+                ImportParser.parse(uri, ProfileSource.Link)
+            }
+        }
+    }
+
+    @Test
+    fun `hysteria2 duplicate known query meaning is refused as ambiguous`() {
+        listOf(
+            "sni=one.example&sni=two.example",
+            "sni=one.example&peer=two.example",
+            "insecure=0&allow-insecure=1",
+        ).forEach { query ->
+            val error = assertThrows(ImportException::class.java) {
+                ImportParser.parse(
+                    "hysteria2://secret@one.example:8443?$query#Hy2",
+                    ProfileSource.Link,
+                )
+            }
+            assertTrue(error.message.orEmpty().contains("повторяет параметр"))
+        }
+    }
+
+    @Test
+    fun `hysteria2 empty optional values match official core defaults`() {
+        val candidate = ImportParser.parse(
+            "hysteria2://secret@one.example:8443?sni=&obfs=&pinSHA256=#Hy2",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed
+        val outbound = candidate.servers.single().outbound
+        val tls = outbound["tls"] as JsonObject
+
+        assertEquals("one.example", tls.string("server_name"))
+        assertFalse("obfs" in outbound)
+        assertFalse("certificate_sha256" in outbound)
+    }
+
+    @Test
+    fun `hysteria2 literal and percent encoded controls are refused`() {
+        listOf(
+            "hysteria2://secret@one.example:8443?auth=bad%0Avalue#Hy2",
+            "hysteria2://secret@one.example:8443#bad%0Dname",
+            "hysteria2://secret@one.example:8443?insecure=0\n&sni=one.example#Hy2",
+        ).forEach { link ->
+            assertThrows(ImportException::class.java) {
+                ImportParser.parse(link, ProfileSource.Link)
+            }
+        }
+    }
+
+    @Test
     fun `parameter names are matched by meaning not spelling`() {
         val candidate = ImportParser.parse(
             "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
@@ -959,7 +1126,7 @@ class ImportParserTest {
     }
 
     @Test
-    fun `hysteria2 pin and unknown parameter variants change split identity`() {
+    fun `hysteria2 publication changes runtime identity but preserve logical split identity`() {
         val base = "hysteria2://secret@one.example:443?insecure=1"
         val first = (ImportParser.parse(
             "$base&pinSHA256=${"00".repeat(32)}&vendor=one#Same",
@@ -971,12 +1138,14 @@ class ImportParserTest {
         ) as ImportCandidate.Managed).servers.single()
 
         assertFalse(first.identityKey == second.identityKey)
-        assertFalse(
-            ManagedProfileFactory.stableMemberKeys(listOf(first)) ==
-                ManagedProfileFactory.stableMemberKeys(listOf(second)),
+        assertEquals(
+            ManagedProfileFactory.stableMemberKeys(listOf(first)),
+            ManagedProfileFactory.stableMemberKeys(listOf(second)),
         )
+        assertEquals(first.refreshIdentityKey, second.refreshIdentityKey)
         assertFalse(first.identityKey.contains("secret"))
         assertFalse(second.identityKey.contains("secret"))
+        assertFalse(first.refreshIdentityKey.contains("secret"))
     }
 
     @Test

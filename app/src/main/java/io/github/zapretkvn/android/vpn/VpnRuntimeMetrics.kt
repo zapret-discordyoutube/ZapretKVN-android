@@ -110,6 +110,8 @@ internal object VpnTestHooks {
     private val nextHttpsProbeFailure = AtomicBoolean(false)
     private val nextCaptivePortal = AtomicBoolean(false)
     private val nextVpnSystemPolicy = AtomicReference<VpnSystemPolicy?>(null)
+    private val nextHysteriaFailure = AtomicReference<HysteriaFailureCode?>(null)
+    private val nextHysteriaReplacementFailure = AtomicBoolean(false)
     private val effectiveRoutingTransform = AtomicReference<((String) -> String)?>(null)
 
     fun failNextProtect() {
@@ -162,6 +164,16 @@ internal object VpnTestHooks {
         effectiveRoutingTransform.set(transform)
     }
 
+    fun reportNextHysteriaFailure(code: HysteriaFailureCode) {
+        check(BuildConfig.DEBUG)
+        nextHysteriaFailure.set(code)
+    }
+
+    fun failNextHysteriaReplacement() {
+        check(BuildConfig.DEBUG)
+        nextHysteriaReplacementFailure.set(true)
+    }
+
     fun reset() {
         failProtect.set(false)
         failAfterEstablish.set(false)
@@ -172,6 +184,8 @@ internal object VpnTestHooks {
         nextHttpsProbeFailure.set(false)
         nextCaptivePortal.set(false)
         nextVpnSystemPolicy.set(null)
+        nextHysteriaFailure.set(null)
+        nextHysteriaReplacementFailure.set(false)
         effectiveRoutingTransform.set(null)
     }
 
@@ -210,4 +224,10 @@ internal object VpnTestHooks {
 
     fun consumeVpnSystemPolicyOverride(): VpnSystemPolicy? =
         if (BuildConfig.DEBUG) nextVpnSystemPolicy.getAndSet(null) else null
+
+    fun consumeHysteriaFailure(): HysteriaFailureCode? =
+        if (BuildConfig.DEBUG) nextHysteriaFailure.getAndSet(null) else null
+
+    fun consumeHysteriaReplacementFailure(): Boolean =
+        BuildConfig.DEBUG && nextHysteriaReplacementFailure.compareAndSet(true, false)
 }

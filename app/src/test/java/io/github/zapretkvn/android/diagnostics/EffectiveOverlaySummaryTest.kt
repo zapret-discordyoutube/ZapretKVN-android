@@ -104,6 +104,12 @@ class EffectiveOverlaySummaryTest {
     }
 
     @Test
+    fun `plain diagnostic text is not reformatted as a json scalar`() {
+        assertEquals("test_override", SecretRedactor.redact("test_override"))
+        assertEquals("test_override", DiagnosticReportRedactor.redact("test_override"))
+    }
+
+    @Test
     fun `report redaction also removes package host and IP metadata from log text`() {
         val source = """
             {"created":"2026-07-22T10:23:45.123Z","message":"com.example.hidden failed at vpn.private.example, 203.0.113.7 and 2001:db8::7"}

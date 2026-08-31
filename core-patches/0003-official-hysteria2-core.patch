@@ -334,7 +334,7 @@ diff --git a/parser/link/hysteria2.go b/parser/link/hysteria2.go
 index d9486064..5ed0f8f8 100644
 --- a/parser/link/hysteria2.go
 +++ b/parser/link/hysteria2.go
-@@ -1,61 +1,426 @@
+@@ -1,61 +1,472 @@
  package link
  
  import (
@@ -345,6 +345,7 @@ index d9486064..5ed0f8f8 100644
  	"strconv"
 +	"strings"
 +	"time"
++	"unicode"
  
 -	"github.com/sagernet/sing-box/common"
  	C "github.com/sagernet/sing-box/constant"
@@ -454,6 +455,11 @@ index d9486064..5ed0f8f8 100644
 +// Unknown query parameters are ignored and never included in errors/logs.
 +func parseHysteria2URI(link string) (hysteria2URI, error) {
 +	var result hysteria2URI
++	for _, character := range link {
++		if unicode.IsSpace(character) || unicode.IsControl(character) {
++			return result, fmt.Errorf("Hysteria2 URI contains whitespace or a control character")
++		}
++	}
 +	schemeEnd := strings.Index(link, "://")
 +	if schemeEnd <= 0 || !strings.EqualFold(link[:schemeEnd], "hy2") && !strings.EqualFold(link[:schemeEnd], "hysteria2") {
 +		return result, fmt.Errorf("invalid Hysteria2 URI scheme")
@@ -461,7 +467,11 @@ index d9486064..5ed0f8f8 100644
 +	body := link[schemeEnd+3:]
 +	fragment := ""
 +	if hash := strings.IndexByte(body, '#'); hash >= 0 {
-+		fragment, _ = url.PathUnescape(body[hash+1:])
++		var fragmentErr error
++		fragment, fragmentErr = url.PathUnescape(body[hash+1:])
++		if fragmentErr != nil || hysteria2HasControl(fragment) {
++			return result, fmt.Errorf("Hysteria2 URI has invalid display name")
++		}
 +		body = body[:hash]
 +	}
 +	queryText := ""
@@ -483,7 +493,7 @@ index d9486064..5ed0f8f8 100644
 +		return result, err
 +	}
 +	host, err = url.PathUnescape(host)
-+	if err != nil || strings.TrimSpace(host) == "" {
++	if err != nil || strings.TrimSpace(host) == "" || hysteria2HasControl(host) {
 +		return result, fmt.Errorf("Hysteria2 URI has invalid server")
 +	}
 +	firstPort, serverPorts, err := parseHysteria2Ports(portText)
@@ -491,7 +501,7 @@ index d9486064..5ed0f8f8 100644
 +		return result, err
 +	}
 +	password, err := url.PathUnescape(userinfo)
-+	if err != nil {
++	if err != nil || hysteria2HasControl(password) {
 +		return result, fmt.Errorf("Hysteria2 URI has invalid authentication")
 +	}
 +	query, err := parseHysteria2Query(queryText)
@@ -532,7 +542,7 @@ index d9486064..5ed0f8f8 100644
 +	if value := query["hopinterval"]; value != "" {
 +		result.hopInterval, err = time.ParseDuration(value)
 +		if err != nil {
-+			if seconds, numberErr := strconv.Atoi(value); numberErr == nil {
++			if seconds, numberErr := strconv.ParseInt(value, 10, 32); numberErr == nil {
 +				result.hopInterval = time.Duration(seconds) * time.Second
 +			} else {
 +				return hysteria2URI{}, fmt.Errorf("invalid Hysteria2 hop interval")
@@ -544,6 +554,9 @@ index d9486064..5ed0f8f8 100644
 +		if err != nil {
 +			return hysteria2URI{}, err
 +		}
++	}
++	if result.insecure && result.certificateSHA256 == "" {
++		return hysteria2URI{}, fmt.Errorf("Hysteria2 insecure requires certificate pin")
 +	}
 +	obfsType := strings.ToLower(strings.TrimSpace(query["obfs"]))
 +	if obfsType != "" && obfsType != "none" && obfsType != "plain" {
@@ -671,9 +684,40 @@ index d9486064..5ed0f8f8 100644
 +		if len(list) == 0 {
 +			continue
 +		}
-+		result[canonicalHysteria2Key(key)] = list[0]
++		canonicalKey := canonicalHysteria2Key(key)
++		if hysteria2HasControl(canonicalKey) || hysteria2HasControl(list[0]) {
++			return nil, fmt.Errorf("Hysteria2 URI query contains a control character")
++		}
++		if hysteria2KnownQueryKey(canonicalKey) {
++			if len(list) != 1 {
++				return nil, fmt.Errorf("Hysteria2 URI repeats a known query parameter")
++			}
++			if _, exists := result[canonicalKey]; exists {
++				return nil, fmt.Errorf("Hysteria2 URI repeats a known query parameter")
++			}
++		}
++		result[canonicalKey] = list[0]
 +	}
 +	return result, nil
++}
++
++func hysteria2KnownQueryKey(key string) bool {
++	switch key {
++	case "auth", "sni", "insecure", "obfs", "obfspassword", "up", "down",
++		"pinsha256", "ech", "hopinterval", "minpacketsize", "maxpacketsize":
++		return true
++	default:
++		return false
++	}
++}
++
++func hysteria2HasControl(value string) bool {
++	for _, character := range value {
++		if unicode.IsControl(character) {
++			return true
++		}
++	}
++	return false
 +}
 +
 +func canonicalHysteria2Key(value string) string {
@@ -732,7 +776,9 @@ index d9486064..5ed0f8f8 100644
 +	default:
 +		return 0, fmt.Errorf("invalid bandwidth unit")
 +	}
-+	maxInt := int64(^uint(0) >> 1)
++	// Android's persisted model uses a Kotlin Int. Keep every ABI on the same
++	// 32-bit contract instead of accepting a value on arm64 which armv7 rejects.
++	maxInt := int64(^uint32(0) >> 1)
 +	if amount > maxInt/factor {
 +		return 0, fmt.Errorf("bandwidth overflow")
 +	}
@@ -805,7 +851,7 @@ new file mode 100644
 index 00000000..2414fcf4
 --- /dev/null
 +++ b/parser/link/hysteria2_test.go
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,99 @@
 +package link
 +
 +import (
@@ -853,9 +899,56 @@ index 00000000..2414fcf4
 +	}
 +}
 +
++func TestParseHysteria2URIExactQueryDialect(t *testing.T) {
++	parsed, err := parseHysteria2URI(
++		"hy2://edge.example:443,20000:20002?auth=user+pass&up=2+Gbps&" +
++			"down=2000000+bps&hop-interval=15&obfs=gecko&obfs-password=cover+key&" +
++			"min-packet-size=64&max-packet-size=128",
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if parsed.password != "user pass" || parsed.upMbps != 2000 || parsed.downMbps != 2 ||
++		parsed.hopInterval != 15*time.Second || parsed.serverPorts[1] != "20000-20002" {
++		t.Fatalf("query dialect fields were not normalized: %+v", parsed)
++	}
++	if parsed.obfs == nil || parsed.obfs.Password != "cover key" ||
++		parsed.obfs.MinPacketSize != 64 || parsed.obfs.MaxPacketSize != 128 {
++		t.Fatalf("query Gecko fields were not normalized: %+v", parsed.obfs)
++	}
++}
++
 +func TestParseHysteria2URIRejectsUnbracketedIPv6(t *testing.T) {
 +	if _, err := parseHysteria2URI("hy2://secret@2001:db8::1"); err == nil {
 +		t.Fatal("unbracketed IPv6 authority accepted")
++	}
++}
++
++func TestParseHysteria2URIRejectsInsecureWithoutPin(t *testing.T) {
++	if _, err := parseHysteria2URI("hy2://secret@example.com:443?insecure=1"); err == nil {
++		t.Fatal("insecure URI without certificate pin accepted")
++	}
++}
++
++func TestParseHysteria2URIRejectsDuplicateKnownParameters(t *testing.T) {
++	for _, uri := range []string{
++		"hy2://secret@example.com:443?sni=one.example&sni=two.example",
++		"hy2://secret@example.com:443?sni=one.example&peer=two.example",
++	} {
++		if _, err := parseHysteria2URI(uri); err == nil {
++			t.Fatalf("duplicate known parameter accepted: %s", uri)
++		}
++	}
++}
++
++func TestParseHysteria2URIRejectsControlCharacters(t *testing.T) {
++	for _, uri := range []string{
++		"hy2://secret@example.com:443?auth=bad%0Avalue",
++		"hy2://secret@example.com:443#bad%0Dname",
++	} {
++		if _, err := parseHysteria2URI(uri); err == nil {
++			t.Fatalf("control character accepted: %s", uri)
++		}
 +	}
 +}
 diff --git a/parser/link/parser.go b/parser/link/parser.go
@@ -1102,7 +1195,7 @@ index d4382fdc..cb90c95a 100644
  	case N.NetworkUDP:
  		conn, err := h.ListenPacket(ctx, destination)
  		if err != nil {
-@@ -108,13 +190,317 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+@@ -108,13 +190,326 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
  
  func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
  	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
@@ -1239,11 +1332,18 @@ index d4382fdc..cb90c95a 100644
 +	case "salamander":
 +		return hyobfs.WrapPacketConnSalamander(conn, []byte(f.obfs.Password))
 +	case "gecko":
-+		return hyobfs.WrapPacketConnGecko(conn, hyobfs.GeckoOptions{
++		wrapped, err := hyobfs.WrapPacketConnGecko(conn, hyobfs.GeckoOptions{
 +			Password:      []byte(f.obfs.Password),
 +			MinPacketSize: f.obfs.MinPacketSize,
 +			MaxPacketSize: f.obfs.MaxPacketSize,
 +		})
++		if err != nil {
++			return nil, err
++		}
++		// Gecko exposes optional UDP methods which return ErrUnsupported when the
++		// protected sing-box PacketConn is not a raw UDP socket. quic-go treats an
++		// advertised but failing SyscallConn as fatal, so hide those optional methods.
++		return &packetConnOnly{PacketConn: wrapped}, nil
 +	default:
 +		_ = conn.Close()
 +		return nil, E.New("unknown obfs type: ", f.obfs.Type)
@@ -1260,6 +1360,8 @@ index d4382fdc..cb90c95a 100644
 +	f.firstConn = nil
 +	return err
 +}
++
++type packetConnOnly struct{ net.PacketConn }
 +
 +func validateObfs(obfsOptions *option.Hysteria2Obfs) error {
 +	if obfsOptions == nil {
@@ -1428,7 +1530,7 @@ new file mode 100644
 index 00000000..864ad5d7
 --- /dev/null
 +++ b/protocol/hysteria2/outbound_test.go
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,444 @@
 +package hysteria2
 +
 +import (
@@ -1448,6 +1550,7 @@ index 00000000..864ad5d7
 +	"os"
 +	"reflect"
 +	"sync/atomic"
++	"syscall"
 +	"testing"
 +	"time"
 +
@@ -1626,6 +1729,12 @@ index 00000000..864ad5d7
 +	if err != nil {
 +		t.Fatal(err)
 +	}
++	if _, advertised := conn.(interface{ SetReadBuffer(int) error }); advertised {
++		t.Fatal("Gecko advertised unsupported raw UDP methods through the protected PacketConn")
++	}
++	if _, advertised := conn.(syscall.Conn); advertised {
++		t.Fatal("Gecko advertised an unsupported SyscallConn through the protected PacketConn")
++	}
 +	if err := conn.Close(); err != nil {
 +		t.Fatal(err)
 +	}
@@ -1790,7 +1899,13 @@ index 00000000..864ad5d7
 +}
 +
 +func (realPacketDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-+	return (&net.ListenConfig{}).ListenPacket(ctx, "udp4", "127.0.0.1:0")
++	conn, err := (&net.ListenConfig{}).ListenPacket(ctx, "udp4", "127.0.0.1:0")
++	if err != nil {
++		return nil, err
++	}
++	// Mirrors sing-box's protected NAT PacketConn, which intentionally does not
++	// expose raw socket methods even when its underlying socket is UDP.
++	return &packetConnOnly{PacketConn: conn}, nil
 +}
 +
 +func syntheticCertificate(t *testing.T) tls.Certificate {

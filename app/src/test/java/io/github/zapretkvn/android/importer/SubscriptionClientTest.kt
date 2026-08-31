@@ -113,6 +113,63 @@ class SubscriptionClientTest {
     }
 
     @Test
+    fun `every manual refresh is unconditional and receives the latest body`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val requests = mutableListOf<Map<String, String>>()
+        var generation = 0
+        server.createContext("/subscription") { exchange ->
+            requests += exchange.requestHeaders.entries.associate { (name, values) ->
+                name.lowercase() to values.first()
+            }
+            generation++
+            val body = "generation-$generation".toByteArray()
+            exchange.responseHeaders.add("ETag", "\"generation-$generation\"")
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val source = SubscriptionSource(
+                "http://127.0.0.1:${server.address.port}/subscription",
+            )
+            val fetcher = HttpSubscriptionFetcher()
+
+            assertEquals("generation-1", fetcher.fetch(source))
+            assertEquals("generation-2", fetcher.fetch(source))
+            assertEquals(2, requests.size)
+            requests.forEach { headers ->
+                assertFalse("if-none-match" in headers)
+                assertFalse("if-modified-since" in headers)
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `unexpected 304 cannot masquerade as a successful refresh`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/subscription") { exchange ->
+            exchange.sendResponseHeaders(304, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val source = SubscriptionSource(
+                "http://127.0.0.1:${server.address.port}/subscription",
+            )
+
+            val error = assertThrows(ImportException::class.java) {
+                HttpSubscriptionFetcher().fetch(source)
+            }
+
+            assertTrue(error.message.orEmpty().contains("304"))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
     fun `device limit response is explained instead of raw status`() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/subscription") { exchange ->
