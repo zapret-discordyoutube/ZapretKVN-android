@@ -18,8 +18,11 @@ object SecretRedactor {
 
     fun redactInline(text: String): String {
         var result = text
-        result = URL_USER_INFO.replace(result) { match -> "${match.groupValues[1]}$MASK@" }
-        result = URL_QUERY.replace(result) { match -> "${match.groupValues[1]}?$MASK" }
+        // A diagnostic must not retain a partially redacted URI.  Keeping the
+        // scheme/host/fragment made Hysteria2 links identifiable and allowed a
+        // credential-like fragment to survive the old query-only pass.
+        result = URI.replace(result, MASK)
+        result = PEM_BLOCK.replace(result, MASK)
         result = HEADER_SECRET.replace(result) { match ->
             "${match.groupValues[1]}${match.groupValues[2]}$MASK"
         }
@@ -33,7 +36,7 @@ object SecretRedactor {
     }
 
     private fun redactElement(element: JsonElement, key: String? = null): JsonElement {
-        if (key != null && key.lowercase() in SECRET_KEYS) return JsonPrimitive(MASK)
+        if (key != null && normalizeKey(key) in SECRET_KEYS) return JsonPrimitive(MASK)
         return when (element) {
             is JsonObject -> JsonObject(element.mapValues { (childKey, child) ->
                 redactElement(child, childKey)
@@ -43,32 +46,72 @@ object SecretRedactor {
         }
     }
 
+    private fun normalizeKey(value: String): String = value
+        .lowercase()
+        .filter(Char::isLetterOrDigit)
+
     private val SECRET_KEYS = setOf(
         "uuid",
         "password",
         "token",
-        "access_token",
+        "accesstoken",
         "authorization",
         "auth",
-        "private_key",
-        "client_secret",
-        "obfs_password",
+        "privatekey",
+        "publickey",
+        "secretkey",
+        "clientsecret",
+        "clientkey",
+        "obfspassword",
+        "presharedkey",
+        "pinsha256",
+        "pinsha",
+        "certificatesha256",
+        "certificatehash",
+        "certificate",
+        "certificatepath",
+        "certificatechain",
+        "cert",
+        "clientcertificatepath",
+        "clientkeypath",
+        "ech",
+        "echconfig",
+        "echconfigpem",
+        "echconfigpath",
+        "shortid",
     )
-    private val URL_USER_INFO = Regex("(?i)([a-z][a-z0-9+.-]*://)([^/@\\s]+)@")
-    private val URL_QUERY = Regex(
-        "(?i)([a-z][a-z0-9+.-]*://[^\\s?#\\\"]+)\\?[^\\s#\\\"\\\\},]+",
+    private val URI = Regex(
+        // Commas and semicolons are valid inside Hysteria2 port unions/query
+        // values. Keep consuming them so no recognizable URI suffix survives.
+        "(?i)\\b[a-z][a-z0-9+.-]*://[^\\s\\\"'<>\\\\}]+",
+    )
+    private val PEM_BLOCK = Regex(
+        "(?s)-----BEGIN [^-\\r\\n]+-----.*?-----END [^-\\r\\n]+-----",
     )
     private val HEADER_SECRET = Regex(
-        "(?i)\\b(token|password|passwd|secret|authorization|auth|uuid)(\\s*:\\s*)" +
+        "(?i)\\b(token|password|passwd|secret|authorization|auth|uuid|" +
+            "obfs[-_]?password|pin[-_]?sha256|certificate(?:[-_]?(?:sha256|hash|path))?|" +
+            "client[-_]?certificate[-_]?path|ech(?:[-_]?config)?(?:[-_]?path)?|" +
+            "(?:private|public|secret|client|preshared)[-_]?key(?:[-_]?path)?|" +
+            "short[-_]?id)(\\s*:\\s*)" +
             "(?:bearer\\s+)?[^\\s,;\\\"\\\\}]+",
     )
     private val BEARER_SECRET = Regex("(?i)\\bbearer\\s+[a-z0-9._~+/-]+=*")
     private val UUID = Regex("(?i)\\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\b")
     private val KEY_VALUE_SECRET = Regex(
-        "(?i)((?:token|password|passwd|secret|authorization|auth|uuid)=)" +
+        "(?i)((?:token|password|passwd|secret|authorization|auth|uuid|" +
+            "obfs[-_]?password|pin[-_]?sha256|certificate(?:[-_]?(?:sha256|hash|path))?|" +
+            "client[-_]?certificate[-_]?path|ech(?:[-_]?config)?(?:[-_]?path)?|" +
+            "(?:private|public|secret|client|preshared)[-_]?key(?:[-_]?path)?|" +
+            "short[-_]?id)=)" +
             "[^&\\s#\\\"\\\\},;]+",
     )
     private val JSON_SECRET = Regex(
-        "(?i)(\\\"(?:uuid|password|token|access_token|authorization|auth|private_key|client_secret)\\\"\\s*:\\s*\\\")(.*?)(\\\")",
+        "(?is)(\\\"(?:uuid|password|token|access[_-]?token|authorization|auth|" +
+            "private[-_]?key|public[-_]?key|secret[-_]?key|client[-_]?secret|" +
+            "client[-_]?key|obfs[-_]?password|preshared[-_]?key|pin[-_]?sha256|" +
+            "certificate(?:[-_]?(?:sha256|hash|path))?|client[-_]?certificate[-_]?path|" +
+            "cert|ech(?:[-_]?config)?(?:[-_]?path)?|short[-_]?id)" +
+            "\\\"\\s*:\\s*\\\")(.*?)(\\\")",
     )
 }

@@ -90,6 +90,51 @@ class ManagedProfileFactoryTest {
     }
 
     @Test
+    fun `hysteria2 URI fingerprint keeps tags and member keys secret-safe`() {
+        val uri = "hysteria2://user%3Asecret@[2001:db8::1]:443?pinSHA256=${"aa".repeat(32)}#Same"
+        val server = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Same",
+            server = "2001:db8::1",
+            serverPort = 443,
+            password = "secret",
+            uri = uri,
+        )
+
+        assertEquals(uri, server.outbound.string("uri"))
+        assertFalse(server.identityKey.contains(uri))
+        assertFalse(server.identityKey.contains("secret"))
+        assertFalse(ManagedProfileFactory.stableTags(listOf(server)).single().contains("secret"))
+        assertFalse(ManagedProfileFactory.stableMemberKeys(listOf(server)).single().contains("secret"))
+    }
+
+    @Test
+    fun `hysteria2 URI change is reflected by managed refresh`() {
+        val old = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Hysteria",
+            server = "one.example",
+            serverPort = 443,
+            password = "old",
+            uri = "hy2://old@one.example:443?pinSHA256=${"00".repeat(32)}#Hysteria",
+        )
+        val fresh = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Hysteria",
+            server = "one.example",
+            serverPort = 443,
+            password = "new",
+            uri = "hy2://new@one.example:443?pinSHA256=${"11".repeat(32)}#Hysteria",
+        )
+        val oldJson = ManagedProfileFactory.single(old)
+        val update = ManagedProfileEditor.refreshServers(oldJson, listOf(fresh))
+        val outbounds = (JsonConfig.parse(update.json) as JsonObject)["outbounds"] as JsonArray
+        val refreshed = outbounds.first { (it as JsonObject).string("type") == "hysteria2" } as JsonObject
+
+        assertEquals(fresh.outbound.string("uri"), refreshed.string("uri"))
+        assertEquals(fresh.outbound.string("password"), refreshed.string("password"))
+        assertFalse(old.identityKey == fresh.identityKey)
+        assertFalse(update.json.contains(old.outbound.string("uri").orEmpty()))
+    }
+
+    @Test
     fun `base64 subscription creates one selector with all links`() {
         val links = listOf(
             "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One",
@@ -133,4 +178,7 @@ class ManagedProfileFactoryTest {
         uuid = uuid,
         tls = TlsSettings(enabled = true, serverName = host),
     )
+
+    private fun JsonObject.string(key: String): String? =
+        (this[key] as? JsonPrimitive)?.contentOrNull
 }

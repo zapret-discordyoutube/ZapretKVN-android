@@ -103,12 +103,13 @@ jq -n \
 cat > "$OUTPUT_DIR/RELEASE_NOTES.md" <<EOF
 # Zapret KVN $ZAPRET_VERSION_NAME
 
-Host/emulator-verified Hysteria2 and QR subscription test build.
+host/emulator-verified; physical Android device not verified.
+Hysteria2 URI, TLS and diagnostics emulator-only test build.
 
 - Embeds official Hysteria core/extras app/v2.12.2 for plain, Salamander and Gecko.
-- Preserves certificate SHA-256 pinning, ECH, port hopping and Android-protected sockets.
-- Adds direct configuration QR and subscription/deep-link QR import from camera or gallery.
-- Subscription QR results open identity/HWID settings before the first network request.
+- Preserves the exact imported URI and uses a secret-safe transport fingerprint for subscription identity.
+- Preserves certificate SHA-256 pinning, ECH, port hopping and Android-protected sockets; native JSON also supports custom CA and mTLS.
+- Adds diagnostic schema v6 with attempt/stage/profile/outbound/protocol context and opaque endpoints.
 - Uses synthetic test credentials only; Gecko is not confirmed on a physical Android device.
 
 - Not a Stable or Beta-updater release.

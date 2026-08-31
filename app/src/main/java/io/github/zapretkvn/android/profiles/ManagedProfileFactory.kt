@@ -141,14 +141,17 @@ object ProtocolOutboundBuilders {
         certificateSha256: String? = null,
         obfsMinPacketSize: Int? = null,
         obfsMaxPacketSize: Int? = null,
+        uri: String? = null,
     ): ManagedServer = ManagedServer(
         displayName = displayName,
-        identityKey = identity("hysteria2", server, serverPort, null),
+        identityKey = identity("hysteria2", server, serverPort, null) +
+            uri?.takeIf(String::isNotBlank)?.let { "|uri-sha256:${uriFingerprint(it)}" }.orEmpty(),
         outbound = buildJsonObject {
             put("type", "hysteria2")
             put("server", server)
             put("server_port", serverPort)
             put("password", password)
+            uri?.takeIf(String::isNotBlank)?.let { put("uri", it) }
             obfsPassword?.takeIf(String::isNotBlank)?.let { value ->
                 put(
                     "obfs",
@@ -297,6 +300,33 @@ object ProtocolOutboundBuilders {
             }
         }
     }
+
+    /**
+     * The raw Hysteria2 URI is retained in the outbound for round-tripping, but must never be
+     * copied into a profile tag, split-member key, or diagnostic identity. A SHA-256 digest keeps
+     * those identities deterministic while distinguishing every transport URI variant (including
+     * pin, unknown parameters, percent encoding, and IPv6 spelling). The display-only fragment is
+     * excluded, and the two official scheme aliases intentionally share one identity.
+     */
+    private fun uriFingerprint(uri: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(authoritativeUri(uri).toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    private fun authoritativeUri(uri: String): String {
+        val text = uri.trim()
+        val separator = text.indexOf(':')
+        val scheme = text.substring(0, separator.coerceAtLeast(0))
+        val remainder = if (separator > 0) text.substring(separator) else text
+        val withoutFragment = remainder.substringBefore('#')
+        return if (scheme.equals("hy2", ignoreCase = true) ||
+            scheme.equals("hysteria2", ignoreCase = true)
+        ) {
+            "hysteria2:$withoutFragment"
+        } else {
+            withoutFragment
+        }
+    }
 }
 
 object ManagedProfileFactory {
@@ -376,8 +406,10 @@ object ManagedProfileFactory {
         }
 
     /**
-     * Stable, credential-free identities for members of a split subscription. Credentials and
-     * obfuscation passwords may rotate without turning an existing profile into a new one.
+     * Stable identities for members of a split subscription. Legacy builders stay credential-free
+     * so their passwords may rotate without turning an existing profile into a new one. Imported
+     * Hysteria2 URI members intentionally include the URI fingerprint: a pin or opaque parameter
+     * change is a new transport member, while the URI value itself never enters the key.
      */
     fun stableMemberKeys(servers: List<ManagedServer>): List<String> {
         val occurrences = mutableMapOf<String, Int>()
@@ -428,4 +460,5 @@ object ManagedProfileFactory {
         MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
+
 }

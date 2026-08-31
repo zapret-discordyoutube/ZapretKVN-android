@@ -153,14 +153,16 @@ jq -n \
         '' \
         '### Что изменилось' \
         '' \
-        '- Все Hysteria2-подключения используют встроенный официальный Hysteria core/extras `app/v2.12.2` внутри общего `libbox.so`.' \
-        '- Добавлена поддержка Hysteria2 Gecko и Salamander, TLS pin, ECH и port hopping без отдельного процесса или второго TUN.' \
-        '- Импорт HY2 корректно обрабатывает base64url auth, IPv4/IPv6, диапазоны портов, `insecure`, pin и percent-encoded названия.' \
-        '- QR-коды конфигураций и подписок можно считывать камерой или выбирать из галереи; URL подписки загружается только после подтверждения.' \
+        '- Hysteria2 URI сохраняется целиком и разбирается встроенным официальным Hysteria core/extras `app/v2.12.2` внутри общего `libbox.so`.' \
+        '- Работают auth, IPv4/IPv6, Gecko/Salamander, bandwidth, port hopping, TLS pin и ECH; native JSON дополнительно поддерживает custom CA и mTLS без отдельного процесса или второго TUN.' \
+        '- Subscription identity учитывает безопасный SHA-256 transport fingerprint: разные pin/URI-варианты не схлопываются, а изменение активного сервера требует подтверждённого reconnect.' \
+        '- Diagnostics report v6 связывает attempt/stage с профилем, outbound, протоколом и opaque endpoint, не сохраняя URI, auth, pin, ECH, сертификаты или ключи.' \
+        '- Сборка ядра обязательно запускает patched Go-тесты `protocol/hysteria2`, поэтому release gate проверяет фактически поставляемую реализацию.' \
         '' \
         '### Проверка релиза' \
         '' \
         '- Пройдены host/unit/integration-проверки, локальный upstream Gecko test и полный доступный набор Android emulator tests.' \
+        '- Release attestation: host/emulator-verified; physical Android device not verified.' \
         '- По прямому разрешению владельца релиз опубликован без ADB-gate: физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялось.' \
         '' \
         'Каждый APK содержит только одну архитектуру и встроенный libbox; отдельная динамическая загрузка ядра не используется.' \

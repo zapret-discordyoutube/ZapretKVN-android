@@ -915,6 +915,11 @@ class ImportParserTest {
         val server = candidate.servers.single()
         val outbound = server.outbound
         assertEquals("Synthetic HY2", server.displayName)
+        assertEquals(
+            "hy2://user%3Apass@[2001:db8::1]:443,20000-20002" +
+                "?obfs=gecko&obfs-password=cover&hop-interval=15s&ECH=AAECAw#Synthetic%20HY2",
+            outbound.string("uri"),
+        )
         assertEquals("2001:db8::1", outbound.string("server"))
         assertEquals("443", (outbound["server_port"] as JsonPrimitive).content)
         assertEquals("user:pass", outbound.string("password"))
@@ -922,6 +927,77 @@ class ImportParserTest {
         assertEquals(2, (outbound["server_ports"] as JsonArray).size)
         val tls = outbound["tls"] as JsonObject
         assertTrue((tls["ech"] as JsonObject).string("config").orEmpty().contains("BEGIN ECH CONFIGS"))
+    }
+
+    @Test
+    fun `hysteria2 schemes and opaque URI details survive without entering identity`() {
+        val pin = "ab".repeat(32)
+        val links = listOf(
+            "hy2://user%3Apass@[2001:db8::1]:443" +
+                "?insecure=1&pinSHA256=$pin&vendor=%2F%2f%25&vendor=second+value#Name%20one",
+            "hysteria2://user%3Apass@[2001:db8::1]:443" +
+                "?insecure=1&pinSHA256=$pin&vendor=%2F%2f%25&vendor=second+value#Name%20two",
+        )
+
+        val servers = links.map { link ->
+            (ImportParser.parse(link, ProfileSource.Link) as ImportCandidate.Managed).servers.single()
+        }
+
+        links.zip(servers).forEach { (link, server) ->
+            assertEquals(link, server.outbound.string("uri"))
+            assertTrue(server.importWarnings.any { it.contains("сохранены в исходной URI") })
+            assertFalse(server.importWarnings.any { it.contains("не переносятся") })
+            assertFalse(link in server.identityKey)
+            assertFalse("user:pass" in server.identityKey)
+            assertFalse("$pin" in server.identityKey)
+        }
+        assertEquals(servers[0].identityKey, servers[1].identityKey)
+
+        val tags = ManagedProfileFactory.stableTags(servers)
+        assertEquals(2, tags.distinct().size)
+        assertFalse(tags.any { it.contains("user") || it.contains(pin) })
+    }
+
+    @Test
+    fun `hysteria2 pin and unknown parameter variants change split identity`() {
+        val base = "hysteria2://secret@one.example:443?insecure=1"
+        val first = (ImportParser.parse(
+            "$base&pinSHA256=${"00".repeat(32)}&vendor=one#Same",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed).servers.single()
+        val second = (ImportParser.parse(
+            "$base&pinSHA256=${"11".repeat(32)}&vendor=two#Same",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed).servers.single()
+
+        assertFalse(first.identityKey == second.identityKey)
+        assertFalse(
+            ManagedProfileFactory.stableMemberKeys(listOf(first)) ==
+                ManagedProfileFactory.stableMemberKeys(listOf(second)),
+        )
+        assertFalse(first.identityKey.contains("secret"))
+        assertFalse(second.identityKey.contains("secret"))
+    }
+
+    @Test
+    fun `native hysteria2 builder omits optional URI unless supplied`() {
+        val legacy = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Legacy",
+            server = "one.example",
+            serverPort = 443,
+            password = "secret",
+        ).outbound
+        assertFalse("uri" in legacy)
+
+        val uri = "hysteria2://secret@one.example:443?x=%2F#Legacy"
+        val imported = ProtocolOutboundBuilders.hysteria2(
+            displayName = "Imported",
+            server = "one.example",
+            serverPort = 443,
+            password = "secret",
+            uri = uri,
+        ).outbound
+        assertEquals(uri, imported.string("uri"))
     }
 
     @Test

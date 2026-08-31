@@ -25,6 +25,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.config.LibboxConfigValidator
+import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ProfileSource
 import io.github.zapretkvn.android.profiles.ProfileStore
@@ -307,7 +308,10 @@ class ImportInstrumentedTest {
             val preview = checkNotNull(viewModel.state.value.importPreview)
             assertEquals("https://subscription.example/profile?token=secret", fetchedUrl)
             assertEquals(1, preview.serverCount)
-            assertEquals(listOf("Пропущены неподдерживаемые схемы: ssh://."), preview.importWarnings)
+            assertEquals(
+                listOf("Пропущены неподдерживаемые схемы: ${SecretRedactor.MASK}"),
+                preview.importWarnings,
+            )
             Libbox.checkConfig(preview.preparedJson)
         } finally {
             testViewModelStore.clear()

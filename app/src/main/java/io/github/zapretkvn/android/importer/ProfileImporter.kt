@@ -421,7 +421,7 @@ object ShareLinkParser {
         val host = uri.host
         val query = uri.query
         rejectImpossibleTlsOptOut(query, "Hysteria2")
-        val warnings = classifyParameters(query, HYSTERIA2_QUERY_KEYS, "Hysteria2")
+        val warnings = classifyPreservedHysteria2Parameters(query)
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: query["auth"]?.takeIf(String::isNotBlank)
             ?: throw ImportException("В Hysteria2 отсутствует пароль.")
@@ -441,6 +441,7 @@ object ShareLinkParser {
             server = host,
             serverPort = uri.firstPort,
             password = password,
+            uri = uri.rawUri,
             tls = TlsSettings(
                 enabled = true,
                 serverName = query["sni"] ?: query["peer"] ?: host,
@@ -460,6 +461,7 @@ object ShareLinkParser {
     }
 
     private data class Hysteria2Uri(
+        val rawUri: String,
         val rawUserInfo: String,
         val host: String,
         val firstPort: Int,
@@ -505,6 +507,7 @@ object ShareLinkParser {
             canonicalKey(decode(part.substringBefore('='))) to decode(part.substringAfter('=', ""))
         }
         return Hysteria2Uri(
+            rawUri = link,
             rawUserInfo = rawUserInfo,
             host = host,
             firstPort = firstPort,
@@ -664,6 +667,26 @@ object ShareLinkParser {
             listOf(
                 "$protocol: параметры не переносятся в sing-box и не применены — " +
                     "${dropped.joinToString()}.",
+            )
+        }
+    }
+
+    /**
+     * Hysteria2 is different from the translating importers above: the exact
+     * share URI is retained in the outbound and parsed again by the embedded
+     * official core. Unknown parameters therefore remain available to newer
+     * cores even when the current core does not interpret them.
+     */
+    private fun classifyPreservedHysteria2Parameters(
+        query: Map<String, String>,
+    ): List<String> {
+        val unknown = query.keys.filterNot(HYSTERIA2_QUERY_KEYS::contains).sorted()
+        return if (unknown.isEmpty()) {
+            emptyList()
+        } else {
+            listOf(
+                "Hysteria2: параметры сохранены в исходной URI; текущее ядро может их игнорировать — " +
+                    "${unknown.joinToString()}.",
             )
         }
     }

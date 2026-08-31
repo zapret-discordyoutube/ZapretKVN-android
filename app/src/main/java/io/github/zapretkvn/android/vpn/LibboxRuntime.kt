@@ -40,14 +40,25 @@ class LibboxRuntime(private val context: Context) {
             initialized = true
             Result.success(Unit)
         } catch (error: Throwable) {
-            val safe = error.message
+            val detail = error.message
                 ?.lineSequence()
                 ?.firstOrNull()
                 ?.let(SecretRedactor::redactInline)
                 ?.take(240)
-                ?: "Не удалось инициализировать libbox."
+            val errorType = error.javaClass.simpleName
+                .takeIf { it.matches(SAFE_ERROR_TYPE) }
+                ?: "LibboxError"
+            val safe = listOfNotNull(errorType, detail).joinToString(": ")
+                .ifBlank { "Не удалось инициализировать libbox." }
             initializationError = safe
-            Result.failure(IllegalStateException(safe, error))
+            // Do not retain the original throwable as a cause. Android's
+            // uncaught-exception/crash machinery can print a complete cause
+            // chain, including a libbox message with URI credentials.
+            Result.failure(IllegalStateException(safe))
         }
+    }
+
+    private companion object {
+        val SAFE_ERROR_TYPE = Regex("[A-Za-z0-9_$<>-]{1,80}")
     }
 }

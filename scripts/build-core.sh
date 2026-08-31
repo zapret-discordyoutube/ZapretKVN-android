@@ -189,6 +189,12 @@ ZAPRET_RU_IP_SRS="$PROJECT_ROOT/app/src/main/assets/rule-sets/zapret-ru-ip.srs" 
 rm -f "$SOURCE_DIR/route/rule/zapret_performance_test.go"
 go test ./dns/... ./route/rule ./experimental/libbox
 go test -tags "$CORE_TAGS" ./transport/wireguard ./protocol/wireguard
+# badlinkname/tfogo_checklinkname0 are host linkname checks and make Go's
+# crypto/tls test binary incompatible with the pinned toolchain; protocol
+# coverage still uses the complete functional build tag set.
+CORE_TEST_TAGS="${CORE_TAGS%,badlinkname,tfogo_checklinkname0}"
+go test -tags "$CORE_TEST_TAGS" ./protocol/hysteria2
+go test -tags "$CORE_TEST_TAGS" ./parser/link
 
 go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
 go install "github.com/sagernet/gomobile/cmd/gobind@$GOMOBILE_VERSION"

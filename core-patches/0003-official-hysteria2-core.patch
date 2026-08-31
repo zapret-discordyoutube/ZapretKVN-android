@@ -291,7 +291,7 @@ index 670efe28..ac68f18d 100644
  golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=
  golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da/go.mod h1:NDW/Ps6MPRej6fsCIbMTohpP40sJ/P/vI1MoTEGwX90=
 diff --git a/option/hysteria2.go b/option/hysteria2.go
-index a44daac8..67e40647 100644
+index a44daac8..fbdb9c96 100644
 --- a/option/hysteria2.go
 +++ b/option/hysteria2.go
 @@ -23,8 +23,10 @@ type Hysteria2InboundOptions struct {
@@ -307,7 +307,7 @@ index a44daac8..67e40647 100644
  }
  
  type Hysteria2User struct {
-@@ -112,13 +114,14 @@ type Hysteria2MasqueradeString struct {
+@@ -112,13 +114,15 @@ type Hysteria2MasqueradeString struct {
  type Hysteria2OutboundOptions struct {
  	DialerOptions
  	ServerOptions
@@ -325,20 +325,565 @@ index a44daac8..67e40647 100644
 +	Obfs              *Hysteria2Obfs             `json:"obfs,omitempty"`
 +	Password          string                     `json:"password,omitempty"`
 +	CertificateSHA256 string                     `json:"certificate_sha256,omitempty"`
++	URI               string                     `json:"uri,omitempty"`
 +	Network           NetworkList                `json:"network,omitempty"`
  	OutboundTLSOptionsContainer
  	BrutalDebug bool `json:"brutal_debug,omitempty"`
  }
-diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
-index d4382fdc..d495b825 100644
---- a/protocol/hysteria2/outbound.go
-+++ b/protocol/hysteria2/outbound.go
-@@ -2,99 +2,131 @@ package hysteria2
+diff --git a/parser/link/hysteria2.go b/parser/link/hysteria2.go
+index d9486064..5ed0f8f8 100644
+--- a/parser/link/hysteria2.go
++++ b/parser/link/hysteria2.go
+@@ -1,61 +1,426 @@
+ package link
  
  import (
++	"encoding/base64"
++	"encoding/hex"
++	"fmt"
+ 	"net/url"
+ 	"strconv"
++	"strings"
++	"time"
+ 
+-	"github.com/sagernet/sing-box/common"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/common/json/badoption"
+ )
+ 
+ func parseHysteria2Link(link string) (option.Outbound, error) {
+-	linkURL, err := url.Parse(link)
++	parsed, err := parseHysteria2URI(link)
+ 	if err != nil {
+ 		return option.Outbound{}, err
+ 	}
+-	var options option.Hysteria2OutboundOptions
+-	TLSOptions := option.OutboundTLSOptions{
+-		Enabled: true,
+-		ECH:     &option.OutboundECHOptions{},
+-		UTLS:    &option.OutboundUTLSOptions{},
+-		Reality: &option.OutboundRealityOptions{},
+-	}
+-	Obfs := &option.Hysteria2Obfs{}
+-	options.ServerPort = uint16(443)
+-	options.Server = linkURL.Hostname()
+-	TLSOptions.ServerName = linkURL.Hostname()
+-	if linkURL.User != nil {
+-		options.Password = linkURL.User.Username()
+-	}
+-	if linkURL.Port() != "" {
+-		options.ServerPort = common.StringToType[uint16](linkURL.Port())
+-	}
+-	for key, values := range linkURL.Query() {
+-		value := values[0]
+-		switch key {
+-		case "up":
+-			options.UpMbps, _ = strconv.Atoi(value)
+-		case "down":
+-			options.DownMbps, _ = strconv.Atoi(value)
+-		case "obfs":
+-			if value == "salamander" {
+-				Obfs.Type = "salamander"
+-				options.Obfs = Obfs
+-			}
+-		case "obfs-password":
+-			Obfs.Password = value
+-		case "insecure", "skip-cert-verify":
+-			if value == "1" || value == "true" {
+-				TLSOptions.Insecure = true
+-			}
++	options := option.Hysteria2OutboundOptions{
++		ServerOptions: option.ServerOptions{Server: parsed.host, ServerPort: parsed.firstPort},
++		ServerPorts:   parsed.serverPorts,
++		Password:      parsed.password,
++		UpMbps:        parsed.upMbps,
++		DownMbps:      parsed.downMbps,
++	}
++	if parsed.hopInterval != 0 {
++		options.HopInterval = badoption.Duration(parsed.hopInterval)
++	}
++	if parsed.obfs != nil {
++		options.Obfs = parsed.obfs
++	}
++	if parsed.certificateSHA256 != "" {
++		options.CertificateSHA256 = parsed.certificateSHA256
++	}
++	tlsOptions := &option.OutboundTLSOptions{
++		Enabled:    true,
++		ServerName: parsed.serverName,
++	}
++	if parsed.insecure {
++		tlsOptions.Insecure = true
++	}
++	if parsed.echPEM != "" {
++		tlsOptions.ECH = &option.OutboundECHOptions{
++			Enabled: true,
++			Config:  badoption.Listable[string]{parsed.echPEM},
+ 		}
+ 	}
++	options.TLS = tlsOptions
+ 	outbound := option.Outbound{
+ 		Type: C.TypeHysteria2,
+-		Tag:  linkURL.Fragment,
++		Tag:  parsed.fragment,
+ 	}
+-	options.TLS = &TLSOptions
+ 	outbound.Options = &options
+ 	return outbound, nil
+ }
++
++type hysteria2URI struct {
++	host              string
++	firstPort         uint16
++	serverPorts       badoption.Listable[string]
++	password          string
++	serverName        string
++	insecure          bool
++	upMbps            int
++	downMbps          int
++	hopInterval       time.Duration
++	obfs              *option.Hysteria2Obfs
++	certificateSHA256 string
++	echPEM            string
++	fragment          string
++}
++
++// parseHysteria2URI deliberately does not use URL.Port: official Hysteria2
++// links allow comma-separated ports and colon-separated ranges in authority.
++// Unknown query parameters are ignored and never included in errors/logs.
++func parseHysteria2URI(link string) (hysteria2URI, error) {
++	var result hysteria2URI
++	schemeEnd := strings.Index(link, "://")
++	if schemeEnd <= 0 || !strings.EqualFold(link[:schemeEnd], "hy2") && !strings.EqualFold(link[:schemeEnd], "hysteria2") {
++		return result, fmt.Errorf("invalid Hysteria2 URI scheme")
++	}
++	body := link[schemeEnd+3:]
++	fragment := ""
++	if hash := strings.IndexByte(body, '#'); hash >= 0 {
++		fragment, _ = url.PathUnescape(body[hash+1:])
++		body = body[:hash]
++	}
++	queryText := ""
++	if question := strings.IndexByte(body, '?'); question >= 0 {
++		queryText = body[question+1:]
++		body = body[:question]
++	}
++	authority := strings.SplitN(body, "/", 2)[0]
++	if authority == "" {
++		return result, fmt.Errorf("Hysteria2 URI has no server")
++	}
++	userinfo := ""
++	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
++		userinfo = authority[:at]
++		authority = authority[at+1:]
++	}
++	host, portText, err := splitHysteria2HostPort(authority)
++	if err != nil {
++		return result, err
++	}
++	host, err = url.PathUnescape(host)
++	if err != nil || strings.TrimSpace(host) == "" {
++		return result, fmt.Errorf("Hysteria2 URI has invalid server")
++	}
++	firstPort, serverPorts, err := parseHysteria2Ports(portText)
++	if err != nil {
++		return result, err
++	}
++	password, err := url.PathUnescape(userinfo)
++	if err != nil {
++		return result, fmt.Errorf("Hysteria2 URI has invalid authentication")
++	}
++	query, err := parseHysteria2Query(queryText)
++	if err != nil {
++		return result, err
++	}
++	if password == "" {
++		password = query["auth"]
++	}
++	if password == "" {
++		return result, fmt.Errorf("Hysteria2 URI has no authentication password")
++	}
++	serverName := query["sni"]
++	if serverName == "" {
++		serverName = host
++	}
++	result = hysteria2URI{
++		host:        host,
++		firstPort:   firstPort,
++		serverPorts: serverPorts,
++		password:    password,
++		serverName:  serverName,
++		insecure:    hysteria2Bool(query["insecure"]),
++		fragment:    fragment,
++	}
++	if value := query["up"]; value != "" {
++		result.upMbps, err = parseHysteria2Mbps(value)
++		if err != nil {
++			return hysteria2URI{}, fmt.Errorf("invalid Hysteria2 up bandwidth")
++		}
++	}
++	if value := query["down"]; value != "" {
++		result.downMbps, err = parseHysteria2Mbps(value)
++		if err != nil {
++			return hysteria2URI{}, fmt.Errorf("invalid Hysteria2 down bandwidth")
++		}
++	}
++	if value := query["hopinterval"]; value != "" {
++		result.hopInterval, err = time.ParseDuration(value)
++		if err != nil {
++			if seconds, numberErr := strconv.Atoi(value); numberErr == nil {
++				result.hopInterval = time.Duration(seconds) * time.Second
++			} else {
++				return hysteria2URI{}, fmt.Errorf("invalid Hysteria2 hop interval")
++			}
++		}
++	}
++	if value := query["pinsha256"]; value != "" {
++		result.certificateSHA256, err = normalizeHysteria2Pin(value)
++		if err != nil {
++			return hysteria2URI{}, err
++		}
++	}
++	obfsType := strings.ToLower(strings.TrimSpace(query["obfs"]))
++	if obfsType != "" && obfsType != "none" && obfsType != "plain" {
++		if obfsType != "salamander" && obfsType != "gecko" {
++			return hysteria2URI{}, fmt.Errorf("unsupported Hysteria2 obfs")
++		}
++		obfsPassword := query["obfspassword"]
++		if obfsPassword == "" {
++			return hysteria2URI{}, fmt.Errorf("Hysteria2 obfs password is required")
++		}
++		result.obfs = &option.Hysteria2Obfs{Type: obfsType, Password: obfsPassword}
++	}
++	minPacket, maxPacket, packetErr := parseHysteria2PacketSizes(query)
++	if packetErr != nil {
++		return hysteria2URI{}, packetErr
++	}
++	if minPacket != 0 || maxPacket != 0 {
++		if result.obfs == nil || result.obfs.Type != "gecko" {
++			return hysteria2URI{}, fmt.Errorf("Hysteria2 packet sizes require Gecko obfs")
++		}
++		result.obfs.MinPacketSize = minPacket
++		result.obfs.MaxPacketSize = maxPacket
++	}
++	if value := query["ech"]; value != "" {
++		result.echPEM, err = decodeHysteria2ECH(value)
++		if err != nil {
++			return hysteria2URI{}, err
++		}
++	}
++	return result, nil
++}
++
++func splitHysteria2HostPort(authority string) (string, string, error) {
++	if strings.HasPrefix(authority, "[") {
++		closeBracket := strings.IndexByte(authority, ']')
++		if closeBracket <= 1 {
++			return "", "", fmt.Errorf("Hysteria2 URI has invalid IPv6 server")
++		}
++		rest := authority[closeBracket+1:]
++		if rest == "" {
++			return authority[1:closeBracket], "443", nil
++		}
++		if !strings.HasPrefix(rest, ":") || len(rest) == 1 {
++			return "", "", fmt.Errorf("Hysteria2 URI has invalid IPv6 port")
++		}
++		if _, _, err := parseHysteria2Ports(rest[1:]); err != nil {
++			return "", "", fmt.Errorf("Hysteria2 URI has invalid IPv6 port")
++		}
++		return authority[1:closeBracket], rest[1:], nil
++	}
++	if colon := strings.IndexByte(authority, ':'); colon >= 0 {
++		if colon == 0 || colon == len(authority)-1 {
++			return "", "", fmt.Errorf("Hysteria2 URI has invalid server port")
++		}
++		host, portText := authority[:colon], authority[colon+1:]
++		// A second colon is valid in the official port-union syntax
++		// (for example 20000:20002), but never in an unbracketed IPv6 host.
++		if strings.Contains(portText, ":") {
++			if _, _, err := parseHysteria2Ports(portText); err != nil {
++				return "", "", fmt.Errorf("Hysteria2 IPv6 server must be bracketed")
++			}
++		}
++		return host, portText, nil
++	}
++	return authority, "443", nil
++}
++
++func parseHysteria2Ports(value string) (uint16, badoption.Listable[string], error) {
++	if value == "" {
++		value = "443"
++	}
++	parts := strings.Split(value, ",")
++	normalized := make([]string, 0, len(parts))
++	var first uint16
++	for index, rawPart := range parts {
++		part := strings.TrimSpace(rawPart)
++		if part == "" {
++			return 0, nil, fmt.Errorf("Hysteria2 URI has an empty port")
++		}
++		separator := "-"
++		if strings.Contains(part, ":") {
++			if strings.Count(part, ":") != 1 {
++				return 0, nil, fmt.Errorf("Hysteria2 URI has invalid port range")
++			}
++			separator = ":"
++		}
++		bounds := strings.Split(part, separator)
++		if len(bounds) > 2 {
++			return 0, nil, fmt.Errorf("Hysteria2 URI has invalid port range")
++		}
++		start, startErr := strconv.Atoi(strings.TrimSpace(bounds[0]))
++		if startErr != nil || start < 1 || start > 65535 {
++			return 0, nil, fmt.Errorf("Hysteria2 URI has invalid port")
++		}
++		end := start
++		if len(bounds) == 2 {
++			var endErr error
++			end, endErr = strconv.Atoi(strings.TrimSpace(bounds[1]))
++			if endErr != nil || end < start || end > 65535 {
++				return 0, nil, fmt.Errorf("Hysteria2 URI has invalid port range")
++			}
++		}
++		if index == 0 {
++			first = uint16(start)
++		}
++		if start == end {
++			normalized = append(normalized, strconv.Itoa(start))
++		} else {
++			normalized = append(normalized, fmt.Sprintf("%d-%d", start, end))
++		}
++	}
++	if len(parts) == 1 && normalized[0] == strconv.Itoa(int(first)) {
++		return first, nil, nil
++	}
++	return first, badoption.Listable[string](normalized), nil
++}
++
++func parseHysteria2Query(rawQuery string) (map[string]string, error) {
++	values, err := url.ParseQuery(rawQuery)
++	if err != nil {
++		return nil, fmt.Errorf("Hysteria2 URI has invalid query encoding")
++	}
++	result := make(map[string]string, len(values))
++	for key, list := range values {
++		if len(list) == 0 {
++			continue
++		}
++		result[canonicalHysteria2Key(key)] = list[0]
++	}
++	return result, nil
++}
++
++func canonicalHysteria2Key(value string) string {
++	key := strings.ToLower(strings.TrimSpace(value))
++	key = strings.NewReplacer("-", "", "_", "").Replace(key)
++	switch key {
++	case "servername", "peer":
++		return "sni"
++	case "allowinsecure", "skipcertverify":
++		return "insecure"
++	case "obfspassword":
++		return "obfspassword"
++	case "upmbps", "upbps":
++		return "up"
++	case "downmbps", "downbps":
++		return "down"
++	default:
++		return key
++	}
++}
++
++func hysteria2Bool(value string) bool {
++	switch strings.ToLower(strings.TrimSpace(value)) {
++	case "1", "true", "yes", "on":
++		return true
++	default:
++		return false
++	}
++}
++
++func parseHysteria2Mbps(value string) (int, error) {
++	fields := strings.Fields(strings.TrimSpace(value))
++	if len(fields) == 0 || len(fields) > 2 {
++		return 0, fmt.Errorf("invalid bandwidth")
++	}
++	amount, err := strconv.ParseInt(fields[0], 10, 64)
++	if err != nil || amount < 0 {
++		return 0, fmt.Errorf("invalid bandwidth")
++	}
++	unit := "mbps"
++	if len(fields) == 2 {
++		unit = strings.ToLower(fields[1])
++	}
++	factor := int64(1)
++	divisor := int64(1)
++	switch unit {
++	case "bps", "b/s":
++		divisor = 1_000_000
++	case "kbps", "kb/s":
++		divisor = 1_000
++	case "mbps", "mb/s":
++	case "gbps", "gb/s":
++		factor = 1_000
++	case "tbps", "tb/s":
++		factor = 1_000_000
++	default:
++		return 0, fmt.Errorf("invalid bandwidth unit")
++	}
++	maxInt := int64(^uint(0) >> 1)
++	if amount > maxInt/factor {
++		return 0, fmt.Errorf("bandwidth overflow")
++	}
++	return int(amount * factor / divisor), nil
++}
++
++func parseHysteria2PacketSizes(query map[string]string) (int, int, error) {
++	parse := func(key string) (int, error) {
++		value := strings.TrimSpace(query[key])
++		if value == "" {
++			return 0, nil
++		}
++		number, err := strconv.Atoi(value)
++		if err != nil || number < 0 {
++			return 0, fmt.Errorf("invalid Hysteria2 packet size")
++		}
++		return number, nil
++	}
++	minPacket, err := parse("minpacketsize")
++	if err != nil {
++		return 0, 0, err
++	}
++	maxPacket, err := parse("maxpacketsize")
++	if err != nil {
++		return 0, 0, err
++	}
++	if minPacket != 0 && maxPacket != 0 && minPacket > maxPacket {
++		return 0, 0, fmt.Errorf("invalid Hysteria2 packet size range")
++	}
++	if maxPacket > 2048 {
++		return 0, 0, fmt.Errorf("invalid Hysteria2 packet size")
++	}
++	return minPacket, maxPacket, nil
++}
++
++func normalizeHysteria2Pin(value string) (string, error) {
++	normalized := strings.NewReplacer(":", "", "-", "").Replace(strings.ToLower(strings.TrimSpace(value)))
++	decoded, err := hex.DecodeString(normalized)
++	if err != nil || len(decoded) != 32 {
++		return "", fmt.Errorf("Hysteria2 certificate pin must contain 32 SHA-256 bytes")
++	}
++	return normalized, nil
++}
++
++func decodeHysteria2ECH(value string) (string, error) {
++	if strings.Contains(value, "BEGIN ECH CONFIGS") {
++		return value, nil
++	}
++	compact := strings.Join(strings.Fields(value), "")
++	var decoded []byte
++	var err error
++	for _, encoding := range []*base64.Encoding{
++		base64.RawURLEncoding,
++		base64.URLEncoding,
++		base64.RawStdEncoding,
++		base64.StdEncoding,
++	} {
++		decoded, err = encoding.DecodeString(compact)
++		if err == nil {
++			break
++		}
++	}
++	if err != nil || len(decoded) == 0 {
++		return "", fmt.Errorf("invalid Hysteria2 ECH config")
++	}
++	return "-----BEGIN ECH CONFIGS-----\n" + base64.StdEncoding.EncodeToString(decoded) + "\n-----END ECH CONFIGS-----", nil
++}
+diff --git a/parser/link/hysteria2_test.go b/parser/link/hysteria2_test.go
+new file mode 100644
+index 00000000..2414fcf4
+--- /dev/null
++++ b/parser/link/hysteria2_test.go
+@@ -0,0 +1,52 @@
++package link
++
++import (
++	"encoding/base64"
++	"testing"
++	"time"
++)
++
++func TestParseHysteria2URIColonPortUnion(t *testing.T) {
++	for _, uri := range []string{
++		"hy2://secret@example.com:443,20000:20002",
++		"hysteria2://secret@[2001:db8::1]:443,20000:20002",
++	} {
++		parsed, err := parseHysteria2URI(uri)
++		if err != nil {
++			t.Fatalf("parse %q: %v", uri, err)
++		}
++		if parsed.firstPort != 443 || len(parsed.serverPorts) != 2 || parsed.serverPorts[1] != "20000-20002" {
++			t.Fatalf("unexpected port union for %q: first=%d ports=%v", uri, parsed.firstPort, parsed.serverPorts)
++		}
++	}
++}
++
++func TestParseHysteria2URITransportContract(t *testing.T) {
++	ech := base64.RawURLEncoding.EncodeToString([]byte{0, 1, 2, 3})
++	parsed, err := parseHysteria2URI(
++		"hy2://p%40ss@example.com:8443?" +
++			"sni=edge.example&insecure=1&pinSHA256=" +
++			"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f&" +
++			"obfs=gecko&obfs-password=cover&min-packet-size=900&max-packet-size=1200&" +
++			"up=20&down=80&hop-interval=15s&ech=" + ech + "&vendor=preserved-by-app#name",
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if parsed.password != "p@ss" || parsed.serverName != "edge.example" || !parsed.insecure {
++		t.Fatalf("authentication/TLS fields were not parsed: %+v", parsed)
++	}
++	if parsed.obfs == nil || parsed.obfs.Type != "gecko" || parsed.obfs.Password != "cover" ||
++		parsed.obfs.MinPacketSize != 900 || parsed.obfs.MaxPacketSize != 1200 {
++		t.Fatalf("Gecko fields were not parsed: %+v", parsed.obfs)
++	}
++	if parsed.upMbps != 20 || parsed.downMbps != 80 || parsed.hopInterval != 15*time.Second || parsed.echPEM == "" {
++		t.Fatalf("transport fields were not parsed: %+v", parsed)
++	}
++}
++
++func TestParseHysteria2URIRejectsUnbracketedIPv6(t *testing.T) {
++	if _, err := parseHysteria2URI("hy2://secret@2001:db8::1"); err == nil {
++		t.Fatal("unbracketed IPv6 authority accepted")
++	}
++}
+diff --git a/parser/link/parser.go b/parser/link/parser.go
+index 092df20c..f34c2ccc 100644
+--- a/parser/link/parser.go
++++ b/parser/link/parser.go
+@@ -16,7 +16,7 @@ func ParseSubscriptionLink(link string) (option.Outbound, error) {
+ 		return option.Outbound{}, E.New("invalid link")
+ 	}
+ 
+-	scheme := result[1]
++	scheme := strings.ToLower(result[1])
+ 	switch scheme {
+ 	case "tuic":
+ 		return parseTuicLink(link)
+diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
+index d4382fdc..cb90c95a 100644
+--- a/protocol/hysteria2/outbound.go
++++ b/protocol/hysteria2/outbound.go
+@@ -1,100 +1,182 @@
+ package hysteria2
+ 
+ import (
++	"bytes"
  	"context"
 +	"crypto/sha256"
 +	"crypto/subtle"
++	"crypto/tls"
 +	"crypto/x509"
 +	"encoding/hex"
 +	"encoding/pem"
@@ -363,6 +908,7 @@ index d4382fdc..d495b825 100644
 -	"github.com/sagernet/sing-quic/hysteria"
 -	"github.com/sagernet/sing-quic/hysteria2"
 -	"github.com/sagernet/sing/common"
++	linkparser "github.com/sagernet/sing-box/parser/link"
  	"github.com/sagernet/sing/common/bufio"
  	E "github.com/sagernet/sing/common/exceptions"
 +	"github.com/sagernet/sing/common/json/badoption"
@@ -403,15 +949,29 @@ index d4382fdc..d495b825 100644
 -func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
 -	options.UDPFragmentDefault = true
 +func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
++	var err error
++	options, err = applyHysteria2URI(options)
++	if err != nil {
++		return nil, err
++	}
  	if options.TLS == nil || !options.TLS.Enabled {
  		return nil, C.ErrTLSRequired
  	}
 -	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
--	if err != nil {
 +	if options.Password == "" {
 +		return nil, E.New("missing password")
 +	}
 +	if err := validateObfs(options.Obfs); err != nil {
++		return nil, err
++	}
++	if _, err := certificatePin(options.CertificateSHA256); err != nil {
++		return nil, err
++	}
++	if _, err := upstreamTLSConfig(ctx, options); err != nil {
++		return nil, err
++	}
++	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+ 	if err != nil {
  		return nil, err
  	}
 -	var salamanderPassword string
@@ -424,11 +984,69 @@ index d4382fdc..d495b825 100644
 -			salamanderPassword = options.Obfs.Password
 -		default:
 -			return nil, E.New("unknown obfs type: ", options.Obfs.Type)
--		}
-+	if _, err := certificatePin(options.CertificateSHA256); err != nil {
++	h := &Outbound{
++		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, options.Network.Build(), options.DialerOptions),
++		ctx:     ctx,
++		logger:  logger,
++		dialer:  outboundDialer,
++		options: options,
++	}
++	client, err := h.newClient()
++	if err != nil {
 +		return nil, err
++	}
++	h.client = client
++	return h, nil
++}
++
++func applyHysteria2URI(options option.Hysteria2OutboundOptions) (option.Hysteria2OutboundOptions, error) {
++	if strings.TrimSpace(options.URI) == "" {
++		return options, nil
++	}
++	parsed, err := linkparser.ParseSubscriptionLink(options.URI)
++	if err != nil {
++		return options, E.New("invalid Hysteria2 URI")
++	}
++	parsedOptions, ok := parsed.Options.(*option.Hysteria2OutboundOptions)
++	if !ok {
++		return options, E.New("invalid Hysteria2 URI options")
++	}
++	// URI transport fields are authoritative; retain native dialer/TUN and
++	// TLS material fields from JSON so Android protection remains in charge.
++	options.Server = parsedOptions.Server
++	options.ServerPort = parsedOptions.ServerPort
++	options.ServerPorts = parsedOptions.ServerPorts
++	options.Password = parsedOptions.Password
++	options.UpMbps = parsedOptions.UpMbps
++	options.DownMbps = parsedOptions.DownMbps
++	options.HopInterval = parsedOptions.HopInterval
++	options.Obfs = parsedOptions.Obfs
++	options.CertificateSHA256 = parsedOptions.CertificateSHA256
++	if options.TLS == nil {
++		options.TLS = parsedOptions.TLS
++	} else if parsedOptions.TLS != nil {
++		tlsOptions := *options.TLS
++		tlsOptions.Enabled = true
++		tlsOptions.ServerName = parsedOptions.TLS.ServerName
++		tlsOptions.Insecure = parsedOptions.TLS.Insecure
++		if parsedOptions.TLS.ECH != nil {
++			tlsOptions.ECH = parsedOptions.TLS.ECH
+ 		}
++		options.TLS = &tlsOptions
  	}
- 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+-	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
++	options.URI = ""
++	return options, nil
++}
++
++func (h *Outbound) newClient() (hyclient.Client, error) {
++	return hyclient.NewReconnectableClient(h.clientConfig, func(_ hyclient.Client, info *hyclient.HandshakeInfo, count int) {
++		h.logger.Debug("official Hysteria2 connected to ", info.ServerAddr, ", attempt ", count)
++	}, true)
++}
++
++func (h *Outbound) clientConfig() (*hyclient.Config, error) {
++	factory, serverAddr, err := newProtectedConnFactory(h.ctx, h.dialer, h.options)
  	if err != nil {
  		return nil, err
  	}
@@ -448,41 +1066,15 @@ index d4382fdc..d495b825 100644
 -		TLSConfig:          tlsConfig,
 -		UDPDisabled:        !common.Contains(networkList, N.NetworkUDP),
 -	})
-+	h := &Outbound{
-+		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, options.Network.Build(), options.DialerOptions),
-+		ctx:     ctx,
-+		logger:  logger,
-+		dialer:  outboundDialer,
-+		options: options,
-+	}
-+	client, err := h.newClient()
++	tlsConfig, err := upstreamTLSConfig(h.ctx, h.options)
  	if err != nil {
++		_ = factory.Close()
  		return nil, err
  	}
 -	return &Outbound{
 -		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions),
 -		logger:  logger,
 -		client:  client,
-+	h.client = client
-+	return h, nil
-+}
-+
-+func (h *Outbound) newClient() (hyclient.Client, error) {
-+	return hyclient.NewReconnectableClient(h.clientConfig, func(_ hyclient.Client, info *hyclient.HandshakeInfo, count int) {
-+		h.logger.Debug("official Hysteria2 connected to ", info.ServerAddr, ", attempt ", count)
-+	}, true)
-+}
-+
-+func (h *Outbound) clientConfig() (*hyclient.Config, error) {
-+	factory, serverAddr, err := newProtectedConnFactory(h.ctx, h.dialer, h.options)
-+	if err != nil {
-+		return nil, err
-+	}
-+	tlsConfig, err := upstreamTLSConfig(h.ctx, h.options)
-+	if err != nil {
-+		_ = factory.Close()
-+		return nil, err
-+	}
 +	return &hyclient.Config{
 +		ConnFactory: factory,
 +		ServerAddr:  serverAddr,
@@ -510,7 +1102,7 @@ index d4382fdc..d495b825 100644
  	case N.NetworkUDP:
  		conn, err := h.ListenPacket(ctx, destination)
  		if err != nil {
-@@ -108,13 +140,241 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+@@ -108,13 +190,317 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
  
  func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
  	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
@@ -552,6 +1144,7 @@ index d4382fdc..d495b825 100644
 +func (closedClient) Close() error                     { return nil }
 +
 +type protectedConnFactory struct {
++	ctx         context.Context
 +	dialer      N.Dialer
 +	destination M.Socksaddr
 +	firstConn   net.PacketConn
@@ -582,6 +1175,7 @@ index d4382fdc..d495b825 100644
 +		return nil, nil, E.Cause(err, "open protected Hysteria2 packet socket")
 +	}
 +	factory := &protectedConnFactory{
++		ctx:         ctx,
 +		dialer:      outboundDialer,
 +		destination: M.SocksaddrFrom(ip, destination.Port),
 +		firstConn:   conn,
@@ -619,7 +1213,7 @@ index d4382fdc..d495b825 100644
 +			return conn, nil
 +		}
 +		f.access.Unlock()
-+		return f.dialer.ListenPacket(context.Background(), f.destination)
++		return f.dialer.ListenPacket(f.ctx, f.destination)
 +	}
 +	var (
 +		conn net.PacketConn
@@ -634,10 +1228,14 @@ index d4382fdc..d495b825 100644
 +	if err != nil {
 +		return nil, err
 +	}
-+	if f.obfs == nil || f.obfs.Type == "" || f.obfs.Type == "none" || f.obfs.Type == "plain" {
++	typeName := ""
++	if f.obfs != nil {
++		typeName = strings.ToLower(strings.TrimSpace(f.obfs.Type))
++	}
++	if typeName == "" || typeName == "none" || typeName == "plain" {
 +		return conn, nil
 +	}
-+	switch strings.ToLower(f.obfs.Type) {
++	switch typeName {
 +	case "salamander":
 +		return hyobfs.WrapPacketConnSalamander(conn, []byte(f.obfs.Password))
 +	case "gecko":
@@ -650,7 +1248,7 @@ index d4382fdc..d495b825 100644
 +		_ = conn.Close()
 +		return nil, E.New("unknown obfs type: ", f.obfs.Type)
 +	}
- }
++}
 +
 +func (f *protectedConnFactory) Close() error {
 +	f.access.Lock()
@@ -664,18 +1262,29 @@ index d4382fdc..d495b825 100644
 +}
 +
 +func validateObfs(obfsOptions *option.Hysteria2Obfs) error {
-+	if obfsOptions == nil || obfsOptions.Type == "" || obfsOptions.Type == "none" || obfsOptions.Type == "plain" {
++	if obfsOptions == nil {
 +		return nil
 +	}
-+	switch strings.ToLower(obfsOptions.Type) {
-+	case "salamander", "gecko":
-+		if obfsOptions.Password == "" {
-+			return E.New("missing obfs password")
++	typeName := strings.ToLower(strings.TrimSpace(obfsOptions.Type))
++	if typeName == "" || typeName == "none" || typeName == "plain" {
++		if obfsOptions.MinPacketSize != 0 || obfsOptions.MaxPacketSize != 0 {
++			return E.New("min_packet_size/max_packet_size are only valid for gecko")
 +		}
-+	default:
++		return nil
++	}
++	if typeName != "salamander" && typeName != "gecko" {
 +		return E.New("unknown obfs type: ", obfsOptions.Type)
 +	}
-+	if obfsOptions.Type != "gecko" && (obfsOptions.MinPacketSize != 0 || obfsOptions.MaxPacketSize != 0) {
++	if obfsOptions.Password == "" {
++		return E.New("missing obfs password")
++	}
++	if obfsOptions.MinPacketSize < 0 || obfsOptions.MaxPacketSize < 0 || obfsOptions.MinPacketSize > obfsOptions.MaxPacketSize {
++		return E.New("invalid Hysteria2 packet size range")
++	}
++	if obfsOptions.MaxPacketSize > 2048 {
++		return E.New("invalid Hysteria2 packet size")
++	}
++	if typeName != "gecko" && (obfsOptions.MinPacketSize != 0 || obfsOptions.MaxPacketSize != 0) {
 +		return E.New("min_packet_size/max_packet_size are only valid for gecko")
 +	}
 +	return nil
@@ -683,14 +1292,55 @@ index d4382fdc..d495b825 100644
 +
 +func upstreamTLSConfig(ctx context.Context, options option.Hysteria2OutboundOptions) (hyclient.TLSConfig, error) {
 +	tlsOptions := options.TLS
++	if tlsOptions == nil {
++		return hyclient.TLSConfig{}, E.New("missing Hysteria2 TLS options")
++	}
 +	pin, err := certificatePin(options.CertificateSHA256)
 +	if err != nil {
 +		return hyclient.TLSConfig{}, err
 +	}
++	serverName := options.Server
++	if tlsOptions.ServerName != "" {
++		serverName = tlsOptions.ServerName
++	}
++	if tlsOptions.DisableSNI {
++		serverName = ""
++	}
 +	config := hyclient.TLSConfig{
-+		ServerName:         tlsOptions.ServerName,
-+		InsecureSkipVerify: tlsOptions.Insecure,
++		ServerName:         serverName,
++		InsecureSkipVerify: tlsOptions.Insecure || tlsOptions.DisableSNI,
 +		RootCAs:            adapter.RootPoolFromContext(ctx),
++	}
++	caPEM, err := hysteria2TLSMaterial(tlsOptions.Certificate, tlsOptions.CertificatePath, "certificate")
++	if err != nil {
++		return hyclient.TLSConfig{}, err
++	}
++	if len(caPEM) > 0 {
++		rootPool := x509.NewCertPool()
++		if !rootPool.AppendCertsFromPEM(caPEM) {
++			return hyclient.TLSConfig{}, E.New("invalid Hysteria2 custom CA certificate")
++		}
++		config.RootCAs = rootPool
++	}
++	clientCertificate, err := hysteria2TLSMaterial(tlsOptions.ClientCertificate, tlsOptions.ClientCertificatePath, "client certificate")
++	if err != nil {
++		return hyclient.TLSConfig{}, err
++	}
++	clientKey, err := hysteria2TLSMaterial(tlsOptions.ClientKey, tlsOptions.ClientKeyPath, "client key")
++	if err != nil {
++		return hyclient.TLSConfig{}, err
++	}
++	if len(clientCertificate) != 0 || len(clientKey) != 0 {
++		if len(clientCertificate) == 0 || len(clientKey) == 0 {
++			return hyclient.TLSConfig{}, E.New("Hysteria2 client certificate and key must be provided together")
++		}
++		keyPair, pairErr := tls.X509KeyPair(clientCertificate, clientKey)
++		if pairErr != nil {
++			return hyclient.TLSConfig{}, E.New("invalid Hysteria2 client certificate/key")
++		}
++		config.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
++			return &keyPair, nil
++		}
 +	}
 +	if len(pin) > 0 {
 +		config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
@@ -705,16 +1355,34 @@ index d4382fdc..d495b825 100644
 +		}
 +	}
 +	if tlsOptions.ECH != nil && tlsOptions.ECH.Enabled {
-+		if len(tlsOptions.ECH.Config) == 0 {
-+			return hyclient.TLSConfig{}, E.New("Hysteria2 ECH requires tls.ech.config")
++		echBytes, err := hysteria2TLSMaterial(tlsOptions.ECH.Config, tlsOptions.ECH.ConfigPath, "ECH config")
++		if err != nil {
++			return hyclient.TLSConfig{}, err
 +		}
-+		block, rest := pem.Decode([]byte(strings.Join(tlsOptions.ECH.Config, "\n")))
-+		if block == nil || block.Type != "ECH CONFIGS" || len(rest) != 0 {
++		if len(echBytes) == 0 {
++			return hyclient.TLSConfig{}, E.New("Hysteria2 ECH requires tls.ech.config or tls.ech.config_path")
++		}
++		block, rest := pem.Decode(bytes.TrimSpace(echBytes))
++		if block == nil || block.Type != "ECH CONFIGS" || len(bytes.TrimSpace(rest)) != 0 {
 +			return hyclient.TLSConfig{}, E.New("invalid Hysteria2 ECH configs PEM")
 +		}
 +		config.ECHConfigList = block.Bytes
 +	}
 +	return config, nil
++}
++
++func hysteria2TLSMaterial(inline badoption.Listable[string], path string, name string) ([]byte, error) {
++	if len(inline) > 0 {
++		return []byte(strings.Join(inline, "\n")), nil
++	}
++	if path == "" {
++		return nil, nil
++	}
++	content, err := os.ReadFile(path)
++	if err != nil {
++		return nil, E.New("unable to read Hysteria2 ", name)
++	}
++	return content, nil
 +}
 +
 +func certificatePin(value string) ([]byte, error) {
@@ -748,7 +1416,7 @@ index d4382fdc..d495b825 100644
 +		return 0, err
 +	}
 +	return len(buffer), nil
-+}
+ }
 +
 +func (c *hyPacketConn) Close() error                     { return c.conn.Close() }
 +func (c *hyPacketConn) LocalAddr() net.Addr              { return M.Socksaddr{} }
@@ -757,10 +1425,10 @@ index d4382fdc..d495b825 100644
 +func (c *hyPacketConn) SetWriteDeadline(time.Time) error { return nil }
 diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
 new file mode 100644
-index 00000000..5e07455e
+index 00000000..864ad5d7
 --- /dev/null
 +++ b/protocol/hysteria2/outbound_test.go
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,431 @@
 +package hysteria2
 +
 +import (
@@ -771,10 +1439,15 @@ index 00000000..5e07455e
 +	"crypto/tls"
 +	"crypto/x509"
 +	"crypto/x509/pkix"
++	"encoding/hex"
++	"encoding/pem"
 +	"io"
 +	"math/big"
 +	"net"
 +	"net/netip"
++	"os"
++	"reflect"
++	"sync/atomic"
 +	"testing"
 +	"time"
 +
@@ -812,6 +1485,111 @@ index 00000000..5e07455e
 +	}
 +	if err := config.VerifyPeerCertificate([][]byte{[]byte("different")}, nil); err == nil {
 +		t.Fatal("mismatching end-entity pin accepted")
++	}
++}
++
++func TestTLSBridgeSupportsCAClientCertificateAndECHPath(t *testing.T) {
++	certificate := syntheticCertificate(t)
++	certificatePEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Certificate[0]})
++	privateKey, err := x509.MarshalPKCS8PrivateKey(certificate.PrivateKey)
++	if err != nil {
++		t.Fatal(err)
++	}
++	clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKey})
++	tempDir := t.TempDir()
++	clientCertificatePath := tempDir + "/client.crt"
++	clientKeyPath := tempDir + "/client.key"
++	caPath := tempDir + "/ca.crt"
++	echPath := tempDir + "/ech.pem"
++	if err := os.WriteFile(clientCertificatePath, certificatePEM, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(clientKeyPath, clientKeyPEM, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(caPath, certificatePEM, 0600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(echPath, []byte("-----BEGIN ECH CONFIGS-----\nAAECAw==\n-----END ECH CONFIGS-----\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	digest := sha256.Sum256(certificate.Certificate[0])
++	config, err := upstreamTLSConfig(context.Background(), option.Hysteria2OutboundOptions{
++		ServerOptions:     option.ServerOptions{Server: "synthetic.invalid", ServerPort: 443},
++		CertificateSHA256: hex.EncodeToString(digest[:]),
++		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{
++			Enabled:               true,
++			Certificate:           badoption.Listable[string]{string(certificatePEM)},
++			ClientCertificatePath: clientCertificatePath,
++			ClientKeyPath:         clientKeyPath,
++			ECH:                   &option.OutboundECHOptions{Enabled: true, ConfigPath: echPath},
++		}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if config.RootCAs == nil || config.GetClientCertificate == nil || len(config.ECHConfigList) != 4 {
++		t.Fatalf("TLS bridge omitted CA/client certificate/ECH: %+v", config)
++	}
++	clientCertificate, err := config.GetClientCertificate(nil)
++	if err != nil || clientCertificate == nil || len(clientCertificate.Certificate) != 1 {
++		t.Fatalf("client certificate callback failed: %v", err)
++	}
++	if err := config.VerifyPeerCertificate([][]byte{certificate.Certificate[0]}, nil); err != nil {
++		t.Fatalf("combined certificate pin rejected: %v", err)
++	}
++
++	inlineConfig, err := upstreamTLSConfig(context.Background(), option.Hysteria2OutboundOptions{
++		ServerOptions:     option.ServerOptions{Server: "synthetic.invalid", ServerPort: 443},
++		CertificateSHA256: hex.EncodeToString(digest[:]),
++		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{
++			Enabled:           true,
++			CertificatePath:   caPath,
++			ClientCertificate: badoption.Listable[string]{string(certificatePEM)},
++			ClientKey:         badoption.Listable[string]{string(clientKeyPEM)},
++			ECH: &option.OutboundECHOptions{
++				Enabled: true,
++				Config: badoption.Listable[string]{
++					"-----BEGIN ECH CONFIGS-----\nAAECAw==\n-----END ECH CONFIGS-----\n",
++				},
++			},
++		}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if inlineConfig.RootCAs == nil || inlineConfig.GetClientCertificate == nil || len(inlineConfig.ECHConfigList) != 4 {
++		t.Fatalf("inline mTLS/path CA/inline ECH bridge omitted material: %+v", inlineConfig)
++	}
++}
++
++func TestApplyHysteria2URIUsesTransportFieldsAndPreservesNativeTLSMaterial(t *testing.T) {
++	options := option.Hysteria2OutboundOptions{
++		URI: "hy2://p%40ss@example.com:443,20000:20002?sni=edge.example&" +
++			"obfs=salamander&obfs-password=cover&up=20&down=80&hop-interval=15s&vendor=ignored",
++		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{
++			Enabled:               true,
++			CertificatePath:       "/native/ca.pem",
++			ClientCertificatePath: "/native/client.pem",
++			ClientKeyPath:         "/native/client.key",
++		}},
++	}
++	parsed, err := applyHysteria2URI(options)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if parsed.URI != "" || parsed.Server != "example.com" || parsed.ServerPort != 443 || parsed.Password != "p@ss" {
++		t.Fatalf("URI transport fields were not applied: %+v", parsed)
++	}
++	if !reflect.DeepEqual(parsed.ServerPorts, badoption.Listable[string]{"443", "20000-20002"}) ||
++		parsed.Obfs == nil || parsed.Obfs.Type != "salamander" || parsed.Obfs.Password != "cover" ||
++		parsed.UpMbps != 20 || parsed.DownMbps != 80 || time.Duration(parsed.HopInterval) != 15*time.Second {
++		t.Fatalf("URI transport options were not applied: %+v", parsed)
++	}
++	if parsed.TLS == nil || parsed.TLS.ServerName != "edge.example" ||
++		parsed.TLS.CertificatePath != "/native/ca.pem" ||
++		parsed.TLS.ClientCertificatePath != "/native/client.pem" || parsed.TLS.ClientKeyPath != "/native/client.key" {
++		t.Fatalf("native TLS material was not preserved: %+v", parsed.TLS)
 +	}
 +}
 +
@@ -853,13 +1631,74 @@ index 00000000..5e07455e
 +	}
 +}
 +
-+func TestOfficialGeckoClientAgainstUpstreamServer(t *testing.T) {
++func TestProtectedFactoryPortHoppingRebindsThroughSingBoxDialer(t *testing.T) {
++	dialer := &stubDialer{packetConn: &stubPacketConn{}, address: netip.MustParseAddr("192.0.2.10")}
++	factory, serverAddr, err := newProtectedConnFactory(context.Background(), dialer, option.Hysteria2OutboundOptions{
++		ServerOptions: option.ServerOptions{Server: "synthetic.example", ServerPort: 443},
++		ServerPorts:   badoption.Listable[string]{"443", "20000:20002"},
++		HopInterval:   badoption.Duration(5 * time.Second),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if factory.hopAddr == nil || !reflect.DeepEqual(factory.hopAddr.Ports, []uint16{443, 20000, 20001, 20002}) {
++		t.Fatalf("unexpected hop address: %+v", factory.hopAddr)
++	}
++	conn, err := factory.New(serverAddr)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	deadline := time.Now().Add(7 * time.Second)
++	for dialer.listenCalls.Load() == 0 && time.Now().Before(deadline) {
++		time.Sleep(25 * time.Millisecond)
++	}
++	if dialer.listenCalls.Load() == 0 {
++		t.Fatal("port hopping did not obtain a fresh protected packet socket")
++	}
++}
++
++func TestOfficialClientsAgainstUpstreamServer(t *testing.T) {
++	tests := []struct {
++		name string
++		obfs *option.Hysteria2Obfs
++		wrap func(net.PacketConn) (net.PacketConn, error)
++	}{
++		{name: "plain", wrap: func(conn net.PacketConn) (net.PacketConn, error) { return conn, nil }},
++		{
++			name: "salamander",
++			obfs: &option.Hysteria2Obfs{Type: "salamander", Password: "synthetic-salamander"},
++			wrap: func(conn net.PacketConn) (net.PacketConn, error) {
++				return obfs.WrapPacketConnSalamander(conn, []byte("synthetic-salamander"))
++			},
++		},
++		{
++			name: "gecko",
++			obfs: &option.Hysteria2Obfs{Type: "gecko", Password: "synthetic-gecko"},
++			wrap: func(conn net.PacketConn) (net.PacketConn, error) {
++				return obfs.WrapPacketConnGecko(conn, obfs.GeckoOptions{Password: []byte("synthetic-gecko")})
++			},
++		},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			testOfficialClientAgainstUpstreamServer(t, test.obfs, test.wrap)
++		})
++	}
++}
++
++func testOfficialClientAgainstUpstreamServer(
++	t *testing.T,
++	obfsOptions *option.Hysteria2Obfs,
++	wrap func(net.PacketConn) (net.PacketConn, error),
++) {
++	t.Helper()
 +	certificate := syntheticCertificate(t)
 +	serverSocket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 +	if err != nil {
 +		t.Fatal(err)
 +	}
-+	serverConn, err := obfs.WrapPacketConnGecko(serverSocket, obfs.GeckoOptions{Password: []byte("synthetic-gecko")})
++	serverConn, err := wrap(serverSocket)
 +	if err != nil {
 +		t.Fatal(err)
 +	}
@@ -890,7 +1729,7 @@ index 00000000..5e07455e
 +	serverAddr := serverSocket.LocalAddr().(*net.UDPAddr)
 +	factory, destination, err := newProtectedConnFactory(context.Background(), realPacketDialer{}, option.Hysteria2OutboundOptions{
 +		ServerOptions: option.ServerOptions{Server: serverAddr.IP.String(), ServerPort: uint16(serverAddr.Port)},
-+		Obfs:          &option.Hysteria2Obfs{Type: "gecko", Password: "synthetic-gecko"},
++		Obfs:          obfsOptions,
 +	})
 +	if err != nil {
 +		t.Fatal(err)
@@ -910,7 +1749,7 @@ index 00000000..5e07455e
 +		t.Fatal(err)
 +	}
 +	defer conn.Close()
-+	payload := []byte("synthetic upstream gecko payload")
++	payload := []byte("synthetic upstream payload")
 +	if _, err := conn.Write(payload); err != nil {
 +		t.Fatal(err)
 +	}
@@ -920,6 +1759,21 @@ index 00000000..5e07455e
 +	}
 +	if string(received) != string(payload) {
 +		t.Fatalf("unexpected echo %q", received)
++	}
++}
++
++func TestInterfaceUpdateReplacesAndClosesHysteria2Client(t *testing.T) {
++	oldClient := &stubClient{}
++	outbound := &Outbound{client: oldClient}
++	outbound.InterfaceUpdated()
++	if !oldClient.closed.Load() {
++		t.Fatal("network recreation did not close the previous client")
++	}
++	if outbound.currentClient() == oldClient {
++		t.Fatal("network recreation did not install a fresh reconnectable client")
++	}
++	if err := outbound.Close(); err != nil {
++		t.Fatal(err)
 +	}
 +}
 +
@@ -964,12 +1818,14 @@ index 00000000..5e07455e
 +	packetConn   net.PacketConn
 +	address      netip.Addr
 +	resolveCalls int
++	listenCalls  atomic.Int32
 +}
 +
 +func (d *stubDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
 +	return nil, net.ErrClosed
 +}
 +func (d *stubDialer) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	d.listenCalls.Add(1)
 +	return &stubPacketConn{}, nil
 +}
 +func (d *stubDialer) ListenPacketWithDestination(context.Context, M.Socksaddr) (net.PacketConn, netip.Addr, error) {
@@ -996,3 +1852,11 @@ index 00000000..5e07455e
 +func (stubHyUDPConn) Close() error              { return nil }
 +
 +var _ hyclient.HyUDPConn = stubHyUDPConn{}
++
++type stubClient struct{ closed atomic.Bool }
++
++func (*stubClient) TCP(string) (net.Conn, error)     { return nil, net.ErrClosed }
++func (*stubClient) UDP() (hyclient.HyUDPConn, error) { return stubHyUDPConn{}, nil }
++func (c *stubClient) Close() error                   { c.closed.Store(true); return nil }
++
++var _ hyclient.Client = (*stubClient)(nil)

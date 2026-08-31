@@ -28,7 +28,8 @@ import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_LOG_LINE_CHARS
 import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STARTUP_LOG_LINES
 import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STAGES
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticClassifier
-import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
+import io.github.zapretkvn.android.diagnostics.DiagnosticReportRedactor
 import io.github.zapretkvn.android.diagnostics.appendPrioritizedBounded
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +56,8 @@ class VpnController(
     private val mutableSessionStats = MutableStateFlow(trafficAccumulator.value)
     private val trafficLock = Any()
     private val latestGeneration = AtomicLong(0)
+    @Volatile
+    private var diagnosticRuntimeMap: DiagnosticRuntimeMap? = null
 
     val state: StateFlow<VpnConnectionState> = mutableState.asStateFlow()
     val selectorGroups: StateFlow<List<RuntimeSelectorGroup>> = mutableGroups.asStateFlow()
@@ -235,6 +238,7 @@ class VpnController(
 
     internal fun nextGeneration(): Long {
         val generation = latestGeneration.incrementAndGet()
+        diagnosticRuntimeMap = null
         // Clear the previous session once, before callbacks can publish data for
         // this generation. Repeated Starting progress updates must not erase the
         // initial CommandGroup snapshot when it arrives quickly.
@@ -244,10 +248,16 @@ class VpnController(
 
     internal fun currentGeneration(): Long = latestGeneration.get()
 
-    internal fun beginConnectionDiagnostic(generation: Long, trigger: String) {
+    internal fun beginConnectionDiagnostic(
+        generation: Long,
+        trigger: String,
+        profileId: String? = null,
+    ) {
         if (generation != currentGeneration()) return
         val elapsed = SystemClock.elapsedRealtime()
         val epoch = System.currentTimeMillis()
+        val initialRuntimeMap = DiagnosticRuntimeMap.profileOnly(profileId)
+        diagnosticRuntimeMap = initialRuntimeMap
         mutableDiagnostics.update { current ->
             val previous = current.connectionAttempt?.finishForReplacement(elapsed)
             val history = (current.previousConnectionAttempts + listOfNotNull(previous))
@@ -267,7 +277,24 @@ class VpnController(
                     trigger = trigger.take(40),
                     startedAtEpochMillis = epoch,
                     startedAtElapsedRealtimeMillis = elapsed,
+                    target = initialRuntimeMap?.profile,
                 ),
+            )
+        }
+    }
+
+    internal fun attachDiagnosticRuntimeMap(
+        generation: Long,
+        runtimeMap: DiagnosticRuntimeMap,
+    ) {
+        if (generation != currentGeneration()) return
+        diagnosticRuntimeMap = runtimeMap
+        mutableDiagnostics.update { current ->
+            val attempt = current.connectionAttempt
+                ?.takeIf { it.generation == generation }
+                ?: return@update current
+            current.copy(
+                connectionAttempt = attempt.copy(target = runtimeMap.profile),
             )
         }
     }
@@ -292,6 +319,8 @@ class VpnController(
                 label = label.take(80),
                 startedAtEpochMillis = epoch,
                 startedAtElapsedRealtimeMillis = elapsed,
+                attempt = generation,
+                target = diagnosticRuntimeMap?.resolve("") ?: attempt.target,
             )
             current.copy(
                 connectionAttempt = attempt.copy(
@@ -354,6 +383,8 @@ class VpnController(
                                     .coerceAtLeast(0L),
                                 status = status,
                                 detail = safeDetail,
+                                attempt = stage.attempt ?: generation,
+                                target = stage.target ?: attempt.target,
                             )
                         } else {
                             stage
@@ -384,6 +415,8 @@ class VpnController(
                     trigger = trigger.take(40),
                     startedAtEpochMillis = epoch,
                     startedAtElapsedRealtimeMillis = elapsed,
+                    target = diagnosticRuntimeMap?.resolve("")
+                        ?: current.connectionAttempt?.target,
                 ),
             )
         }
@@ -411,6 +444,8 @@ class VpnController(
                         label = label.take(80),
                         startedAtEpochMillis = epoch,
                         startedAtElapsedRealtimeMillis = elapsed,
+                        attempt = generation,
+                        target = attempt.target,
                     )).takeLast(MAX_DIAGNOSTIC_STAGES),
                 ),
             )
@@ -450,6 +485,8 @@ class VpnController(
                                     DiagnosticStageStatus.Failed
                                 },
                                 detail = detail,
+                                attempt = stage.attempt ?: generation,
+                                target = stage.target ?: attempt.target,
                             )
                         } else {
                             stage
@@ -620,7 +657,7 @@ class VpnController(
     internal fun publishMessage(message: String) {
         val safe = sanitizeDiagnosticText(message, 360)
         mutableMessage.value = safe
-        appendApplicationDiagnosticLog(level = 5, message = safe)
+        appendApplicationDiagnosticLog(level = 5, message = safe, generation = currentGeneration())
     }
 
     internal fun publishMessage(generation: Long, message: String) {
@@ -629,7 +666,7 @@ class VpnController(
 
     internal fun publishDiagnosticWarning(message: String) {
         val safe = sanitizeDiagnosticText(message, 360)
-        appendApplicationDiagnosticLog(level = 3, message = safe)
+        appendApplicationDiagnosticLog(level = 3, message = safe, generation = currentGeneration())
     }
 
     internal fun publishDiagnosticNetwork(generation: Long, state: UnderlyingNetworkState) {
@@ -690,9 +727,23 @@ class VpnController(
         ingressDropped: Int,
     ) {
         if (generation != currentGeneration()) return
+        val attemptSnapshot = mutableDiagnostics.value.connectionAttempt
+            ?.takeIf { it.generation == generation }
+        val currentStage = attemptSnapshot
+            ?.stages
+            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
+            ?.key
+        val runtimeMap = diagnosticRuntimeMap
         val lines = entries.mapNotNull { (level, message) ->
+            val target = runtimeMap?.resolve(message) ?: attemptSnapshot?.target
             val safe = sanitizeDiagnosticText(message, MAX_DIAGNOSTIC_LOG_LINE_CHARS)
-            safe.takeIf(String::isNotEmpty)?.let { CoreDiagnosticClassifier.classify(level, it) }
+            safe.takeIf(String::isNotEmpty)?.let {
+                CoreDiagnosticClassifier.classify(level, it).copy(
+                    attempt = generation,
+                    stage = currentStage,
+                    target = target,
+                )
+            }
         }
         if (lines.isEmpty() && ingressDropped <= 0) return
         mutableDiagnostics.update { current ->
@@ -838,6 +889,13 @@ class VpnController(
     }
 
     private fun recordConnectionFailure(generation: Long, state: VpnConnectionState.Error) {
+        val runningAttempt = mutableDiagnostics.value.connectionAttempt
+            ?.takeIf { it.generation == generation }
+        val failureStage = runningAttempt
+            ?.stages
+            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
+            ?.key
+        val failureTarget = diagnosticRuntimeMap?.resolve("") ?: runningAttempt?.target
         finishConnectionDiagnostic(
             generation = generation,
             outcome = DiagnosticAttemptOutcome.Failed,
@@ -850,8 +908,13 @@ class VpnController(
             type = DiagnosticFailureClassifier.classify(safe),
             supportCode = state.code,
             message = safe,
-            technicalDetail = state.technicalDetail,
+            technicalDetail = state.technicalDetail
+                ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
+                ?.takeIf(String::isNotBlank),
             occurredAtEpochMillis = now,
+            attempt = generation,
+            stage = failureStage,
+            target = failureTarget,
         )
         val line = DiagnosticLogLine(
             level = 2,
@@ -860,6 +923,9 @@ class VpnController(
             source = DiagnosticLogSource.Application,
             category = DiagnosticLogCategory.Lifecycle,
             priority = true,
+            attempt = generation,
+            stage = failureStage,
+            target = failureTarget,
         )
         mutableDiagnostics.update {
             val attempt = it.connectionAttempt
@@ -937,8 +1003,18 @@ class VpnController(
         this
     }
 
-    private fun appendApplicationDiagnosticLog(level: Int, message: String) {
+    private fun appendApplicationDiagnosticLog(
+        level: Int,
+        message: String,
+        generation: Long? = null,
+    ) {
         if (message.isEmpty()) return
+        val attempt = mutableDiagnostics.value.connectionAttempt
+            ?.takeIf { generation == null || it.generation == generation }
+        val stage = attempt
+            ?.stages
+            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
+            ?.key
         val line = DiagnosticLogLine(
             level = level,
             message = message.take(MAX_DIAGNOSTIC_LOG_LINE_CHARS),
@@ -946,6 +1022,9 @@ class VpnController(
             source = DiagnosticLogSource.Application,
             category = DiagnosticLogCategory.Lifecycle,
             priority = level <= 3,
+            attempt = generation ?: attempt?.generation,
+            stage = stage,
+            target = diagnosticRuntimeMap?.resolve("") ?: attempt?.target,
         )
         mutableDiagnostics.update {
             val result = it.applicationLogs.appendPrioritizedBounded(
@@ -958,7 +1037,7 @@ class VpnController(
     }
 
     private fun sanitizeDiagnosticText(message: String, maxLength: Int): String =
-        SecretRedactor.redactInline(message)
+        DiagnosticReportRedactor.redact(message)
             .replace(ANSI_ESCAPE, "")
             .replace(NEW_LINES, " ")
             .trim()

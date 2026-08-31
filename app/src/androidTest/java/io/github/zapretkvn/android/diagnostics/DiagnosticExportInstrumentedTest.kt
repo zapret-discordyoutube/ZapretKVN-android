@@ -9,6 +9,7 @@ import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.OutboundDescription
 import io.github.zapretkvn.android.vpn.PrivateDnsMode
 import io.github.zapretkvn.android.vpn.UnderlyingNetworkState
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -57,6 +58,22 @@ class DiagnosticExportInstrumentedTest {
             container.vpnController.startConnectionDiagnosticStage(token, "profile", "Профиль")
             container.vpnController.startConnectionDiagnosticStage(token, "dns_probe", "DNS-проверка")
             container.vpnController.publish(token, VpnConnectionState.Starting("hidden-profile", "Тест"))
+            container.vpnController.attachDiagnosticRuntimeMap(
+                token,
+                DiagnosticRuntimeMap.create(
+                    profileId = "hidden-profile",
+                    profileName = "Hidden profile",
+                    descriptions = mapOf(
+                        "hy2-prod" to OutboundDescription(
+                            tag = "hy2-prod",
+                            type = "hysteria2",
+                            serverHost = "vpn.example",
+                            endpoint = "vpn.example:8443",
+                        ),
+                    ),
+                    selectedRawTag = "hy2-prod",
+                ),
+            )
             container.vpnController.publishDiagnosticNetwork(
                 token,
                 UnderlyingNetworkState(
@@ -80,7 +97,8 @@ class DiagnosticExportInstrumentedTest {
                 token,
                 3,
                 "\u001B[31mtoken=super-secret 123e4567-e89b-12d3-a456-426614174000 " +
-                    "com.example.hidden 203.0.113.7\u001B[0m",
+                    "hysteria2://auth-secret@vpn.example:8443?pinSHA256=pin-secret&ech=ech-secret#name " +
+                    "outbound/hysteria2[hy2-prod] com.example.hidden 203.0.113.7\u001B[0m",
             )
             container.vpnController.publish(
                 token,
@@ -118,10 +136,14 @@ class DiagnosticExportInstrumentedTest {
             assertFalse("super-secret" in inMemoryLogs)
             assertFalse("123e4567-e89b-12d3-a456-426614174000" in inMemoryLogs)
             assertFalse("\u001B" in inMemoryLogs)
+            assertFalse("hysteria2://" in inMemoryLogs)
+            assertFalse("pinSHA256" in inMemoryLogs)
+            assertFalse("ech-secret" in inMemoryLogs)
+            assertFalse("vpn.example" in inMemoryLogs)
 
             val report = exporter.createReport()
             JsonConfig.parse(report)
-            assertTrue("\"report_version\": 5" in report)
+            assertTrue("\"report_version\": 6" in report)
             assertTrue(BuildConfig.CORE_COMMIT in report)
             assertTrue(BuildConfig.CORE_PATCH_SHA256 in report)
             assertTrue("\"private_dns_mode\"" in report)
@@ -147,6 +169,11 @@ class DiagnosticExportInstrumentedTest {
             assertTrue("\"dns_probe_socket_path\": \"vpn_uid_tun\"" in report)
             assertTrue("\"elapsed_ms\"" in report)
             assertTrue("\"remaining_startup_budget_ms\"" in report)
+            assertTrue("\"profile_ref\"" in report)
+            assertTrue("\"profile_name\"" in report)
+            assertTrue("\"outbound_tag\": \"hy2-prod\"" in report)
+            assertTrue("\"protocol\": \"hysteria2\"" in report)
+            assertTrue("\"endpoint\": \"ep-" in report)
             assertTrue("\"runtime_log_persisted\": false" in report)
             assertTrue("\"support_code\": \"DNS-200\"" in report)
             assertEquals(
@@ -162,6 +189,11 @@ class DiagnosticExportInstrumentedTest {
             assertTrue("\"IllegalStateException\"" in report)
             assertFalse("hidden-profile" in report)
             assertFalse("super-secret" in report)
+            assertFalse("hysteria2://" in report)
+            assertFalse("auth-secret" in report)
+            assertFalse("pin-secret" in report)
+            assertFalse("ech-secret" in report)
+            assertFalse("vpn.example" in report)
             assertFalse("123e4567-e89b-12d3-a456-426614174000" in report)
             assertFalse("com.example.hidden" in report)
             assertFalse("203.0.113.7" in report)

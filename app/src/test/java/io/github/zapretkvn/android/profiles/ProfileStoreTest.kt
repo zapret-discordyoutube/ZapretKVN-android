@@ -3,11 +3,17 @@ package io.github.zapretkvn.android.profiles
 import io.github.zapretkvn.android.config.ConfigValidationResult
 import io.github.zapretkvn.android.config.ConfigValidator
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.importer.ImportCandidate
+import io.github.zapretkvn.android.importer.ImportParser
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -94,6 +100,21 @@ class ProfileStoreTest {
         assertFalse("super-secret" in metadata.name)
         assertFalse("password" in index)
         assertFalse("super-secret" in index)
+    }
+
+    @Test
+    fun `stored imported hysteria2 profile retains exact URI value`() = runBlocking {
+        val uri = "hy2://user%3Apass@[2001:db8::1]:443?vendor=%2F%2f&pinSHA256=${"ab".repeat(32)}#Name%20one"
+        val server = (ImportParser.parse(uri, ProfileSource.Link) as ImportCandidate.Managed)
+            .servers.single()
+        val store = store(JvmAtomicWriter())
+        store.initialize()
+
+        val metadata = store.create("Hysteria2", ManagedProfileFactory.single(server), ProfileSource.Link)
+        val root = JsonConfig.parse(store.read(metadata.id).json) as JsonObject
+        val outbound = ((root["outbounds"] as JsonArray).first() as JsonObject)
+
+        assertEquals(uri, (outbound["uri"] as JsonPrimitive).contentOrNull)
     }
 
     @Test

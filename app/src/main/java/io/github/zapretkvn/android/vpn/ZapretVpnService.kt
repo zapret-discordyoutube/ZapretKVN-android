@@ -26,6 +26,7 @@ import io.github.zapretkvn.android.config.SelectorGroup
 import io.github.zapretkvn.android.diagnostics.EffectiveOverlaySummary
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticBatchCollector
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
+import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.config.RuntimeConfigResult
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
@@ -281,7 +282,7 @@ class ZapretVpnService : VpnService() {
         cancelRecovery()
         resetRecoveryCounters()
         terminalError = false
-        controller.beginConnectionDiagnostic(token, "user_start")
+        controller.beginConnectionDiagnostic(token, "user_start", profileId)
         controller.startConnectionDiagnosticStage(token, "profile", "Профиль и область приложений")
         controller.publish(
             token,
@@ -515,15 +516,31 @@ class ZapretVpnService : VpnService() {
             VpnConnectionState.Starting(profileId, "Создание TUN", updaterRouting),
         )
         showForeground(ForegroundNotificationState.CreatingTun)
+        val outboundDescriptions = ConfigAnalyzer.outboundDescriptions(profile.json)
+        val selectorGroups = ConfigAnalyzer.selectorGroups(profile.json)
+        val primaryGroupTag = BootstrapConfig.selectedProxyTag(runtimeJson)
+        val selectedOutboundTag = selectorGroups
+            .firstOrNull { it.tag == primaryGroupTag }
+            ?.default
+            ?.takeIf(outboundDescriptions::containsKey)
+        controller.attachDiagnosticRuntimeMap(
+            token,
+            DiagnosticRuntimeMap.create(
+                profileId = profileId,
+                profileName = profile.metadata.name,
+                descriptions = outboundDescriptions,
+                selectedRawTag = selectedOutboundTag,
+            ),
+        )
         val resources = ActiveSession(
             profileId = profileId,
             profileName = profile.metadata.name,
             generation = token,
             networkMonitor = networkMonitor,
             networkPolicyKey = underlying.policyKey(),
-            outboundDescriptions = ConfigAnalyzer.outboundDescriptions(profile.json),
-            selectorGroups = ConfigAnalyzer.selectorGroups(profile.json),
-            primaryGroupTag = BootstrapConfig.selectedProxyTag(runtimeJson),
+            outboundDescriptions = outboundDescriptions,
+            selectorGroups = selectorGroups,
+            primaryGroupTag = primaryGroupTag,
             updaterRouting = updaterRouting,
             controller = controller,
             scope = serviceScope,
@@ -775,7 +792,11 @@ class ZapretVpnService : VpnService() {
                     return@withLock
                 }
                 terminalError = false
-                controller.beginConnectionDiagnostic(token, restartDiagnosticTrigger(reason))
+                controller.beginConnectionDiagnostic(
+                    token,
+                    restartDiagnosticTrigger(reason),
+                    targetProfile,
+                )
                 controller.startConnectionDiagnosticStage(
                     token,
                     "profile",
@@ -1259,7 +1280,11 @@ class ZapretVpnService : VpnService() {
                     startConnectionIdentityProbe(session)
                 } catch (runtimeSwitchError: RuntimeSwitchException) {
                     val restartToken = controller.nextGeneration()
-                    controller.beginConnectionDiagnostic(restartToken, "server_switch_restart")
+                    controller.beginConnectionDiagnostic(
+                        restartToken,
+                        "server_switch_restart",
+                        profileId,
+                    )
                     controller.startConnectionDiagnosticStage(
                         restartToken,
                         "profile",

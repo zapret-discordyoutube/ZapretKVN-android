@@ -16,6 +16,7 @@ import io.github.zapretkvn.android.vpn.UnderlyingNetworkState
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.VpnRuntimeMetrics
+import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,6 +33,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -88,7 +90,7 @@ class DiagnosticExporter(
         val network = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 5)
+            put("report_version", 6)
             put("created_at", isoTimestamp(now))
             put("created_at_epoch_ms", now)
             put(
@@ -196,19 +198,7 @@ class DiagnosticExporter(
             put(
                 "logs",
                 buildJsonArray {
-                    diagnostics.logs.forEach { line ->
-                        add(
-                            buildJsonObject {
-                                put("received_at_epoch_ms", line.receivedAtEpochMillis)
-                                put("last_received_at_epoch_ms", line.lastReceivedAtEpochMillis)
-                                put("level", line.levelName)
-                                put("source", line.source.code)
-                                put("category", line.category.code)
-                                put("repeat_count", line.repeatCount)
-                                put("message", line.message)
-                            },
-                        )
-                    }
+                    diagnostics.logs.forEach { line -> add(logLineJson(line)) }
                 },
             )
             put(
@@ -297,6 +287,11 @@ class DiagnosticExporter(
 
     private fun failureJson(failure: DiagnosticFailure?): JsonObject = buildJsonObject {
         put("present", failure != null)
+        putDiagnosticContext(
+            attempt = failure?.attempt,
+            stage = failure?.stage,
+            target = failure?.target,
+        )
         failure?.let {
             put("type", it.type.code)
             put("title", it.type.title)
@@ -310,6 +305,12 @@ class DiagnosticExporter(
     private fun connectionAttemptJson(attempt: DiagnosticConnectionAttempt): JsonObject =
         buildJsonObject {
             put("generation", attempt.generation)
+            putDiagnosticContext(
+                attempt = attempt.generation,
+                stage = attempt.stages.lastOrNull { it.status == DiagnosticStageStatus.Running }?.key
+                    ?: attempt.failure?.stage,
+                target = attempt.target ?: attempt.failure?.target,
+            )
             put("trigger", attempt.trigger)
             put("candidate_attempt_id", attempt.candidateAttemptId)
             put("started_at_epoch_ms", attempt.startedAtEpochMillis)
@@ -342,6 +343,11 @@ class DiagnosticExporter(
                     attempt.stages.forEach { stage ->
                         add(
                             buildJsonObject {
+                                putDiagnosticContext(
+                                    attempt = stage.attempt ?: attempt.generation,
+                                    stage = stage.key,
+                                    target = stage.target ?: attempt.target,
+                                )
                                 put("key", stage.key)
                                 put("label", stage.label)
                                 put("started_at_epoch_ms", stage.startedAtEpochMillis)
@@ -369,6 +375,11 @@ class DiagnosticExporter(
         buildJsonObject {
             val elapsed = SystemClock.elapsedRealtime()
             put("generation", attempt.generation)
+            putDiagnosticContext(
+                attempt = attempt.generation,
+                stage = attempt.stages.lastOrNull { it.status == DiagnosticStageStatus.Running }?.key,
+                target = attempt.target,
+            )
             put("trigger", attempt.trigger)
             put("started_at_epoch_ms", attempt.startedAtEpochMillis)
             put("outcome", attempt.outcome.code)
@@ -393,6 +404,11 @@ class DiagnosticExporter(
                     attempt.stages.forEach { stage ->
                         add(
                             buildJsonObject {
+                                putDiagnosticContext(
+                                    attempt = stage.attempt ?: attempt.generation,
+                                    stage = stage.key,
+                                    target = stage.target ?: attempt.target,
+                                )
                                 put("key", stage.key)
                                 put("label", stage.label)
                                 put("started_at_epoch_ms", stage.startedAtEpochMillis)
@@ -412,6 +428,7 @@ class DiagnosticExporter(
         }
 
     private fun logLineJson(line: DiagnosticLogLine): JsonObject = buildJsonObject {
+        putDiagnosticContext(line.attempt, line.stage, line.target)
         put("received_at_epoch_ms", line.receivedAtEpochMillis)
         put("last_received_at_epoch_ms", line.lastReceivedAtEpochMillis)
         put("level", line.levelName)
@@ -428,6 +445,20 @@ class DiagnosticExporter(
             put("coalesced_lines", stats.coalescedLines)
             put("dropped_lines", stats.droppedLines)
         }
+
+    private fun JsonObjectBuilder.putDiagnosticContext(
+        attempt: Long?,
+        stage: String?,
+        target: DiagnosticTargetContext?,
+    ) {
+        put("attempt", attempt?.let(::JsonPrimitive) ?: JsonNull)
+        put("stage", stage?.let(::JsonPrimitive) ?: JsonNull)
+        put("profile_ref", target?.profileRef?.let(::JsonPrimitive) ?: JsonNull)
+        put("profile_name", target?.profileName?.let(::JsonPrimitive) ?: JsonNull)
+        put("outbound_tag", target?.outboundTag?.let(::JsonPrimitive) ?: JsonNull)
+        put("protocol", target?.protocol?.let(::JsonPrimitive) ?: JsonNull)
+        put("endpoint", target?.endpoint?.let(::JsonPrimitive) ?: JsonNull)
+    }
 
     private fun crashJson(crash: AppCrashRecord?): JsonObject = buildJsonObject {
         put("present", crash != null)

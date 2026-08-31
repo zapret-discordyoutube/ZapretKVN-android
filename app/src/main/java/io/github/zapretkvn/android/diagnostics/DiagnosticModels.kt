@@ -63,6 +63,9 @@ data class DiagnosticFailure(
     val message: String,
     val technicalDetail: String? = null,
     val occurredAtEpochMillis: Long,
+    val attempt: Long? = null,
+    val stage: String? = null,
+    val target: DiagnosticTargetContext? = null,
 )
 
 data class DiagnosticLogLine(
@@ -74,6 +77,9 @@ data class DiagnosticLogLine(
     val priority: Boolean = false,
     val repeatCount: Int = 1,
     val lastReceivedAtEpochMillis: Long = receivedAtEpochMillis,
+    val attempt: Long? = null,
+    val stage: String? = null,
+    val target: DiagnosticTargetContext? = null,
 ) {
     val levelName: String
         get() = when (level) {
@@ -246,6 +252,8 @@ data class DiagnosticStageTiming(
     val durationMillis: Long? = null,
     val status: DiagnosticStageStatus = DiagnosticStageStatus.Running,
     val detail: String? = null,
+    val attempt: Long? = null,
+    val target: DiagnosticTargetContext? = null,
 )
 
 data class DiagnosticConnectionAttempt(
@@ -263,6 +271,7 @@ data class DiagnosticConnectionAttempt(
     val cancellationReason: String? = null,
     val vpnNetworkIdentity: String? = null,
     val vpnNetworkLost: Boolean = false,
+    val target: DiagnosticTargetContext? = null,
 ) {
     val slowestCompletedStage: DiagnosticStageTiming?
         get() = stages
@@ -279,6 +288,7 @@ data class DiagnosticStopAttempt(
     val totalDurationMillis: Long? = null,
     val outcome: DiagnosticStopOutcome = DiagnosticStopOutcome.Running,
     val stages: List<DiagnosticStageTiming> = emptyList(),
+    val target: DiagnosticTargetContext? = null,
 ) {
     val slowestCompletedStage: DiagnosticStageTiming?
         get() = stages
@@ -372,7 +382,10 @@ private fun DiagnosticLogLine.sameDiagnosticMessage(other: DiagnosticLogLine): B
     level == other.level &&
         source == other.source &&
         category == other.category &&
-        message == other.message
+        message == other.message &&
+        attempt == other.attempt &&
+        stage == other.stage &&
+        target == other.target
 
 const val MAX_DIAGNOSTIC_LOG_LINES = 80
 const val MAX_DIAGNOSTIC_STARTUP_LOG_LINES = 48
