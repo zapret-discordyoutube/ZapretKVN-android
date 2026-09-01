@@ -47,10 +47,11 @@ keytool -exportcert -rfc -keystore zapret-kvn-release.jks -alias zapret-kvn-rele
 
 ## Финальный approval, версии и публикация
 
-После закрытия всех пунктов «Финальный gate» в `IMPLEMENTATION_PLAN.md`, физической
-матрицы `GATE8_RESULTS.md` и проверки production-signed ABI-specific APK на реальном
-устройстве stable выпускается из чистого `main`, который точно совпадает с
-`origin/main`:
+После закрытия всех обязательных host/emulator-пунктов финального gate stable выпускается
+из чистого `main`, который точно совпадает с `origin/main`. Проверка production-signed
+ABI-specific APK на физическом Android-устройстве даёт дополнительное подтверждение, но
+не является обязательным условием публикации; её фактический статус всегда указывается
+в release notes:
 
 ```bash
 git tag -a vMAJOR.MINOR.PATCH -m "Zapret KVN MAJOR.MINOR.PATCH"
@@ -78,8 +79,10 @@ signing fingerprint и размером APK.
 После публикации он запускает `release-verify.yml` и сразу завершается, не ожидая workflow.
 Forgejo Actions ничего не публикует и не имеет production key: он собирает исходники с
 одноразовым тестовым ключом, скачивает опубликованные локально assets и независимо
-проверяет metadata, checksum, ABI, версии и production fingerprint. Проверки на реальном
-устройстве и эмуляторе остаются обязательным локальным финальным gate до публикации.
+проверяет metadata, checksum, ABI, версии и production fingerprint. Доступные проверки
+на эмуляторе остаются обязательным локальным финальным gate до публикации. Проверка на
+реальном устройстве необязательна и не отмечается как пройденная, если фактически не
+запускалась.
 
 ## Возобновление прерванной публикации
 

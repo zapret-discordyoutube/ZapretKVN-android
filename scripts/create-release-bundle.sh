@@ -153,17 +153,17 @@ jq -n \
         '' \
         '### Что изменилось' \
         '' \
-        '- Hysteria2 URI сохраняется целиком и разбирается встроенным официальным Hysteria core/extras `app/v2.12.2` внутри общего `libbox.so`.' \
-        '- Работают auth, IPv4/IPv6, Gecko/Salamander, bandwidth, port hopping, TLS pin и ECH; native JSON дополнительно поддерживает custom CA и mTLS без отдельного процесса или второго TUN.' \
-        '- Subscription identity учитывает безопасный SHA-256 transport fingerprint: разные pin/URI-варианты не схлопываются, а изменение активного сервера требует подтверждённого reconnect.' \
-        '- Diagnostics report v6 связывает attempt/stage с профилем, outbound, протоколом и opaque endpoint, не сохраняя URI, auth, pin, ECH, сертификаты или ключи.' \
-        '- Сборка ядра обязательно запускает patched Go-тесты `protocol/hysteria2`, поэтому release gate проверяет фактически поставляемую реализацию.' \
+        '- Runtime-ошибки Hysteria2 сохраняют identity и generation исходного target, поэтому поздний лог старого соединения не останавливает уже переключённый VPN.' \
+        '- При отсутствии совместимой замены сессия закрывается с typed error вместо ложного состояния Connected.' \
+        '- Failure-log observer входит в readiness-контракт и не может молча исчезнуть после подключения.' \
+        '- Hysteria2 URI строго отклоняет duplicate query, malformed percent encoding и неоднозначный unbracketed IPv6 до запуска core.' \
+        '- Обновление подписки детерминированно различает несколько Hysteria2-серверов с одинаковым auth и сохраняет выбранный target.' \
         '' \
         '### Проверка релиза' \
         '' \
         '- Пройдены host/unit/integration-проверки, локальный upstream Gecko test и полный доступный набор Android emulator tests.' \
         '- Release attestation: host/emulator-verified; physical Android device not verified.' \
-        '- По прямому разрешению владельца релиз опубликован без ADB-gate: физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялось.' \
+        '- Физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялось; этот дополнительный ADB-gate необязателен.' \
         '' \
         'Каждый APK содержит только одну архитектуру и встроенный libbox; отдельная динамическая загрузка ядра не используется.' \
         '' \

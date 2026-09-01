@@ -71,6 +71,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -730,7 +731,7 @@ class ZapretVpnService : VpnService() {
             showForeground(ForegroundNotificationState.Connected)
             if (VpnTestHooks.consumeHysteriaFailureObserverDisconnect()) {
                 serviceScope.launch {
-                    delay(100)
+                    yield()
                     resources.simulateFailureLogDisconnect()
                 }
             }
