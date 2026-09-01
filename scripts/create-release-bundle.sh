@@ -161,9 +161,9 @@ jq -n \
         '' \
         '### Проверка релиза' \
         '' \
-        '- Пройдены host/unit/integration-проверки, локальный upstream Gecko test и полный доступный набор Android emulator tests.' \
-        '- Release attestation: host/emulator-verified; physical Android device not verified.' \
-        '- Физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялось; этот дополнительный ADB-gate необязателен.' \
+        '- Пройдены host/unit/integration-проверки и локальный upstream Gecko test; Android instrumentation APK успешно собран.' \
+        '- Release attestation: host-verified; Android ADB device tests not verified.' \
+        '- Эмулятор и физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялись; этот дополнительный ADB-gate необязателен.' \
         '' \
         'Каждый APK содержит только одну архитектуру и встроенный libbox; отдельная динамическая загрузка ядра не используется.' \
         '' \
