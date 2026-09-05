@@ -25,6 +25,7 @@ LLVM_STRIP="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION/toolchains/llvm/prebuilt/linu
 CORE_PATCH_APPLIED=false
 cleanup() {
     if [[ "$CORE_PATCH_APPLIED" == true ]]; then
+        rm -rf -- "$SOURCE_DIR/third_party/xray-core"
         reverse_core_patchset "$PROJECT_ROOT" "$SOURCE_DIR"
         CORE_PATCH_APPLIED=false
     fi
@@ -46,6 +47,7 @@ export GOPATH="$GOPATH_DIR"
 export PATH="$GOPATH/bin:$PATH"
 export GOTOOLCHAIN=local
 export GOFLAGS=
+bash "$SOURCE_DIR/protocol/xraycore/prepare.sh" "$XRAY_CORE_MODULE" "$XRAY_CORE_COMMIT"
 
 LIBBOX_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_trusttunnel,with_call,with_openvpn,with_sudoku,with_snell,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_tailscale,ts_omit_logtail,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird"
 

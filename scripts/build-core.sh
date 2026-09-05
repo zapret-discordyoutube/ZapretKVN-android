@@ -23,7 +23,7 @@ OUTPUT_DIR="$BUILD_ROOT/output"
 GOPATH_DIR="$BUILD_ROOT/gopath"
 LIBS_DIR="$PROJECT_ROOT/app/libs"
 
-for command in git go java javac sha256sum unzip; do
+for command in git go java javac sha256sum unzip jq; do
     command -v "$command" >/dev/null || {
         echo "Missing required command: $command" >&2
         exit 1
@@ -125,7 +125,10 @@ cleanup_source_artifacts() {
         \( -name 'libbox.aar' -o -name 'libbox-legacy.aar' \) -delete
     rm -f "$SOURCE_DIR/dns/transport/fallback/zapret_audit_test.go"
     rm -f "$SOURCE_DIR/route/rule/zapret_performance_test.go"
+    rm -f "$SOURCE_DIR/protocol/xraycore/zapret_integration_test.go"
+    rm -f "$SOURCE_DIR/daemon/zapret_observer_test.go"
     if [[ "$CORE_PATCH_APPLIED" == true ]]; then
+        rm -rf -- "$SOURCE_DIR/third_party/xray-core"
         reverse_core_patchset "$PROJECT_ROOT" "$SOURCE_DIR"
         CORE_PATCH_APPLIED=false
     fi
@@ -134,6 +137,7 @@ trap cleanup_source_artifacts EXIT
 cleanup_source_artifacts
 apply_core_patchset "$PROJECT_ROOT" "$SOURCE_DIR"
 CORE_PATCH_APPLIED=true
+bash "$SOURCE_DIR/protocol/xraycore/prepare.sh" "$XRAY_CORE_MODULE" "$XRAY_CORE_COMMIT"
 
 for expected_module in "$ANDROID_WIREGUARD_GO" "$ANDROID_AMNEZIAWG_GO"; do
     module_path="${expected_module%@*}"
@@ -188,12 +192,18 @@ ZAPRET_RU_IP_SRS="$PROJECT_ROOT/app/src/main/assets/rule-sets/zapret-ru-ip.srs" 
         | tee "$OUTPUT_DIR/rule-set-benchmark.txt"
 rm -f "$SOURCE_DIR/route/rule/zapret_performance_test.go"
 go test ./dns/... ./route/rule ./experimental/libbox
+install -m 0644 "$PROJECT_ROOT/audit/runtime_log_observer_test.go" "$SOURCE_DIR/daemon/zapret_observer_test.go"
+go test ./daemon -run '^TestZapretRuntimeLogObserver' -count=1
+rm -f "$SOURCE_DIR/daemon/zapret_observer_test.go"
 go test -tags "$CORE_TAGS" ./transport/wireguard ./protocol/wireguard
 # badlinkname/tfogo_checklinkname0 are host linkname checks and make Go's
 # crypto/tls test binary incompatible with the pinned toolchain; protocol
 # coverage still uses the complete functional build tag set.
 CORE_TEST_TAGS="${CORE_TAGS%,badlinkname,tfogo_checklinkname0}"
-go test -tags "$CORE_TEST_TAGS" ./protocol/hysteria2
+install -m 0644 "$PROJECT_ROOT/audit/xray_module_integration_test.go" \
+    "$SOURCE_DIR/protocol/xraycore/zapret_integration_test.go"
+go test -tags "$CORE_TEST_TAGS" ./protocol/hysteria2 ./protocol/xraycore
+rm -f "$SOURCE_DIR/protocol/xraycore/zapret_integration_test.go"
 go test -tags "$CORE_TEST_TAGS" ./parser/link
 
 go install "github.com/sagernet/gomobile/cmd/gomobile@$GOMOBILE_VERSION"
@@ -233,6 +243,8 @@ cat > "$OUTPUT_DIR/core-build-metadata.json" <<EOF
   "patch_sha256": "$CORE_PATCH_SHA256",
   "hysteria_core_tag": "$HYSTERIA_CORE_TAG",
   "hysteria_core_commit": "$HYSTERIA_CORE_COMMIT",
+  "xray_core_module": "$XRAY_CORE_MODULE",
+  "xray_core_commit": "$XRAY_CORE_COMMIT",
   "android_wireguard_go": "$ANDROID_WIREGUARD_GO",
   "android_amneziawg_go": "$ANDROID_AMNEZIAWG_GO",
   "go": "$GO_VERSION",
@@ -251,6 +263,8 @@ CORE_PATCH_FILE=$CORE_PATCH_FILE
 CORE_PATCH_SHA256=$CORE_PATCH_SHA256
 HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG
 HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT
+XRAY_CORE_MODULE=$XRAY_CORE_MODULE
+XRAY_CORE_COMMIT=$XRAY_CORE_COMMIT
 ANDROID_WIREGUARD_GO=$ANDROID_WIREGUARD_GO
 ANDROID_AMNEZIAWG_GO=$ANDROID_AMNEZIAWG_GO
 LIBBOX_SHA256=$LIBBOX_SHA256

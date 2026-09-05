@@ -30,6 +30,7 @@ import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STAGES
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticClassifier
 import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.DiagnosticReportRedactor
+import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.appendPrioritizedBounded
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +42,7 @@ class VpnController(
     private val context: Context,
     previousCrash: AppCrashRecord? = null,
 ) {
+    internal val runtimeErrors = RuntimeErrorJournal()
     private val mutableState = MutableStateFlow<VpnConnectionState>(VpnConnectionState.Stopped)
     private val mutableGroups = MutableStateFlow<List<RuntimeSelectorGroup>>(emptyList())
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -170,13 +172,13 @@ class VpnController(
             if (latestGeneration.compareAndSet(previous, generation)) break
         }
         val safeState = if (state is VpnConnectionState.Error) {
-            val message = sanitizeDiagnosticText(state.message, 360)
+            val message = SecretRedactor.redactInline(state.message)
             val fallbackCode = DiagnosticFailureClassifier.classify(message).supportCode
             state.copy(
                 message = message,
                 code = VpnFailureCodeSanitizer.sanitize(state.code).ifBlank { fallbackCode },
                 technicalDetail = state.technicalDetail
-                    ?.let { sanitizeDiagnosticText(it, 240) }
+                    ?.let(SecretRedactor::redactInline)
                     ?.takeIf(String::isNotBlank),
             )
         } else {
@@ -719,6 +721,24 @@ class VpnController(
 
     internal fun publishCoreDiagnosticLog(generation: Long, level: Int, message: String) {
         publishCoreDiagnosticLogs(generation, listOf(level to message), ingressDropped = 0)
+    }
+
+    internal fun recordCoreFailure(generation: Long, level: Int, message: String) {
+        if (level !in 0..3) return
+        val tagged = Regex("outbound/([^\\[]+)\\[([^]]+)]").find(message)
+        val component = tagged?.groupValues?.get(1) ?: "sing-box"
+        val stage = mutableDiagnostics.value.connectionAttempt
+            ?.takeIf { it.generation == generation }
+            ?.stages?.lastOrNull { it.status == DiagnosticStageStatus.Running }?.key ?: "runtime"
+        runtimeErrors.record(RuntimeErrors.capture(
+            component = component,
+            stage = stage,
+            message = message,
+            sessionGeneration = generation,
+            targetId = tagged?.groupValues?.get(2).orEmpty(),
+            level = level,
+        ))
+        mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
     }
 
     internal fun publishCoreDiagnosticLogs(

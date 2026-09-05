@@ -305,6 +305,7 @@ object ShareLinkParser {
         val uuid = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В VLESS отсутствует UUID.")
         return ProtocolOutboundBuilders.vless(
+            uri = link,
             displayName = name,
             server = host,
             serverPort = requirePort(uri, 443),

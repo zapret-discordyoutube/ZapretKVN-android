@@ -33,6 +33,11 @@ object SecretRedactor {
         }
         result = BEARER_SECRET.replace(result, "Bearer $MASK")
         result = KEY_VALUE_SECRET.replace(result) { match -> "${match.groupValues[1]}$MASK" }
+        result = INI_ASSIGNMENT.replace(result) { match ->
+            if (normalizeKey(match.groupValues[1].substringBefore('=').trim()) in SECRET_KEYS) {
+                "${match.groupValues[1]}$MASK"
+            } else match.value
+        }
         result = UUID.replace(result, MASK)
         result = JSON_SECRET.replace(result) { match ->
             "${match.groupValues[1]}$MASK${match.groupValues[3]}"
@@ -69,6 +74,7 @@ object SecretRedactor {
         "clientkey",
         "obfspassword",
         "presharedkey",
+        "headerprotectionkey",
         "pinsha256",
         "pinsha",
         "certificatesha256",
@@ -85,6 +91,7 @@ object SecretRedactor {
         "echconfigpath",
         "shortid",
     )
+    private val INI_ASSIGNMENT = Regex("(?m)^([ \\t]*[\\w-]+[ \\t]*=[ \\t]*)[^\\r\\n]+")
     private val URI = Regex(
         // Commas and semicolons are valid inside Hysteria2 port unions/query
         // values. Keep consuming them so no recognizable URI suffix survives.

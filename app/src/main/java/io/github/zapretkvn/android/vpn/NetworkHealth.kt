@@ -553,18 +553,15 @@ class VpnHealthPipeline(
     ): HttpsProbeFailure {
         val detail = (
             failures.map { (endpoint, error) ->
-                "${endpoint.code}:${httpsFailureReason(error, HTTPS_ENDPOINT_TIMEOUT_MILLIS)}"
+                "${endpoint.code}:${RuntimeErrors.describe(error)}"
             } + listOfNotNull(rescue?.let { (endpoint, error) ->
-                "rescue-${endpoint.code}:${httpsFailureReason(error, HTTPS_RESCUE_TIMEOUT_MILLIS)}"
+                "rescue-${endpoint.code}:${RuntimeErrors.describe(error)}"
             })
             )
             .joinToString("; ")
-            .take(MAX_HTTPS_FAILURE_DETAIL_CHARS)
         return HttpsProbeFailure(
             diagnosticDetail = detail,
-            message = "HTTPS-проверка через VPN не прошла: $detail. " +
-                "Причиной может быть недоступный или заблокированный сервер, " +
-                "отключённый ключ либо неверные параметры транспорта.",
+            message = "HTTPS через VPN: $detail",
             cause = rescue?.second ?: failures.lastOrNull()?.second,
         )
     }
@@ -727,25 +724,6 @@ class VpnHealthPipeline(
         return bytes.toByteArray().toString(StandardCharsets.US_ASCII)
     }
 
-    private fun httpsFailureReason(
-        error: Throwable,
-        timeoutMillis: Int = HTTPS_ENDPOINT_TIMEOUT_MILLIS,
-    ): String {
-        val chain = generateSequence(error) { it.cause }.toList()
-        chain.filterIsInstance<CodedFailure>().firstOrNull()?.let { coded ->
-            return "DNS через VPN (${coded.failureCode})"
-        }
-        return when (val cause = chain.last()) {
-            is UnexpectedHttpsStatus -> "тестовый узел вернул некорректный HTTP ${cause.status}"
-            is SocketTimeoutException -> "истёк тайм-аут $timeoutMillis мс"
-            is UnknownHostException -> "Android не разрешил имя тестового узла"
-            is ConnectException -> "TCP-соединение с тестовым узлом не установлено"
-            is SSLException -> "ошибка TLS (${cause.javaClass.simpleName})"
-            is IOException -> "ошибка ввода-вывода (${cause.javaClass.simpleName})"
-            else -> cause.javaClass.simpleName.ifBlank { "неизвестная сетевая ошибка" }
-        }
-    }
-
     /** Стабильный код вместо obfuscated-имени класса в release-сборке. */
     private fun rootCauseName(error: Throwable): String {
         val chain = generateSequence(error) { it.cause }.toList()
@@ -777,7 +755,7 @@ class VpnHealthPipeline(
         override val technicalDetail = diagnosticDetail
     }
 
-    private class UnexpectedHttpsStatus(val status: Int) : IOException()
+    private class UnexpectedHttpsStatus(val status: Int) : IOException("HTTP $status")
 
     private class VpnHealthAddressFamilyException(
         private val requiredFamily: ProxyIpFamily,
@@ -835,7 +813,6 @@ class VpnHealthPipeline(
         const val HTTPS_RESCUE_TIMEOUT_MILLIS = 8_000
         const val HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS = 5_000L
         const val MIN_HTTPS_RESCUE_BUDGET_MILLIS = 8_500L
-        const val MAX_HTTPS_FAILURE_DETAIL_CHARS = 240
         const val MAX_HTTP_STATUS_LINE_BYTES = 512
         const val MAX_DNS_PACKET = 65_535
         val HTTP_REACHABLE_STATUS_RANGE = 200..599

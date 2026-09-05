@@ -90,7 +90,22 @@ class DiagnosticExporter(
         val network = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 6)
+            put("report_version", 7)
+            put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
+                buildJsonObject {
+                    val failure = record.failure
+                    put("component", failure.component)
+                    put("stage", failure.stage)
+                    put("message", DiagnosticReportRedactor.redact(failure.message))
+                    put("code", failure.code)
+                    put("session_generation", failure.sessionGeneration)
+                    put("target_generation", failure.targetGeneration)
+                    put("target", DiagnosticReportRedactor.redact(failure.targetId))
+                    put("first_seen_epoch_ms", record.firstSeenEpochMillis)
+                    put("last_seen_epoch_ms", record.lastSeenEpochMillis)
+                    put("occurrences", record.occurrences)
+                }
+            }))
             put("created_at", isoTimestamp(now))
             put("created_at_epoch_ms", now)
             put(

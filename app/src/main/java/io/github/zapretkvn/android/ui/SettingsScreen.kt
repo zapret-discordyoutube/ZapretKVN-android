@@ -719,6 +719,7 @@ private fun DiagnosticsSettings(
     var stopTimelineExpanded by rememberSaveable { mutableStateOf(false) }
     var crashExpanded by rememberSaveable { mutableStateOf(false) }
     var logsExpanded by rememberSaveable { mutableStateOf(false) }
+    var errorsExpanded by rememberSaveable { mutableStateOf(false) }
     var overlayExpanded by rememberSaveable { mutableStateOf(false) }
     var exporting by remember { mutableStateOf(false) }
     var exportError by remember { mutableStateOf<String?>(null) }
@@ -1143,6 +1144,31 @@ private fun DiagnosticsSettings(
                                 Text(
                                     "${line.levelName}/${line.category.code}: ${line.message}" +
                                         if (line.repeatCount > 1) " ×${line.repeatCount}" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Ошибки ядер", style = MaterialTheme.typography.titleMedium)
+                Text("Исходные сообщения. Секреты скрыты; неизвестные ошибки тоже сохраняются.")
+                OutlinedButton(onClick = { errorsExpanded = !errorsExpanded }) {
+                    Text(if (errorsExpanded) "Скрыть" else "Показать (${diagnostics.runtimeErrors.size})")
+                }
+                if (errorsExpanded) {
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Column(modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())) {
+                            diagnostics.runtimeErrors.forEach { record ->
+                                val error = record.failure
+                                Text(
+                                    "[${error.component}][${error.stage}] ${error.message}\n" +
+                                        "${error.code}; событий: ${record.occurrences}",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
                                 )

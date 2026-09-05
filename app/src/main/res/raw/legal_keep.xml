@@ -1,3 +1,3 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@raw/license_gpl_3,@raw/notice,@raw/sing_box_extended_license,@raw/sing_geoip_license,@raw/third_party_notices" />
+    tools:keep="@raw/license_gpl_3,@raw/notice,@raw/sing_box_extended_license,@raw/sing_geoip_license,@raw/third_party_notices,@raw/xray_core_license" />

@@ -34,6 +34,11 @@ internal enum class HysteriaRuntimeState {
 }
 
 internal enum class HysteriaFailureCode {
+    CORE_UNCLASSIFIED,
+    LOCAL_RELAY_AUTH_REJECTED,
+    LOCAL_SOCKET_PROTECTION_FAILED,
+    TARGET_TLS_REJECTED,
+    TARGET_CONNECTION_CLOSED,
     TARGET_NETWORK_TIMEOUT,
     TARGET_CONNECTION_REFUSED,
     TARGET_TLS_INTERNAL,
@@ -68,6 +73,7 @@ internal val AUTOMATIC_HYSTERIA_SWITCH_FAILURES = setOf(
 )
 
 internal val HYSTERIA_SECURITY_FAILURES = setOf(
+    HysteriaFailureCode.TARGET_TLS_REJECTED,
     HysteriaFailureCode.TARGET_TLS_INTERNAL,
     HysteriaFailureCode.TARGET_TLS_UNKNOWN_AUTHORITY,
     HysteriaFailureCode.TARGET_PIN_MISMATCH,
@@ -274,27 +280,8 @@ internal object HysteriaFailureClassifier {
     }
 
     fun classify(message: String, processExited: Boolean = false): HysteriaFailureCode? {
-        val value = message.lowercase(Locale.ROOT)
-        return when {
-            "pin" in value && listOf("mismatch", "does not match", "invalid").any(value::contains) ->
-                HysteriaFailureCode.TARGET_PIN_MISMATCH
-            "unknown authority" in value || "certificate signed by unknown" in value ->
-                HysteriaFailureCode.TARGET_TLS_UNKNOWN_AUTHORITY
-            "tls: internal error" in value || "crypto_error 0x150" in value ->
-                HysteriaFailureCode.TARGET_TLS_INTERNAL
-            listOf("authentication failed", "auth rejected", "access denied").any(value::contains) ->
-                HysteriaFailureCode.TARGET_AUTH_REJECTED
-            "obfs" in value && listOf("reject", "invalid", "failed").any(value::contains) ->
-                HysteriaFailureCode.TARGET_OBFS_REJECTED
-            listOf("no recent network activity", "i/o timeout", "network timeout", "deadline exceeded").any(value::contains) ->
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT
-            listOf("connection refused", "actively refused", "forcibly closed").any(value::contains) ->
-                HysteriaFailureCode.TARGET_CONNECTION_REFUSED
-            "address already in use" in value || "only one usage of each socket" in value ->
-                HysteriaFailureCode.LOCAL_BIND_COLLISION
-            processExited -> HysteriaFailureCode.LOCAL_PROCESS_EXITED
-            else -> null
-        }
+        return RuntimeErrors.classify(message)?.let(HysteriaFailureCode::valueOf)
+            ?: HysteriaFailureCode.LOCAL_PROCESS_EXITED.takeIf { processExited }
     }
 }
 
@@ -417,18 +404,22 @@ internal data class HysteriaFailureEvent(
     val outboundTag: String,
     val failureCode: HysteriaFailureCode,
     val observedAtMonotonic: Long,
+    val originalMessage: String = "",
 )
 
 internal data class HysteriaTaggedFailure(
     val outboundTag: String,
     val failureCode: HysteriaFailureCode,
+    val originalMessage: String = "",
 )
 
 internal object HysteriaFailureLogParser {
     private val outboundTagPattern =
         Regex("outbound/(?:hysteria2|hy2)\\[([^]\\r\\n]+)]", RegexOption.IGNORE_CASE)
 
-    fun first(messages: List<String>): HysteriaTaggedFailure? = messages.asSequence()
+    fun first(messages: List<String>): HysteriaTaggedFailure? = all(messages).firstOrNull()
+
+    fun all(messages: List<String>): List<HysteriaTaggedFailure> = messages.asSequence()
         .mapNotNull { message ->
             val failure = HysteriaFailureClassifier.classifyRuntime(message)
                 ?: return@mapNotNull null
@@ -437,9 +428,9 @@ internal object HysteriaFailureLogParser {
                 ?.getOrNull(1)
                 ?.takeIf(String::isNotBlank)
                 ?: return@mapNotNull null
-            HysteriaTaggedFailure(outboundTag, failure)
+            HysteriaTaggedFailure(outboundTag, failure, message)
         }
-        .firstOrNull()
+        .toList()
 }
 
 internal class HysteriaTargetGenerationFence(

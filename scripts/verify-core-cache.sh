@@ -52,6 +52,8 @@ grep -Fqx "CORE_PATCH_FILE=$CORE_PATCH_FILE" "$LIBBOX_PROPERTIES"
 grep -Fqx "CORE_PATCH_SHA256=$CORE_PATCH_SHA256" "$LIBBOX_PROPERTIES"
 grep -Fqx "HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG" "$LIBBOX_PROPERTIES"
 grep -Fqx "HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT" "$LIBBOX_PROPERTIES"
+grep -Fqx "XRAY_CORE_MODULE=$XRAY_CORE_MODULE" "$LIBBOX_PROPERTIES"
+grep -Fqx "XRAY_CORE_COMMIT=$XRAY_CORE_COMMIT" "$LIBBOX_PROPERTIES"
 source "$PROJECT_ROOT/scripts/core-patchset.sh"
 verify_core_patchset "$PROJECT_ROOT"
 EXPECTED_LIBBOX_SHA256="$(sed -n 's/^LIBBOX_SHA256=//p' "$LIBBOX_PROPERTIES")"
@@ -69,6 +71,8 @@ jq -e \
     --arg patch_sha256 "$CORE_PATCH_SHA256" \
     --arg hysteria_core_tag "$HYSTERIA_CORE_TAG" \
     --arg hysteria_core_commit "$HYSTERIA_CORE_COMMIT" \
+    --arg xray_core_module "$XRAY_CORE_MODULE" \
+    --arg xray_core_commit "$XRAY_CORE_COMMIT" \
     --arg go "$GO_VERSION" \
     --arg gomobile "$GOMOBILE_VERSION" \
     --arg ndk "$ANDROID_NDK_VERSION" \
@@ -79,6 +83,8 @@ jq -e \
      .patch_sha256 == $patch_sha256 and
      .hysteria_core_tag == $hysteria_core_tag and
      .hysteria_core_commit == $hysteria_core_commit and
+     .xray_core_module == $xray_core_module and
+     .xray_core_commit == $xray_core_commit and
      .go == $go and
      .gomobile == $gomobile and
      .android_ndk == $ndk and

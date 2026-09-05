@@ -5,7 +5,7 @@
 - Source: <https://github.com/shtorm-7/sing-box-extended>
 - Pinned commit: `e8f6936480b7fa9738911e3e7fc2ec0d8a634a88`
 - Android patchset manifest: `core-patches/series.sha256`
-- Patchset manifest SHA-256: `4345b98b1ee1d3a619b5e90c3a8a550dc7a2e1638f5795ad4c4db1b5b44b5d30`
+- The exact patchset SHA-256 is recorded in `core.properties` and the diagnostic build identity.
 - License: GNU General Public License version 3 or later.
 - Copyright: 2022 nekohasekai and contributors.
 
@@ -16,6 +16,19 @@ The exact pinned license text, including the additional naming condition, is
 also retained as an application raw resource and as a CI core artifact.
 The patch is applied only after verifying the pinned checkout and patch hash,
 is recorded separately from the upstream revision, and is reversed after compilation.
+
+## Xray core
+
+- Source: <https://github.com/XTLS/Xray-core>
+- Module: `github.com/xtls/xray-core@v1.260327.0` (v26.3.27).
+- Pinned commit: `d2758a023cd7f4174a5a5fa4ff66e487d4342ba0`.
+- License: Mozilla Public License 2.0, retained in `res/raw/xray_core_license.txt`.
+
+The official VLESS implementation is linked into `libbox.so`. The local patchset
+adds the protected socket adapter and logger interface integration; original
+Xray protocol sources are not rewritten. sing-box remains the only routing,
+DNS and TUN owner. The corresponding integration source and build instructions
+are included in `core-patches/0004-protocol-runtime-modules.patch`.
 
 ## Hysteria core and extras
 

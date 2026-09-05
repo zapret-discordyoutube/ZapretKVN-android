@@ -1,0 +1,1653 @@
+diff --git a/common/dialer/resolve.go b/common/dialer/resolve.go
+index 6628267..55a96f1 100644
+--- a/common/dialer/resolve.go
++++ b/common/dialer/resolve.go
+@@ -113,8 +113,11 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
+ }
+ 
+ func (d *resolveDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+-	conn, _, err := d.ListenPacketWithDestination(ctx, destination)
+-	return conn, err
++	conn, address, err := d.ListenPacketWithDestination(ctx, destination)
++	if err != nil || !destination.IsDomain() {
++		return conn, err
++	}
++	return bufio.NewNATPacketConn(bufio.NewPacketConn(conn), M.SocksaddrFrom(address, destination.Port), destination), nil
+ }
+ 
+ // ListenPacketWithDestination opens the same protected/bound socket as
+@@ -139,7 +142,8 @@ func (d *resolveDialer) ListenPacketWithDestination(ctx context.Context, destina
+ 	if err != nil {
+ 		return nil, netip.Addr{}, err
+ 	}
+-	return bufio.NewNATPacketConn(bufio.NewPacketConn(conn), M.SocksaddrFrom(destinationAddress, destination.Port), destination), destinationAddress, nil
++	// Native QUIC needs the actual peer address, not the ordinary domain NAT view.
++	return conn, destinationAddress, nil
+ }
+ 
+ func (d *resolveDialer) QueryOptions() adapter.DNSQueryOptions {
+diff --git a/go.mod b/go.mod
+index c7b3757..07dcb2c 100644
+--- a/go.mod
++++ b/go.mod
+@@ -71,6 +71,7 @@ require (
+ 	github.com/stretchr/testify v1.11.1
+ 	github.com/vishvananda/netns v0.0.5
+ 	github.com/xtaci/kcp-go/v5 v5.6.72
++	github.com/xtls/xray-core v1.260327.0
+ 	github.com/yosida95/uritemplate/v3 v3.0.2
+ 	go.uber.org/zap v1.28.0
+ 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
+@@ -81,7 +82,7 @@ require (
+ 	golang.org/x/sync v0.22.0
+ 	golang.org/x/sys v0.47.0
+ 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
+-	google.golang.org/grpc v1.79.1
++	google.golang.org/grpc v1.79.3
+ 	google.golang.org/protobuf v1.36.11
+ 	howett.net/plist v1.0.1
+ 	modernc.org/sqlite v1.50.0
+@@ -92,17 +93,21 @@ require (
+ 	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e // indirect
+ 	github.com/bahlo/generic-list-go v0.2.0 // indirect
+ 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
++	github.com/cloudflare/circl v1.6.3 // indirect
+ 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+ 	github.com/docker/docker v28.5.2+incompatible // indirect
+ 	github.com/docker/go-connections v0.7.0 // indirect
+ 	github.com/dunglas/httpsfv v1.1.0 // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
++	github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 // indirect
++	github.com/juju/ratelimit v1.0.2 // indirect
+ 	github.com/klauspost/reedsolomon v1.12.0 // indirect
+ 	github.com/lib/pq v1.10.9 // indirect
+ 	github.com/moby/term v0.5.2 // indirect
+ 	github.com/ncruces/go-strftime v1.0.0 // indirect
+ 	github.com/opencontainers/image-spec v1.1.1 // indirect
+ 	github.com/panjf2000/ants/v2 v2.12.0 // indirect
++	github.com/pelletier/go-toml v1.9.5 // indirect
+ 	github.com/pion/dtls/v3 v3.1.4 // indirect
+ 	github.com/pion/ice/v4 v4.2.1 // indirect
+ 	github.com/pion/logging v0.2.4 // indirect
+@@ -117,18 +122,22 @@ require (
+ 	github.com/pion/turn/v4 v4.1.4 // indirect
+ 	github.com/pkg/errors v0.9.1 // indirect
+ 	github.com/redis/go-redis/v9 v9.8.0 // indirect
+-	github.com/refraction-networking/utls v1.8.2 // indirect
++	github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af // indirect
+ 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+ 	github.com/stretchr/objx v0.5.2 // indirect
+ 	github.com/tjfoc/gmsm v1.4.1 // indirect
+ 	github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b // indirect
++	github.com/vishvananda/netlink v1.3.1 // indirect
+ 	github.com/wlynxg/anet v0.0.5 // indirect
++	github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f // indirect
+ 	github.com/zeebo/assert v1.3.0 // indirect
+ 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
+ 	go.opentelemetry.io/otel v1.44.0 // indirect
+ 	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
+ 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
++	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb // indirect
+ 	gopkg.in/yaml.v2 v2.4.0 // indirect
++	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 // indirect
+ 	modernc.org/libc v1.72.0 // indirect
+ 	modernc.org/mathutil v1.7.1 // indirect
+ 	modernc.org/memory v1.11.0 // indirect
+@@ -270,3 +279,5 @@ replace github.com/shtorm-7/go-cache/v2 => github.com/shtorm-7/go-cache/v2 v2.1.
+ replace github.com/sagernet/sing => github.com/shtorm-7/sing v0.8.12-extended-1.2.0
+ 
+ replace github.com/sagernet/sing-mux => github.com/shtorm-7/sing-mux v0.3.5-extended-1.0.0
++
++replace github.com/xtls/xray-core => ./third_party/xray-core
+diff --git a/go.sum b/go.sum
+index ac68f18..164b11b 100644
+--- a/go.sum
++++ b/go.sum
+@@ -56,6 +56,8 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
+ github.com/cilium/ebpf v0.15.0 h1:7NxJhNiBT3NG8pZJ3c+yfrVdHY8ScgKD27sScgjLMMk=
+ github.com/cilium/ebpf v0.15.0/go.mod h1:DHp1WyrLeiBh19Cf/tfiSMhqheEiK8fXFZ4No0P1Hso=
+ github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
++github.com/cloudflare/circl v1.6.3 h1:9GPOhQGF9MCYUeXyMYlqTR6a5gTrgR/fBLXvUgtVcg8=
++github.com/cloudflare/circl v1.6.3/go.mod h1:2eXP6Qfat4O/Yhh8BznvKnJ+uzEoTQ6jVKJRn81BiS4=
+ github.com/cncf/udpa/go v0.0.0-20191209042840-269d4d468f6f/go.mod h1:M8M6+tZqaGXZJjfX53e64911xZQV5JYwmTeXPW+k8Sc=
+ github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
+ github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
+@@ -119,6 +121,8 @@ github.com/gabriel-vasile/mimetype v1.4.12 h1:e9hWvmLYvtp846tLHam2o++qitpguFiYCK
+ github.com/gabriel-vasile/mimetype v1.4.12/go.mod h1:d+9Oxyo1wTzWdyVUPMmXFvp4F9tea18J8ufA774AB3s=
+ github.com/gaissmai/bart v0.18.0 h1:jQLBT/RduJu0pv/tLwXE+xKPgtWJejbxuXAR+wLJafo=
+ github.com/gaissmai/bart v0.18.0/go.mod h1:JJzMAhNF5Rjo4SF4jWBrANuJfqY+FvsFhW7t1UZJ+XY=
++github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344 h1:Arcl6UOIS/kgO2nW3A65HN+7CMjSDP/gofXL4CZt1V4=
++github.com/ghodss/yaml v1.0.1-0.20220118164431-d8423dcdf344/go.mod h1:GIjDIg/heH5DOkXY3YJ/wNhfHsQHoXGjl8G8amsYQ1I=
+ github.com/github/fakeca v0.1.0 h1:Km/MVOFvclqxPM9dZBC4+QE564nU4gz4iZ0D9pMw28I=
+ github.com/github/fakeca v0.1.0/go.mod h1:+bormgoGMMuamOscx7N91aOuUST7wdaJ2rNjeohylyo=
+ github.com/go-chi/chi/v5 v5.2.5 h1:Eg4myHZBjyvJmAFjFvWgrqDTXFyOzjj7YIm3L3mu6Ug=
+@@ -220,6 +224,8 @@ github.com/jackc/puddle/v2 v2.2.2/go.mod h1:vriiEXHvEE654aYKXXjOvZM39qJ0q+azkZFr
+ github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
+ github.com/jsimonetti/rtnetlink v1.4.0 h1:Z1BF0fRgcETPEa0Kt0MRk3yV5+kF1FWTni6KUFKrq2I=
+ github.com/jsimonetti/rtnetlink v1.4.0/go.mod h1:5W1jDvWdnthFJ7fxYX1GMK07BUpI4oskfOqvPteYS6E=
++github.com/juju/ratelimit v1.0.2 h1:sRxmtRiajbvrcLQT7S+JbqU0ntsb9W2yhSdNN8tWfaI=
++github.com/juju/ratelimit v1.0.2/go.mod h1:qapgC/Gy+xNh9UxzV13HGGl/6UXNN+ct+vwSgWNm/qk=
+ github.com/keybase/go-keychain v0.0.1 h1:way+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=
+ github.com/keybase/go-keychain v0.0.1/go.mod h1:PdEILRW3i9D8JcdM+FmY6RwkHGnhHxXwkPPMeUgOK1k=
+ github.com/klauspost/compress v1.18.6 h1:2jupLlAwFm95+YDR+NwD2MEfFO9d4z4Prjl1XXDjuao=
+@@ -290,6 +296,8 @@ github.com/panjf2000/ants/v2 v2.12.0 h1:u9JhESo83i/GkZnhfTNuFMMWcNt7mnV1bGJ6FT4w
+ github.com/panjf2000/ants/v2 v2.12.0/go.mod h1:tSQuaNQ6r6NRhPt+IZVUevvDyFMTs+eS4ztZc52uJTY=
+ github.com/patrickmn/go-cache v2.1.0+incompatible h1:HRMgzkcYKYpi3C8ajMPV8OFXaaRUnok+kx1WdO15EQc=
+ github.com/patrickmn/go-cache v2.1.0+incompatible/go.mod h1:3Qf8kWWT7OJRJbdiICTKqZju1ZixQ/KpMGzzAfe6+WQ=
++github.com/pelletier/go-toml v1.9.5 h1:4yBQzkHv+7BHq2PQUZF3Mx0IYxG7LsP222s7Agd3ve8=
++github.com/pelletier/go-toml v1.9.5/go.mod h1:u1nR/EPcESfeI/szUZKdtJ0xRNbUoANCkoOuaOx1Y+c=
+ github.com/pierrec/lz4/v4 v4.1.27 h1:+PhzhWDrjRj89TH2sw43nE3+4+W8lSxIuQadEHZyjUk=
+ github.com/pierrec/lz4/v4 v4.1.27/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
+ github.com/pion/datachannel v1.6.0 h1:XecBlj+cvsxhAMZWFfFcPyUaDZtd7IJvrXqlXD/53i0=
+@@ -348,6 +356,8 @@ github.com/redis/go-redis/v9 v9.8.0 h1:q3nRvjrlge/6UD7eTu/DSg2uYiU2mCL0G/uzBWqhi
+ github.com/redis/go-redis/v9 v9.8.0/go.mod h1:huWgSWd8mW6+m0VPhJjSSQ+d6Nh1VICQ6Q5lHuCH/Iw=
+ github.com/refraction-networking/utls v1.8.2 h1:j4Q1gJj0xngdeH+Ox/qND11aEfhpgoEvV+S9iJ2IdQo=
+ github.com/refraction-networking/utls v1.8.2/go.mod h1:jkSOEkLqn+S/jtpEHPOsVv/4V4EVnelwbMQl4vCWXAM=
++github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af h1:er2acxbi3N1nvEq6HXHUAR1nTWEJmQfqiGR8EVT9rfs=
++github.com/refraction-networking/utls v1.8.3-0.20260301010127-aa6edf4b11af/go.mod h1:jkSOEkLqn+S/jtpEHPOsVv/4V4EVnelwbMQl4vCWXAM=
+ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
+ github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+ github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
+@@ -522,6 +532,8 @@ github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b h1:p+bJ3v5u
+ github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b/go.mod h1:OYRfF6eb5wY9VRFkXJH8FFBi3plw2v+giaIu7P054pM=
+ github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 h1:pyC9PaHYZFgEKFdlp3G8RaCKgVpHZnecvArXvPXcFkM=
+ github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701/go.mod h1:P3a5rG4X7tI17Nn3aOIAYr5HbIMukwXG0urG0WuL8OA=
++github.com/vishvananda/netlink v1.3.1 h1:3AEMt62VKqz90r0tmNhog0r/PpWKmrEShJU0wJW6bV0=
++github.com/vishvananda/netlink v1.3.1/go.mod h1:ARtKouGSTGchR8aMwmkzC0qiNPrrWO5JS/XMVl45+b4=
+ github.com/vishvananda/netns v0.0.0-20200728191858-db3c7e526aae/go.mod h1:DD4vA1DwXk04H54A1oHXtwZmA0grkVMdPxx/VGLCah0=
+ github.com/vishvananda/netns v0.0.5 h1:DfiHV+j8bA32MFM7bfEunvT8IAqQ/NzSJHtcmW5zdEY=
+ github.com/vishvananda/netns v0.0.5/go.mod h1:SpkAiCQRtJ6TvvxPnOSyH3BMl6unz3xZlaprSwhNNJM=
+@@ -533,6 +545,10 @@ github.com/xtaci/kcp-go/v5 v5.6.72 h1:FLaQPalgpufJYQRk0OK+gErEhXGLUPjv6FSRPrFR8L
+ github.com/xtaci/kcp-go/v5 v5.6.72/go.mod h1:9O3D8WR+cyyUjGiTILYfg17vn72otWuXK2AFfqIe6CM=
+ github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae h1:J0GxkO96kL4WF+AIT3M4mfUVinOCPgf2uUWYFUzN0sM=
+ github.com/xtaci/lossyconn v0.0.0-20190602105132-8df528c0c9ae/go.mod h1:gXtu8J62kEgmN++bm9BVICuT/e8yiLI2KFobd/TRFsE=
++github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f h1:iy2JRioxmUpoJ3SzbFPyTxHZMbR/rSHP7dOOgYaq1O8=
++github.com/xtls/reality v0.0.0-20260322125925-9234c772ba8f/go.mod h1:DsJblcWDGt76+FVqBVwbwRhxyyNJsGV48gJLch0OOWI=
++github.com/xtls/xray-core v1.260327.0 h1:g4TzxMwyPrxslZh6uD+FiG3lXKTrnNO+b4ky2OhogHE=
++github.com/xtls/xray-core v1.260327.0/go.mod h1:OXMlhBloFry8mw0KwWLWLd3RQyXJzEYsCGlgsX36h60=
+ github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
+ github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
+ github.com/yl2chen/cidranger v1.0.2 h1:lbOWZVCG1tCRX4u24kuM1Tb4nHqWkDxwLdoS+SevawU=
+@@ -621,7 +637,9 @@ golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f/go.mod h1:h1NjWce9XRLGQEsW7w
+ golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20210423082822-04245dca01da/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.2.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
++golang.org/x/sys v0.10.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
+ golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+ golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
+@@ -646,6 +664,8 @@ golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da h1:noIWHXmPHxILtqtCOPIhS
+ golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da/go.mod h1:NDW/Ps6MPRej6fsCIbMTohpP40sJ/P/vI1MoTEGwX90=
+ golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 h1:B82qJJgjvYKsXS9jeunTOisW56dUokqW/FOteYJJ/yg=
+ golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2/go.mod h1:deeaetjYA+DHMHg+sMSMI58GrEteJUUzzw7en6TJQcI=
++golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb h1:whnFRlWMcXI9d+ZbWg+4sHnLp52d5yiIPUxMBSt4X9A=
++golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb/go.mod h1:rpwXGsirqLqN2L0JDJQlwOboGHmptD5ZD6T2VmcqhTw=
+ golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10 h1:3GDAcqdIg1ozBNLgPy4SLT84nfcBjr6rhGtXYtrkWLU=
+ golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10/go.mod h1:T97yPqesLiNrOYxkwmhMI0ZIlJDm+p0PMR8eRVeR5tQ=
+ golang.zx2c4.com/wireguard/windows v0.5.3 h1:On6j2Rpn3OEMXqBq00QEDC7bWSZrPIHKIus8eIuExIE=
+@@ -664,6 +684,8 @@ google.golang.org/grpc v1.25.1/go.mod h1:c3i+UQWmh7LiEpx4sFZnkU36qjEYZ0imhYfXVyQ
+ google.golang.org/grpc v1.31.0/go.mod h1:N36X2cJ7JwdamYAgDz+s+rVMFjt3numwzf/HckM8pak=
+ google.golang.org/grpc v1.79.1 h1:zGhSi45ODB9/p3VAawt9a+O/MULLl9dpizzNNpq7flY=
+ google.golang.org/grpc v1.79.1/go.mod h1:KmT0Kjez+0dde/v2j9vzwoAScgEPx/Bw1CYChhHLrHQ=
++google.golang.org/grpc v1.79.3 h1:sybAEdRIEtvcD68Gx7dmnwjZKlyfuc61Dyo9pGXXkKE=
++google.golang.org/grpc v1.79.3/go.mod h1:KmT0Kjez+0dde/v2j9vzwoAScgEPx/Bw1CYChhHLrHQ=
+ google.golang.org/protobuf v0.0.0-20200109180630-ec00e32a8dfd/go.mod h1:DFci5gLYBciE7Vtevhsrf46CRTquxDuWsQurQQe4oz8=
+ google.golang.org/protobuf v0.0.0-20200221191635-4d8936d0db64/go.mod h1:kwYJMbMJ01Woi6D6+Kah6886xMZcty6N08ah7+eCXa0=
+ google.golang.org/protobuf v0.0.0-20200228230310-ab0ca4ff8a60/go.mod h1:cfTl7dwQJ+fmap5saPgwCLgHXTUD7jkjRqWcaiX5VyM=
+@@ -684,6 +706,8 @@ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489 h1:ze1vwAdliUAr68RQ5NtufWaXaOg8WUO2OACzEV+TNdE=
+ gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489/go.mod h1:10sU+Uh5KKNv1+2x2A0Gvzt8FjD3ASIhorV3YsauXhk=
++gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 h1:Lk6hARj5UPY47dBep70OD/TIMwikJ5fGUGX0Rm3Xigk=
++gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0/go.mod h1:QkHjoMIBaYtpVufgwv3keYAbln78mBoCuShZrPrer1Q=
+ honnef.co/go/tools v0.0.0-20190102054323-c2f93a96b099/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
+ honnef.co/go/tools v0.0.0-20190523083050-ea95bdfd59fc/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
+ howett.net/plist v1.0.1 h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM=
+diff --git a/include/registry.go b/include/registry.go
+index c927a78..df12f02 100644
+--- a/include/registry.go
++++ b/include/registry.go
+@@ -45,6 +45,7 @@ import (
+ 	"github.com/sagernet/sing-box/protocol/vless"
+ 	"github.com/sagernet/sing-box/protocol/vmess"
+ 	"github.com/sagernet/sing-box/protocol/vpn"
++	"github.com/sagernet/sing-box/protocol/xraycore"
+ 	localProvider "github.com/sagernet/sing-box/provider/local"
+ 	remoteProvider "github.com/sagernet/sing-box/provider/remote"
+ 	"github.com/sagernet/sing-box/service/admin_panel"
+@@ -117,7 +118,7 @@ func OutboundRegistry() *outbound.Registry {
+ 	tor.RegisterOutbound(registry)
+ 	ssh.RegisterOutbound(registry)
+ 	shadowtls.RegisterOutbound(registry)
+-	vless.RegisterOutbound(registry)
++	xraycore.RegisterOutbound(registry)
+ 	mieru.RegisterOutbound(registry)
+ 	anytls.RegisterOutbound(registry)
+ 	registerMASQUEOutbound(registry)
+diff --git a/option/vless.go b/option/vless.go
+index 989bcc6..e4a16f2 100644
+--- a/option/vless.go
++++ b/option/vless.go
+@@ -16,6 +16,7 @@ type VLESSUser struct {
+ }
+ 
+ type VLESSOutboundOptions struct {
++	URI string `json:"uri,omitempty"`
+ 	DialerOptions
+ 	ServerOptions
+ 	UUID       string      `json:"uuid"`
+diff --git a/parser/link/vless.go b/parser/link/vless.go
+index f183366..61cae6a 100644
+--- a/parser/link/vless.go
++++ b/parser/link/vless.go
+@@ -21,6 +21,7 @@ func parseVLESSLink(link string) (option.Outbound, error) {
+ 		return option.Outbound{}, E.New("missing uuid")
+ 	}
+ 	var options option.VLESSOutboundOptions
++	options.URI = link
+ 	TLSOptions := option.OutboundTLSOptions{
+ 		ECH:     &option.OutboundECHOptions{},
+ 		UTLS:    &option.OutboundUTLSOptions{},
+diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
+index 8dd8fed..69d48c8 100644
+--- a/protocol/hysteria2/outbound.go
++++ b/protocol/hysteria2/outbound.go
+@@ -51,12 +51,14 @@ var (
+ type Outbound struct {
+ 	outbound.Adapter
+ 	ctx     context.Context
++	cancel  context.CancelFunc
+ 	logger  logger.ContextLogger
+ 	dialer  N.Dialer
+ 	options option.Hysteria2OutboundOptions
+ 
+ 	access sync.RWMutex
+ 	client hyclient.Client
++	closed bool
+ }
+ 
+ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
+@@ -84,15 +86,18 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	ownedContext, cancel := context.WithCancel(ctx)
+ 	h := &Outbound{
+ 		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, options.Network.Build(), options.DialerOptions),
+-		ctx:     ctx,
++		ctx:     ownedContext,
++		cancel:  cancel,
+ 		logger:  logger,
+ 		dialer:  outboundDialer,
+ 		options: options,
+ 	}
+ 	client, err := h.newClient()
+ 	if err != nil {
++		cancel()
+ 		return nil, err
+ 	}
+ 	h.client = client
+@@ -176,7 +181,11 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+ 	switch N.NetworkName(network) {
+ 	case N.NetworkTCP:
+ 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
+-		return h.currentClient().TCP(destination.String())
++		conn, err := h.currentClient().TCP(destination.String())
++		if err != nil {
++			h.logger.ErrorContext(ctx, err)
++		}
++		return conn, err
+ 	case N.NetworkUDP:
+ 		conn, err := h.ListenPacket(ctx, destination)
+ 		if err != nil {
+@@ -192,6 +201,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+ 	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+ 	conn, err := h.currentClient().UDP()
+ 	if err != nil {
++		h.logger.ErrorContext(ctx, err)
+ 		return nil, err
+ 	}
+ 	return &hyPacketConn{conn: conn}, nil
+@@ -204,6 +214,11 @@ func (h *Outbound) InterfaceUpdated() {
+ 		return
+ 	}
+ 	h.access.Lock()
++	if h.closed {
++		h.access.Unlock()
++		_ = client.Close()
++		return
++	}
+ 	oldClient := h.client
+ 	h.client = client
+ 	h.access.Unlock()
+@@ -211,7 +226,11 @@ func (h *Outbound) InterfaceUpdated() {
+ }
+ 
+ func (h *Outbound) Close() error {
++	if h.cancel != nil {
++		h.cancel()
++	}
+ 	h.access.Lock()
++	h.closed = true
+ 	client := h.client
+ 	h.client = closedClient{}
+ 	h.access.Unlock()
+@@ -291,10 +310,14 @@ func (f *protectedConnFactory) New(net.Addr) (net.PacketConn, error) {
+ 			conn := f.firstConn
+ 			f.firstConn = nil
+ 			f.access.Unlock()
+-			return conn, nil
++			return newContextPacketConn(f.ctx, conn), nil
+ 		}
+ 		f.access.Unlock()
+-		return f.dialer.ListenPacket(f.ctx, f.destination)
++		conn, err := f.dialer.ListenPacket(f.ctx, f.destination)
++		if err != nil {
++			return nil, err
++		}
++		return newContextPacketConn(f.ctx, conn), nil
+ 	}
+ 	var (
+ 		conn net.PacketConn
+@@ -351,6 +374,20 @@ func (f *protectedConnFactory) Close() error {
+ 
+ type packetConnOnly struct{ net.PacketConn }
+ 
++type contextPacketConn struct {
++	net.PacketConn
++	stop func() bool
++}
++
++func newContextPacketConn(ctx context.Context, conn net.PacketConn) net.PacketConn {
++	return &contextPacketConn{PacketConn: conn, stop: context.AfterFunc(ctx, func() { _ = conn.Close() })}
++}
++
++func (c *contextPacketConn) Close() error {
++	c.stop()
++	return c.PacketConn.Close()
++}
++
+ func validateObfs(obfsOptions *option.Hysteria2Obfs) error {
+ 	if obfsOptions == nil {
+ 		return nil
+diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
+index 72f64aa..cd6a086 100644
+--- a/protocol/hysteria2/outbound_test.go
++++ b/protocol/hysteria2/outbound_test.go
+@@ -303,8 +303,8 @@ func testOfficialClientAgainstUpstreamServer(
+ 	}()
+ 
+ 	serverAddr := serverSocket.LocalAddr().(*net.UDPAddr)
+-	factory, destination, err := newProtectedConnFactory(context.Background(), realPacketDialer{}, option.Hysteria2OutboundOptions{
+-		ServerOptions: option.ServerOptions{Server: serverAddr.IP.String(), ServerPort: uint16(serverAddr.Port)},
++	factory, destination, err := newProtectedConnFactory(context.Background(), resolvedLoopbackDialer(), option.Hysteria2OutboundOptions{
++		ServerOptions: option.ServerOptions{Server: "synthetic.example", ServerPort: uint16(serverAddr.Port)},
+ 		Obfs:          obfsOptions,
+ 	})
+ 	if err != nil {
+diff --git a/protocol/hysteria2/audit_boundary_test.go b/protocol/hysteria2/audit_boundary_test.go
+new file mode 100644
+index 0000000..103c1df
+--- /dev/null
++++ b/protocol/hysteria2/audit_boundary_test.go
+@@ -0,0 +1,66 @@
++package hysteria2
++
++import (
++	"context"
++	"net"
++	"net/netip"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dialer"
++	"github.com/sagernet/sing-box/option"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++// Exercise the production resolveDialer, substituting only DNS and the socket.
++type loopbackDNS struct{ adapter.DNSRouter }
++
++func (loopbackDNS) Lookup(context.Context, string, adapter.DNSQueryOptions) ([]netip.Addr, error) {
++	return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
++}
++
++func resolvedLoopbackDialer() N.Dialer {
++	ctx := service.ContextWith[adapter.DNSRouter](context.Background(), loopbackDNS{})
++	return dialer.NewResolveDialer(ctx, realPacketDialer{}, false, "", adapter.DNSQueryOptions{}, 0)
++}
++
++func TestAuditDomainPacketAddress(t *testing.T) {
++	remote, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer remote.Close()
++	factory, expected, err := newProtectedConnFactory(context.Background(), resolvedLoopbackDialer(), option.Hysteria2OutboundOptions{
++		ServerOptions: option.ServerOptions{Server: "synthetic.example", ServerPort: uint16(remote.LocalAddr().(*net.UDPAddr).Port)},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	conn, err := factory.New(expected)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	_ = conn.SetDeadline(time.Now().Add(time.Second))
++	_ = remote.SetDeadline(time.Now().Add(time.Second))
++	if _, err = conn.WriteTo([]byte("query"), expected); err != nil {
++		t.Fatal(err)
++	}
++	buffer := make([]byte, 64)
++	_, sender, err := remote.ReadFrom(buffer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = remote.WriteTo([]byte("response"), sender); err != nil {
++		t.Fatal(err)
++	}
++	_, actual, err := conn.ReadFrom(buffer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if actual.String() != expected.String() {
++		t.Fatalf("QUIC peer identity lost at protected dialer boundary: expected=%s actual=%s", expected, actual)
++	}
++}
+diff --git a/protocol/vless/outbound.go b/protocol/vless/outbound.go
+deleted file mode 100644
+index f1e1955..0000000
+--- a/protocol/vless/outbound.go
++++ /dev/null
+@@ -1,460 +0,0 @@
+-package vless
+-
+-import (
+-	"context"
+-	stdtls "crypto/tls"
+-	"encoding/base64"
+-	"net"
+-	"strings"
+-	"sync"
+-
+-	"github.com/sagernet/sing-box/adapter"
+-	"github.com/sagernet/sing-box/adapter/outbound"
+-	"github.com/sagernet/sing-box/common/dialer"
+-	"github.com/sagernet/sing-box/common/mux"
+-	"github.com/sagernet/sing-box/common/tls"
+-	"github.com/sagernet/sing-box/common/vision"
+-	C "github.com/sagernet/sing-box/constant"
+-	"github.com/sagernet/sing-box/log"
+-	"github.com/sagernet/sing-box/option"
+-	"github.com/sagernet/sing-box/protocol/vless/encryption"
+-	"github.com/sagernet/sing-box/transport/v2ray"
+-	"github.com/sagernet/sing-vmess/packetaddr"
+-	"github.com/sagernet/sing-vmess/vless"
+-	"github.com/sagernet/sing/common"
+-	"github.com/sagernet/sing/common/bufio"
+-	E "github.com/sagernet/sing/common/exceptions"
+-	"github.com/sagernet/sing/common/logger"
+-	M "github.com/sagernet/sing/common/metadata"
+-	N "github.com/sagernet/sing/common/network"
+-)
+-
+-func RegisterOutbound(registry *outbound.Registry) {
+-	outbound.Register[option.VLESSOutboundOptions](registry, C.TypeVLESS, NewOutbound)
+-}
+-
+-var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
+-
+-type Outbound struct {
+-	outbound.Adapter
+-	logger          logger.ContextLogger
+-	dialer          N.Dialer
+-	client          *vless.Client
+-	serverAddr      M.Socksaddr
+-	multiplexDialer *mux.Client
+-	tlsConfig       tls.Config
+-	tlsDialer       tls.Dialer
+-	transport       adapter.V2RayClientTransport
+-	packetAddr      bool
+-	xudp            bool
+-	encryption      *encryption.ClientInstance
+-	vision          bool
+-}
+-
+-func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.VLESSOutboundOptions) (adapter.Outbound, error) {
+-	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+-	if err != nil {
+-		return nil, err
+-	}
+-	outbound := &Outbound{
+-		Adapter:    outbound.NewAdapterWithDialerOptions(C.TypeVLESS, tag, options.Network.Build(), options.DialerOptions),
+-		logger:     logger,
+-		dialer:     outboundDialer,
+-		serverAddr: options.ServerOptions.Build(),
+-		vision:     strings.HasPrefix(options.Flow, "xtls-rprx-vision"),
+-	}
+-	if options.TLS != nil {
+-		outbound.tlsConfig, err = tls.NewClientWithOptions(tls.ClientOptions{
+-			Context:       ctx,
+-			Logger:        logger,
+-			ServerAddress: options.Server,
+-			Options:       common.PtrValueOrDefault(options.TLS),
+-			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
+-				!common.PtrValueOrDefault(options.Multiplex).Enabled &&
+-				options.Flow == "",
+-		})
+-		if err != nil {
+-			return nil, err
+-		}
+-		outbound.tlsDialer = tls.NewDialer(outboundDialer, outbound.tlsConfig)
+-	}
+-	if options.Transport != nil {
+-		outbound.transport, err = v2ray.NewClientTransport(ctx, logger, outbound.dialer, outbound.serverAddr, common.PtrValueOrDefault(options.Transport), outbound.tlsConfig)
+-		if err != nil {
+-			return nil, E.Cause(err, "create client transport: ", options.Transport.Type)
+-		}
+-	}
+-	if options.PacketEncoding == nil {
+-		outbound.xudp = true
+-	} else {
+-		switch *options.PacketEncoding {
+-		case "":
+-		case "packetaddr":
+-			outbound.packetAddr = true
+-		case "xudp":
+-			outbound.xudp = true
+-		default:
+-			return nil, E.New("unknown packet encoding: ", *options.PacketEncoding)
+-		}
+-	}
+-	muxOpts := common.PtrValueOrDefault(options.Multiplex)
+-	if muxOpts.Enabled {
+-		options.Flow = ""
+-	}
+-	if options.Encryption != "" && options.Encryption != "none" {
+-		encryptionConfig, err := parseClientEncryption(options.Encryption)
+-		if err != nil {
+-			return nil, E.Cause(err, "parse encryption")
+-		}
+-		outbound.encryption = &encryption.ClientInstance{}
+-		if err := outbound.encryption.Init(encryptionConfig.keys, encryptionConfig.xorMode, encryptionConfig.seconds, encryptionConfig.padding); err != nil {
+-			return nil, E.Cause(err, "initialize encryption")
+-		}
+-		logger.Debug("encryption initialized: keys=", len(encryptionConfig.keys), " xorMode=", encryptionConfig.xorMode, " seconds=", encryptionConfig.seconds, " padding=", encryptionConfig.padding)
+-	}
+-
+-	outbound.client, err = vless.NewClient(options.UUID, options.Flow, logger)
+-	if err != nil {
+-		return nil, err
+-	}
+-	outbound.multiplexDialer, err = mux.NewClientWithOptions((*vlessDialer)(outbound), logger, muxOpts)
+-	if err != nil {
+-		return nil, err
+-	}
+-	return outbound, nil
+-}
+-
+-func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+-	if h.multiplexDialer == nil {
+-		switch N.NetworkName(network) {
+-		case N.NetworkTCP:
+-			h.logger.InfoContext(ctx, "outbound connection to ", destination)
+-		case N.NetworkUDP:
+-			h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+-		}
+-		return (*vlessDialer)(h).DialContext(ctx, network, destination)
+-	} else {
+-		switch N.NetworkName(network) {
+-		case N.NetworkTCP:
+-			h.logger.InfoContext(ctx, "outbound multiplex connection to ", destination)
+-		case N.NetworkUDP:
+-			h.logger.InfoContext(ctx, "outbound multiplex packet connection to ", destination)
+-		}
+-		return h.multiplexDialer.DialContext(ctx, network, destination)
+-	}
+-}
+-
+-func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+-	if h.multiplexDialer == nil {
+-		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+-		return (*vlessDialer)(h).ListenPacket(ctx, destination)
+-	} else {
+-		h.logger.InfoContext(ctx, "outbound multiplex packet connection to ", destination)
+-		return h.multiplexDialer.ListenPacket(ctx, destination)
+-	}
+-}
+-
+-func (h *Outbound) MultiplexEnabled() bool {
+-	return h.multiplexDialer != nil
+-}
+-
+-func (h *Outbound) InterfaceUpdated() {
+-	if h.transport != nil {
+-		h.transport.Close()
+-	}
+-	if h.multiplexDialer != nil {
+-		h.multiplexDialer.Reset()
+-	}
+-}
+-
+-func (h *Outbound) Close() error {
+-	return common.Close(common.PtrOrNil(h.multiplexDialer), h.transport)
+-}
+-
+-type vlessDialer Outbound
+-
+-func (h *vlessDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+-	ctx, metadata := adapter.ExtendContext(ctx)
+-	metadata.Outbound = h.Tag()
+-	metadata.Destination = destination
+-	var conn net.Conn
+-	var baseConn net.Conn
+-	var hookOnce sync.Once
+-	if h.vision {
+-		ctx = vision.WithHook(ctx, func(tlsConn net.Conn) {
+-			if tlsConn == nil || !isVisionTLSConn(tlsConn) {
+-				return
+-			}
+-			hookOnce.Do(func() {
+-				baseConn = tlsConn
+-			})
+-		})
+-	}
+-	var err error
+-	if h.transport != nil {
+-		conn, err = h.transport.DialContext(ctx)
+-		if err == nil && h.vision {
+-			if baseConn == nil {
+-				if isVisionTLSConn(conn) {
+-					h.logger.Warn("Vision enabled but hook was not called by transport, using fallback")
+-					baseConn = conn
+-				}
+-			}
+-		}
+-	} else if h.tlsDialer != nil {
+-		conn, err = h.tlsDialer.DialTLSContext(ctx, h.serverAddr)
+-		if err == nil && h.vision && baseConn == nil {
+-			baseConn = conn
+-		}
+-	} else {
+-		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+-	}
+-	if err != nil {
+-		return nil, err
+-	}
+-
+-	if h.encryption != nil {
+-		conn, err = h.encryption.Handshake(conn)
+-		if err != nil {
+-			return nil, E.Cause(err, "encryption handshake")
+-		}
+-	}
+-
+-	var visionBaseConn net.Conn
+-	var visionCanSplice bool
+-	if h.vision {
+-		conn, visionBaseConn, visionCanSplice, err = h.setupVision(conn, baseConn)
+-		if err != nil {
+-			return nil, err
+-		}
+-	}
+-
+-	switch N.NetworkName(network) {
+-	case N.NetworkTCP:
+-		h.logger.InfoContext(ctx, "outbound connection to ", destination)
+-		if h.vision && visionBaseConn != nil {
+-			return h.client.DialEarlyConnWithOptions(conn, visionBaseConn, destination, visionCanSplice)
+-		}
+-		return h.client.DialEarlyConn(conn, destination)
+-	case N.NetworkUDP:
+-		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+-		if h.xudp {
+-			return h.client.DialEarlyXUDPPacketConn(conn, destination)
+-		} else if h.packetAddr {
+-			if destination.IsDomain() {
+-				return nil, E.New("packetaddr: domain destination is not supported")
+-			}
+-			packetConn, err := h.client.DialEarlyPacketConn(conn, M.Socksaddr{Fqdn: packetaddr.SeqPacketMagicAddress})
+-			if err != nil {
+-				return nil, err
+-			}
+-			return bufio.NewBindPacketConn(packetaddr.NewConn(packetConn, destination), destination), nil
+-		} else {
+-			return h.client.DialEarlyPacketConn(conn, destination)
+-		}
+-	default:
+-		return nil, E.Extend(N.ErrUnknownNetwork, network)
+-	}
+-}
+-
+-func (h *vlessDialer) setupVision(conn net.Conn, baseConn net.Conn) (net.Conn, net.Conn, bool, error) {
+-	isRAWTransport := h.transport == nil
+-
+-	if baseConn != nil && !isVisionTLSConn(baseConn) {
+-		baseConn = nil
+-	}
+-
+-	if baseConn != nil {
+-		return newVisionConnWrapper(conn, baseConn), baseConn, isRAWTransport, nil
+-	}
+-
+-	if h.encryption != nil {
+-		encConn := findEncryptionLayer(conn)
+-		if encConn == nil {
+-			return nil, nil, false, E.New("Vision: failed to find encryption layer")
+-		}
+-		canSplice := isRAWTransport && !h.encryption.IsFullRandomXorMode()
+-		return newVisionConnWrapper(conn, encConn), encConn, canSplice, nil
+-	}
+-
+-	return nil, nil, false, E.New("Vision requires either TLS/Reality or Encryption")
+-}
+-
+-func (h *vlessDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+-	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+-	ctx, metadata := adapter.ExtendContext(ctx)
+-	metadata.Outbound = h.Tag()
+-	metadata.Destination = destination
+-	var conn net.Conn
+-	var err error
+-	if h.transport != nil {
+-		conn, err = h.transport.DialContext(ctx)
+-	} else if h.tlsDialer != nil {
+-		conn, err = h.tlsDialer.DialTLSContext(ctx, h.serverAddr)
+-	} else {
+-		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
+-	}
+-	if err != nil {
+-		common.Close(conn)
+-		return nil, err
+-	}
+-	if h.encryption != nil {
+-		conn, err = h.encryption.Handshake(conn)
+-		if err != nil {
+-			common.Close(conn)
+-			return nil, E.Cause(err, "encryption handshake")
+-		}
+-	}
+-	if h.xudp {
+-		return h.client.DialEarlyXUDPPacketConn(conn, destination)
+-	} else if h.packetAddr {
+-		if destination.IsDomain() {
+-			return nil, E.New("packetaddr: domain destination is not supported")
+-		}
+-		conn, err := h.client.DialEarlyPacketConn(conn, M.Socksaddr{Fqdn: packetaddr.SeqPacketMagicAddress})
+-		if err != nil {
+-			return nil, err
+-		}
+-		return packetaddr.NewConn(conn, destination), nil
+-	} else {
+-		return h.client.DialEarlyPacketConn(conn, destination)
+-	}
+-}
+-
+-type visionConnWrapper struct {
+-	net.Conn
+-	upstream net.Conn
+-}
+-
+-var (
+-	_ N.ReaderWithUpstream = (*visionConnWrapper)(nil)
+-	_ N.WriterWithUpstream = (*visionConnWrapper)(nil)
+-	_ common.WithUpstream  = (*visionConnWrapper)(nil)
+-)
+-
+-func newVisionConnWrapper(conn net.Conn, upstream net.Conn) net.Conn {
+-	if upstream == nil || conn == nil || conn == upstream {
+-		return conn
+-	}
+-	return &visionConnWrapper{
+-		Conn:     conn,
+-		upstream: upstream,
+-	}
+-}
+-
+-func (c *visionConnWrapper) Upstream() any {
+-	return c.upstream
+-}
+-
+-func (c *visionConnWrapper) ReaderReplaceable() bool {
+-	if replacer, ok := c.Conn.(N.ReaderWithUpstream); ok {
+-		return replacer.ReaderReplaceable()
+-	}
+-	return true
+-}
+-
+-func (c *visionConnWrapper) WriterReplaceable() bool {
+-	if replacer, ok := c.Conn.(N.WriterWithUpstream); ok {
+-		return replacer.WriterReplaceable()
+-	}
+-	return true
+-}
+-
+-func isVisionTLSConn(conn net.Conn) bool {
+-	if conn == nil {
+-		return false
+-	}
+-	if _, ok := conn.(interface{ ConnectionState() stdtls.ConnectionState }); ok {
+-		return true
+-	}
+-	if _, ok := conn.(interface{ Handshake() error }); ok {
+-		return true
+-	}
+-	return false
+-}
+-
+-func findEncryptionLayer(conn net.Conn) net.Conn {
+-	for conn != nil {
+-		if enc, ok := conn.(encryption.EncryptionConn); ok && enc.IsEncryptionLayer() {
+-			return conn
+-		}
+-		if upstream, ok := conn.(common.WithUpstream); ok {
+-			if next := upstream.Upstream(); next != nil {
+-				if nextConn, ok := next.(net.Conn); ok {
+-					conn = nextConn
+-					continue
+-				}
+-			}
+-		}
+-		break
+-	}
+-	return nil
+-}
+-
+-type clientEncryptionConfig struct {
+-	keys    [][]byte
+-	xorMode uint32
+-	seconds uint32
+-	padding string
+-}
+-
+-func parseClientEncryption(raw string) (clientEncryptionConfig, error) {
+-	var cfg clientEncryptionConfig
+-	raw = strings.TrimSpace(raw)
+-	if raw == "" {
+-		return cfg, E.New("empty encryption string")
+-	}
+-	parts := strings.Split(raw, ".")
+-	if len(parts) < 4 {
+-		return cfg, E.New("invalid encryption string: missing components")
+-	}
+-	if parts[0] != "mlkem768x25519plus" {
+-		return cfg, E.New("unsupported encryption prefix: ", parts[0])
+-	}
+-	switch parts[1] {
+-	case "native":
+-		cfg.xorMode = 0
+-	case "xorpub":
+-		cfg.xorMode = 1
+-	case "random":
+-		cfg.xorMode = 2
+-	default:
+-		return cfg, E.New("unknown encryption mode: ", parts[1])
+-	}
+-	switch parts[2] {
+-	case "0rtt":
+-		cfg.seconds = 1
+-	case "1rtt":
+-		cfg.seconds = 0
+-	default:
+-		return cfg, E.New("unsupported encryption RTT value: ", parts[2])
+-	}
+-	paddingPhase := true
+-	var paddingParts []string
+-	for _, segment := range parts[3:] {
+-		segment = strings.TrimSpace(segment)
+-		if segment == "" {
+-			return cfg, E.New("invalid empty segment in encryption string")
+-		}
+-		if data, err := base64.RawURLEncoding.DecodeString(segment); err == nil {
+-			if len(data) == 32 || len(data) == 1184 {
+-				cfg.keys = append(cfg.keys, data)
+-				paddingPhase = false
+-				continue
+-			}
+-			return cfg, E.New("invalid encryption key length: ", len(data))
+-		}
+-		if paddingPhase {
+-			paddingParts = append(paddingParts, segment)
+-			continue
+-		}
+-		return cfg, E.New("invalid encryption key: ", segment)
+-	}
+-	if len(cfg.keys) == 0 {
+-		return cfg, E.New("no valid encryption keys found in encryption string")
+-	}
+-	if len(paddingParts) > 0 {
+-		cfg.padding = strings.Join(paddingParts, ".")
+-	}
+-	return cfg, nil
+-}
+diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
+new file mode 100644
+index 0000000..7972cd4
+--- /dev/null
++++ b/protocol/xraycore/config.go
+@@ -0,0 +1,249 @@
++package xraycore
++
++import (
++	"encoding/base64"
++	"encoding/json"
++	"fmt"
++	"net/url"
++	"strconv"
++	"strings"
++
++	"github.com/sagernet/sing-box/option"
++)
++
++type object = map[string]any
++
++func buildConfig(options option.VLESSOutboundOptions, dialerID string) ([]byte, error) {
++	var outbound object
++	var err error
++	if options.URI != "" {
++		outbound, err = outboundFromURI(options.URI)
++	} else {
++		outbound, err = legacyOutbound(options)
++	}
++	if err != nil {
++		return nil, err
++	}
++	stream := outbound["streamSettings"].(object)
++	protectStream(stream, dialerID)
++	return json.Marshal(object{"outbounds": []any{outbound}})
++}
++
++func protectStream(stream object, dialerID string) {
++	// App-owned socket boundary only; protocol/TLS fields remain core-native.
++	stream["sockopt"] = object{"interface": dialerID}
++	if xhttp, ok := stream["xhttpSettings"].(object); ok {
++		if extra, ok := xhttp["extra"].(object); ok {
++			if download, ok := extra["downloadSettings"].(object); ok {
++				protectStream(download, dialerID)
++			}
++		}
++		if download, ok := xhttp["downloadSettings"].(object); ok {
++			protectStream(download, dialerID)
++		}
++	}
++}
++
++func vlessOutbound(server string, port int, user object, stream object) object {
++	return object{
++		"tag": "proxy", "protocol": "vless",
++		"settings":       object{"vnext": []any{object{"address": server, "port": port, "users": []any{user}}}},
++		"streamSettings": stream,
++	}
++}
++
++func outboundFromURI(raw string) (object, error) {
++	u, err := url.Parse(raw)
++	if err != nil {
++		return nil, fmt.Errorf("invalid VLESS URI syntax")
++	}
++	if !strings.EqualFold(u.Scheme, "vless") || u.User == nil || u.User.Username() == "" || u.Hostname() == "" {
++		return nil, fmt.Errorf("VLESS URI requires a user and server")
++	}
++	q, err := url.ParseQuery(u.RawQuery)
++	if err != nil {
++		return nil, fmt.Errorf("invalid VLESS URI query")
++	}
++	for key, values := range q {
++		if len(values) != 1 {
++			return nil, fmt.Errorf("duplicate VLESS query parameter: %s", key)
++		}
++	}
++	value := func(key, fallback string) string {
++		if q.Has(key) {
++			return q.Get(key)
++		}
++		return fallback
++	}
++	port := 443
++	if u.Port() != "" {
++		port, err = strconv.Atoi(u.Port())
++		if err != nil || port < 1 || port > 65535 {
++			return nil, fmt.Errorf("invalid VLESS server port")
++		}
++	}
++	user := object{"id": u.User.Username(), "encryption": value("encryption", "none")}
++	if q.Has("flow") {
++		user["flow"] = q.Get("flow")
++	}
++	network := value("type", "tcp")
++	security := value("security", "none")
++	stream := object{"network": network, "security": security}
++	if security == "tls" || security == "reality" {
++		tls := object{"serverName": value("sni", u.Hostname()), "fingerprint": value("fp", "chrome")}
++		if q.Has("alpn") {
++			tls["alpn"] = strings.Split(q.Get("alpn"), ",")
++		}
++		if security == "reality" {
++			for from, to := range map[string]string{"pbk": "publicKey", "sid": "shortId", "spx": "spiderX", "pqv": "mldsa65Verify"} {
++				if q.Has(from) {
++					tls[to] = q.Get(from)
++				}
++			}
++		} else {
++			for _, key := range []string{"allowInsecure", "insecure"} {
++				if q.Has(key) {
++					insecure, parseErr := strconv.ParseBool(q.Get(key))
++					if parseErr != nil {
++						return nil, fmt.Errorf("invalid VLESS TLS boolean: %s", key)
++					}
++					tls["allowInsecure"] = insecure
++				}
++			}
++		}
++		stream[security+"Settings"] = tls
++	}
++	transport := object{}
++	switch network {
++	case "tcp", "raw":
++		if q.Get("headerType") != "" && q.Get("headerType") != "none" {
++			transport["header"] = object{"type": q.Get("headerType"), "request": object{
++				"path": []string{value("path", "/")}, "headers": object{"Host": strings.Split(value("host", u.Hostname()), ",")},
++			}}
++		}
++	case "ws", "httpupgrade":
++		transport["path"] = value("path", "/")
++		if network == "ws" {
++			transport["headers"] = object{"Host": q.Get("host")}
++		} else {
++			transport["host"] = q.Get("host")
++		}
++	case "grpc":
++		transport["serviceName"] = q.Get("serviceName")
++		if q.Get("mode") == "multi" {
++			transport["multiMode"] = true
++		}
++		if q.Has("authority") {
++			transport["authority"] = q.Get("authority")
++		}
++	case "xhttp", "splithttp":
++		transport["host"] = q.Get("host")
++		transport["path"] = value("path", "/")
++		transport["mode"] = value("mode", "auto")
++		if q.Has("extra") {
++			extraBytes := []byte(q.Get("extra"))
++			if !json.Valid(extraBytes) {
++				for _, decoder := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
++					if decoded, decodeErr := decoder.DecodeString(q.Get("extra")); decodeErr == nil {
++						extraBytes = decoded
++						break
++					}
++				}
++			}
++			var extra object
++			if json.Unmarshal(extraBytes, &extra) != nil || extra == nil {
++				return nil, fmt.Errorf("invalid VLESS XHTTP extra JSON")
++			}
++			transport["extra"] = extra
++		}
++	case "kcp":
++		transport["seed"] = q.Get("seed")
++		transport["header"] = object{"type": value("headerType", "none")}
++	default:
++		return nil, fmt.Errorf("unsupported VLESS URI transport: %s", network)
++	}
++	key := network
++	if key == "raw" {
++		key = "tcp"
++	}
++	if key == "splithttp" {
++		key = "xhttp"
++	}
++	stream[key+"Settings"] = transport
++	return vlessOutbound(u.Hostname(), port, user, stream), nil
++}
++
++// Existing saved JSON is migrated at the adapter boundary. New imports retain
++// the original URI and never take this compatibility path.
++func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
++	user := object{"id": o.UUID, "encryption": o.Encryption, "flow": o.Flow}
++	if o.Encryption == "" {
++		user["encryption"] = "none"
++	}
++	stream := object{"network": "tcp", "security": "none"}
++	if o.Multiplex != nil && o.Multiplex.Enabled {
++		return nil, fmt.Errorf("legacy sing-box multiplex is not an Xray protocol; reimport the original VLESS link")
++	}
++	if t := o.TLS; t != nil && t.Enabled {
++		tls := object{"serverName": t.ServerName, "allowInsecure": t.Insecure, "alpn": t.ALPN}
++		if t.UTLS != nil && t.UTLS.Enabled {
++			tls["fingerprint"] = t.UTLS.Fingerprint
++		}
++		security := "tls"
++		if t.Reality != nil && t.Reality.Enabled {
++			security = "reality"
++			tls["publicKey"] = t.Reality.PublicKey
++			tls["shortId"] = t.Reality.ShortID
++		}
++		if t.DisableSNI || len(t.Certificate) > 0 || t.CertificatePath != "" ||
++			len(t.CertificatePublicKeySHA256) > 0 || t.ECH != nil || len(t.ClientCertificate) > 0 || t.ClientCertificatePath != "" {
++			return nil, fmt.Errorf("legacy VLESS TLS extensions require the original VLESS link or native Xray configuration")
++		}
++		if t.MinVersion != "" {
++			tls["minVersion"] = t.MinVersion
++		}
++		if t.MaxVersion != "" {
++			tls["maxVersion"] = t.MaxVersion
++		}
++		stream["security"] = security
++		stream[security+"Settings"] = tls
++	}
++	if t := o.Transport; t != nil {
++		var settings object
++		switch t.Type {
++		case "ws":
++			settings = object{"path": t.WebsocketOptions.Path, "headers": t.WebsocketOptions.Headers.Build()}
++		case "httpupgrade":
++			settings = object{"path": t.HTTPUpgradeOptions.Path, "host": t.HTTPUpgradeOptions.Host}
++		case "grpc":
++			settings = object{"serviceName": t.GRPCOptions.ServiceName}
++		case "xhttp":
++			data, err := json.Marshal(t)
++			if err != nil {
++				return nil, err
++			}
++			var legacy object
++			if err = json.Unmarshal(data, &legacy); err != nil {
++				return nil, err
++			}
++			settings = object{}
++			for key, value := range legacy {
++				if key == "type" {
++					continue
++				}
++				pieces := strings.Split(key, "_")
++				for i := 1; i < len(pieces); i++ {
++					if pieces[i] != "" {
++						pieces[i] = strings.ToUpper(pieces[i][:1]) + pieces[i][1:]
++					}
++				}
++				settings[strings.Join(pieces, "")] = value
++			}
++		default:
++			return nil, fmt.Errorf("legacy VLESS transport %s requires the original link", t.Type)
++		}
++		stream["network"] = t.Type
++		stream[t.Type+"Settings"] = settings
++	}
++	return vlessOutbound(o.Server, int(o.ServerPort), user, stream), nil
++}
+diff --git a/protocol/xraycore/outbound.go b/protocol/xraycore/outbound.go
+new file mode 100644
+index 0000000..b94d63b
+--- /dev/null
++++ b/protocol/xraycore/outbound.go
+@@ -0,0 +1,283 @@
++// Package xraycore delegates VLESS and its transports to the official Xray core.
++// sing-box owns routing and all underlying socket creation. No second TUN or
++// localhost proxy is needed inside Android.
++package xraycore
++
++import (
++	"bytes"
++	"context"
++	"fmt"
++	"net"
++	"net/netip"
++	"os"
++	"sync"
++	"sync/atomic"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/common/dialer"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++	xlog "github.com/xtls/xray-core/common/log"
++	xnet "github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/infra/conf/serial"
++	"github.com/xtls/xray-core/transport/internet"
++
++	_ "github.com/xtls/xray-core/app/dispatcher"
++	_ "github.com/xtls/xray-core/app/policy"
++	_ "github.com/xtls/xray-core/app/proxyman/inbound"
++	_ "github.com/xtls/xray-core/app/proxyman/outbound"
++	_ "github.com/xtls/xray-core/proxy/vless/outbound"
++	_ "github.com/xtls/xray-core/transport/internet/grpc"
++	_ "github.com/xtls/xray-core/transport/internet/headers/http"
++	_ "github.com/xtls/xray-core/transport/internet/headers/noop"
++	_ "github.com/xtls/xray-core/transport/internet/httpupgrade"
++	_ "github.com/xtls/xray-core/transport/internet/kcp"
++	_ "github.com/xtls/xray-core/transport/internet/reality"
++	_ "github.com/xtls/xray-core/transport/internet/splithttp"
++	_ "github.com/xtls/xray-core/transport/internet/tcp"
++	_ "github.com/xtls/xray-core/transport/internet/tls"
++	_ "github.com/xtls/xray-core/transport/internet/udp"
++	_ "github.com/xtls/xray-core/transport/internet/websocket"
++)
++
++var protectedDialers sync.Map
++var nextDialerID atomic.Uint64
++var logFactories = struct {
++	sync.Mutex
++	refs map[log.Factory]int
++}{refs: make(map[log.Factory]int)}
++
++func init() {
++	// Install once. Never swap the global dialer during a connection/transition.
++	internet.UseAlternativeSystemDialer(protectedSystemDialer{})
++	xlog.RegisterHandler(coreLogHandler{})
++}
++
++func RegisterOutbound(registry *outbound.Registry) {
++	outbound.Register[option.VLESSOutboundOptions](registry, C.TypeVLESS, NewOutbound)
++}
++
++type Outbound struct {
++	outbound.Adapter
++	instance  *core.Instance
++	logger    log.ContextLogger
++	factory   log.Factory
++	dialerID  string
++	ctx       context.Context
++	cancel    context.CancelFunc
++	closeOnce sync.Once
++	closed    atomic.Bool
++}
++
++func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.VLESSOutboundOptions) (adapter.Outbound, error) {
++	protected, err := dialer.New(ctx, options.DialerOptions, true)
++	if err != nil {
++		return nil, err
++	}
++	id := fmt.Sprintf("zapret-xray-%d", nextDialerID.Add(1))
++	configBytes, err := buildConfig(options, id)
++	if err != nil {
++		return nil, err
++	}
++	document, err := serial.DecodeJSONConfig(bytes.NewReader(configBytes))
++	if err != nil {
++		return nil, err
++	}
++	config, err := document.Build()
++	if err != nil {
++		return nil, err
++	}
++	// Xray's process-global console logger must not replace the app observer.
++	apps := config.App[:0]
++	for _, app := range config.App {
++		if app.Type != "xray.app.log.Config" {
++			apps = append(apps, app)
++		}
++	}
++	config.App = apps
++	factory := service.FromContext[log.Factory](ctx)
++	if factory != nil {
++		logFactories.Lock()
++		logFactories.refs[factory]++
++		logFactories.Unlock()
++	}
++	ownedContext, cancel := context.WithCancel(ctx)
++	protectedDialers.Store(id, ownedDialer{dialer: protected, ctx: ownedContext})
++	instance, err := core.NewWithContext(ownedContext, config)
++	if err != nil {
++		cancel()
++		protectedDialers.Delete(id)
++		releaseLogger(factory)
++		return nil, err
++	}
++	return &Outbound{
++		Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeVLESS, tag, options.Network.Build(), options.DialerOptions),
++		instance: instance, logger: logger, factory: factory, dialerID: id, ctx: ownedContext, cancel: cancel,
++	}, nil
++}
++
++func (h *Outbound) Start(stage adapter.StartStage) error {
++	if stage != adapter.StartStateStart {
++		return nil
++	}
++	if h.closed.Load() {
++		return os.ErrClosed
++	}
++	return h.instance.Start()
++}
++
++func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	if h.closed.Load() {
++		return nil, os.ErrClosed
++	}
++	dest, err := xnet.ParseDestination(network + ":" + destination.String())
++	if err != nil {
++		return nil, err
++	}
++	conn, err := core.Dial(ctx, h.instance, dest)
++	if err != nil {
++		h.logger.ErrorContext(ctx, err)
++	}
++	return conn, err
++}
++
++func (h *Outbound) ListenPacket(ctx context.Context, _ M.Socksaddr) (net.PacketConn, error) {
++	if h.closed.Load() {
++		return nil, os.ErrClosed
++	}
++	conn, err := core.DialUDP(ctx, h.instance)
++	if err != nil {
++		h.logger.ErrorContext(ctx, err)
++		return nil, err
++	}
++	return &ownedPacketConn{PacketConn: conn, stop: context.AfterFunc(h.ctx, func() { _ = conn.Close() })}, nil
++}
++
++func (h *Outbound) Close() error {
++	var err error
++	h.closeOnce.Do(func() {
++		h.closed.Store(true)
++		h.cancel()
++		protectedDialers.Delete(h.dialerID)
++		err = h.instance.Close()
++		releaseLogger(h.factory)
++	})
++	return err
++}
++
++type protectedSystemDialer struct{}
++
++type ownedDialer struct {
++	dialer N.Dialer
++	ctx    context.Context
++}
++
++type ownedConn struct {
++	net.Conn
++	stop func() bool
++}
++
++type ownedPacketConn struct {
++	net.PacketConn
++	stop func() bool
++}
++
++func (c *ownedPacketConn) Close() error {
++	c.stop()
++	return c.PacketConn.Close()
++}
++
++func (c *ownedConn) Close() error {
++	c.stop()
++	return c.Conn.Close()
++}
++
++func (protectedSystemDialer) Dial(ctx context.Context, _ xnet.Address, destination xnet.Destination, socket *internet.SocketConfig) (net.Conn, error) {
++	if socket == nil {
++		return nil, fmt.Errorf("Xray socket has no protected dialer identity")
++	}
++	value, ok := protectedDialers.Load(socket.Interface)
++	if !ok {
++		return nil, fmt.Errorf("Xray protected dialer is closed or missing")
++	}
++	// Includes XHTTP alternate endpoints and all UDP sockets: even a cancelled
++	// or stale Xray callback can never fall back to an unprotected system socket.
++	owner := value.(ownedDialer)
++	if err := owner.ctx.Err(); err != nil {
++		return nil, err
++	}
++	dialContext, cancel := context.WithCancel(ctx)
++	stop := context.AfterFunc(owner.ctx, cancel)
++	defer stop()
++	defer cancel()
++	target := M.ParseSocksaddr(destination.NetAddr())
++	if destination.Network == xnet.Network_UDP {
++		var conn net.PacketConn
++		var err error
++		if resolver, ok := owner.dialer.(interface {
++			ListenPacketWithDestination(context.Context, M.Socksaddr) (net.PacketConn, netip.Addr, error)
++		}); ok {
++			var address netip.Addr
++			conn, address, err = resolver.ListenPacketWithDestination(dialContext, target)
++			target = M.SocksaddrFrom(address, target.Port)
++		} else if target.IsDomain() {
++			return nil, fmt.Errorf("Xray UDP transport requires a protected domain resolver")
++		} else {
++			conn, err = owner.dialer.ListenPacket(dialContext, target)
++		}
++		if err != nil {
++			return nil, err
++		}
++		owned := &ownedPacketConn{PacketConn: conn, stop: context.AfterFunc(owner.ctx, func() { _ = conn.Close() })}
++		return &internet.PacketConnWrapper{PacketConn: owned, Dest: target.UDPAddr()}, nil
++	}
++	conn, err := owner.dialer.DialContext(dialContext, destination.Network.SystemString(), target)
++	if err != nil {
++		return nil, err
++	}
++	return &ownedConn{Conn: conn, stop: context.AfterFunc(owner.ctx, func() { _ = conn.Close() })}, nil
++}
++func (protectedSystemDialer) DestIpAddress() net.IP { return nil }
++
++func releaseLogger(factory log.Factory) {
++	if factory == nil {
++		return
++	}
++	logFactories.Lock()
++	defer logFactories.Unlock()
++	logFactories.refs[factory]--
++	if logFactories.refs[factory] <= 0 {
++		delete(logFactories.refs, factory)
++	}
++}
++
++// Global Xray messages have no trustworthy target identity. Preserve them as
++// component evidence; never attach them to whichever selector target is current.
++type coreLogHandler struct{}
++
++func (coreLogHandler) Handle(message xlog.Message) {
++	general, ok := message.(*xlog.GeneralMessage)
++	if !ok || general.Severity > xlog.Severity_Warning {
++		return
++	}
++	logFactories.Lock()
++	factories := make([]log.Factory, 0, len(logFactories.refs))
++	for factory := range logFactories.refs {
++		factories = append(factories, factory)
++	}
++	logFactories.Unlock()
++	for _, factory := range factories {
++		logger := factory.NewLogger("xray")
++		if general.Severity <= xlog.Severity_Error {
++			logger.Error(message.String())
++		} else {
++			logger.Warn(message.String())
++		}
++	}
++}
+diff --git a/protocol/xraycore/outbound_test.go b/protocol/xraycore/outbound_test.go
+new file mode 100644
+index 0000000..e222a99
+--- /dev/null
++++ b/protocol/xraycore/outbound_test.go
+@@ -0,0 +1,93 @@
++package xraycore
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"os"
++	"testing"
++	"time"
++
++	M "github.com/sagernet/sing/common/metadata"
++	xnet "github.com/xtls/xray-core/common/net"
++	"github.com/xtls/xray-core/transport/internet"
++)
++
++type loopbackDialer struct{}
++
++func (loopbackDialer) DialContext(ctx context.Context, network string, target M.Socksaddr) (net.Conn, error) {
++	return (&net.Dialer{}).DialContext(ctx, network, target.String())
++}
++
++func (loopbackDialer) ListenPacket(ctx context.Context, target M.Socksaddr) (net.PacketConn, error) {
++	return (&net.ListenConfig{}).ListenPacket(ctx, "udp4", "127.0.0.1:0")
++}
++
++func TestProtectedDialerRejectsMissingAndClosedOwner(t *testing.T) {
++	destination := xnet.TCPDestination(xnet.LocalHostIP, 1)
++	d := protectedSystemDialer{}
++	if _, err := d.Dial(context.Background(), nil, destination, nil); err == nil {
++		t.Fatal("socket without ownership accepted")
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	protectedDialers.Store(t.Name(), ownedDialer{dialer: loopbackDialer{}, ctx: ctx})
++	defer protectedDialers.Delete(t.Name())
++	cancel()
++	_, err := d.Dial(context.Background(), nil, destination, &internet.SocketConfig{Interface: t.Name()})
++	if !errors.Is(err, context.Canceled) {
++		t.Fatalf("closed owner: %v", err)
++	}
++}
++
++func TestProtectedUDPHasNativePacketShapeAndNumericPeer(t *testing.T) {
++	remote, err := net.ListenPacket("udp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer remote.Close()
++	ctx, cancel := context.WithCancel(context.Background())
++	defer cancel()
++	protectedDialers.Store(t.Name(), ownedDialer{dialer: loopbackDialer{}, ctx: ctx})
++	defer protectedDialers.Delete(t.Name())
++	destination := xnet.DestinationFromAddr(remote.LocalAddr())
++	conn, err := (protectedSystemDialer{}).Dial(ctx, nil, destination, &internet.SocketConfig{Interface: t.Name()})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	if _, ok := conn.(*internet.PacketConnWrapper); !ok {
++		t.Fatalf("Xray transport cannot use %T", conn)
++	}
++	_ = conn.SetDeadline(time.Now().Add(time.Second))
++	_ = remote.SetDeadline(time.Now().Add(time.Second))
++	if _, err = conn.Write([]byte("query")); err != nil {
++		t.Fatal(err)
++	}
++	buffer := make([]byte, 32)
++	_, peer, err := remote.ReadFrom(buffer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = remote.WriteTo([]byte("reply"), peer); err != nil {
++		t.Fatal(err)
++	}
++	n, err := conn.Read(buffer)
++	if err != nil || string(buffer[:n]) != "reply" {
++		t.Fatalf("response: %q %v", buffer[:n], err)
++	}
++	if conn.RemoteAddr().String() != remote.LocalAddr().String() {
++		t.Fatal("peer changed at core boundary")
++	}
++	cancel()
++	done := make(chan error, 1)
++	go func() { _, err := conn.Read(buffer); done <- err }()
++	select {
++	case err := <-done:
++		if !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.EOF) {
++			t.Fatalf("close did not terminate socket: %v", err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("socket survived owner cancellation")
++	}
++}
+diff --git a/protocol/xraycore/prepare.sh b/protocol/xraycore/prepare.sh
+new file mode 100644
+index 0000000..2ce5a42
+--- /dev/null
++++ b/protocol/xraycore/prepare.sh
+@@ -0,0 +1,22 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++# The only local Xray change is logger interface integration with the pinned
++# sing fork. Protocol code is copied unchanged from the verified upstream module.
++source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
++module="$1"
++expected_commit="$2"
++destination="$source_root/third_party/xray-core"
++[[ ! -e "$destination" ]] || { echo "Xray source already exists: $destination" >&2; exit 1; }
++metadata="$(go mod download -json "$module")"
++[[ "$(jq -r '.Origin.Hash' <<< "$metadata")" == "$expected_commit" ]]
++[[ "$(jq -r '.Path + "@" + .Version' <<< "$metadata")" == "$module" ]]
++module_dir="$(jq -r '.Dir' <<< "$metadata")"
++[[ -f "$module_dir/go.mod" && -f "$module_dir/LICENSE" ]]
++mkdir -p "$source_root/third_party"
++temporary="$(mktemp -d "$source_root/third_party/xray-prepare.XXXXXXXX")"
++trap 'rm -rf -- "$temporary"' EXIT
++cp -a "$module_dir/." "$temporary/"
++chmod -R u+w "$temporary"
++git -C "$source_root" apply --directory="${temporary#"$source_root/"}" "$source_root/protocol/xraycore/logger.patch"
++mv "$temporary" "$destination"
+diff --git a/protocol/xraycore/logger.patch b/protocol/xraycore/logger.patch
+new file mode 100644
+index 0000000..b8c14da
+--- /dev/null
++++ b/protocol/xraycore/logger.patch
+@@ -0,0 +1,26 @@
++diff --git a/common/singbridge/logger.go b/common/singbridge/logger.go
++index 16ff29c..1c45e44 100644
++--- a/common/singbridge/logger.go
+++++ b/common/singbridge/logger.go
++@@ -30,6 +30,10 @@ func (l *XrayLogger) Info(args ...any) {
++ 	errors.LogInfo(context.Background(), args...)
++ }
++ 
+++func (l *XrayLogger) Notice(args ...any) {
+++	errors.LogInfo(context.Background(), args...)
+++}
+++
++ func (l *XrayLogger) Warn(args ...any) {
++ 	errors.LogWarning(context.Background(), args...)
++ }
++@@ -55,6 +59,10 @@ func (l *XrayLogger) InfoContext(ctx context.Context, args ...any) {
++ 	errors.LogInfo(ctx, args...)
++ }
++ 
+++func (l *XrayLogger) NoticeContext(ctx context.Context, args ...any) {
+++	errors.LogInfo(ctx, args...)
+++}
+++
++ func (l *XrayLogger) WarnContext(ctx context.Context, args ...any) {
++ 	errors.LogWarning(ctx, args...)
++ }
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index a675b56..941ab13 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -362,13 +362,12 @@ func (s *StartedService) SubscribeLog(empty *emptypb.Empty, server grpc.ServerSt
+ 
+ func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.Empty) (*DefaultLogLevel, error) {
+ 	s.serviceAccess.RLock()
+-	switch s.serviceStatus.Status {
+-	case ServiceStatus_STARTING, ServiceStatus_STARTED:
+-	default:
+-		s.serviceAccess.RUnlock()
+-		return nil, os.ErrInvalid
++	defer s.serviceAccess.RUnlock()
++	// CommandLog must be usable before startup so config/start errors are not
++	// lost. This is display metadata, not a runtime readiness assertion.
++	if s.instance == nil || s.instance.instance == nil {
++		return &DefaultLogLevel{Level: LogLevel(log.LevelInfo)}, nil
+ 	}
+ 	logLevel := s.instance.instance.LogFactory().Level()
+-	s.serviceAccess.RUnlock()
+ 	return &DefaultLogLevel{Level: LogLevel(logLevel)}, nil
+ }

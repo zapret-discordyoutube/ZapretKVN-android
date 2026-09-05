@@ -52,6 +52,7 @@ object ProtocolOutboundBuilders {
         serverPort: Int,
         uuid: String,
         encryption: String = "none",
+        uri: String? = null,
         flow: String? = null,
         tls: TlsSettings = TlsSettings(),
         transport: TransportSettings? = null,
@@ -60,6 +61,7 @@ object ProtocolOutboundBuilders {
         identityKey = identity("vless", server, serverPort, transport),
         outbound = buildJsonObject {
             put("type", "vless")
+            uri?.let { put("uri", it) }
             put("server", server)
             put("server_port", serverPort)
             put("uuid", uuid)
