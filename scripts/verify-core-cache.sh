@@ -50,6 +50,7 @@ grep -Fqx "CORE_TAG=$CORE_TAG" "$LIBBOX_PROPERTIES"
 grep -Fqx "CORE_COMMIT=$CORE_COMMIT" "$LIBBOX_PROPERTIES"
 grep -Fqx "CORE_PATCH_FILE=$CORE_PATCH_FILE" "$LIBBOX_PROPERTIES"
 grep -Fqx "CORE_PATCH_SHA256=$CORE_PATCH_SHA256" "$LIBBOX_PROPERTIES"
+grep -Fqx "CORE_UDP_PATCH_SHA256=$CORE_UDP_PATCH_SHA256" "$LIBBOX_PROPERTIES"
 grep -Fqx "HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG" "$LIBBOX_PROPERTIES"
 grep -Fqx "HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT" "$LIBBOX_PROPERTIES"
 grep -Fqx "XRAY_CORE_MODULE=$XRAY_CORE_MODULE" "$LIBBOX_PROPERTIES"
@@ -69,6 +70,7 @@ jq -e \
     --arg commit "$CORE_COMMIT" \
     --arg patch_file "$CORE_PATCH_FILE" \
     --arg patch_sha256 "$CORE_PATCH_SHA256" \
+    --arg udp_patch_sha256 "$CORE_UDP_PATCH_SHA256" \
     --arg hysteria_core_tag "$HYSTERIA_CORE_TAG" \
     --arg hysteria_core_commit "$HYSTERIA_CORE_COMMIT" \
     --arg xray_core_module "$XRAY_CORE_MODULE" \
@@ -81,6 +83,7 @@ jq -e \
      .commit == $commit and
      .patch_file == $patch_file and
      .patch_sha256 == $patch_sha256 and
+     .udp_patch_sha256 == $udp_patch_sha256 and
      .hysteria_core_tag == $hysteria_core_tag and
      .hysteria_core_commit == $hysteria_core_commit and
      .xray_core_module == $xray_core_module and

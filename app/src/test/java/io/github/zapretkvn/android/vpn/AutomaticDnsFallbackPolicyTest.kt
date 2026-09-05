@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.vpn
 
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.network.probes.VpnDnsHealthException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows

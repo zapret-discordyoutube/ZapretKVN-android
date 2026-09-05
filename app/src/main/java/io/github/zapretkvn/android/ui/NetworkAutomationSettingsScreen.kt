@@ -39,10 +39,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import io.github.zapretkvn.android.network.CurrentWifiSsidReader
+import io.github.zapretkvn.android.network.NetworkAutomationSettings
+import io.github.zapretkvn.android.network.TrustedWifiName
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
-import io.github.zapretkvn.android.vpn.CurrentWifiSsidReader
-import io.github.zapretkvn.android.vpn.NetworkAutomationSettings
-import io.github.zapretkvn.android.vpn.TrustedWifiName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

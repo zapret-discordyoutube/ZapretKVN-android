@@ -128,6 +128,7 @@ cleanup_source_artifacts() {
     rm -f "$SOURCE_DIR/protocol/xraycore/zapret_integration_test.go"
     rm -f "$SOURCE_DIR/daemon/zapret_observer_test.go"
     if [[ "$CORE_PATCH_APPLIED" == true ]]; then
+        restore_sing_udp_dependency "$SOURCE_DIR"
         rm -rf -- "$SOURCE_DIR/third_party/xray-core"
         reverse_core_patchset "$PROJECT_ROOT" "$SOURCE_DIR"
         CORE_PATCH_APPLIED=false
@@ -138,6 +139,9 @@ cleanup_source_artifacts
 apply_core_patchset "$PROJECT_ROOT" "$SOURCE_DIR"
 CORE_PATCH_APPLIED=true
 bash "$SOURCE_DIR/protocol/xraycore/prepare.sh" "$XRAY_CORE_MODULE" "$XRAY_CORE_COMMIT"
+prepare_sing_udp_dependency "$PROJECT_ROOT" "$SOURCE_DIR"
+go test github.com/sagernet/sing/common/network -run '^TestZapret' -count=1
+go test -tags with_low_memory github.com/sagernet/sing/common/network -run '^TestZapret' -count=1
 
 for expected_module in "$ANDROID_WIREGUARD_GO" "$ANDROID_AMNEZIAWG_GO"; do
     module_path="${expected_module%@*}"
@@ -241,6 +245,7 @@ cat > "$OUTPUT_DIR/core-build-metadata.json" <<EOF
   "commit": "$CORE_COMMIT",
   "patch_file": "$CORE_PATCH_FILE",
   "patch_sha256": "$CORE_PATCH_SHA256",
+  "udp_patch_sha256": "$CORE_UDP_PATCH_SHA256",
   "hysteria_core_tag": "$HYSTERIA_CORE_TAG",
   "hysteria_core_commit": "$HYSTERIA_CORE_COMMIT",
   "xray_core_module": "$XRAY_CORE_MODULE",
@@ -261,6 +266,7 @@ CORE_TAG=$CORE_TAG
 CORE_COMMIT=$CORE_COMMIT
 CORE_PATCH_FILE=$CORE_PATCH_FILE
 CORE_PATCH_SHA256=$CORE_PATCH_SHA256
+CORE_UDP_PATCH_SHA256=$CORE_UDP_PATCH_SHA256
 HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG
 HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT
 XRAY_CORE_MODULE=$XRAY_CORE_MODULE
@@ -277,6 +283,7 @@ EOF
         libbox.aar \
         core-version.txt \
         core-build-metadata.json \
+        sing-udp-provenance.json \
         rule-set-benchmark.txt \
         sing-box-extended-LICENSE.txt \
         > SHA256SUMS

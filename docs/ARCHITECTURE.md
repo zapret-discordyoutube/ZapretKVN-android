@@ -1,5 +1,7 @@
 # Zapret KVN Android — главный план архитектуры
 
+Актуальная карта пакетов обеих платформ: [структура исходников](SOURCE_LAYOUT.md).
+
 > **Читать первым.** Это главный документ для человека или ИИ, продолжающего проект. Он фиксирует границы MVP, владельцев данных, порядок реализации и запрещённые усложнения. Детали сетевой политики находятся в [ROUTING_ARCHITECTURE.md](ROUTING_ARCHITECTURE.md), детали DNS и Android VPN — в [DNS_ARCHITECTURE.md](DNS_ARCHITECTURE.md), rootless hardening — в [VPN_HIDING_ARCHITECTURE.md](VPN_HIDING_ARCHITECTURE.md), границы входных форматов — в [IMPORT_FORMATS.md](IMPORT_FORMATS.md), рабочие TODO и gates — в [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 | Поле | Значение |

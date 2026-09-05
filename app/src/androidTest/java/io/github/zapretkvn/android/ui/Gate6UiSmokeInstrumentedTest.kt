@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
-import io.github.zapretkvn.android.vpn.AppScopeMode
+import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking

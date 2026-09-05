@@ -9,14 +9,12 @@ import androidx.core.content.FileProvider
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.network.DefaultNetworkMonitor
+import io.github.zapretkvn.android.network.PrivateDnsMode
+import io.github.zapretkvn.android.network.UnderlyingNetworkState
 import io.github.zapretkvn.android.ui.UiSettingsStore
-import io.github.zapretkvn.android.vpn.DefaultNetworkMonitor
-import io.github.zapretkvn.android.vpn.PrivateDnsMode
-import io.github.zapretkvn.android.vpn.UnderlyingNetworkState
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
-import io.github.zapretkvn.android.vpn.VpnRuntimeMetrics
-import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,8 +30,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -122,6 +120,7 @@ class DiagnosticExporter(
                     put("tag", BuildConfig.CORE_TAG)
                     put("revision", BuildConfig.CORE_COMMIT)
                     put("patch_sha256", BuildConfig.CORE_PATCH_SHA256)
+                    put("udp_patch_sha256", BuildConfig.CORE_UDP_PATCH_SHA256)
                     put(
                         "hysteria2",
                         buildJsonObject {

@@ -5,12 +5,12 @@ import android.content.Context
 import android.content.Intent
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
+import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.profiles.ProfileSource
-import io.github.zapretkvn.android.vpn.AppScopeMode
 import io.github.zapretkvn.android.vpn.VpnConnectionState
-import io.github.zapretkvn.android.vpn.VpnRuntimeMetrics
-import io.github.zapretkvn.android.vpn.VpnTestHooks
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

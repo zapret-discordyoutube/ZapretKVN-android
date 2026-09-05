@@ -1,5 +1,16 @@
 package io.github.zapretkvn.android.vpn
 
+import io.github.zapretkvn.android.apps.AppCatalogSnapshot
+import io.github.zapretkvn.android.apps.AppDiscoveryCompleteness
+import io.github.zapretkvn.android.apps.AppDiscoveryCoordinator
+import io.github.zapretkvn.android.apps.AppDiscoveryReport
+import io.github.zapretkvn.android.apps.AppDiscoverySource
+import io.github.zapretkvn.android.apps.AppDiscoverySourceId
+import io.github.zapretkvn.android.apps.AppDiscoverySourceOutcome
+import io.github.zapretkvn.android.apps.AppDiscoverySourceReport
+import io.github.zapretkvn.android.apps.AppDiscoverySummary
+import io.github.zapretkvn.android.apps.DiscoveredApplication
+import io.github.zapretkvn.android.apps.NamedAppDiscoverySource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

@@ -71,6 +71,7 @@ object WireGuardConfigParser {
         val awg3 = amnezia?.keys?.any { it in AWG3_JSON_KEYS } == true
         val awg2 = amnezia?.keys?.any { it in AWG2_KEYS } == true
         val protocol = when {
+            amnezia?.keys?.any { it in AWG31_BOOLEAN_KEYS.values } == true -> "AmneziaWG 3.1"
             awg3 -> "AmneziaWG 3.0"
             awg2 -> "AmneziaWG 2.0"
             amnezia != null -> "AmneziaWG"
@@ -132,7 +133,7 @@ object WireGuardConfigParser {
                 throw WireGuardImportException("Некорректное имя параметра в строке $lineNumber.")
             }
             val value = line.substring(separator + 1).trim()
-            current.getOrPut(originalKey.lowercase()) { mutableListOf() }
+            current.getOrPut(originalKey.lowercase().replace("_", "")) { mutableListOf() }
                 .add(IniValue(value, originalKey, lineNumber))
         }
         if (!seenInterface) throw WireGuardImportException("В конфигурации отсутствует секция [Interface].")
@@ -151,7 +152,8 @@ object WireGuardConfigParser {
         }.distinct()
         val endpoint = values.single("endpoint")?.let(::parseEndpoint)
         val keepalive = values.single("persistentkeepalive")?.let {
-            parseInt(it, "PersistentKeepalive", 0..65535).takeIf { value -> value != 0 }
+            if (it.value.equals("off", ignoreCase = true)) JsonPrimitive(0)
+            else parseHeaderRange(it.value, "PersistentKeepalive")
         }
         return WireGuardPeer(
             address = endpoint?.first,
@@ -165,16 +167,18 @@ object WireGuardConfigParser {
 
     private fun parseAmnezia(values: ValueMap): Map<String, JsonElement>? {
         val result = linkedMapOf<String, JsonElement>()
-        val integers = linkedMapOf<String, Int>()
+        val integers = linkedMapOf<String, Long>()
         AWG_INTEGER_KEYS.forEach { key ->
             values.single(key)?.let { raw ->
-                val value = parseInt(raw, raw.originalKey, 0..MAX_AWG_INTEGER)
+                val maximum = if (key.startsWith("s")) 65_535L else 0xFFFF_FFFFL
+                val value = raw.value.toLongOrNull()?.takeIf { it in 0..maximum }
+                    ?: throw WireGuardImportException("${raw.originalKey} должен быть числом от 0 до $maximum.")
                 integers[key] = value
-                if (value != 0) result[key] = JsonPrimitive(value)
+                result[key] = JsonPrimitive(value)
             }
         }
-        val jMin = integers["jmin"] ?: 0
-        val jMax = integers["jmax"] ?: 0
+        val jMin = integers["jmin"] ?: 0L
+        val jMax = integers["jmax"] ?: 0L
         if (jMin > jMax) {
             throw WireGuardImportException("Jmin не может быть больше Jmax.")
         }
@@ -199,6 +203,16 @@ object WireGuardConfigParser {
         AWG3_RANGE_KEYS.forEach { (iniKey, jsonKey) ->
             values.single(iniKey)?.value?.takeIf(String::isNotBlank)?.let { value ->
                 result[jsonKey] = parseHeaderRange(value, checkNotNull(AWG3_CONF_NAMES[iniKey]))
+            }
+        }
+        AWG31_BOOLEAN_KEYS.forEach { (iniKey, jsonKey) ->
+            values.single(iniKey)?.let { raw ->
+                val value = when (raw.value.lowercase()) {
+                    "true", "t", "1", "on" -> true
+                    "false", "f", "0", "off" -> false
+                    else -> throw WireGuardImportException("${raw.originalKey} должен быть true или false.")
+                }
+                result[jsonKey] = JsonPrimitive(value)
             }
         }
         return result.takeIf { it.isNotEmpty() }
@@ -356,6 +370,9 @@ object WireGuardConfigParser {
     private fun parseHeaderRange(value: String, name: String): JsonPrimitive {
         val parts = value.split('-')
         if (parts.size !in 1..2) throw WireGuardImportException("$name должен быть числом или диапазоном A-B.")
+        if (parts.any { part -> part.isEmpty() || part.any { it !in '0'..'9' } }) {
+            throw WireGuardImportException("$name должен содержать только цифры ASCII и разделитель диапазона.")
+        }
         val bounds = parts.map { it.toULongOrNull()?.takeIf { number -> number <= UInt.MAX_VALUE.toULong() } }
         if (bounds.any { it == null }) throw WireGuardImportException("$name выходит за диапазон UInt32.")
         if (parts.size == 2 && checkNotNull(bounds[0]) > checkNotNull(bounds[1])) {
@@ -524,7 +541,7 @@ object WireGuardConfigParser {
         val publicKey: String,
         val preSharedKey: String?,
         val allowedIPs: List<String>,
-        val persistentKeepalive: Int?,
+        val persistentKeepalive: JsonElement?,
     )
 
     private data class IniValue(val value: String, val originalKey: String, val lineNumber: Int)
@@ -597,7 +614,8 @@ object WireGuardConfigParser {
         "keepalivetimeout" to "KeepaliveTimeout",
         "maxhandshakeattempts" to "MaxHandshakeAttempts",
     )
-    private val AWG3_JSON_KEYS = setOf("header_protection_key") + AWG3_RANGE_KEYS.values
+    private val AWG31_BOOLEAN_KEYS = mapOf("randomtrailers" to "random_trailers", "disablecookies" to "disable_cookies")
+    private val AWG3_JSON_KEYS = setOf("header_protection_key") + AWG3_RANGE_KEYS.values + AWG31_BOOLEAN_KEYS.values
     private val SUPPORTED_INTERFACE_KEYS = setOf(
         "address",
         "dns",
@@ -605,7 +623,7 @@ object WireGuardConfigParser {
         "mtu",
         "privatekey",
         AWG3_HEADER_PROTECTION_KEY,
-    ) + AWG_INTEGER_KEYS + AWG_HEADER_KEYS + AWG2_KEYS + AWG3_RANGE_KEYS.keys
+    ) + AWG_INTEGER_KEYS + AWG_HEADER_KEYS + AWG2_KEYS + AWG3_RANGE_KEYS.keys + AWG31_BOOLEAN_KEYS.keys
     private val SUPPORTED_PEER_KEYS = setOf(
         "allowedips",
         "endpoint",
@@ -619,8 +637,7 @@ object WireGuardConfigParser {
     // Official Amnezia uses this conservative default for WireGuard/AWG on Android.
     // It is the inner WireGuard MTU, independent from the outer Android TUN MTU.
     private const val ANDROID_WIREGUARD_MTU = 1280
-    private const val MAX_AWG_INTEGER = 65_535
-    private const val MAX_AWG_STRING_LENGTH = 5 * 1024
+    private const val MAX_AWG_STRING_LENGTH = 65_531
     private const val MAX_OBFUSCATION_SIZE = 65_535
 
     private val JSON = Json {

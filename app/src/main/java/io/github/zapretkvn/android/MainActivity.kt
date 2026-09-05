@@ -2,37 +2,37 @@ package io.github.zapretkvn.android
 
 import android.Manifest
 import android.app.Activity
-import android.content.pm.PackageManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
-import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
+import io.github.zapretkvn.android.apps.AppsViewModel
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.routing.RoutingViewModel
-import io.github.zapretkvn.android.ui.ZapretApp
 import io.github.zapretkvn.android.ui.ThemeMode
+import io.github.zapretkvn.android.ui.ZapretApp
 import io.github.zapretkvn.android.ui.theme.ZapretTheme
 import io.github.zapretkvn.android.updates.UpdateState
-import io.github.zapretkvn.android.vpn.AppsViewModel
-import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.VpnConnectionState
+import io.github.zapretkvn.android.vpn.VpnController
 
 class MainActivity : ComponentActivity() {
     private val vpnController: VpnController

@@ -10,10 +10,10 @@ import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.config.OutboundDescription
-import io.github.zapretkvn.android.vpn.PrivateDnsMode
-import io.github.zapretkvn.android.vpn.UnderlyingNetworkState
+import io.github.zapretkvn.android.network.PrivateDnsMode
+import io.github.zapretkvn.android.network.UnderlyingNetworkState
+import io.github.zapretkvn.android.platform.VpnSystemPolicy
 import io.github.zapretkvn.android.vpn.VpnConnectionState
-import io.github.zapretkvn.android.vpn.VpnSystemPolicy
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray

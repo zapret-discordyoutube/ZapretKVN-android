@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn
 
+import io.github.zapretkvn.android.platform.AndroidProcfsConnectionOwner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue

@@ -2,7 +2,6 @@ package io.github.zapretkvn.android.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,9 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,15 +38,15 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.apps.AppsUiState
+import io.github.zapretkvn.android.apps.AppsViewModel
 import io.github.zapretkvn.android.routing.ManagedRoutingRule
 import io.github.zapretkvn.android.routing.RoutingMatchType
 import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.routing.RoutingRuleAction
 import io.github.zapretkvn.android.routing.RoutingUiState
 import io.github.zapretkvn.android.routing.RoutingViewModel
-import io.github.zapretkvn.android.vpn.AppScopeMode
-import io.github.zapretkvn.android.vpn.AppsUiState
-import io.github.zapretkvn.android.vpn.AppsViewModel
 
 @Composable
 fun RoutingScreen(

@@ -3,6 +3,10 @@ package io.github.zapretkvn.android.vpn
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.apps.AllowedApplicationSink
+import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.apps.DisallowedApplicationSink
+import io.github.zapretkvn.android.apps.VpnAppScopeResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After

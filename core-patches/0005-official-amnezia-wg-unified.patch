@@ -1,0 +1,862 @@
+--- a/go.mod
++++ b/go.mod
+@@ -32,9 +32,8 @@
+ 	github.com/libdns/alidns v1.0.6
+ 	github.com/libdns/cloudflare v0.2.2
+ 	github.com/logrusorgru/aurora v2.0.3+incompatible
+ 	github.com/metacubex/utls v1.8.4
+-	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f
+ 	github.com/mholt/acmez/v3 v3.1.6
+ 	github.com/miekg/dns v1.1.72
+ 	github.com/openai/openai-go/v3 v3.26.0
+ 	github.com/oschwald/maxminddb-golang v1.13.1
+@@ -150,9 +149,9 @@
+ 	github.com/akutz/memconn v0.1.0 // indirect
+ 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
+ 	github.com/ameshkov/dnscrypt/v2 v2.4.0
+ 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
+-	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814
++	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
+ 	github.com/andybalholm/brotli v1.2.1 // indirect
+ 	github.com/caddyserver/zerossl v0.1.5 // indirect
+ 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+ 	github.com/coreos/go-iptables v0.7.1-0.20240112124308-65c67c9f46e6 // indirect
+--- a/go.sum
++++ b/go.sum
+@@ -21,10 +21,8 @@
+ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7VVbI0o4wBRNQIgn917usHWOd6VAffYI=
+ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
+ github.com/ameshkov/dnsstamps v1.0.3 h1:Srzik+J9mivH1alRACTbys2xOxs0lRH9qnTA7Y1OYVo=
+ github.com/ameshkov/dnsstamps v1.0.3/go.mod h1:Ii3eUu73dx4Vw5O4wjzmT5+lkCwovjzaEZZ4gKyIH5A=
+-github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 h1:l2AhBD+sFycU8Im81n/bZORMxW7fWtlZJEuJ4Hh0+z0=
+-github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814/go.mod h1:YoPc6qcOZqD7TXZ1xpedD8Sx3aSKsxN05ZqEFmXDNHk=
+ github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
+ github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
+ github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAfT7CoSYSac11PY=
+ github.com/anthropics/anthropic-sdk-go v1.26.0/go.mod h1:qUKmaW+uuPB64iy1l+4kOSvaLqPXnHTTBKH6RVZ7q5Q=
+@@ -265,10 +263,8 @@
+ github.com/mdlayher/socket v0.5.1 h1:VZaqt6RkGkt2OE9l3GcC6nZkqD3xKeQLyfleW/uBcos=
+ github.com/mdlayher/socket v0.5.1/go.mod h1:TjPLHI1UgwEv5J1B5q0zTZq12A/6H7nKmtTanQE37IQ=
+ github.com/metacubex/utls v1.8.4 h1:HmL9nUApDdWSkgUyodfwF6hSjtiwCGGdyhaSpEejKpg=
+ github.com/metacubex/utls v1.8.4/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
+-github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f h1:FGBPRb1zUabhPhDrlKEjQ9lgIwQ6cHL4x8M9lrERhbk=
+-github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f/go.mod h1:oPGcV994OGJedmmxrcK9+ni7jUEMGhR+uVQAdaduIP4=
+ github.com/mholt/acmez/v3 v3.1.6 h1:eGVQNObP0pBN4sxqrXeg7MYqTOWyoiYpQqITVWlrevk=
+ github.com/mholt/acmez/v3 v3.1.6/go.mod h1:5nTPosTGosLxF3+LU4ygbgMRFDhbAVpqMI4+a4aHLBY=
+ github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
+ github.com/miekg/dns v1.1.72/go.mod h1:+EuEPhdHOsfk6Wk5TT2CzssZdqkmFhf8r+aVyDEToIs=
+@@ -743,4 +739,6 @@
+ modernc.org/token v1.1.0 h1:Xl7Ap9dKaEs5kLoOQeQmPWevfnk/DM5qcLcYlA8ys6Y=
+ modernc.org/token v1.1.0/go.mod h1:UGzOrNV1mAFSEB63lOFHIpNRUVMvYTc6yu1SMY/XTDM=
+ software.sslmate.com/src/go-pkcs12 v0.4.0 h1:H2g08FrTvSFKUj+D309j1DPfk5APnIdAQAB8aEykJ5k=
+ software.sslmate.com/src/go-pkcs12 v0.4.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
++github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828 h1:D8d8gGvwXcTxUIsE4z6F6vjy4/VZddu95vMNtOygh1c=
++github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828/go.mod h1:YoPc6qcOZqD7TXZ1xpedD8Sx3aSKsxN05ZqEFmXDNHk=
+--- a/transport/wireguard/android_client_bind.go
++++ b/transport/wireguard/android_client_bind.go
+@@ -1,24 +1,26 @@
+ package wireguard
+ 
+ import (
+ 	"context"
++	"fmt"
+ 	"net"
+ 	"net/netip"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
+ 
+ 	awgConn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
+-	metaConn "github.com/metacubex/wireguard-go/conn"
++	"github.com/sagernet/sing-box/common/dialer"
++	"github.com/sagernet/sing/common"
+ 	"github.com/sagernet/sing/common/bufio"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	"github.com/sagernet/sing/common/logger"
+ 	M "github.com/sagernet/sing/common/metadata"
+ 	N "github.com/sagernet/sing/common/network"
+ )
+ 
+-var _ metaConn.Bind = (*AndroidClientBind)(nil)
++var _ awgConn.Bind = (*AndroidClientBind)(nil)
+ 
+ // AndroidClientBind always uses the protected sing-box dialer. It avoids the
+ // platform UDP batching/GRO path while retaining one Android VpnService TUN.
+ type AndroidClientBind struct {
+@@ -32,8 +34,9 @@
+ 	closed      atomic.Bool
+ 	lastLogNano atomic.Int64
+ 	isConnect   bool
+ 	connectAddr netip.AddrPort
++	listenPort  uint16
+ }
+ 
+ func NewAndroidClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, peers []peerConfig) *AndroidClientBind {
+ 	bind := &AndroidClientBind{ctx: ctx, logger: logger, dialer: dialer}
+@@ -43,12 +46,26 @@
+ 	}
+ 	return bind
+ }
+ 
+-func (b *AndroidClientBind) Open(uint16) ([]metaConn.ReceiveFunc, uint16, error) {
++func (b *AndroidClientBind) Open(port uint16) ([]awgConn.ReceiveFunc, uint16, error) {
+ 	b.closed.Store(false)
+ 	b.bindCtx, b.bindDone = context.WithCancel(b.ctx)
+-	return []metaConn.ReceiveFunc{b.receive}, 0, nil
++	b.listenPort = port
++	if port != 0 {
++		// Reuse sing-box's protected socket Control hook. A detour cannot
++		// promise a local port and is rejected, never silently changed to :0.
++		if _, ok := common.Cast[dialer.WireGuardListener](b.dialer); !ok {
++			b.Close()
++			return nil, 0, fmt.Errorf("listen_port requires a protected direct WireGuard listener")
++		}
++		if _, err := b.connect(); err != nil {
++			b.Close()
++			return nil, 0, err
++		}
++		return []awgConn.ReceiveFunc{b.receive}, port, nil
++	}
++	return []awgConn.ReceiveFunc{b.receive}, 0, nil
+ }
+ 
+ func (b *AndroidClientBind) connect() (net.PacketConn, error) {
+ 	b.connAccess.Lock()
+@@ -58,9 +75,20 @@
+ 	}
+ 	if b.conn != nil {
+ 		return b.conn, nil
+ 	}
+-	if b.isConnect {
++	if b.listenPort != 0 {
++		listener, ok := common.Cast[dialer.WireGuardListener](b.dialer)
++		if !ok {
++			return nil, fmt.Errorf("listen_port requires a protected direct WireGuard listener")
++		}
++		config := net.ListenConfig{Control: listener.WireGuardControl()}
++		conn, err := config.ListenPacket(b.bindCtx, N.NetworkUDP, fmt.Sprintf(":%d", b.listenPort))
++		if err != nil {
++			return nil, err
++		}
++		b.conn = conn
++	} else if b.isConnect {
+ 		conn, err := b.dialer.DialContext(b.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(b.connectAddr))
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -74,16 +102,15 @@
+ 	}
+ 	return b.conn, nil
+ }
+ 
+-func (b *AndroidClientBind) receive(packets [][]byte, sizes []int, endpoints []metaConn.Endpoint) (int, error) {
++func (b *AndroidClientBind) receive(packets [][]byte, sizes []int, endpoints []awgConn.Endpoint) (int, error) {
+ 	return b.receiveCore(packets, sizes, func(index int, endpoint androidEndpoint) {
+ 		endpoints[index] = endpoint
+ 	})
+ }
+ 
+-// receiveCore is engine-agnostic: the vanilla metacubex bind and the official
+-// Amnezia bind wrap it with their own endpoint slice types.
++// receiveCore preserves the protected platform socket for both WG and AWG.
+ func (b *AndroidClientBind) receiveCore(packets [][]byte, sizes []int, setEndpoint func(int, androidEndpoint)) (int, error) {
+ 	conn, err := b.connect()
+ 	if err != nil {
+ 		if b.closed.Load() {
+@@ -123,11 +150,16 @@
+ 	}
+ 	return nil
+ }
+ 
+-func (b *AndroidClientBind) SetMark(uint32) error { return nil }
++func (b *AndroidClientBind) SetMark(mark uint32) error {
++	if mark != 0 {
++		return fmt.Errorf("Android WireGuard bind does not support fwmark")
++	}
++	return nil
++}
+ 
+-func (b *AndroidClientBind) Send(buffers [][]byte, endpoint metaConn.Endpoint) error {
++func (b *AndroidClientBind) Send(buffers [][]byte, endpoint awgConn.Endpoint) error {
+ 	return b.sendCore(buffers, netip.AddrPort(endpoint.(androidEndpoint)))
+ }
+ 
+ func (b *AndroidClientBind) sendCore(buffers [][]byte, destination netip.AddrPort) error {
+@@ -143,9 +175,9 @@
+ 	}
+ 	return nil
+ }
+ 
+-func (b *AndroidClientBind) ParseEndpoint(value string) (metaConn.Endpoint, error) {
++func (b *AndroidClientBind) ParseEndpoint(value string) (awgConn.Endpoint, error) {
+ 	address, err := netip.ParseAddrPort(value)
+ 	return androidEndpoint(address), err
+ }
+ 
+@@ -177,46 +209,8 @@
+ 		b.conn = nil
+ 	}
+ }
+ 
+-var _ awgConn.Bind = androidAmneziaBind{}
+-
+-// androidAmneziaBind exposes the same protected-dialer bind to the official
+-// amnezia-vpn/amneziawg-go v3 engine. Go cannot let one type implement two
+-// structurally identical Bind interfaces from different packages, so this
+-// thin wrapper only converts the package-typed slices.
+-type androidAmneziaBind struct {
+-	bind *AndroidClientBind
+-}
+-
+-func (b androidAmneziaBind) Open(port uint16) ([]awgConn.ReceiveFunc, uint16, error) {
+-	_, actualPort, err := b.bind.Open(port)
+-	if err != nil {
+-		return nil, 0, err
+-	}
+-	receive := func(packets [][]byte, sizes []int, endpoints []awgConn.Endpoint) (int, error) {
+-		return b.bind.receiveCore(packets, sizes, func(index int, endpoint androidEndpoint) {
+-			endpoints[index] = endpoint
+-		})
+-	}
+-	return []awgConn.ReceiveFunc{receive}, actualPort, nil
+-}
+-
+-func (b androidAmneziaBind) Close() error        { return b.bind.Close() }
+-func (b androidAmneziaBind) SetMark(mark uint32) error { return b.bind.SetMark(mark) }
+-
+-func (b androidAmneziaBind) Send(buffers [][]byte, endpoint awgConn.Endpoint) error {
+-	return b.bind.sendCore(buffers, netip.AddrPort(endpoint.(androidEndpoint)))
+-}
+-
+-func (b androidAmneziaBind) ParseEndpoint(value string) (awgConn.Endpoint, error) {
+-	address, err := netip.ParseAddrPort(value)
+-	return androidEndpoint(address), err
+-}
+-
+-func (b androidAmneziaBind) BatchSize() int { return 1 }
+-
+-var _ metaConn.Endpoint = androidEndpoint{}
+ var _ awgConn.Endpoint = androidEndpoint{}
+ 
+ type androidEndpoint netip.AddrPort
+ 
+--- a/transport/wireguard/android_client_bind_test.go
++++ b/transport/wireguard/android_client_bind_test.go
+@@ -1,18 +1,24 @@
+ package wireguard
+ 
+ import (
+ 	"context"
++	"fmt"
+ 	"io"
+ 	"net"
+ 	"net/netip"
++	"strings"
++	"sync/atomic"
++	"syscall"
+ 	"testing"
+ 	"time"
+ 
+-	metaConn "github.com/metacubex/wireguard-go/conn"
+-	metaTun "github.com/metacubex/wireguard-go/tun"
++	metaConn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
++	metaTun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
++	"github.com/sagernet/sing/common/control"
+ 	"github.com/sagernet/sing/common/logger"
+ 	M "github.com/sagernet/sing/common/metadata"
++	sagerDevice "github.com/sagernet/wireguard-go/device"
+ 
+ 	"github.com/stretchr/testify/require"
+ )
+ 
+@@ -45,8 +51,49 @@
+ 	require.NoError(t, bind.Close())
+ 	require.NoError(t, bind.Close())
+ }
+ 
++type protectedTestDialer struct {
++	testDialer
++	calls *atomic.Int32
++}
++
++func (d protectedTestDialer) WireGuardControl() control.Func {
++	return func(network, address string, raw syscall.RawConn) error { d.calls.Add(1); return nil }
++}
++
++func TestAndroidClientBindHonorsProtectedListenPort(t *testing.T) {
++	reserve, err := net.ListenPacket("udp", ":0")
++	require.NoError(t, err)
++	port := uint16(reserve.LocalAddr().(*net.UDPAddr).Port)
++	require.NoError(t, reserve.Close())
++	var calls atomic.Int32
++	bind := NewAndroidClientBind(context.Background(), logger.NOP(), protectedTestDialer{calls: &calls}, nil)
++	defer bind.Close()
++	_, actual, err := bind.Open(port)
++	require.NoError(t, err)
++	require.Equal(t, port, actual)
++	require.Equal(t, 1, int(calls.Load()))
++	require.Equal(t, int(port), bind.conn.LocalAddr().(*net.UDPAddr).Port)
++	blocked, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
++	if blocked != nil {
++		blocked.Close()
++	}
++	require.Error(t, err, "requested port must actually be owned")
++	require.NoError(t, bind.Close())
++	_, actual, err = bind.Open(port)
++	require.NoError(t, err)
++	require.Equal(t, port, actual)
++	require.Equal(t, 2, int(calls.Load()), "reopen must protect the new socket again")
++}
++
++func TestAndroidClientBindRejectsUnrepresentablePortAndMark(t *testing.T) {
++	bind := NewAndroidClientBind(context.Background(), logger.NOP(), testDialer{}, nil)
++	_, _, err := bind.Open(12345)
++	require.ErrorContains(t, err, "listen_port")
++	require.ErrorContains(t, bind.SetMark(1), "fwmark")
++}
++
+ func TestAndroidWireGuardEngineActivatesTunExplicitly(t *testing.T) {
+ 	tun := &androidTunAdapter{events: make(chan metaTun.Event, 1)}
+ 	engine := &androidWireGuardEngine{wireGuardEngine: testWireGuardEngine{}, tun: tun}
+ 	select {
+@@ -57,8 +104,33 @@
+ 	engine.activate()
+ 	require.Equal(t, metaTun.Event(metaTun.EventUp), <-tun.events)
+ }
+ 
++func TestOfficialAndroidEngineAcceptsAwg31AndKeepaliveRange(t *testing.T) {
++	tun, err := NewDevice(DeviceOptions{
++		Context: context.Background(), Logger: logger.NOP(), MTU: 1280,
++		Address: []netip.Prefix{netip.MustParsePrefix("10.0.0.2/32")},
++	})
++	require.NoError(t, err)
++	bind := NewAndroidClientBind(context.Background(), logger.NOP(), testDialer{}, nil)
++	engine := NewAndroidWireGuardEngine(tun, bind, &sagerDevice.Logger{
++		Verbosef: func(string, ...any) {}, Errorf: func(string, ...any) {},
++	})
++	defer engine.Close()
++	require.NoError(t, engine.IpcSet("private_key="+strings.Repeat("01", 32)+"\n"+
++		"jc=0\njmin=0\njmax=0\ns1=27\ns2=21\ns3=27\ns4=15\n"+
++		"h1=10-11\nh2=20-21\nh3=30-31\nh4=40-41\n"+
++		"i1=<r 4>\ni2=<r 4>\ni3=<r 4>\ni4=<r 4>\ni5=<r 4>\n"+
++		"header_protection_key="+strings.Repeat("02", 32)+"\n"+
++		"content_padding_addition=0-124\nrekey_after_time=120-180\nrekey_timeout=5\nreject_after_time=600\nkeepalive_timeout=25\nmax_handshake_attempts=20-30\n"+
++		"random_trailers=true\ndisable_cookies=true\npublic_key="+strings.Repeat("03", 32)+"\nallowed_ip=0.0.0.0/0\npersistent_keepalive_interval=20-30\n"))
++	raw, err := engine.(*androidWireGuardEngine).wireGuardEngine.(interface{ IpcGet() (string, error) }).IpcGet()
++	require.NoError(t, err)
++	for _, field := range []string{"random_trailers=1", "disable_cookies=1", "persistent_keepalive_interval=20-30", "content_padding_addition=0-124"} {
++		require.Contains(t, raw, field)
++	}
++}
++
+ type testWireGuardEngine struct{}
+ 
+ func (testWireGuardEngine) IpcSet(string) error                         { return nil }
+ func (testWireGuardEngine) Up() error                                   { return nil }
+--- a/transport/wireguard/android_engine.go
++++ b/transport/wireguard/android_engine.go
+@@ -1,122 +1,63 @@
+ package wireguard
+ 
+ import (
+-	"sync"
+-
+ 	awgDevice "github.com/amnezia-vpn/amneziawg-go/v3/device"
+ 	awgTun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
+-	metaDevice "github.com/metacubex/wireguard-go/device"
+-	metaTun "github.com/metacubex/wireguard-go/tun"
+ 	sagerDevice "github.com/sagernet/wireguard-go/device"
++	"sync"
+ )
+ 
+-// wireGuardEngine is the common lifecycle shared by the pinned sing-box
+-// engine and the Android vanilla/Amnezia engines. Keeping it here avoids a
+-// second Android TUN or a local proxy hop.
+ type wireGuardEngine interface {
+ 	IpcSet(string) error
+ 	Up() error
+ 	Down() error
+ 	Close()
+ 	DisableSomeRoamingForBrokenMobileSemantics()
+ }
+ 
+-// NewAndroidWireGuardEngine keeps the split data plane: vanilla WireGuard
+-// runs on metacubex/wireguard-go, while every AmneziaWG generation
+-// (1.5/2.0/3.0) runs on the official amnezia-vpn/amneziawg-go v3 engine —
+-// the same protocol line as the server fleet, including AWG 3.0 header
+-// protection and content padding delivered over the same UAPI keys the
+-// pinned core writes.
+-func NewAndroidWireGuardEngine(
+-	tunDevice Device,
+-	bind *AndroidClientBind,
+-	logger *sagerDevice.Logger,
+-	useAmnezia bool,
+-	workers int,
+-) wireGuardEngine {
+-	if useAmnezia {
+-		adapter := newAndroidAmneziaTunAdapter(tunDevice)
+-		engine := awgDevice.NewDevice(
+-			adapter,
+-			androidAmneziaBind{bind: bind},
+-			&awgDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf},
+-		)
+-		engine.DisableSomeRoamingForBrokenMobileSemantics()
+-		return &androidAmneziaEngine{Device: engine, tun: adapter}
+-	}
+-	adapter := newAndroidTunAdapter(tunDevice)
+-	metaLogger := &metaDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf}
+-	engine := metaDevice.NewDevice(adapter, bind, metaLogger, workers)
++// The official engine starts with standard WireGuard headers and no Amnezia
++// extensions. AWG parameters are applied only when explicitly configured.
++func NewAndroidWireGuardEngine(tunDevice Device, bind *AndroidClientBind, logger *sagerDevice.Logger) wireGuardEngine {
++	adapter := &androidTunAdapter{Device: tunDevice, events: make(chan awgTun.Event, 1)}
++	engine := awgDevice.NewDevice(adapter, bind, &awgDevice.Logger{Verbosef: logger.Verbosef, Errorf: logger.Errorf})
+ 	engine.DisableSomeRoamingForBrokenMobileSemantics()
+ 	return &androidWireGuardEngine{wireGuardEngine: engine, tun: adapter}
+ }
+ 
+-// androidEngineActivator marks engines whose adapter must observe EventUp
+-// after IpcSet, mirroring the platform TUN lifecycle.
+-type androidEngineActivator interface {
+-	activate()
+-}
++type androidEngineActivator interface{ activate() }
+ 
+ type androidWireGuardEngine struct {
+ 	wireGuardEngine
+ 	tun *androidTunAdapter
+ }
+ 
+ func (e *androidWireGuardEngine) activate() {
+-	e.tun.events <- metaTun.EventUp
+-}
+-
+-type androidAmneziaEngine struct {
+-	*awgDevice.Device
+-	tun *androidAmneziaTunAdapter
+-}
+-
+-func (e *androidAmneziaEngine) activate() {
+-	e.tun.events <- awgTun.EventUp
++	e.tun.mu.Lock()
++	defer e.tun.mu.Unlock()
++	if !e.tun.closed && !e.tun.activated {
++		e.tun.activated = true
++		e.tun.events <- awgTun.EventUp
++	}
+ }
+ 
+ type androidTunAdapter struct {
+ 	Device
+-	events chan metaTun.Event
+-	close  sync.Once
+-}
+-
+-func newAndroidTunAdapter(device Device) *androidTunAdapter {
+-	return &androidTunAdapter{Device: device, events: make(chan metaTun.Event, 1)}
+-}
+-
+-func (a *androidTunAdapter) Events() <-chan metaTun.Event {
+-	return a.events
++	events    chan awgTun.Event
++	mu        sync.Mutex
++	closed    bool
++	activated bool
++	close     sync.Once
+ }
+ 
++func (a *androidTunAdapter) Events() <-chan awgTun.Event { return a.events }
+ func (a *androidTunAdapter) Close() error {
+ 	var err error
+ 	a.close.Do(func() {
++		a.mu.Lock()
++		a.closed = true
+ 		close(a.events)
+-		err = a.Device.Close()
+-	})
+-	return err
+-}
+-
+-type androidAmneziaTunAdapter struct {
+-	Device
+-	events chan awgTun.Event
+-	close  sync.Once
+-}
+-
+-func newAndroidAmneziaTunAdapter(device Device) *androidAmneziaTunAdapter {
+-	return &androidAmneziaTunAdapter{Device: device, events: make(chan awgTun.Event, 1)}
+-}
+-
+-func (a *androidAmneziaTunAdapter) Events() <-chan awgTun.Event {
+-	return a.events
+-}
+-
+-func (a *androidAmneziaTunAdapter) Close() error {
+-	var err error
+-	a.close.Do(func() {
+-		close(a.events)
++		a.mu.Unlock()
+ 		err = a.Device.Close()
+ 	})
+ 	return err
+ }
+--- a/transport/wireguard/endpoint.go
++++ b/transport/wireguard/endpoint.go
+@@ -18,8 +18,9 @@
+ 	"github.com/sagernet/sing-tun"
+ 	"github.com/sagernet/sing/common"
+ 	E "github.com/sagernet/sing/common/exceptions"
+ 	F "github.com/sagernet/sing/common/format"
++	"github.com/sagernet/sing/common/json/badoption"
+ 	M "github.com/sagernet/sing/common/metadata"
+ 	"github.com/sagernet/sing/common/x/list"
+ 	"github.com/sagernet/sing/service"
+ 	"github.com/sagernet/sing/service/pause"
+@@ -182,9 +183,9 @@
+ 	}
+ 	var wgDevice wireGuardEngine
+ 	if runtime.GOOS == "android" && !e.options.System {
+ 		androidBind := NewAndroidClientBind(e.options.Context, e.options.Logger, e.options.Dialer, e.peers)
+-		wgDevice = NewAndroidWireGuardEngine(deviceInput, androidBind, logger, e.options.Amnezia != nil, e.options.Workers)
++		wgDevice = NewAndroidWireGuardEngine(deviceInput, androidBind, logger)
+ 		e.options.Logger.Info("wireguard engine: android split data-plane")
+ 	} else {
+ 		wgDevice = device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
+ 		e.tunDevice.SetDevice(wgDevice.(*device.Device))
+@@ -192,27 +193,27 @@
+ 	var ipcConf strings.Builder
+ 	ipcConf.WriteString(e.ipcConf)
+ 	if e.options.Amnezia != nil {
+ 		if e.options.Amnezia.JC > 0 {
+-			ipcConf.WriteString("\njc=" + strconv.Itoa(e.options.Amnezia.JC))
++			ipcConf.WriteString("\njc=" + strconv.FormatUint(uint64(e.options.Amnezia.JC), 10))
+ 		}
+ 		if e.options.Amnezia.JMin > 0 {
+-			ipcConf.WriteString("\njmin=" + strconv.Itoa(e.options.Amnezia.JMin))
++			ipcConf.WriteString("\njmin=" + strconv.FormatUint(uint64(e.options.Amnezia.JMin), 10))
+ 		}
+ 		if e.options.Amnezia.JMax > 0 {
+-			ipcConf.WriteString("\njmax=" + strconv.Itoa(e.options.Amnezia.JMax))
++			ipcConf.WriteString("\njmax=" + strconv.FormatUint(uint64(e.options.Amnezia.JMax), 10))
+ 		}
+ 		if e.options.Amnezia.S1 > 0 {
+-			ipcConf.WriteString("\ns1=" + strconv.Itoa(e.options.Amnezia.S1))
++			ipcConf.WriteString("\ns1=" + strconv.FormatUint(uint64(e.options.Amnezia.S1), 10))
+ 		}
+ 		if e.options.Amnezia.S2 > 0 {
+-			ipcConf.WriteString("\ns2=" + strconv.Itoa(e.options.Amnezia.S2))
++			ipcConf.WriteString("\ns2=" + strconv.FormatUint(uint64(e.options.Amnezia.S2), 10))
+ 		}
+ 		if e.options.Amnezia.S3 > 0 {
+-			ipcConf.WriteString("\ns3=" + strconv.Itoa(e.options.Amnezia.S3))
++			ipcConf.WriteString("\ns3=" + strconv.FormatUint(uint64(e.options.Amnezia.S3), 10))
+ 		}
+ 		if e.options.Amnezia.S4 > 0 {
+-			ipcConf.WriteString("\ns4=" + strconv.Itoa(e.options.Amnezia.S4))
++			ipcConf.WriteString("\ns4=" + strconv.FormatUint(uint64(e.options.Amnezia.S4), 10))
+ 		}
+ 		if e.options.Amnezia.H1 != nil {
+ 			ipcConf.WriteString("\nh1=" + e.options.Amnezia.H1.String())
+ 		}
+@@ -261,8 +262,14 @@
+ 		}
+ 		if e.options.Amnezia.KeepaliveTimeout != nil {
+ 			ipcConf.WriteString("\nkeepalive_timeout=" + e.options.Amnezia.KeepaliveTimeout.String())
+ 		}
++		if e.options.Amnezia.RandomTrailers != nil {
++			ipcConf.WriteString("\nrandom_trailers=" + strconv.FormatBool(*e.options.Amnezia.RandomTrailers))
++		}
++		if e.options.Amnezia.DisableCookies != nil {
++			ipcConf.WriteString("\ndisable_cookies=" + strconv.FormatBool(*e.options.Amnezia.DisableCookies))
++		}
+ 		if e.options.Amnezia.MaxHandshakeAttempts != nil {
+ 			ipcConf.WriteString("\nmax_handshake_attempts=" + e.options.Amnezia.MaxHandshakeAttempts.String())
+ 		}
+ 	}
+@@ -271,9 +278,9 @@
+ 	}
+ 	err = wgDevice.IpcSet(ipcConf.String())
+ 	if err != nil {
+ 		wgDevice.Close()
+-		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
++		return E.Cause(err, "setup wireguard")
+ 	}
+ 	if activator, isAndroidEngine := wgDevice.(androidEngineActivator); isAndroidEngine {
+ 		activator.activate()
+ 	}
+@@ -339,9 +346,9 @@
+ 	endpoint        netip.AddrPort
+ 	publicKeyHex    string
+ 	preSharedKeyHex string
+ 	allowedIPs      []netip.Prefix
+-	keepalive       uint16
++	keepalive       *badoption.Range[uint32]
+ }
+ 
+ func (c peerConfig) GenerateIpcLines() string {
+ 	var ipcLines strings.Builder
+@@ -354,9 +361,9 @@
+ 	}
+ 	for _, allowedIP := range c.allowedIPs {
+ 		ipcLines.WriteString("\nallowed_ip=" + allowedIP.String())
+ 	}
+-	if c.keepalive > 0 {
+-		ipcLines.WriteString("\npersistent_keepalive_interval=" + F.ToString(c.keepalive))
++	if c.keepalive != nil {
++		ipcLines.WriteString("\npersistent_keepalive_interval=" + c.keepalive.String())
+ 	}
+ 	return ipcLines.String()
+ }
+--- a/transport/wireguard/endpoint_options.go
++++ b/transport/wireguard/endpoint_options.go
+@@ -38,19 +38,19 @@
+ 	Endpoint                    M.Socksaddr
+ 	PublicKey                   string
+ 	PreSharedKey                string
+ 	AllowedIPs                  []netip.Prefix
+-	PersistentKeepaliveInterval uint16
++	PersistentKeepaliveInterval *badoption.Range[uint32]
+ }
+ 
+ type AmneziaOptions struct {
+-	JC                     int
+-	JMin                   int
+-	JMax                   int
+-	S1                     int
+-	S2                     int
+-	S3                     int
+-	S4                     int
++	JC                     uint32
++	JMin                   uint32
++	JMax                   uint32
++	S1                     uint32
++	S2                     uint32
++	S3                     uint32
++	S4                     uint32
+ 	H1                     *badoption.Range[uint32]
+ 	H2                     *badoption.Range[uint32]
+ 	H3                     *badoption.Range[uint32]
+ 	H4                     *badoption.Range[uint32]
+@@ -65,5 +65,7 @@
+ 	RekeyTimeout           *badoption.Range[uint32]
+ 	RejectAfterTime        *badoption.Range[uint32]
+ 	KeepaliveTimeout       *badoption.Range[uint32]
+ 	MaxHandshakeAttempts   *badoption.Range[uint32]
++	RandomTrailers         *bool
++	DisableCookies         *bool
+ }
+--- a/protocol/wireguard/endpoint.go
++++ b/protocol/wireguard/endpoint.go
+@@ -99,8 +99,10 @@
+ 			RekeyTimeout:           options.Amnezia.RekeyTimeout,
+ 			RejectAfterTime:        options.Amnezia.RejectAfterTime,
+ 			KeepaliveTimeout:       options.Amnezia.KeepaliveTimeout,
+ 			MaxHandshakeAttempts:   options.Amnezia.MaxHandshakeAttempts,
++			RandomTrailers:         options.Amnezia.RandomTrailers,
++			DisableCookies:         options.Amnezia.DisableCookies,
+ 		}
+ 	}
+ 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
+ 		Context:     ctx,
+--- a/option/wireguard.go
++++ b/option/wireguard.go
+@@ -27,19 +27,19 @@
+ 	Port                        uint16                           `json:"port,omitempty"`
+ 	PublicKey                   string                           `json:"public_key,omitempty"`
+ 	PreSharedKey                string                           `json:"pre_shared_key,omitempty"`
+ 	AllowedIPs                  badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
+-	PersistentKeepaliveInterval uint16                           `json:"persistent_keepalive_interval,omitempty"`
++	PersistentKeepaliveInterval *badoption.Range[uint32]         `json:"persistent_keepalive_interval,omitempty"`
+ }
+ 
+ type WireGuardAmnezia struct {
+-	JC                     int                      `json:"jc,omitempty"`
+-	JMin                   int                      `json:"jmin,omitempty"`
+-	JMax                   int                      `json:"jmax,omitempty"`
+-	S1                     int                      `json:"s1,omitempty"`
+-	S2                     int                      `json:"s2,omitempty"`
+-	S3                     int                      `json:"s3,omitempty"`
+-	S4                     int                      `json:"s4,omitempty"`
++	JC                     uint32                   `json:"jc,omitempty"`
++	JMin                   uint32                   `json:"jmin,omitempty"`
++	JMax                   uint32                   `json:"jmax,omitempty"`
++	S1                     uint32                   `json:"s1,omitempty"`
++	S2                     uint32                   `json:"s2,omitempty"`
++	S3                     uint32                   `json:"s3,omitempty"`
++	S4                     uint32                   `json:"s4,omitempty"`
+ 	H1                     *badoption.Range[uint32] `json:"h1,omitempty"`
+ 	H2                     *badoption.Range[uint32] `json:"h2,omitempty"`
+ 	H3                     *badoption.Range[uint32] `json:"h3,omitempty"`
+ 	H4                     *badoption.Range[uint32] `json:"h4,omitempty"`
+@@ -54,5 +54,7 @@
+ 	RekeyTimeout           *badoption.Range[uint32] `json:"rekey_timeout,omitempty"`
+ 	RejectAfterTime        *badoption.Range[uint32] `json:"reject_after_time,omitempty"`
+ 	KeepaliveTimeout       *badoption.Range[uint32] `json:"keepalive_timeout,omitempty"`
+ 	MaxHandshakeAttempts   *badoption.Range[uint32] `json:"max_handshake_attempts,omitempty"`
++	RandomTrailers         *bool                    `json:"random_trailers,omitempty"`
++	DisableCookies         *bool                    `json:"disable_cookies,omitempty"`
+ }
+--- a/protocol/warp/endpoint.go
++++ b/protocol/warp/endpoint.go
+@@ -39,8 +39,15 @@
+ 	await chan struct{}
+ }
+ 
+ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WARPEndpointOptions) (adapter.Endpoint, error) {
++	if options.Amnezia != nil {
++		for _, value := range []int{options.Amnezia.JC, options.Amnezia.JMin, options.Amnezia.JMax} {
++			if value < 0 || uint64(value) > 0xffffffff {
++				return nil, E.New("WARP Amnezia junk fields must be uint32")
++			}
++		}
++	}
+ 	var dependencies []string
+ 	if options.Detour != "" {
+ 		dependencies = append(dependencies, options.Detour)
+ 	}
+@@ -90,11 +97,11 @@
+ 		hostParts := strings.Split(peer.Endpoint.Host, ":")
+ 		var amnezia *option.WireGuardAmnezia
+ 		if options.Amnezia != nil {
+ 			amnezia = &option.WireGuardAmnezia{
+-				JC:                     options.Amnezia.JC,
+-				JMin:                   options.Amnezia.JMin,
+-				JMax:                   options.Amnezia.JMax,
++				JC:                     uint32(options.Amnezia.JC),
++				JMin:                   uint32(options.Amnezia.JMin),
++				JMax:                   uint32(options.Amnezia.JMax),
+ 				I1:                     options.Amnezia.I1,
+ 				I2:                     options.Amnezia.I2,
+ 				I3:                     options.Amnezia.I3,
+ 				I4:                     options.Amnezia.I4,
+@@ -136,9 +143,9 @@
+ 						AllowedIPs: badoption.Listable[netip.Prefix]{
+ 							netip.MustParsePrefix("0.0.0.0/0"),
+ 							netip.MustParsePrefix("::/0"),
+ 						},
+-						PersistentKeepaliveInterval: options.PersistentKeepaliveInterval,
++						PersistentKeepaliveInterval: &badoption.Range[uint32]{From: uint32(options.PersistentKeepaliveInterval), To: uint32(options.PersistentKeepaliveInterval)},
+ 					},
+ 				},
+ 				MTU: 1280,
+ 			},
+--- /dev/null
++++ b/option/wireguard_validation.go
+@@ -0,0 +1,89 @@
++package option
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"strconv"
++	"strings"
++)
++
++// Validate the original representation before badoption.Range can narrow an
++// int64 string into uint32. A malformed native JSON must not silently change
++// the user's cryptographic headers or timing parameters.
++func validateWireGuardRange(raw json.RawMessage) error {
++	if bytes.Equal(raw, []byte("null")) {
++		return nil
++	}
++	var text string
++	if json.Unmarshal(raw, &text) == nil {
++		parts := strings.Split(text, "-")
++		if len(parts) < 1 || len(parts) > 2 {
++			return fmt.Errorf("invalid uint32 range")
++		}
++		var first uint64
++		for i, part := range parts {
++			if part == "" || strings.Trim(part, "0123456789") != "" {
++				return fmt.Errorf("invalid uint32 range")
++			}
++			n, err := strconv.ParseUint(part, 10, 32)
++			if err != nil {
++				return fmt.Errorf("invalid uint32 range")
++			}
++			if i == 0 {
++				first = n
++			} else if n < first {
++				return fmt.Errorf("reversed uint32 range")
++			}
++		}
++		return nil
++	}
++	var number uint32
++	if json.Unmarshal(raw, &number) == nil {
++		return nil
++	}
++	var bounds struct {
++		From *uint32 `json:"from"`
++		To   *uint32 `json:"to"`
++	}
++	decoder := json.NewDecoder(bytes.NewReader(raw))
++	decoder.DisallowUnknownFields()
++	if err := decoder.Decode(&bounds); err != nil || bounds.From == nil || bounds.To == nil || *bounds.From > *bounds.To {
++		return fmt.Errorf("invalid uint32 range")
++	}
++	return nil
++}
++
++func (a *WireGuardAmnezia) UnmarshalJSON(data []byte) error {
++	var fields map[string]json.RawMessage
++	if err := json.Unmarshal(data, &fields); err != nil {
++		return err
++	}
++	for _, field := range []string{"h1", "h2", "h3", "h4", "content_padding_addition", "rekey_after_time", "rekey_timeout", "reject_after_time", "keepalive_timeout", "max_handshake_attempts"} {
++		if raw, found := fields[field]; found {
++			if err := validateWireGuardRange(raw); err != nil {
++				return fmt.Errorf("amnezia.%s: %w", field, err)
++			}
++		}
++	}
++	type plain WireGuardAmnezia
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.DisallowUnknownFields()
++	return decoder.Decode((*plain)(a))
++}
++
++func (p *WireGuardPeer) UnmarshalJSON(data []byte) error {
++	var fields map[string]json.RawMessage
++	if err := json.Unmarshal(data, &fields); err != nil {
++		return err
++	}
++	if raw, found := fields["persistent_keepalive_interval"]; found {
++		if err := validateWireGuardRange(raw); err != nil {
++			return fmt.Errorf("persistent_keepalive_interval: %w", err)
++		}
++	}
++	type plain WireGuardPeer
++	decoder := json.NewDecoder(bytes.NewReader(data))
++	decoder.DisallowUnknownFields()
++	return decoder.Decode((*plain)(p))
++}
+--- /dev/null
++++ b/option/wireguard_validation_test.go
+@@ -0,0 +1,25 @@
++package option
++
++import (
++	"encoding/json"
++	"testing"
++)
++
++func TestWireGuardRangesDoNotNarrowOrWrap(t *testing.T) {
++	for _, raw := range []string{`"4294967296"`, `"-1"`, `"0-4294967296"`, `"20-10"`, `{"from":0,"to":4294967296}`} {
++		var options WireGuardAmnezia
++		if err := json.Unmarshal([]byte(`{"h1":`+raw+`}`), &options); err == nil {
++			t.Errorf("accepted %s", raw)
++		}
++		var peer WireGuardPeer
++		if err := json.Unmarshal([]byte(`{"persistent_keepalive_interval":`+raw+`}`), &peer); err == nil {
++			t.Errorf("accepted keepalive %s", raw)
++		}
++	}
++	for _, raw := range []string{`0`, `4294967295`, `"20-30"`, `{"from":10,"to":20}`} {
++		var options WireGuardAmnezia
++		if err := json.Unmarshal([]byte(`{"h1":`+raw+`,"random_trailers":true,"disable_cookies":false}`), &options); err != nil {
++			t.Errorf("rejected %s: %v", raw, err)
++		}
++	}
++}

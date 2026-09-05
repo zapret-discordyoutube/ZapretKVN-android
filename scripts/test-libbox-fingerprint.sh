@@ -24,6 +24,7 @@ CORE_TAG=$CORE_TAG
 CORE_COMMIT=$CORE_COMMIT
 CORE_PATCH_FILE=$CORE_PATCH_FILE
 CORE_PATCH_SHA256=$CORE_PATCH_SHA256
+CORE_UDP_PATCH_SHA256=$CORE_UDP_PATCH_SHA256
 HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG
 HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT
 XRAY_CORE_MODULE=$XRAY_CORE_MODULE
@@ -43,6 +44,10 @@ make_sandbox() {
         "$SCRIPT_DIR/ensure-libbox.sh" \
         "$root/scripts/"
     printf 'fake patch\n' > "$root/core-patches/0001-test.patch"
+    cp "$SCRIPT_DIR/../core-patches/sing-udp.json" \
+        "$SCRIPT_DIR/../core-patches/sing-udp-v8.patch" \
+        "$SCRIPT_DIR/../core-patches/sing-udp-v9.patch" \
+        "$SCRIPT_DIR/../core-patches/sing_udp_buffer_test.go" "$root/core-patches/"
     (cd "$root" && sha256sum core-patches/0001-test.patch > core-patches/series.sha256)
     local manifest_sha
     manifest_sha="$(sha256sum "$root/core-patches/series.sha256" | awk '{print $1}')"
@@ -52,6 +57,7 @@ CORE_TAG=v1.0.0-test
 CORE_COMMIT=1111111111111111111111111111111111111111
 CORE_PATCH_FILE=core-patches/series.sha256
 CORE_PATCH_SHA256=$manifest_sha
+CORE_UDP_PATCH_SHA256=$(sha256sum "$root/core-patches/sing-udp.json" | awk '{print $1}')
 HYSTERIA_CORE_TAG=app/v2.12.2
 HYSTERIA_CORE_COMMIT=619a6f856b69fb7ee6a7a379e810e68b84004605
 XRAY_CORE_MODULE=github.com/xtls/xray-core@v1.260327.0
@@ -78,6 +84,7 @@ CORE_TAG=$CORE_TAG
 CORE_COMMIT=$CORE_COMMIT
 CORE_PATCH_FILE=$CORE_PATCH_FILE
 CORE_PATCH_SHA256=$CORE_PATCH_SHA256
+CORE_UDP_PATCH_SHA256=$CORE_UDP_PATCH_SHA256
 HYSTERIA_CORE_TAG=$HYSTERIA_CORE_TAG
 HYSTERIA_CORE_COMMIT=$HYSTERIA_CORE_COMMIT
 XRAY_CORE_MODULE=$XRAY_CORE_MODULE
@@ -153,6 +160,16 @@ make_sandbox "$SANDBOX"
 sed -i 's/^ANDROID_AMNEZIAWG_GO=.*/ANDROID_AMNEZIAWG_GO=github.com\/example\/amneziawg-go\/v3@v3.0.2/' \
     "$SANDBOX/core.properties"
 expect_check "$SANDBOX" 2 "check: AAR built with an old Go module is stale"
+
+SANDBOX="$WORK_DIR/stale-udp-patch"
+make_sandbox "$SANDBOX"
+sed -i '/^CORE_UDP_PATCH_SHA256=/d' "$SANDBOX/app/libs/libbox.properties"
+expect_check "$SANDBOX" 2 "check: AAR without the UDP patch fingerprint is stale"
+
+SANDBOX="$WORK_DIR/tampered-udp-patch"
+make_sandbox "$SANDBOX"
+printf 'tampered\n' >> "$SANDBOX/core-patches/sing-udp-v8.patch"
+expect_check "$SANDBOX" 3 "check: changed UDP patch cannot reuse a recorded pin"
 
 SANDBOX="$WORK_DIR/missing-aar"
 make_sandbox "$SANDBOX"

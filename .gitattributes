@@ -6,6 +6,10 @@
 *.xml text eol=lf
 *.md text eol=lf
 *.properties text eol=lf
+*.py text eol=lf
+*.go text eol=lf
+*.json text eol=lf
+*.sha256 text eol=lf
 core-patches/*.patch text eol=lf -whitespace
 *.jar binary
 *.png binary

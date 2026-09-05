@@ -42,10 +42,10 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import io.github.zapretkvn.android.vpn.AppsUiState
-import io.github.zapretkvn.android.vpn.AppsViewModel
-import io.github.zapretkvn.android.vpn.AppScopeMode
-import io.github.zapretkvn.android.vpn.InstalledApp
+import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.apps.AppsUiState
+import io.github.zapretkvn.android.apps.AppsViewModel
+import io.github.zapretkvn.android.apps.InstalledApp
 
 enum class AppPickerMode {
     VpnScope,

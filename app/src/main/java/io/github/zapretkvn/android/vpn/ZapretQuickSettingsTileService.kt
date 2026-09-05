@@ -12,6 +12,8 @@ import androidx.core.content.ContextCompat
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.R
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.ui.QuickSettingsTilePresentation
+import io.github.zapretkvn.android.ui.toQuickSettingsTilePresentation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

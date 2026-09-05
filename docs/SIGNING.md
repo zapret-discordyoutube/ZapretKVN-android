@@ -47,6 +47,15 @@ keytool -exportcert -rfc -keystore zapret-kvn-release.jks -alias zapret-kvn-rele
 
 ## Финальный approval, версии и публикация
 
+Перед проверками и финальными коммитами согласованного Windows/Android выпуска
+из checkout Windows выполняется `python3 scripts/prepare_core_release.py
+--windows-version X.Y.Z --android-tag vA.B.C --android-root /path/to/ZapretKVN`.
+Скрипт проверяет официальные теги Amnezia и создаёт одинаковый
+`core-release-freeze.json` в обоих репозиториях. Повтор той же пары версий лишь
+проверяет фиксацию, без нового выбора upstream. Android publisher требует, чтобы
+tag и закреплённые исходники соответствовали этой фиксации; изменившийся API или
+несовместимый UDP-патч нужно исправить и проверить до публикации.
+
 После закрытия всех обязательных host-пунктов финального gate stable выпускается
 из чистого `main`, который точно совпадает с `origin/main`. Проверка production-signed
 ABI-specific APK на физическом Android-устройстве даёт дополнительное подтверждение, но

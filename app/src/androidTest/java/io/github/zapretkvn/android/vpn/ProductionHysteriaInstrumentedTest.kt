@@ -10,12 +10,15 @@ import android.os.Bundle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
 import io.github.zapretkvn.android.config.RuntimeConfigResult
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
+import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.importer.ImportCandidate
 import io.github.zapretkvn.android.importer.ImportParser
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory

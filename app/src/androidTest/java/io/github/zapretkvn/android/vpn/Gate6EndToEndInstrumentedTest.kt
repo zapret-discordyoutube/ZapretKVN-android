@@ -4,9 +4,9 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.Build
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -19,7 +19,10 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
+import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.ui.ThemeMode
 import java.io.FileInputStream
 import java.net.InetAddress

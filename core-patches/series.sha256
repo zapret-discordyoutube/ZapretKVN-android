@@ -2,3 +2,4 @@ e1c2014d9429ccba2a44a378cb300eadad06a3f43088a3dba33b95a93e26f423  core-patches/0
 fc7f6e86454ca547b4920dfd8d605cedf5dab11fd8c1bfcc6d122b144f08a8d0  core-patches/0002-read-only-relay-delay-probe.patch
 24ec74d85fafaa49cadfa93b7ffe2f5972d5f8aec9ccf246266201c58eabac87  core-patches/0003-official-hysteria2-core.patch
 cf865a0262fe5169e2c47f216849c916b6ecf346fbb7eb5f09cff7ecd17e7f6a  core-patches/0004-protocol-runtime-modules.patch
+7afa8fcc9ec3965e1c651c51df2103f0410bac43b96df35a2be7c92844b1791e  core-patches/0005-official-amnezia-wg-unified.patch

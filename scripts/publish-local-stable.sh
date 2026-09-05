@@ -23,6 +23,10 @@ if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-appro
     exit 1
 fi
 
+# This release pair was resolved once before source validation/commit. Dev,
+# stable and resume all consume the same pin without selecting upstream again.
+python3 "$PROJECT_ROOT/scripts/check_core_release_freeze.py" android "$TAG" --root "$PROJECT_ROOT"
+
 for command in curl git jq keytool mv sha256sum stat timeout; do
     command -v "$command" >/dev/null || {
         echo "Missing required command: $command" >&2

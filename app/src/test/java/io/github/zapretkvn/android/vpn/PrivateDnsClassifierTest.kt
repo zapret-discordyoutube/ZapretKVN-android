@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android.vpn
 
+import io.github.zapretkvn.android.network.PrivateDnsClassifier
+import io.github.zapretkvn.android.network.PrivateDnsMode
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

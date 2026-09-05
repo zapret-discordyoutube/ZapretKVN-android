@@ -298,7 +298,7 @@ data class DiagnosticStopAttempt(
 }
 
 data class DiagnosticState(
-    val runtimeErrors: List<io.github.zapretkvn.android.vpn.RecordedRuntimeFailure> = emptyList(),
+    val runtimeErrors: List<io.github.zapretkvn.android.diagnostics.RecordedRuntimeFailure> = emptyList(),
     val generation: Long = 0,
     val lastFailure: DiagnosticFailure? = null,
     val applicationLogs: List<DiagnosticLogLine> = emptyList(),

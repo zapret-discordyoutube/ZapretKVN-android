@@ -11,13 +11,15 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
+import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.apps.InstalledApp
 import io.github.zapretkvn.android.ui.AppRow
 import io.github.zapretkvn.android.ui.theme.ZapretTheme
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertTrue
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test

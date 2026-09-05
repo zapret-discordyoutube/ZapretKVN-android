@@ -48,6 +48,11 @@
       "pattern": "(?:Android не разрешил исключить .*сокет|failed to protect socket|socket protection failed)"
     },
     {
+      "code": "LOCAL_CLIENT_CONNECTION_CLOSED",
+      "action": "record_only",
+      "pattern": "(?:read|write) tcp[46]? (?:127(?:\\.\\d{1,3}){3}:\\d+|\\[(?:::1|::ffff:127(?:\\.\\d{1,3}){3})\\]:\\d+)->(?:127(?:\\.\\d{1,3}){3}:\\d+|\\[(?:::1|::ffff:127(?:\\.\\d{1,3}){3})\\]:\\d+): [^\\r\\n]*(?:forcibly closed|connection reset|broken pipe|(?:^|[ :])EOF(?:$|[ ,;\"}]))"
+    },
+    {
       "code": "TARGET_NETWORK_TIMEOUT",
       "action": "recover_once",
       "pattern": "(?:no recent network activity|i/o timeout|network timeout|deadline exceeded|handshake timeout|SocketTimeoutException|operation timed out)"
@@ -55,12 +60,12 @@
     {
       "code": "TARGET_CONNECTION_REFUSED",
       "action": "recover_once",
-      "pattern": "(?:connection refused|actively refused|forcibly closed|ECONNREFUSED)"
+      "pattern": "(?:connection refused|actively refused|ECONNREFUSED)"
     },
     {
       "code": "TARGET_CONNECTION_CLOSED",
       "action": "stop",
-      "pattern": "(?:connection reset|broken pipe|unexpected EOF|(?:^|[ :])EOF(?:$|[ ,;]))"
+      "pattern": "(?:connection reset|forcibly closed|broken pipe|unexpected EOF|(?:^|[ :])EOF(?:$|[ ,;]))"
     }
   ]
 }

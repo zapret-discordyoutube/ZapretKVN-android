@@ -95,6 +95,7 @@ android {
             "\"$coreCommit\"",
         )
         buildConfigField("String", "CORE_PATCH_SHA256", "\"$corePatchSha256\"")
+        buildConfigField("String", "CORE_UDP_PATCH_SHA256", "\"${coreProperties.getProperty("CORE_UDP_PATCH_SHA256")}\"")
         buildConfigField("String", "HYSTERIA_CORE_TAG", "\"$hysteriaCoreTag\"")
         buildConfigField("String", "HYSTERIA_CORE_COMMIT", "\"$hysteriaCoreCommit\"")
     }

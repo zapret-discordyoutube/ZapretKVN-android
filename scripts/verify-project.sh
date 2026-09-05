@@ -144,6 +144,18 @@ from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
+source_root = root / "app/src/main/java"
+for source in source_root.rglob("*.kt"):
+    declaration = next((line for line in source.read_text().splitlines() if line.startswith("package ")), "")
+    expected_package = ".".join(source.relative_to(source_root).parts[:-1])
+    if declaration != "package " + expected_package:
+        raise SystemExit(f"Kotlin package/path mismatch: {source.relative_to(root)}")
+vpn_root = source_root / "io/github/zapretkvn/android/vpn"
+if {path.name for path in vpn_root.glob("*.kt")} != {
+    "ZapretVpnService.kt", "ZapretQuickSettingsTileService.kt",
+    "VpnController.kt", "VpnState.kt", "VpnRecoveryPolicy.kt",
+}:
+    raise SystemExit("Keep VPN lifecycle in vpn/; place adapters, probes and app scope in their packages")
 delays = []
 for source in (
     root / "app/src/main/java",
@@ -156,8 +168,8 @@ for source in (
             delays.append((str(path.relative_to(root)), count))
 delays.sort()
 expected = [
+    ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
-    ("app/src/main/java/io/github/zapretkvn/android/vpn/HealthProbeRace.kt", 1),
     # Дебаунс перезапуска и двух направлений автоматизации по смене сети плюс
     # ограниченный backoff восстановления. Одновременно активен только один
     # debounce Job; ожидание сети событийное и таймера не добавляет.

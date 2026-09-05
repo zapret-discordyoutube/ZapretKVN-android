@@ -13,6 +13,25 @@ import org.junit.Test
 
 class WireGuardConfigParserTest {
     @Test
+    fun `awg31 boolean flags and keepalive range survive import`() {
+        val conf = AWG3_CONF.replace("[Peer]", "RandomTrailers = true\nDisableCookies = false\n[Peer]")
+            .replace("PersistentKeepalive = 25", "PersistentKeepalive = 20-30")
+        assertEquals("AmneziaWG 3.1", WireGuardConfigParser.parse(conf).protocolName)
+        val root = Json.parseToJsonElement(WireGuardConfigParser.parse(conf).json) as JsonObject
+        val endpoint = (root["endpoints"] as JsonArray).single() as JsonObject
+        val amnezia = endpoint["amnezia"] as JsonObject
+        assertEquals(JsonPrimitive(true), amnezia["random_trailers"])
+        assertEquals(JsonPrimitive(false), amnezia["disable_cookies"])
+        assertEquals("20-30", ((endpoint["peers"] as JsonArray).single() as JsonObject).string("persistent_keepalive_interval"))
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(conf.replace("RandomTrailers = true", "RandomTrailers = maybe"))
+        }
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(conf.replace("RandomTrailers = true", "RandomTrailers = true\nrandom_trailers = false"))
+        }
+    }
+
+    @Test
     fun `wireguard fields map to a native sing box endpoint`() {
         val result = WireGuardConfigParser.parse(WIREGUARD_CONF)
         val root = Json.parseToJsonElement(result.json) as JsonObject

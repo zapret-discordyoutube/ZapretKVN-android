@@ -50,9 +50,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.BuildConfig
+import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.network.probes.primaryGroup
 import io.github.zapretkvn.android.profiles.ProfileMetadata
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
-import io.github.zapretkvn.android.vpn.AppScopeMode
 import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencyUnsupportedReason
@@ -61,10 +62,9 @@ import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
-import io.github.zapretkvn.android.vpn.primaryGroup
 import io.github.zapretkvn.android.vpn.withFreshness
-import kotlinx.coroutines.delay
 import kotlin.math.max
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

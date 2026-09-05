@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.vpn
 
 import io.github.zapretkvn.android.config.ProxyIpFamily
+import io.github.zapretkvn.android.network.probes.selectHealthAddress
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress

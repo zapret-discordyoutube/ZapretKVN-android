@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn
 
+import io.github.zapretkvn.android.network.probes.DnsHealthResponseValidator
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
