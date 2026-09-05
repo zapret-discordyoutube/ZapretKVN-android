@@ -28,6 +28,12 @@ data class RecordedRuntimeFailure(
     val occurrences: Long = 1,
 )
 
+/** Freeze the failure before closing sockets and CommandLog emits teardown callbacks. */
+internal class RuntimeStartupFailure(
+    cause: Throwable,
+    val evidence: RuntimeFailure?,
+) : RuntimeException(cause.message, cause)
+
 /** Separate from the bounded traffic log: no error or unknown message is evicted. */
 internal class RuntimeErrorJournal {
     private val records = linkedMapOf<RuntimeFailure, RecordedRuntimeFailure>()
@@ -103,4 +109,17 @@ internal object RuntimeErrors {
                 it.failure.code in setOf("TARGET_PIN_MISMATCH", "TARGET_AUTH_REJECTED", "TARGET_OBFS_REJECTED")
             ) 1 else 0
         }.thenBy { it.lastSeenEpochMillis })?.failure
+
+    fun startupEvidence(error: Throwable, records: List<RecordedRuntimeFailure>): RuntimeFailure? {
+        val captured = generateSequence(error) { it.cause }
+            .filterIsInstance<RuntimeStartupFailure>().firstOrNull()
+        // A captured null is meaningful: cleanup cannot supply the original cause.
+        return if (captured != null) captured.evidence else bestEvidence(records)
+    }
+
+    fun commandLogFailure(generation: Long, message: String, expectedClose: Boolean): RuntimeFailure? {
+        if (expectedClose) return null
+        return capture("libbox-command-log", "observer", "CommandLog: $message", generation)
+            .copy(code = "LOCAL_CONTROL_PLANE_UNAVAILABLE", action = "stop")
+    }
 }

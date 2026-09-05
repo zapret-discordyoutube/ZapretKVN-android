@@ -696,9 +696,13 @@ class ZapretVpnService : VpnService() {
                     pendingHysteriaReplacement = null
                 }
         } catch (error: Throwable) {
+            val startupFailure = if (error is CancellationException) error else RuntimeStartupFailure(
+                error,
+                RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token)),
+            )
             discardSession(resources)
             resources.close()
-            throw error
+            throw startupFailure
         }
 
         if (token == controller.currentGeneration() && activeSession === resources) {
@@ -1810,7 +1814,7 @@ class ZapretVpnService : VpnService() {
         updaterRouting: Boolean,
     ) {
         cancelScheduledNetworkRestart()
-        val evidence = RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token))
+        val evidence = RuntimeErrors.startupEvidence(error, controller.runtimeErrors.forGeneration(token))
         val baseFailure = safeError(error).let { fallback ->
             if (evidence == null) fallback else fallback.copy(
                 message = "[${evidence.component}][${evidence.stage}] ${evidence.message}",
@@ -2387,6 +2391,7 @@ class ZapretVpnService : VpnService() {
         private var logClientCounted = false
         private var runtimeErrorClient: CommandClient? = null
         private val runtimeErrorClientAvailable = AtomicBoolean(false)
+        @Volatile private var runtimeErrorClientFailure: String? = null
         @Volatile private var runtimeErrorClientUnavailableCallback: ((String) -> Unit)? = null
         @Volatile private var selectedOutboundTag: String? = initialSelectedOutboundTag
         private val hysteriaTargetFence = HysteriaTargetGenerationFence(
@@ -2658,6 +2663,7 @@ class ZapretVpnService : VpnService() {
                 throw RuntimeErrorObserverUnavailableException()
             }
             runtimeErrorClientUnavailableCallback = { message -> onUnavailable(generation, message) }
+            val closeRequested = AtomicBoolean(false)
             val candidate = Libbox.newCommandClient(
                 RuntimeErrorLogClientHandler(
                     generation = generation,
@@ -2665,8 +2671,11 @@ class ZapretVpnService : VpnService() {
                     onEntry = { level, message -> controller.recordCoreFailure(generation, level, message) },
                     onConnected = { runtimeErrorClientAvailable.set(true) },
                     onDisconnected = { message ->
+                        val expectedClose = closing.get() || closeRequested.get()
+                        controller.recordCommandLogDisconnect(generation, message, expectedClose)
+                        if (!expectedClose) runtimeErrorClientFailure = message
                         val wasAvailable = runtimeErrorClientAvailable.getAndSet(false)
-                        if (wasAvailable && !closing.get()) runtimeErrorClientUnavailableCallback?.invoke(message)
+                        if (wasAvailable && !expectedClose) runtimeErrorClientUnavailableCallback?.invoke(message)
                     },
                 ),
                 CommandClientOptions().apply { addCommand(Libbox.CommandLog) },
@@ -2682,6 +2691,7 @@ class ZapretVpnService : VpnService() {
                 }
                 runtimeErrorClient = candidate
             } catch (error: Throwable) {
+                closeRequested.set(true)
                 runtimeErrorClientAvailable.set(false)
                 runCatching { candidate.disconnect() }
                 if (error is CancellationException) throw error
@@ -2693,7 +2703,7 @@ class ZapretVpnService : VpnService() {
         fun requireRuntimeErrorClient() {
             if (closing.get()) throw CancellationException("VPN-сессия уже закрывается.")
             if (runtimeErrorClient == null || !runtimeErrorClientAvailable.get()) {
-                throw RuntimeErrorObserverUnavailableException()
+                throw RuntimeErrorObserverUnavailableException(runtimeErrorClientFailure?.let(::IllegalStateException))
             }
         }
 
@@ -2840,7 +2850,7 @@ class ZapretVpnService : VpnService() {
         override fun writeDebugMessage(message: String) = Unit
     }
 
-    private abstract class BaseClientHandler : CommandClientHandler {
+    internal abstract class BaseClientHandler : CommandClientHandler {
         override fun connected() = Unit
         override fun disconnected(message: String) = Unit
         override fun setDefaultLogLevel(level: Int) = Unit
@@ -2894,7 +2904,7 @@ class ZapretVpnService : VpnService() {
     }
 
     /** Always-on bounded detector; raw messages are classified in memory only. */
-    private class RuntimeErrorLogClientHandler(
+    internal class RuntimeErrorLogClientHandler(
         private val generation: Long,
         private val onLogs: (Long, List<String>) -> Unit,
         private val onEntry: (Int, String) -> Unit,
@@ -2904,7 +2914,6 @@ class ZapretVpnService : VpnService() {
         override fun connected() = onConnected()
 
         override fun disconnected(message: String) {
-            onEntry(2, "CommandLog: $message")
             onDisconnected(message)
         }
 

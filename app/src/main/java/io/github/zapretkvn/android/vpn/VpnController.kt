@@ -741,6 +741,17 @@ class VpnController(
         mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
     }
 
+    internal fun recordCommandLogDisconnect(generation: Long, message: String, expectedClose: Boolean) {
+        val failure = RuntimeErrors.commandLogFailure(generation, message, expectedClose)
+        if (failure == null) {
+            // A locally requested close is lifecycle evidence, not a runtime failure.
+            publishCoreDiagnosticLog(generation, 4, "CommandLog: $message")
+        } else {
+            runtimeErrors.record(failure)
+            mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
+        }
+    }
+
     internal fun publishCoreDiagnosticLogs(
         generation: Long,
         entries: List<Pair<Int, String>>,
