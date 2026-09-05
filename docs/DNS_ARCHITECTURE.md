@@ -32,7 +32,7 @@
 | `experimental/libbox/dns.go` | platform transport принимает raw DNS, а при `Raw=false` — только A/AAAA | API 29+ использовать `DnsResolver.rawQuery`, API 26–28 — `Network.getAllByName()` |
 | `common/dialer/default.go`, `route/network.go` | при `route.auto_detect_interface=true` platform control вызывается для исходящих сокетов и возвращает ошибку в dialer | требовать этот флаг; не игнорировать `protect(fd) == false`, а выбрасывать ошибку в libbox |
 | `dns/transport/https.go` | literal `server` задаёт адрес соединения, `tls.server_name` — SNI и HTTP Host; `detour` использует указанный outbound | DoH не имеет DNS bootstrap-цикла и действительно идёт через выбранный proxy |
-| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `parallel` остаётся только внутри последнего DoH-этапа; plaintext fallback запрещён |
+| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `parallel` остаётся только внутри DoH-этапа; системный DNS разрешён только последним кандидатом Auto с предупреждением |
 | `dns/client.go` | общий DNS timeout — 10 секунд; кэш при `independent_cache=false` не включает tag транспорта | DNS-выбор одного домена должен быть детерминированным, а при смене режима/сети кэш сбрасывается |
 | `dns/router.go` | `ResetNetwork()` очищает DNS response cache и сбрасывает транспорты, но не очищает `dnsReverseMapping` | для полного сброса DNS-состояния в MVP нужен перезапуск core |
 | `dns/transport/hosts/hosts.go` и dialer | `hosts.predefined` работает как resolver для `outbound.domain_resolver`, не меняя hostname назначения | last-known-good overlay сохраняет TLS/Reality SNI и HTTP Host |
@@ -53,10 +53,10 @@ Pinned Android gitlink фиксирует полезный пример пове
 - FakeIP по умолчанию выключен.
 - До запуска VPN адрес сервера разрешает системный resolver Android на физической сети.
 - После запуска DNS по TCP/UDP 53 выбранных приложений принимает DNS-модуль sing-box внутри TUN.
-- В режиме «Автоматически» сначала без изменений пробуется выбранный DNS профиля, если он существует; после подтверждённой DNS-ошибки выполняется чистая попытка с DNS Android, затем последняя — с DoH через выбранный proxy outbound.
+- В режиме «Автоматически» сначала без изменений пробуется выбранный DNS профиля, если он существует; после подтверждённой DNS-ошибки выполняется чистая попытка с DoH через выбранный proxy outbound, затем последний резерв — DNS Android с предупреждением.
 - Строгий Private DNS Android не отключается и не перехватывается: для управляемых режимов «Автоматически»/«Защищённый» это блокирующая несовместимость, а не повод тайно ослабить DNS.
 - Невыбранные приложения вообще не попадают в TUN и продолжают использовать обычную сеть и системный DNS.
-- Явные режимы «Из JSON», «DNS Android» и «Защищённый через VPN» не получают скрытого fallback. Отказ последнего защищённого этапа Auto закрывает VPN.
+- Явные режимы «Из JSON», «DNS Android» и «Защищённый через VPN» не получают скрытого fallback. Отказ всех DNS-кандидатов Auto закрывает VPN.
 - Управляемый Zapret/sing-box DNS-кэш существует только в памяти сессии. Android resolver может иметь собственный системный кэш вне контроля приложения. Отдельно сохраняется маленький last-known-good кэш адресов VPN-серверов.
 
 Это даёт наиболее предсказуемое поведение для per-app VPN и не создаёт постоянной второй системы маршрутизации.
@@ -294,7 +294,7 @@ DNS-решение внутри каждого managed Android/Secure этапа
 
 ## Эталонный фрагмент защищённого этапа для sing-box 1.13.14
 
-Фрагмент для явного Secure или последнего Auto-этапа с proxy по умолчанию и прямыми LAN-исключениями:
+Фрагмент для явного Secure или DoH-этапа Auto с proxy по умолчанию и прямыми LAN-исключениями:
 
 ```json
 {
@@ -500,7 +500,7 @@ FakeIP выключен по умолчанию и в MVP не требуетс�
 → запуск libbox и TUN
 → проверка, что VPN стал default network для UID Zapret KVN
 → DNS-проба обычным сокетом UID Zapret KVN через TUN
-→ только в Auto при DNS-ошибке: полный stop и следующий кандидат профиль → Android → DoH
+→ только в Auto при DNS-ошибке: полный stop и следующий кандидат профиль → DoH → Android
 → HTTPS-пробы Cloudflare, Google и OpenDNS через TUN со ступенчатым стартом
 → первый корректный ответ побеждает и отменяет остальные пробы
 → при провале всех трёх — одна спасательная проба с удвоенными тайм-аутами
@@ -559,7 +559,7 @@ FakeIP выключен по умолчанию и в MVP не требуетс�
 
 ## Настройки DNS
 
-- **Автоматически** — DNS профиля, если он задан; после подтверждённой DNS-ошибки чистая попытка с DNS Android, затем последняя с DoH через proxy. Strict Private DNS блокирует запуск этого режима.
+- **Автоматически** — DNS профиля, если он задан; после подтверждённой DNS-ошибки чистая попытка с DoH через proxy, затем последний резерв — DNS Android с предупреждением. При strict Private DNS используется только DNS Android.
 - **DNS Android** — все стандартные DNS-запросы выбранных приложений через системную DNS-политику Android/Private DNS.
 - **Защищённый через VPN** — DNS по TCP/UDP 53 выбранных приложений через DoH fallback и proxy outbound; strict Private DNS блокирует запуск этого режима.
 - **Из JSON** — существующая DNS-секция используется без замены и fallback-цепочки. Если DNS-секции или серверов в профиле нет, runtime-копия получает минимальный local DNS Android; это не записывается в профиль и не включает DoH.
@@ -642,7 +642,7 @@ Source-аудит отдельно подтвердил, что libbox package o
 - Wi‑Fi, cellular, Wi‑Fi ↔ cellular, IPv6/NAT64;
 - captive portal;
 - заблокирован системный DNS, есть/нет last-known-good;
-- Auto с DNS профиля: успех без Android/DoH, DNS error/timeout с переходом к Android, затем к DoH; HTTPS/proxy/JSON-ошибка не должна запускать DNS fallback; после каждой неудачной попытки ноль старых core/PFD/callback;
+- Auto с DNS профиля: успех без Android/DoH, DNS error/timeout с переходом к DoH, затем к Android; HTTPS/proxy/JSON-ошибка не должна запускать DNS fallback; после каждой неудачной попытки ноль старых core/PFD/callback;
 - все пять DoH стартуют на cache miss: один успешен/быстро недоступен/завис, все недоступны, первый корректный ответ выигрывает; отдельно проверяются гонки с `NXDOMAIN`/`SERVFAIL`/`REFUSED`;
 - proxy доступен по hostname и по IP;
 - каждый поддерживаемый MVP outbound отдельно проходит socket-protection/loop test; неаудированный backend отклоняется до `establish()`;
@@ -661,7 +661,7 @@ Source-аудит отдельно подтвердил, что libbox package o
 
 - DNS-матрица входит в прошедшие 66/66 instrumented-тестов на AVD API 26/29 и
   текущие 67/67 на API 36.
-- JVM-тесты подтверждают конечный порядок Auto `профиль → Android → DoH`, отсутствие fallback у явных режимов и запрет переключения на non-DNS ошибке. Новый instrumented-тест clean restart Android→DoH с fault injection компилируется; физическое подтверждение входит в Test 21 и пока не считается закрытым gate.
+- JVM-тесты подтверждают конечный порядок Auto `профиль → DoH → Android`, отсутствие fallback у явных режимов и запрет переключения на non-DNS ошибке. Новый instrumented-тест clean restart DoH→Android с fault injection компилируется; физическое подтверждение входит в Test 21 и пока не считается закрытым gate.
 - Проверены legacy `Network.getAllByName()` и API 29+ `DnsResolver`, Private DNS off/automatic/strict working/strict broken, включая поломку strict во время активного TUN, реальные переключения emulator Wi-Fi ↔ cellular, IPv6, fresh/emergency/expired/no LKG, managed DoH success, недоступный proxy/managed DoH, мёртвый внутренний DNS и немедленный возврат обычной Android network после stop. Третий OpenDNS закреплён exact fixture и JVM-тестом; физический сценарий с блокировкой первых двух endpoints остаётся обязательной проверкой.
 - Captive-portal ветка проверена детерминированной подстановкой platform state до `establish()`. Это доказывает fail-close кода, но не заменяет настоящий портал Android validation.
 - Эмуляторная сеть dual-stack не является IPv6-only/NAT64. Поэтому настоящий captive portal, NAT64 и повтор blocked-DNS/LKG/DoH на физических Wi-Fi/mobile сетях остаются открытой частью Gate 3.

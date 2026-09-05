@@ -926,7 +926,7 @@ class VpnServiceInstrumentedTest {
     }
 
     @Test
-    fun automaticDnsFallsBackOnceFromAndroidToSecureAfterConfirmedDnsFailure() = runBlocking {
+    fun automaticDnsFallsBackOnceFromSecureToAndroidAfterConfirmedDnsFailure() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = (context.applicationContext as ZapretApplication).container
@@ -945,10 +945,10 @@ class VpnServiceInstrumentedTest {
             val diagnostics = container.vpnController.diagnostics.value
             assertTrue(
                 diagnostics.connectionAttempt?.stages.orEmpty().any {
-                    it.key == "dns_fallback_secure" && it.status == DiagnosticStageStatus.Success
+                    it.key == "dns_fallback_android" && it.status == DiagnosticStageStatus.Success
                 },
             )
-            assertTrue(diagnostics.effectiveOverlay.orEmpty().contains("\"dns_mode\": \"Secure\""))
+            assertTrue(diagnostics.effectiveOverlay.orEmpty().contains("\"dns_mode\": \"Android\""))
         } finally {
             VpnTestHooks.reset()
             stopIfNeeded(container.vpnController, context)

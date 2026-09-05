@@ -63,7 +63,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 | Приложения | Android allowlist применяется один раз в `VpnService.Builder` |
 | Маршруты | sing-box `route.rules`: `direct`, selected proxy или `reject` |
 | GEO/списки | Локальные binary `.srs` rule-set внутри APK |
-| DNS | FakeIP выключен; Android bootstrap; Auto: DNS профиля → Android → DoH |
+| DNS | FakeIP выключен; Android bootstrap; Auto: DNS профиля → DoH → Android |
 | Rootless hardening | Один compile-time/runtime overlay без process/thread/polling; localhost endpoints закрыты по умолчанию |
 | Go runtime | `Libbox.SetMemoryLimit(false)`: стандартный GC, без Android GC=10 |
 | Телеметрия | Только session totals; 1 Гц лишь пока главная видима |
@@ -88,7 +88,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 11. Любая ошибка после открытия TUN полностью закрывает PFD и core.
 12. Статус «Подключено» появляется только после DNS и HTTPS health-check.
 13. Приложение не держит `WakeLock`, не использует alarm/job/WorkManager и не делает периодический health-check.
-14. «Автоматически» сначала пробует DNS профиля, затем DNS Android и только после подтверждённой DNS-ошибки — DoH; каждый переход создаёт чистую bounded-сессию без фонового retry.
+14. «Автоматически» сначала пробует DNS профиля, затем DoH и только после подтверждённой DNS-ошибки — DNS Android; каждый переход создаёт чистую bounded-сессию без фонового retry.
 15. Скорость не показывается в уведомлении; status/log streams существуют только пока нужен соответствующий экран.
 16. Управляемый профиль не создаёт NTP, remote rule-set, периодический URL-test или явный persistent keepalive сверх defaults выбранного протокола.
 17. `VpnService.Builder.allowBypass()` не вызывается; rootless hardening не обещает скрыть системный TUN/`TRANSPORT_VPN`.
@@ -129,7 +129,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 10. Создать platform adapter и локальный libbox command server в том же Android process.
 11. Вызвать `startOrReloadService()`: libbox синхронно вызывает `OpenTun(TunOptions)`, а adapter создаёт один `VpnService.Builder`, применяет приложения, адреса, полные routes и внутренний DNS.
 12. `Builder.establish()` возвращает Android PFD; libbox дублирует его FD и запускает единственный core поверх этого же TUN. Второго адаптера или второго TUN здесь нет.
-13. Проверить DNS и HTTPS через Android TUN. Для HTTPS runtime-копия включает TLS sniff только для package Zapret KVN и порта 443, после чего точные probe-hostnames направляются в выбранный outbound. Это доказывает настоящий путь через proxy без глобального sniff и без отдельного WireGuard-only gate. В Auto подтверждённая именно DNS-ошибка полностью закрывает текущие core/PFD/callbacks и запускает следующий кандидат `профиль → Android → DoH`; максимум три попытки внутри общего deadline 45 секунд. Ошибка data-plane, JSON или HTTPS-пути не считается DNS-ошибкой и не запускает переключение.
+13. Проверить DNS и HTTPS через Android TUN. Для HTTPS runtime-копия включает TLS sniff только для package Zapret KVN и порта 443, после чего точные probe-hostnames направляются в выбранный outbound. Это доказывает настоящий путь через proxy без глобального sniff и без отдельного WireGuard-only gate. В Auto подтверждённая именно DNS-ошибка полностью закрывает текущие core/PFD/callbacks и запускает следующий кандидат `профиль → DoH → Android`; максимум три попытки внутри общего deadline 45 секунд. Ошибка data-plane, JSON или HTTPS-пути не считается DNS-ошибкой и не запускает переключение.
 14. Только после успеха показать «Подключено»; сбор 1 Hz session-only статистики начать лишь при видимой главной.
 
 Ожидание физической сети выполняется до шага 4 и не входит в общий deadline 45 секунд: сначала ждём зрелую сеть 10 секунд, затем любую пригодную ещё 15. Бюджет подключения не должен тратиться на то, что Android ещё поднимает Wi-Fi.
@@ -473,7 +473,7 @@ DNS/route `package_name → reject`; сохранённый JSON не измен
 
 Режимы GUI:
 
-- **Автоматически** — выбранный DNS профиля; при подтверждённой DNS-ошибке чистая попытка с DNS Android, затем последняя попытка с DoH через proxy;
+- **Автоматически** — выбранный DNS профиля; при подтверждённой DNS-ошибке чистая попытка с DoH через proxy, затем последний резерв — DNS Android с предупреждением;
 - **DNS Android** — системная DNS/Private DNS политика;
 - **Защищённый через VPN** — стандартный DNS выбранных приложений через DoH/proxy;
 - **Из JSON** — существующая DNS-секция не переписывается; если секции/серверов нет, runtime-копия получает один local DNS Android, `hijack-dns` и `default_domain_resolver`, а сохранённый JSON остаётся прежним.
@@ -497,7 +497,7 @@ FakeIP выключен. Системные настройки Android прил�
 | Dynamic core/rule updates | Отклонены: больше кода, мусора и точек отказа |
 | Remote managed rule-set | Отклонены: сеть может заблокировать запуск VPN |
 | Fork ради owner lookup | Пока отклонён: exact core вызывает lookup безусловно, но сначала нужен device benchmark |
-| Три DoH параллельно | Только последний Auto-этап или явный Secure: exact core с `sequential` не достигает резерва, если первый DoH занял общий deadline; на успешных profile/Android-этапах DoH-запросов нет |
+| Три DoH параллельно | Только DoH-этап Auto или явный Secure: exact core с `sequential` не достигает резерва, если первый DoH занял общий deadline; успешный профильный DNS не запускает DoH; после отказа DoH доступен системный резерв |
 | Отдельный VPN-процесс | Отклонён до профилирования: добавляет IPC/process overhead и усложняет lifecycle |
 
 Pinned Android AAR собирается с `with_gvisor`. Для managed TUN поле `stack` не переопределяем: exact core выбирает upstream default `mixed`. Exact pinned core при пустом `tun.mtu` выбирает на Android `9000`, а userspace WireGuard — собственный меньший MTU. Поэтому стандартный runtime задаёт внешний TUN явно: `1500` для остальных профилей и `min(1500, effective userspace WireGuard endpoint MTU)` для конфигураций с userspace WireGuard. Endpoint без MTU получает Android fallback `1280`; это совпадает с default официального AmneziaWG Android. Режим «По профилю» сохраняет явно заданный TUN MTU, но при отсутствии поля также использует MTU userspace WireGuard endpoint и не возвращается к несовместимому 9000. Stored JSON не меняется. Исправление основано на системном logcat stable 0.2.3, где фактический Android TUN был `9000` при endpoint `1280`; окончательный физический A/B `1280 ↔ 9000` остаётся обязательным.
@@ -519,7 +519,7 @@ Runtime-копия каждого профиля, включая raw JSON и end
 - 60 значений графика — обычный кольцевой массив в памяти. Уведомление, фон и закрытый UI не обновляют график;
 - health-check выполняется при подключении и значимой смене сети, IP — один раз за соединение, Relay/ICMP — только явной командой. Периодических проверок «на всякий случай» нет;
 - автоматическое восстановление после транзиентного отказа ждёт сеть по событию `ConnectivityManager`, а не опросом; единственный таймер — ограниченный backoff повтора. Простой без сети не стоит ничего и потому не ограничен, а число попыток подключения ограничено жёстко; wakelock и alarm не используются;
-- DNS cache остаётся включённым с capacity 4096. Только явный Secure или последний Auto-этап использует `parallel`: Quad9, Google, OpenDNS, Cloudflare и Yandex стартуют на cache miss, потому что `sequential` exact core не достигает резерва при зависании первого; успешный DNS профиля/Android не создаёт DoH-трафика;
+- DNS cache остаётся включённым с capacity 4096. Только явный Secure или DoH-этап Auto использует `parallel`: Quad9, Google, OpenDNS, Cloudflare и Yandex стартуют на cache miss, потому что `sequential` exact core не достигает резерва при зависании первого; успешный DNS профиля не создаёт DoH-трафика;
 - updater, подписки и импорт работают только после действия пользователя;
 - rootless hardening выполняется один раз при сборке runtime JSON и не создаёт scanner, timer, listener или отдельный process;
 - приложение не запрашивает `WAKE_LOCK` и исключение из battery optimization;

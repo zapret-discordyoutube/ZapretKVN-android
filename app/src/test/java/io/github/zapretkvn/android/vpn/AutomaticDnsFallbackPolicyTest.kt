@@ -9,20 +9,20 @@ import org.junit.Test
 
 class AutomaticDnsFallbackPolicyTest {
     @Test
-    fun `automatic uses profile then Android then secure DNS`() {
+    fun `automatic uses profile then secure then Android DNS`() {
         assertEquals(
-            listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure),
+            listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android),
             AutomaticDnsFallbackPolicy.candidates(DnsMode.Automatic, hasProfileDns = true),
         )
         assertEquals(
-            listOf(DnsMode.Android, DnsMode.Secure),
+            listOf(DnsMode.Secure, DnsMode.Android),
             AutomaticDnsFallbackPolicy.candidates(DnsMode.Automatic, hasProfileDns = false),
         )
     }
 
     @Test
     fun `explicit modes never receive hidden fallback`() {
-        listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure).forEach { mode ->
+        listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android).forEach { mode ->
             assertEquals(
                 listOf(mode),
                 AutomaticDnsFallbackPolicy.candidates(mode, hasProfileDns = true),
@@ -44,7 +44,7 @@ class AutomaticDnsFallbackPolicyTest {
 
     @Test
     fun `strict private dns does not change explicit modes`() {
-        listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure).forEach { mode ->
+        listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android).forEach { mode ->
             assertEquals(
                 listOf(mode),
                 AutomaticDnsFallbackPolicy.candidates(
@@ -61,19 +61,19 @@ class AutomaticDnsFallbackPolicyTest {
         val attempts = mutableListOf<DnsMode>()
         val transitions = mutableListOf<Pair<DnsMode, DnsMode>>()
         val result = AutomaticDnsFallbackPolicy.run(
-            candidates = listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure),
+            candidates = listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android),
             onFallback = { from, to, _ -> transitions += from to to },
             attempt = { mode ->
                 attempts += mode
-                if (mode != DnsMode.Secure) throw VpnDnsHealthException("dns failed")
+                if (mode != DnsMode.Android) throw VpnDnsHealthException("dns failed")
                 "connected"
             },
         )
 
         assertEquals("connected", result)
-        assertEquals(listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure), attempts)
+        assertEquals(listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android), attempts)
         assertEquals(
-            listOf(DnsMode.FromJson to DnsMode.Android, DnsMode.Android to DnsMode.Secure),
+            listOf(DnsMode.FromJson to DnsMode.Secure, DnsMode.Secure to DnsMode.Android),
             transitions,
         )
     }
@@ -83,7 +83,7 @@ class AutomaticDnsFallbackPolicyTest {
         val error = assertThrows(IllegalStateException::class.java) {
             runBlocking {
                 AutomaticDnsFallbackPolicy.run(
-                    candidates = listOf(DnsMode.FromJson, DnsMode.Android, DnsMode.Secure),
+                    candidates = listOf(DnsMode.FromJson, DnsMode.Secure, DnsMode.Android),
                     onFallback = { _, _, _ -> error("unexpected fallback") },
                     attempt = { throw IllegalStateException("https failed") },
                 )

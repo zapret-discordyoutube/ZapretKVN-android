@@ -140,8 +140,8 @@ internal object AutomaticDnsFallbackPolicy {
         strictPrivateDns -> listOf(DnsMode.Android)
         else -> buildList {
             if (hasProfileDns) add(DnsMode.FromJson)
-            add(DnsMode.Android)
             add(DnsMode.Secure)
+            add(DnsMode.Android)
         }
     }
 
@@ -822,7 +822,10 @@ class ZapretVpnService : VpnService() {
                             ?: failureChain.last().javaClass.simpleName
                         ).take(80)
                     val detail = "Автоматический DNS: ${AutomaticDnsFallbackPolicy.label(previous)} " +
-                        "не отвечает ($failureType); пробуем ${AutomaticDnsFallbackPolicy.label(candidate)}."
+                        "не отвечает ($failureType); пробуем ${AutomaticDnsFallbackPolicy.label(candidate)}." +
+                        if (candidate == DnsMode.Android && !strictPrivateDns) {
+                            " Системный DNS может передавать запросы без шифрования провайдеру."
+                        } else ""
                     controller.publishDiagnosticWarning(detail)
                     controller.startConnectionDiagnosticStage(
                         token,

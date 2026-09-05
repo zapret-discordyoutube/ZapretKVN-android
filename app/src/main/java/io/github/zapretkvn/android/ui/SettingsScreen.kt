@@ -1420,7 +1420,7 @@ private fun DnsMode.displayName(): String = when (this) {
 }
 
 private fun DnsMode.description(): String = when (this) {
-    DnsMode.Automatic -> "DNS профиля → DNS Android → DoH. Переход только после подтверждённой ошибки."
+    DnsMode.Automatic -> "DNS профиля → DoH → DNS Android. Переход только после подтверждённой ошибки; системный DNS — последний резерв."
     DnsMode.Android -> "Системный resolver и Private DNS Android остаются источником истины."
     DnsMode.Secure -> "Стандартный DNS выбранных приложений идёт в DoH через proxy."
     DnsMode.FromJson -> "DNS профиля используется как есть; если его нет — local DNS Android без DoH."
