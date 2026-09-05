@@ -142,7 +142,6 @@ done
 APK_SIZE="$(stat -c '%s' "$APK")"
 MAPPING_SIZE="$(stat -c '%s' "$MAPPING")"
 SYMBOL_SIZE="$(stat -c '%s' "$SYMBOL_ZIP")"
-(( APK_SIZE > 0 && APK_SIZE <= 100663296 )) || { echo "Release APK exceeds 96 MiB: $APK_SIZE" >&2; exit 1; }
 (( MAPPING_SIZE >= 1024 )) || { echo "R8 mapping is unexpectedly small" >&2; exit 1; }
 grep -Fq 'io.github.zapretkvn.android' "$MAPPING"
 
@@ -161,9 +160,15 @@ if [[ -n "$EXPECTED_ABI" && "$ABI" != "$EXPECTED_ABI" ]]; then
     exit 1
 fi
 case "$ABI" in
-    arm64-v8a|armeabi-v7a|x86_64) ;;
+    arm64-v8a|armeabi-v7a) APK_LIMIT_MIB=96 ;;
+    # Owner-approved budget for the larger x86_64 official Xray integration.
+    x86_64) APK_LIMIT_MIB=112 ;;
     *) echo "Unsupported release APK ABI: $ABI" >&2; exit 1 ;;
 esac
+(( APK_SIZE > 0 && APK_SIZE <= APK_LIMIT_MIB * 1024 * 1024 )) || {
+    echo "Release APK exceeds $APK_LIMIT_MIB MiB for $ABI: $APK_SIZE" >&2
+    exit 1
+}
 
 unzip -p "$APK" "lib/$ABI/libbox.so" > "$TEMP_DIR/libbox.so"
 [[ -s "$TEMP_DIR/libbox.so" ]]
@@ -229,6 +234,7 @@ jq -n \
     --arg apk "$APK" \
     --arg apk_sha256 "$APK_SHA256" \
     --argjson apk_size "$APK_SIZE" \
+    --argjson apk_limit_mib "$APK_LIMIT_MIB" \
     --arg mapping_sha256 "$MAPPING_SHA256" \
     --argjson mapping_size "$MAPPING_SIZE" \
     --arg symbols_sha256 "$SYMBOL_SHA256" \
@@ -238,7 +244,7 @@ jq -n \
     --arg core_commit "$CORE_COMMIT" \
     --arg core_patch_sha256 "$CORE_PATCH_SHA256" \
     --arg abi "$ABI" \
-    '{apk:$apk,abi:$abi,apk_sha256:$apk_sha256,apk_size:$apk_size,r8_mapping_sha256:$mapping_sha256,r8_mapping_size:$mapping_size,native_symbols_sha256:$symbols_sha256,native_symbols_size:$symbols_size,signed:$signed,signer_sha256:$signer_sha256,core_commit:$core_commit,core_patch_sha256:$core_patch_sha256,debuggable:false,cleartext:false,manifest_allowlist:true,secret_canaries_absent:true}' \
+    '{apk:$apk,abi:$abi,apk_sha256:$apk_sha256,apk_size:$apk_size,apk_limit_mib:$apk_limit_mib,r8_mapping_sha256:$mapping_sha256,r8_mapping_size:$mapping_size,native_symbols_sha256:$symbols_sha256,native_symbols_size:$symbols_size,signed:$signed,signer_sha256:$signer_sha256,core_commit:$core_commit,core_patch_sha256:$core_patch_sha256,debuggable:false,cleartext:false,manifest_allowlist:true,secret_canaries_absent:true}' \
     > "$REPORT_DIR/security-report-$ABI.json"
 
 echo "Release candidate security audit passed: $REPORT_DIR/security-report-$ABI.json"
