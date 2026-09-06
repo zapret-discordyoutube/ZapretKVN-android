@@ -553,7 +553,7 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
-    fun `secure DNS uses real IP parallel fallback and no fakeip`() {
+    fun `tunnel DNS is plain 53 through the proxy so the node resolver answers`() {
         val result = RuntimeConfigBuilder.build(
             validConfig(),
             options = RuntimeConfigOptions(dnsMode = DnsMode.Secure),
@@ -564,27 +564,28 @@ class RuntimeConfigBuilderTest {
         val rules = (dns["rules"] as JsonArray).map { it as JsonObject }
         val fallback = servers.first { it.string("tag") == "zapret-secure-dns" }
 
-        assertEquals("parallel", fallback.string("strategy"))
-        val expected = listOf(
-            Triple("zapret-doh-1", "9.9.9.9", "dns.quad9.net"),
-            Triple("zapret-doh-2", "8.8.8.8", "dns.google"),
-            Triple("zapret-doh-3", "208.67.222.222", "dns.opendns.com"),
-            Triple("zapret-doh-4", "1.1.1.1", "cloudflare-dns.com"),
-            Triple("zapret-doh-5", "77.88.8.8", "common.dot.dns.yandex.net"),
-        )
-        expected.forEach { (tag, address, serverName) ->
-            val server = servers.first { it.string("tag") == tag }
-            assertEquals(address, server.string("server"))
-            assertEquals(
-                serverName,
-                ((server["tls"] as JsonObject)["server_name"] as JsonPrimitive).content,
-            )
-            assertEquals("zapret-proxy", server.string("detour"))
-        }
+        // Узел перенаправляет DNS туннеля на 53 в собственный resolver и
+        // подменяет там адреса управляемых имён. DoH этого перехвата не видит и
+        // возвращает настоящий origin.
+        assertEquals("sequential", fallback.string("strategy"))
         assertEquals(
-            expected.map(Triple<String, String, String>::first),
+            listOf("zapret-node-dns-udp", "zapret-node-dns-tcp"),
             (fallback["servers"] as JsonArray).map { (it as JsonPrimitive).content },
         )
+        listOf(
+            "zapret-node-dns-udp" to "udp",
+            "zapret-node-dns-tcp" to "tcp",
+        ).forEach { (tag, transport) ->
+            val server = servers.first { it.string("tag") == tag }
+            assertEquals(transport, server.string("type"))
+            // 1.1.1.1 и 1.0.0.1 — канонические upstream узла, они исключены из
+            // его перенаправления и ушли бы к настоящему Cloudflare.
+            assertEquals("8.8.8.8", server.string("server"))
+            assertEquals("53", (server["server_port"] as JsonPrimitive).content)
+            assertEquals("zapret-proxy", server.string("detour"))
+            assertFalse("tls" in server)
+        }
+        assertFalse(servers.any { it.string("type") == "https" })
         assertFalse(servers.any { it.string("type") == "fakeip" })
         assertEquals("4096", (dns["cache_capacity"] as JsonPrimitive).content)
         assertTrue((dns["reverse_mapping"] as JsonPrimitive).boolean)
@@ -597,7 +598,7 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
-    fun `switching a runtime copy from secure to Android removes every generated DoH`() {
+    fun `switching a runtime copy from secure to Android removes every generated resolver`() {
         val secure = RuntimeConfigBuilder.build(
             validConfig(),
             options = RuntimeConfigOptions(dnsMode = DnsMode.Secure),
@@ -609,9 +610,26 @@ class RuntimeConfigBuilderTest {
         val dns = (JsonConfig.parse(android.json) as JsonObject)["dns"] as JsonObject
         val tags = (dns["servers"] as JsonArray).map { (it as JsonObject).string("tag") }
 
-        assertFalse(tags.any { it?.startsWith("zapret-doh-") == true })
+        assertFalse(tags.any { it?.startsWith("zapret-node-dns-") == true })
         assertFalse("zapret-secure-dns" in tags)
         assertEquals("zapret-android-dns", dns.string("final"))
+    }
+
+    @Test
+    fun `a runtime copy written by an older DoH build drops its managed resolvers`() {
+        val legacy = validConfig(
+            rootExtra = """
+                ,"dns":{"servers":[{"type":"https","tag":"zapret-doh-2","server":"8.8.8.8","tls":{"enabled":true,"server_name":"dns.google"},"detour":"zapret-proxy"}],"final":"zapret-doh-2"}
+            """.trimIndent(),
+        )
+        val result = RuntimeConfigBuilder.build(
+            legacy,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Secure),
+        ) as RuntimeConfigResult.Ready
+        val dns = (JsonConfig.parse(result.json) as JsonObject)["dns"] as JsonObject
+        val tags = (dns["servers"] as JsonArray).map { (it as JsonObject).string("tag") }
+
+        assertFalse(tags.any { it?.startsWith("zapret-doh-") == true })
     }
 
     @Test

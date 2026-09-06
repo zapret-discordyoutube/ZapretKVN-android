@@ -31,8 +31,8 @@
 | `experimental/libbox/tun.go` | DNS-адрес — следующий IPv4 после первого TUN-адреса; `/32` отклоняется | брать только `GetDNSServerAddress()`, не хардкодить `172.19.0.2` |
 | `experimental/libbox/dns.go` | platform transport принимает raw DNS, а при `Raw=false` — только A/AAAA | API 29+ использовать `DnsResolver.rawQuery`, API 26–28 — `Network.getAllByName()` |
 | `common/dialer/default.go`, `route/network.go` | при `route.auto_detect_interface=true` platform control вызывается для исходящих сокетов и возвращает ошибку в dialer | требовать этот флаг; не игнорировать `protect(fd) == false`, а выбрасывать ошибку в libbox |
-| `dns/transport/https.go` | literal `server` задаёт адрес соединения, `tls.server_name` — SNI и HTTP Host; `detour` использует указанный outbound | DoH не имеет DNS bootstrap-цикла и действительно идёт через выбранный proxy |
-| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `parallel` остаётся только внутри DoH-этапа; системный DNS разрешён только последним кандидатом Auto с предупреждением |
+| `dns/transport/udp.go`, `dns/transport/tcp.go` | literal `server` задаёт адрес соединения, `detour` использует указанный outbound | обычный DNS на 53 действительно уходит внутрь туннеля и попадает под перенаправление узла |
+| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `sequential` внутри managed-этапа перебирает только два транспорта до одного и того же resolver'а узла; системный DNS разрешён только последним кандидатом Auto с предупреждением |
 | `dns/client.go` | общий DNS timeout — 10 секунд; кэш при `independent_cache=false` не включает tag транспорта | DNS-выбор одного домена должен быть детерминированным, а при смене режима/сети кэш сбрасывается |
 | `dns/router.go` | `ResetNetwork()` очищает DNS response cache и сбрасывает транспорты, но не очищает `dnsReverseMapping` | для полного сброса DNS-состояния в MVP нужен перезапуск core |
 | `dns/transport/hosts/hosts.go` и dialer | `hosts.predefined` работает как resolver для `outbound.domain_resolver`, не меняя hostname назначения | last-known-good overlay сохраняет TLS/Reality SNI и HTTP Host |
@@ -53,7 +53,7 @@ Pinned Android gitlink фиксирует полезный пример пове
 - FakeIP по умолчанию выключен.
 - До запуска VPN адрес сервера разрешает системный resolver Android на физической сети.
 - После запуска DNS по TCP/UDP 53 выбранных приложений принимает DNS-модуль sing-box внутри TUN.
-- В режиме «Автоматически» сначала без изменений пробуется выбранный DNS профиля, если он существует; после подтверждённой DNS-ошибки выполняется чистая попытка с DoH через выбранный proxy outbound, затем последний резерв — DNS Android с предупреждением.
+- В режиме «Автоматически» сначала без изменений пробуется выбранный DNS профиля, если он существует; после подтверждённой DNS-ошибки выполняется чистая попытка с DNS узла через выбранный proxy outbound, затем последний резерв — DNS Android с предупреждением.
 - Строгий Private DNS Android не отключается и не перехватывается: для управляемых режимов «Автоматически»/«Защищённый» это блокирующая несовместимость, а не повод тайно ослабить DNS.
 - Невыбранные приложения вообще не попадают в TUN и продолжают использовать обычную сеть и системный DNS.
 - Явные режимы «Из JSON», «DNS Android» и «Защищённый через VPN» не получают скрытого fallback. Отказ всех DNS-кандидатов Auto закрывает VPN.
@@ -211,7 +211,7 @@ Lockdown Android способен блокировать трафик прило
 }
 ```
 
-Это разрешает hostname proxy outbound до того, как DoH через этот proxy станет доступен.
+Это разрешает hostname proxy outbound до того, как DNS узла через этот proxy станет доступен.
 
 ## Private DNS Android внутри VPN
 
@@ -220,7 +220,7 @@ Private DNS нельзя считать только свойством bootstra
 Политика MVP:
 
 - на API 28+ strict-режим определяем по непустому `LinkProperties.privateDnsServerName`, даже если `isPrivateDnsActive` временно `false` из-за неудачной валидации;
-- если выбран «Автоматически», strict Private DNS не блокирует запуск: цепочка кандидатов сужается до «DNS Android» (единственный кандидат, уважающий системный DoT) с явным предупреждением в логе; кандидаты «DNS профиля» и managed DoH при strict пропускаются, потому что подменяли бы выбранный пользователем резолвер. Для «Защищённого через VPN» strict остаётся блокирующей preflight-ошибкой (`DNS-110`) до `establish()`: этот режим явно обещает DoH и не может одновременно уважать strict. Приложение системную настройку само не меняет;
+- если выбран «Автоматически», strict Private DNS не блокирует запуск: цепочка кандидатов сужается до «DNS Android» (единственный кандидат, уважающий системный DoT) с явным предупреждением в логе; кандидаты «DNS профиля» и managed DNS узла при strict пропускаются, потому что подменяли бы выбранный пользователем резолвер. Для «DNS узла через VPN» strict остаётся блокирующей preflight-ошибкой (`DNS-110`) до `establish()`: этот режим явно обещает собственный резолвер и не может одновременно уважать strict. Приложение системную настройку само не меняет;
 - в режиме «DNS Android» работающий strict Private DNS разрешён и остаётся системным источником истины. До TUN требуются `isPrivateDnsActive=true` и `NET_CAPABILITY_VALIDATED`; иначе подключение блокируется без plaintext fallback. На Android 9 при несуществующем strict hostname active может остаться `true`, но сеть теряет `VALIDATED`, поэтому проверять только один флаг нельзя. GUI предупреждает, что доменные правила, которым требуется `reverse_mapping`, могут быть неполными;
 - в режиме «Из JSON» существующую DNS-секцию не переписываем, а при её отсутствии добавляем только в runtime минимальный local DNS Android; показываем обнаруженный strict Private DNS и оставляем ответственность за явно заданную схему пользователю;
 - opportunistic Private DNS разрешён: Android может проверить DoT, а для внутреннего адреса без DoT вернуться к обычному DNS. Это поведение обязательно проверяется на API 28, 29 и современной версии Android;
@@ -267,8 +267,8 @@ resolver-ов внутри одной сессии:
    core, TUN PFD, command clients и network callback полностью закрываются. Новая
    попытка использует системную DNS/Private DNS политику Android.
 3. Только после второй подтверждённой DNS-ошибки выполняется последняя чистая
-   попытка с защищённым DoH через выбранный proxy outbound.
-4. После отказа DoH VPN закрывается. Цикла, фонового retry и перехода обратно нет.
+   попытка с DNS узла через выбранный proxy outbound.
+4. После отказа DNS узла VPN закрывается. Цикла, фонового retry и перехода обратно нет.
 
 Если профиль не задаёт DNS, цепочка начинается с Android. Ошибка JSON, bootstrap,
 proxy/handshake или HTTPS health-check не является DNS-ошибкой и не переключает
@@ -278,23 +278,51 @@ token, поэтому одновременно существуют не бол�
 App-level переход нужен из-за контракта exact core: встроенный `fallback/sequential`
 передаёт всем транспортам один context, поэтому зависший первый resolver способен
 израсходовать общий deadline и не дать второму начать полезную работу. Смешивать DNS
-профиля, Android и DoH через `parallel` также нельзя: это отправило бы каждый новый
+профиля, Android и DNS узла через `parallel` также нельзя: это отправило бы каждый новый
 запрос сразу всем источникам и сделало бы результат гонкой разных политик. Чистый
 restart сохраняет простой fail-close lifecycle и не оставляет старый DNS-кэш или
 reverse mapping следующему кандидату.
 
 DNS-решение внутри каждого managed Android/Secure этапа повторяет доменную часть
 маршрутизации: LAN/direct-домены используют Android resolver, а proxy-домены в Secure
-используют DoH. IP-CIDR правила применяются уже после получения IP и не могут сами
+используют DNS узла. IP-CIDR правила применяются уже после получения IP и не могут сами
 выбрать DNS до ответа.
 
 Настройка «Только IPv4 через VPN» добавляет `strategy: "ipv4_only"` к сгенерированным DNS-действиям для доменов, которые по effective route пойдут через proxy. Она применяется в явных Secure/DNS Android и в соответствующих managed-этапах Auto, но не изменяет первую попытку с DNS профиля или явный режим «Из JSON». Pinned sing-box отвечает на AAAA пустым успешным ответом, поэтому приложение выбирает A и не тратит время на IPv6, которого нет у proxy-сервера. LAN/direct-домены, IPv6 TUN route и сохранённый JSON не меняются.
 
 Для IPv6-only сайта пользователь может выключить опцию и вернуть dual-stack. Однако WireGuard outbound без внутреннего IPv6-адреса всё равно не способен передать IPv6: exact core завершает такой flow ошибкой `missing IPv6 local address`. Для него нужны IPv6-адрес интерфейса и соответствующий peer route в самом профиле. DNS-слой не может безопасно изобрести этот адрес или выдать AAAA только после неудачной IPv4-попытки приложения.
 
+## Почему имена туннеля разрешает узел, а не публичный резолвер
+
+Узел перенаправляет любой DNS-запрос туннеля на порт 53 в собственный resolver и
+подменяет там адреса управляемых имён — на этом стоит наш доступ к ИИ-сервисам.
+Зашифрованный запрос перенаправления не видит: узел открывает обычное TLS-соединение
+к DoH-эндпоинту, и клиент получает настоящий origin. Дальше клиент идёт к этому
+origin через тот же узел и получает региональный отказ. Managed DoH через proxy,
+существовавший до этого решения, ломал доступ именно так.
+
+Поэтому managed-этап использует обычный DNS на 53 через выбранный proxy outbound.
+Внутри туннеля это не ослабление: канал до узла уже зашифрован протоколом, а
+участок «узел → его upstream» принадлежит узлу. Ослаблением был бы plaintext DNS
+**мимо** туннеля — его в managed-режимах нет.
+
+Адрес `8.8.8.8` здесь — указатель, а не резолвер, которому доверяют: пакет до него
+не доходит, его забирает узел. Канонические upstream самого узла (`1.1.1.1` и
+`1.0.0.1`) из перенаправления исключены, поэтому ставить их сюда нельзя — запрос
+ушёл бы к настоящему Cloudflare.
+
+Транспорты перечислены `sequential`: сначала UDP, затем TCP на случай сетей, где
+UDP через прокси не проходит. Гонка `parallel` на одном и том же resolver'е
+выигрыша не даёт.
+
+Что это не закрывает: встроенный DoH приложения (Chrome, Firefox) уходит на 443 и
+перехвату не поддаётся; DoT на 853 приложение намеренно не блокирует, потому что
+тот же порт использует системный Private DNS Android, который приложение обязано
+уважать.
+
 ## Эталонный фрагмент защищённого этапа для sing-box 1.13.14
 
-Фрагмент для явного Secure или DoH-этапа Auto с proxy по умолчанию и прямыми LAN-исключениями:
+Фрагмент для явного Secure или managed-этапа Auto с proxy по умолчанию и прямыми LAN-исключениями:
 
 ```json
 {
@@ -305,66 +333,27 @@ DNS-решение внутри каждого managed Android/Secure этапа
         "tag": "zapret-android-dns"
       },
       {
-        "type": "https",
-        "tag": "zapret-doh-1",
-        "server": "9.9.9.9",
-        "tls": {
-          "enabled": true,
-          "server_name": "dns.quad9.net"
-        },
-        "detour": "<SELECTED_PROXY_OUTBOUND_TAG>"
-      },
-      {
-        "type": "https",
-        "tag": "zapret-doh-2",
+        "type": "udp",
+        "tag": "zapret-node-dns-udp",
         "server": "8.8.8.8",
-        "tls": {
-          "enabled": true,
-          "server_name": "dns.google"
-        },
+        "server_port": 53,
         "detour": "<SELECTED_PROXY_OUTBOUND_TAG>"
       },
       {
-        "type": "https",
-        "tag": "zapret-doh-3",
-        "server": "208.67.222.222",
-        "tls": {
-          "enabled": true,
-          "server_name": "dns.opendns.com"
-        },
-        "detour": "<SELECTED_PROXY_OUTBOUND_TAG>"
-      },
-      {
-        "type": "https",
-        "tag": "zapret-doh-4",
-        "server": "1.1.1.1",
-        "tls": {
-          "enabled": true,
-          "server_name": "cloudflare-dns.com"
-        },
-        "detour": "<SELECTED_PROXY_OUTBOUND_TAG>"
-      },
-      {
-        "type": "https",
-        "tag": "zapret-doh-5",
-        "server": "77.88.8.8",
-        "tls": {
-          "enabled": true,
-          "server_name": "common.dot.dns.yandex.net"
-        },
+        "type": "tcp",
+        "tag": "zapret-node-dns-tcp",
+        "server": "8.8.8.8",
+        "server_port": 53,
         "detour": "<SELECTED_PROXY_OUTBOUND_TAG>"
       },
       {
         "type": "fallback",
         "tag": "zapret-secure-dns",
         "servers": [
-          "zapret-doh-1",
-          "zapret-doh-2",
-          "zapret-doh-3",
-          "zapret-doh-4",
-          "zapret-doh-5"
+          "zapret-node-dns-udp",
+          "zapret-node-dns-tcp"
         ],
-        "strategy": "parallel"
+        "strategy": "sequential"
       }
     ],
     "rules": [
@@ -408,11 +397,11 @@ DNS-решение внутри каждого managed Android/Secure этапа
 
 Это не самостоятельный профиль: полный JSON дополнительно содержит TUN inbound с `address: ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]`, `auto_route: true`, IPv4/IPv6 routes, direct outbound и реально выбранный proxy/selector outbound. Все placeholder заменяются до `CheckConfig()`.
 
-У DoH указан literal IP, а TLS hostname остаётся в `server_name`. Поэтому подключение к DoH не требует предварительно разрешать имя самого DoH. `detour` всегда заменяется тегом выбранного proxy/selector outbound, а не фиксированной строкой `proxy`.
+Адрес указан числом, имён внутри managed DNS нет вообще — цикл «резолвер, который надо резолвить» невозможен по построению. `detour` всегда заменяется тегом выбранного proxy/selector outbound, а не фиксированной строкой `proxy`.
 
-Только этот защищённый этап использует extended `fallback/parallel`. Пять DoH-транспортов перечислены как Quad9, Google, OpenDNS, Cloudflare и Yandex, но на cache miss стартуют параллельно в одном bounded context; первый корректный DNS-пакет выигрывает, остальные вызовы отменяются. Это создаёт до пяти защищённых запросов на новый домен, но не затрагивает успешные profile/Android-этапы Auto. В exact core это единственный встроенный способ не потерять резервный DoH, когда основной завис до общего deadline. Кэш capacity 4096 ограничивает повторение этой цены. Периодического трафика, отдельного health-loop и plaintext fallback нет.
+Только этот managed-этап использует extended `fallback`. Оба транспорта ведут к одному resolver'у узла, поэтому стратегия `sequential`: TCP пробуется, лишь когда UDP через прокси не прошёл. Периодического трафика, отдельного health-loop и plaintext fallback мимо туннеля нет; `bootstrap`-путь остаётся отдельным и в цепочку `zapret-secure-dns` не входит.
 
-`fallback` не оценивает DNS RCODE: `NXDOMAIN`, `SERVFAIL` или `REFUSED` являются корректным DNS-пакетом и могут выиграть гонку. Поэтому все managed endpoints должны быть равно доверенными и семантически взаимозаменяемыми. Пользовательский режим «Из JSON» сохраняет явно заданную стратегию без подмены.
+`fallback` не оценивает DNS RCODE: `NXDOMAIN`, `SERVFAIL` или `REFUSED` являются корректным DNS-пакетом и завершают перебор. Для одного и того же resolver'а узла это и есть нужное поведение. Пользовательский режим «Из JSON» сохраняет явно заданную стратегию без подмены.
 
 Созданные приложением объекты имеют префикс `zapret-`. GUI управляет только этими DNS-серверами и правилами, которые ссылаются на них; остальные JSON-поля и правила сохраняются. Полный импортированный JSON с собственным DNS по умолчанию открывается в режиме «Из JSON», без скрытого переписывания.
 
@@ -500,7 +489,7 @@ FakeIP выключен по умолчанию и в MVP не требуетс�
 → запуск libbox и TUN
 → проверка, что VPN стал default network для UID Zapret KVN
 → DNS-проба обычным сокетом UID Zapret KVN через TUN
-→ только в Auto при DNS-ошибке: полный stop и следующий кандидат профиль → DoH → Android
+→ только в Auto при DNS-ошибке: полный stop и следующий кандидат профиль → DNS узла → Android
 → HTTPS-пробы Cloudflare, Google и OpenDNS через TUN со ступенчатым стартом
 → первый корректный ответ побеждает и отменяет остальные пробы
 → при провале всех трёх — одна спасательная проба с удвоенными тайм-аутами
@@ -559,10 +548,10 @@ FakeIP выключен по умолчанию и в MVP не требуетс�
 
 ## Настройки DNS
 
-- **Автоматически** — DNS профиля, если он задан; после подтверждённой DNS-ошибки чистая попытка с DoH через proxy, затем последний резерв — DNS Android с предупреждением. При strict Private DNS используется только DNS Android.
+- **Автоматически** — DNS профиля, если он задан; после подтверждённой DNS-ошибки чистая попытка с DNS узла через proxy, затем последний резерв — DNS Android с предупреждением. При strict Private DNS используется только DNS Android.
 - **DNS Android** — все стандартные DNS-запросы выбранных приложений через системную DNS-политику Android/Private DNS.
-- **Защищённый через VPN** — DNS по TCP/UDP 53 выбранных приложений через DoH fallback и proxy outbound; strict Private DNS блокирует запуск этого режима.
-- **Из JSON** — существующая DNS-секция используется без замены и fallback-цепочки. Если DNS-секции или серверов в профиле нет, runtime-копия получает минимальный local DNS Android; это не записывается в профиль и не включает DoH.
+- **DNS узла через VPN** — DNS по TCP/UDP 53 выбранных приложений уходит на 53 через proxy outbound, где его забирает resolver самого узла; strict Private DNS блокирует запуск этого режима.
+- **Из JSON** — существующая DNS-секция используется без замены и fallback-цепочки. Если DNS-секции или серверов в профиле нет, runtime-копия получает минимальный local DNS Android; это не записывается в профиль и не включает managed-резолверы.
 - **Только IPv4 через VPN** — включённая по умолчанию опция для Secure/DNS Android и managed-этапов Auto: подавляет AAAA только для доменов, направляемых через proxy; первая попытка с DNS профиля, direct/LAN и пользовательский JSON остаются без изменений. Для IPv6-only proxy-сайта опцию можно выключить, но WireGuard-профиль при этом обязан иметь собственный внутренний IPv6-адрес.
 - **DNS-переопределение** — одна глобальная редактируемая пара `точный hostname → IPv4`, применяемая только в Secure/DNS Android и соответствующих managed-этапах Auto. Настройка включена по умолчанию как `ntc.party → 130.255.77.28`; пользователь может изменить пару или выключить её. Runtime добавляет отдельный `hosts` transport и точное DNS-правило после `reject`, но до правил выбора resolver. Первая попытка Auto с DNS профиля не меняется. Имя назначения, TLS SNI и HTTP Host не подменяются; правило маршрутизации сайта также не создаётся.
 
@@ -588,7 +577,7 @@ IP-only rule-set не вставляется в DNS-правила: адрес �
 - `reverse_mapping` содержит не более 1024 IP→domain записей с TTL DNS-ответа и не очищается текущим `ResetNetwork()`. Поэтому при значимой смене сети/режима перезапускается core.
 - Кнопка приложения не может очистить глобальный DNS/Private DNS cache Android; на API 29+ она может лишь запросить следующую диагностику без cache lookup.
 - В режиме «Из JSON» ответственность за утечки и совместимость пользовательской DNS-схемы остаётся у конфигурации; приложение только валидирует и диагностирует её.
-- Strict Private DNS уважается для Android resolver; приложение не может обещать одновременно принудительный собственный DoH и неизменённый system strict resolver, поэтому конфликт разрешается явной блокировкой, а не скрытым fallback.
+- Strict Private DNS уважается для Android resolver; приложение не может обещать одновременно принудительный собственный резолвер и неизменённый system strict resolver, поэтому конфликт разрешается явной блокировкой, а не скрытым fallback.
 
 ## Версионирование и проверка
 
@@ -610,7 +599,7 @@ IP-only rule-set не вставляется в DNS-правила: адрес �
 - Auto с direct-final;
 - `port: 53 → hijack-dns`;
 - runtime `exact probe domains → selected outbound` без process/package lookup;
-- DoH `fallback/parallel`;
+- `fallback/sequential` над UDP/TCP-транспортами DNS узла;
 - runtime `hosts.predefined` + `outbound.domain_resolver`.
 
 Воспроизводимый audit-test временно копируется в `dns/transport/fallback` exact pinned checkout и запускается скриптом сборки без изменения сохранённого source tree. Он подтвердил: первый success не вызывает резервный transport; transport error вызывает; зависший первый transport исчерпывает общий context, поэтому второй получает уже истёкший deadline; `NXDOMAIN`, `SERVFAIL` и `REFUSED` без Go-ошибки не запускают следующий transport. Также подтверждены `172.19.0.1/30 → 172.19.0.2`, отказ для `/32`, полный capture обеих IP-family и потеря `172.19.0.2` при исключении RFC1918 `172.16.0.0/12`. Повторный `go test ./dns/... ./route/rule ./experimental/libbox` прошёл. В upstream fallback test-файлов нет; наш audit закрывает поведенческую часть P15, но не заменяет сравнение энергии и cache-burst на физических устройствах.
@@ -642,8 +631,9 @@ Source-аудит отдельно подтвердил, что libbox package o
 - Wi‑Fi, cellular, Wi‑Fi ↔ cellular, IPv6/NAT64;
 - captive portal;
 - заблокирован системный DNS, есть/нет last-known-good;
-- Auto с DNS профиля: успех без Android/DoH, DNS error/timeout с переходом к DoH, затем к Android; HTTPS/proxy/JSON-ошибка не должна запускать DNS fallback; после каждой неудачной попытки ноль старых core/PFD/callback;
-- все пять DoH стартуют на cache miss: один успешен/быстро недоступен/завис, все недоступны, первый корректный ответ выигрывает; отдельно проверяются гонки с `NXDOMAIN`/`SERVFAIL`/`REFUSED`;
+- Auto с DNS профиля: успех без Android/DNS узла, DNS error/timeout с переходом к DNS узла, затем к Android; HTTPS/proxy/JSON-ошибка не должна запускать DNS fallback; после каждой неудачной попытки ноль старых core/PFD/callback;
+- DNS узла на cache miss: UDP отвечает; UDP не проходит и отвечает TCP; оба недоступны; отдельно проверяется, что `NXDOMAIN`/`SERVFAIL`/`REFUSED` завершают перебор и не уводят резолв наружу из туннеля;
+- управляемое ИИ-имя внутри туннеля разрешается в адрес, отданный узлом, а не в настоящий origin;
 - proxy доступен по hostname и по IP;
 - каждый поддерживаемый MVP outbound отдельно проходит socket-protection/loop test; неаудированный backend отклоняется до `establish()`;
 - UDP и TCP DNS на 53; DoT/853, DoH/443, custom DNS port и mDNS/5353;
@@ -655,16 +645,16 @@ Source-аудит отдельно подтвердил, что libbox package o
 - остановка core, ошибка после `OpenTun`, revoke VPN, смена профиля, смена DNS-режима и проверка закрытия PFD/reverse mapping;
 - повторяющиеся и устаревшие network callbacks не запускают несколько core restart;
 - benchmark owner/process lookup на API 26 и современном Android; отдельно считаются TCP/UDP flow/s, CPU и battery impact;
-- приложение со стандартным DNS и приложение со встроенным DoH.
+- приложение со стандартным DNS и приложение со встроенным DoH (второе обходит managed DNS и это ожидаемо).
 
 ### Состояние автоматизированной матрицы — 22 июля 2026
 
 - DNS-матрица входит в прошедшие 66/66 instrumented-тестов на AVD API 26/29 и
   текущие 67/67 на API 36.
-- JVM-тесты подтверждают конечный порядок Auto `профиль → DoH → Android`, отсутствие fallback у явных режимов и запрет переключения на non-DNS ошибке. Новый instrumented-тест clean restart DoH→Android с fault injection компилируется; физическое подтверждение входит в Test 21 и пока не считается закрытым gate.
-- Проверены legacy `Network.getAllByName()` и API 29+ `DnsResolver`, Private DNS off/automatic/strict working/strict broken, включая поломку strict во время активного TUN, реальные переключения emulator Wi-Fi ↔ cellular, IPv6, fresh/emergency/expired/no LKG, managed DoH success, недоступный proxy/managed DoH, мёртвый внутренний DNS и немедленный возврат обычной Android network после stop. Третий OpenDNS закреплён exact fixture и JVM-тестом; физический сценарий с блокировкой первых двух endpoints остаётся обязательной проверкой.
+- JVM-тесты подтверждают конечный порядок Auto `профиль → DNS узла → Android`, отсутствие fallback у явных режимов и запрет переключения на non-DNS ошибке. Новый instrumented-тест clean restart «DNS узла → Android» с fault injection компилируется; физическое подтверждение входит в Test 21 и пока не считается закрытым gate.
+- Проверены legacy `Network.getAllByName()` и API 29+ `DnsResolver`, Private DNS off/automatic/strict working/strict broken, включая поломку strict во время активного TUN, реальные переключения emulator Wi-Fi ↔ cellular, IPv6, fresh/emergency/expired/no LKG, недоступный proxy, мёртвый внутренний DNS и немедленный возврат обычной Android network после stop. Замена managed DoH на DNS узла закреплена JVM-тестом; физическое подтверждение резолва управляемого имени на RU-узле остаётся обязательной проверкой.
 - Captive-portal ветка проверена детерминированной подстановкой platform state до `establish()`. Это доказывает fail-close кода, но не заменяет настоящий портал Android validation.
-- Эмуляторная сеть dual-stack не является IPv6-only/NAT64. Поэтому настоящий captive portal, NAT64 и повтор blocked-DNS/LKG/DoH на физических Wi-Fi/mobile сетях остаются открытой частью Gate 3.
+- Эмуляторная сеть dual-stack не является IPv6-only/NAT64. Поэтому настоящий captive portal, NAT64 и повтор blocked-DNS/LKG/DNS узла на физических Wi-Fi/mobile сетях остаются открытой частью Gate 3.
 - Отдельный stress на API 29/36 прошёл 100 connect/stop и 50 Wi-Fi/cellular transitions с ровно одним core restart на переход.
 
 ## Источники

@@ -87,7 +87,7 @@ class ImportParserTest {
         assertEquals("zapret-secure-dns", automaticDns.string("final"))
         assertEquals(
             "wireguard-out",
-            automaticServers.first { it.string("tag") == "zapret-doh-1" }.string("detour"),
+            automaticServers.first { it.string("tag") == "zapret-node-dns-udp" }.string("detour"),
         )
     }
 

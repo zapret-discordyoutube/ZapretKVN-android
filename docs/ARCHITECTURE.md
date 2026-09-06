@@ -63,7 +63,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 | Приложения | Android allowlist применяется один раз в `VpnService.Builder` |
 | Маршруты | sing-box `route.rules`: `direct`, selected proxy или `reject` |
 | GEO/списки | Локальные binary `.srs` rule-set внутри APK |
-| DNS | FakeIP выключен; Android bootstrap; Auto: DNS профиля → DoH → Android |
+| DNS | FakeIP выключен; Android bootstrap; Auto: DNS профиля → DNS узла → Android |
 | Rootless hardening | Один compile-time/runtime overlay без process/thread/polling; localhost endpoints закрыты по умолчанию |
 | Go runtime | `Libbox.SetMemoryLimit(false)`: стандартный GC, без Android GC=10 |
 | Телеметрия | Только session totals; 1 Гц лишь пока главная видима |
@@ -88,7 +88,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 11. Любая ошибка после открытия TUN полностью закрывает PFD и core.
 12. Статус «Подключено» появляется только после DNS и HTTPS health-check.
 13. Приложение не держит `WakeLock`, не использует alarm/job/WorkManager и не делает периодический health-check.
-14. «Автоматически» сначала пробует DNS профиля, затем DoH и только после подтверждённой DNS-ошибки — DNS Android; каждый переход создаёт чистую bounded-сессию без фонового retry.
+14. «Автоматически» сначала пробует DNS профиля, затем DNS узла через туннель и только после подтверждённой DNS-ошибки — DNS Android; каждый переход создаёт чистую bounded-сессию без фонового retry.
 15. Скорость не показывается в уведомлении; status/log streams существуют только пока нужен соответствующий экран.
 16. Управляемый профиль не создаёт NTP, remote rule-set, периодический URL-test или явный persistent keepalive сверх defaults выбранного протокола.
 17. `VpnService.Builder.allowBypass()` не вызывается; rootless hardening не обещает скрыть системный TUN/`TRANSPORT_VPN`.
@@ -129,7 +129,7 @@ Zapret KVN — независимый нативный Android-клиент sing
 10. Создать platform adapter и локальный libbox command server в том же Android process.
 11. Вызвать `startOrReloadService()`: libbox синхронно вызывает `OpenTun(TunOptions)`, а adapter создаёт один `VpnService.Builder`, применяет приложения, адреса, полные routes и внутренний DNS.
 12. `Builder.establish()` возвращает Android PFD; libbox дублирует его FD и запускает единственный core поверх этого же TUN. Второго адаптера или второго TUN здесь нет.
-13. Проверить DNS и HTTPS через Android TUN. Для HTTPS runtime-копия включает TLS sniff только для package Zapret KVN и порта 443, после чего точные probe-hostnames направляются в выбранный outbound. Это доказывает настоящий путь через proxy без глобального sniff и без отдельного WireGuard-only gate. В Auto подтверждённая именно DNS-ошибка полностью закрывает текущие core/PFD/callbacks и запускает следующий кандидат `профиль → DoH → Android`; максимум три попытки внутри общего deadline 45 секунд. Ошибка data-plane, JSON или HTTPS-пути не считается DNS-ошибкой и не запускает переключение.
+13. Проверить DNS и HTTPS через Android TUN. Для HTTPS runtime-копия включает TLS sniff только для package Zapret KVN и порта 443, после чего точные probe-hostnames направляются в выбранный outbound. Это доказывает настоящий путь через proxy без глобального sniff и без отдельного WireGuard-only gate. В Auto подтверждённая именно DNS-ошибка полностью закрывает текущие core/PFD/callbacks и запускает следующий кандидат `профиль → DNS узла → Android`; максимум три попытки внутри общего deadline 45 секунд. Ошибка data-plane, JSON или HTTPS-пути не считается DNS-ошибкой и не запускает переключение.
 14. Только после успеха показать «Подключено»; сбор 1 Hz session-only статистики начать лишь при видимой главной.
 
 Ожидание физической сети выполняется до шага 4 и не входит в общий deadline 45 секунд: сначала ждём зрелую сеть 10 секунд, затем любую пригодную ещё 15. Бюджет подключения не должен тратиться на то, что Android ещё поднимает Wi-Fi.
@@ -355,7 +355,7 @@ policy и компилируются в runtime-копию активного JS
 
 Профиль, созданный из одиночной ссылки, всё равно получает managed `selector` с одним сервером. Следующую одиночную ссылку можно сохранить новым профилем либо явно добавить сервером в существующий managed-профиль. Одна подписка по умолчанию создаёт один профиль-группу: несколько server outbounds и один основной selector. В предпросмотре импорта её можно вместо этого разложить по одному профилю на сервер (не более 200): профили создаются только после того, как ядро приняло каждый JSON, имя берётся из имени сервера, а URL и настройки источника сохраняются как одна split-группа вне `profiles/index.json`.
 
-Ручное обновление любого участника split-группы загружает подписку один раз и атомарно согласует все связанные профили. Стабильный credential-free ключ строится из протокола, endpoint и транспорта: сменившиеся UUID, password и obfs обновляют существующий JSON с сохранением его индивидуальных маршрутов; новые endpoint создают профили с `RussiaDirect`, исчезнувшие удаляются после preview. Удалённый пользователем профиль остаётся исключённым и не появляется снова при следующем refresh. Обновление настроек клиента/HWID через любой профиль применяется ко всей группе. У создаваемого приложением selector стабильный tag `zapret-proxy`; managed route и DoH ссылаются на него. Tag сервера строится из его имени в ссылке и сохраняет буквы любого алфавита (похожие на секреты строки вырезает `SecretRedactor`), потому что именно он виден пользователю в списке серверов.
+Ручное обновление любого участника split-группы загружает подписку один раз и атомарно согласует все связанные профили. Стабильный credential-free ключ строится из протокола, endpoint и транспорта: сменившиеся UUID, password и obfs обновляют существующий JSON с сохранением его индивидуальных маршрутов; новые endpoint создают профили с `RussiaDirect`, исчезнувшие удаляются после preview. Удалённый пользователем профиль остаётся исключённым и не появляется снова при следующем refresh. Обновление настроек клиента/HWID через любой профиль применяется ко всей группе. У создаваемого приложением selector стабильный tag `zapret-proxy`; managed route и managed DNS ссылаются на него. Tag сервера строится из его имени в ссылке и сохраняет буквы любого алфавита (похожие на секреты строки вырезает `SecretRedactor`), потому что именно он виден пользователю в списке серверов.
 
 Упрощённый фрагмент:
 
@@ -473,14 +473,14 @@ DNS/route `package_name → reject`; сохранённый JSON не измен
 
 Режимы GUI:
 
-- **Автоматически** — выбранный DNS профиля; при подтверждённой DNS-ошибке чистая попытка с DoH через proxy, затем последний резерв — DNS Android с предупреждением;
+- **Автоматически** — выбранный DNS профиля; при подтверждённой DNS-ошибке чистая попытка с DNS узла через proxy, затем последний резерв — DNS Android с предупреждением;
 - **DNS Android** — системная DNS/Private DNS политика;
-- **Защищённый через VPN** — стандартный DNS выбранных приложений через DoH/proxy;
+- **DNS узла через VPN** — стандартный DNS выбранных приложений уходит на 53 через proxy, где его забирает resolver узла;
 - **Из JSON** — существующая DNS-секция не переписывается; если секции/серверов нет, runtime-копия получает один local DNS Android, `hijack-dns` и `default_domain_resolver`, а сохранённый JSON остаётся прежним.
 
 FakeIP выключен. Системные настройки Android приложение не меняет и Private DNS не обходит.
 
-При strict Private DNS Auto не падает, а сужает цепочку кандидатов до «DNS Android» с предупреждением в логе — системный DoT уважается, пользователь ничего не настраивает. Secure при strict не запускается (`DNS-110`): он явно обещает DoH, а системный DoT обошёл бы port-53 hijack и reverse mapping. Явные режимы не получают скрытого fallback. Полная политика, bootstrap cache и fail-close описаны в DNS ADR.
+При strict Private DNS Auto не падает, а сужает цепочку кандидатов до «DNS Android» с предупреждением в логе — системный DoT уважается, пользователь ничего не настраивает. Secure при strict не запускается (`DNS-110`): он явно обещает собственный резолвер, а системный DoT обошёл бы port-53 hijack и reverse mapping. Явные режимы не получают скрытого fallback. Полная политика, bootstrap cache и fail-close описаны в DNS ADR.
 
 ## Проверка простоты и скорости
 
@@ -497,7 +497,7 @@ FakeIP выключен. Системные настройки Android прил�
 | Dynamic core/rule updates | Отклонены: больше кода, мусора и точек отказа |
 | Remote managed rule-set | Отклонены: сеть может заблокировать запуск VPN |
 | Fork ради owner lookup | Пока отклонён: exact core вызывает lookup безусловно, но сначала нужен device benchmark |
-| Три DoH параллельно | Только DoH-этап Auto или явный Secure: exact core с `sequential` не достигает резерва, если первый DoH занял общий deadline; успешный профильный DNS не запускает DoH; после отказа DoH доступен системный резерв |
+| DoH через proxy для трафика туннеля | Отклонён: узел перенаправляет на свой resolver только DNS на 53, а зашифрованный запрос проходит мимо и возвращает настоящий origin — управляемые имена переставали работать. Managed-этап использует UDP/TCP 53 через proxy; DoH остаётся только вне туннеля, в bootstrap |
 | Отдельный VPN-процесс | Отклонён до профилирования: добавляет IPC/process overhead и усложняет lifecycle |
 
 Pinned Android AAR собирается с `with_gvisor`. Для managed TUN поле `stack` не переопределяем: exact core выбирает upstream default `mixed`. Exact pinned core при пустом `tun.mtu` выбирает на Android `9000`, а userspace WireGuard — собственный меньший MTU. Поэтому стандартный runtime задаёт внешний TUN явно: `1500` для остальных профилей и `min(1500, effective userspace WireGuard endpoint MTU)` для конфигураций с userspace WireGuard. Endpoint без MTU получает Android fallback `1280`; это совпадает с default официального AmneziaWG Android. Режим «По профилю» сохраняет явно заданный TUN MTU, но при отсутствии поля также использует MTU userspace WireGuard endpoint и не возвращается к несовместимому 9000. Stored JSON не меняется. Исправление основано на системном logcat stable 0.2.3, где фактический Android TUN был `9000` при endpoint `1280`; окончательный физический A/B `1280 ↔ 9000` остаётся обязательным.
@@ -519,7 +519,7 @@ Runtime-копия каждого профиля, включая raw JSON и end
 - 60 значений графика — обычный кольцевой массив в памяти. Уведомление, фон и закрытый UI не обновляют график;
 - health-check выполняется при подключении и значимой смене сети, IP — один раз за соединение, Relay/ICMP — только явной командой. Периодических проверок «на всякий случай» нет;
 - автоматическое восстановление после транзиентного отказа ждёт сеть по событию `ConnectivityManager`, а не опросом; единственный таймер — ограниченный backoff повтора. Простой без сети не стоит ничего и потому не ограничен, а число попыток подключения ограничено жёстко; wakelock и alarm не используются;
-- DNS cache остаётся включённым с capacity 4096. Только явный Secure или DoH-этап Auto использует `parallel`: Quad9, Google, OpenDNS, Cloudflare и Yandex стартуют на cache miss, потому что `sequential` exact core не достигает резерва при зависании первого; успешный DNS профиля не создаёт DoH-трафика;
+- DNS cache остаётся включённым с capacity 4096. Явный Secure или managed-этап Auto использует `fallback/sequential` над двумя транспортами к одному resolver'у узла: UDP, затем TCP для сетей, где UDP через прокси не проходит; успешный DNS профиля managed-трафика не создаёт;
 - updater, подписки и импорт работают только после действия пользователя;
 - rootless hardening выполняется один раз при сборке runtime JSON и не создаёт scanner, timer, listener или отдельный process;
 - приложение не запрашивает `WAKE_LOCK` и исключение из battery optimization;
@@ -659,7 +659,7 @@ Gate: выбранное приложение проходит через TUN, �
 - underlying network monitor;
 - Android bootstrap resolver и LKG;
 - четыре DNS-режима;
-- port-53 hijack, DoH fallback/parallel;
+- port-53 hijack, fallback/sequential над UDP/TCP DNS узла;
 - captive portal, strict Private DNS preflight;
 - health-check state machine.
 
@@ -756,7 +756,7 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
 - Markdown, локальные ссылки, fixture hashes, lint и полный локальный аналог CI проверены;
 - P12–P14, физическая/энергетическая часть P15 и обязательный release-gate энергии на устройстве ещё не выполнены.
 
-Эти результаты закрывают локальные автоматизированные Gate 2/4/6/7, но не закрывают физический Gate 3 и выпускную OEM/energy matrix: ещё нужны настоящий captive portal, IPv6-only/NAT64, blocked-DNS/LKG/DoH и повтор per-app/routing на физических сетях/устройствах. Они также не заменяют внешний Forgejo Actions run, постоянный signing key и фактически опубликованный Release. Приложение нельзя считать готовым к выпуску до этапа 8.
+Эти результаты закрывают локальные автоматизированные Gate 2/4/6/7, но не закрывают физический Gate 3 и выпускную OEM/energy matrix: ещё нужны настоящий captive portal, IPv6-only/NAT64, blocked-DNS/LKG/DNS узла и повтор per-app/routing на физических сетях/устройствах. Они также не заменяют внешний Forgejo Actions run, постоянный signing key и фактически опубликованный Release. Приложение нельзя считать готовым к выпуску до этапа 8.
 
 ## Потом проверить — открытые вопросы
 
@@ -768,7 +768,7 @@ Gate: APK не выпускается при failed fixture, instrumented test, 
 | P2 | Какой userspace stack быстрее именно на наших устройствах | Одинаковые TCP/UDP/QUIC сценарии для `mixed` и `system`: throughput, CPU, RAM, connect time, потери и стабильность на Wi‑Fi/mobile | Оставить поле `stack` пустым, то есть upstream `mixed`; не показывать выбор в обычном GUI |
 | P3 | Отсутствие OEM/операторских проблем у default `1500`, а для userspace WireGuard — `min(1500, endpoint MTU)` | Проверить IPv4, IPv6, NAT64, QUIC, крупные загрузки, PMTU/fragmentation и смену Wi‑Fi/mobile; отдельно A/B WireGuard 1280 ↔ core 9000 | Оставить вычисляемый runtime MTU с явным откатом «По профилю»; менять только по воспроизводимой регрессии |
 | P4 | Цена безусловного Android owner/process lookup в pinned core | Профилирование connect latency, CPU и throughput с текущим core; отдельная экспериментальная сборка без lookup допустима только для сравнения | Не форкать ядро. Patch рассматривается лишь при повторяемом существенном выигрыше и полном повторе матрицы |
-| P5 | Реальное поведение DNS на Android/OEM | Private DNS off/automatic/strict working/broken, captive portal, заблокированный system DNS, DoH через proxy, port-53 hijack, DNS/HTTPS health-check | Следовать fail-close DNS ADR; системные настройки не менять и strict Private DNS скрыто не обходить |
+| P5 | Реальное поведение DNS на Android/OEM | Private DNS off/automatic/strict working/broken, captive portal, заблокированный system DNS, DNS узла через proxy, port-53 hijack, DNS/HTTPS health-check | Следовать fail-close DNS ADR; системные настройки не менять и strict Private DNS скрыто не обходить |
 | P6 | Сетевой lifecycle без гонок | Wi‑Fi ↔ mobile, потеря underlying network, быстрые callback bursts, reconnect 8–10 секунд, LKG fresh/stale, revoke, kill process и повторный старт | Один generation token, один service-lock и идемпотентный stop |
 | P7 | Production RU/domain/block rule-set | Выбрать источники и лицензии, закрепить commit/hash, собрать настоящие `.srs`, проверить RU/non-RU IPv4/IPv6, память, cold start и повреждённый asset | Эталонные fixtures считать только schema/graph тестами, не production-базой |
 | P8 | Практическая граница domain block | Стандартный DNS, кэшированный ответ, direct IP и приложения со встроенным DoH; TCP/UDP/ICMP reject | Не обещать firewall. Для гарантии IP-блокировки требовать IP/CIDR set; глобальный sniff не включать |

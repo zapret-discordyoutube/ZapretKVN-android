@@ -128,7 +128,7 @@ internal object AutomaticDnsFallbackPolicy {
     /**
      * При strict Private DNS автоматический режим сужается до «DNS Android»:
      * это единственный кандидат, уважающий системный DoT. Профильный DNS и
-     * managed DoH подменяли бы выбранный пользователем резолвер, а fail-close
+     * managed DNS узла подменяли бы выбранный пользователем резолвер, а fail-close
      * заставлял пользователя чинить настройки вручную.
      */
     fun candidates(
@@ -148,7 +148,7 @@ internal object AutomaticDnsFallbackPolicy {
     fun label(mode: DnsMode): String = when (mode) {
         DnsMode.FromJson -> "DNS профиля"
         DnsMode.Android -> "DNS Android"
-        DnsMode.Secure -> "защищённый DoH"
+        DnsMode.Secure -> "DNS узла"
         DnsMode.Automatic -> "автоматический DNS"
     }
 

@@ -270,7 +270,7 @@ private fun SettingsMain(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Перехватывается TCP/UDP 53; встроенный DoH, DoT и mDNS не перехватываются.",
+                    "Перехватывается TCP/UDP 53; встроенный DoH и mDNS приложений не перехватываются.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -285,7 +285,7 @@ private fun SettingsMain(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Только IPv4 через VPN")
                         Text(
-                            "Включено по умолчанию. Убирает AAAA после перехода автоматического режима на DNS Android/DoH; DNS профиля и «Из JSON» не меняются. Выключите для IPv6-only сайтов.",
+                            "Включено по умолчанию. Убирает AAAA после перехода автоматического режима на DNS узла или DNS Android; DNS профиля и «Из JSON» не меняются. Выключите для IPv6-only сайтов.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -327,7 +327,7 @@ private fun SettingsMain(
                     if (state.settings.dnsMode == DnsMode.FromJson) {
                         "Сохранено, но не применяется в режиме «Из JSON»."
                     } else if (state.settings.dnsMode == DnsMode.Automatic) {
-                        "Применяется только после автоматического перехода с DNS профиля на DNS Android или DoH."
+                        "Применяется только после автоматического перехода с DNS профиля на DNS узла или DNS Android."
                     } else {
                         "Точный домен получает указанный IPv4 до обращения к DNS. Встроенный DoH/DoT приложения может обойти правило."
                     },
@@ -1415,15 +1415,15 @@ private fun UpdateChannel.displayName(): String = when (this) {
 private fun DnsMode.displayName(): String = when (this) {
     DnsMode.Automatic -> "Автоматически"
     DnsMode.Android -> "DNS Android"
-    DnsMode.Secure -> "Защищённый через VPN"
+    DnsMode.Secure -> "DNS узла через VPN"
     DnsMode.FromJson -> "Из JSON"
 }
 
 private fun DnsMode.description(): String = when (this) {
-    DnsMode.Automatic -> "DNS профиля → DoH → DNS Android. Переход только после подтверждённой ошибки; системный DNS — последний резерв."
+    DnsMode.Automatic -> "DNS профиля → DNS узла → DNS Android. Переход только после подтверждённой ошибки; системный DNS — последний резерв."
     DnsMode.Android -> "Системный resolver и Private DNS Android остаются источником истины."
-    DnsMode.Secure -> "Стандартный DNS выбранных приложений идёт в DoH через proxy."
-    DnsMode.FromJson -> "DNS профиля используется как есть; если его нет — local DNS Android без DoH."
+    DnsMode.Secure -> "Стандартный DNS выбранных приложений разрешает сам VPN-узел через туннель."
+    DnsMode.FromJson -> "DNS профиля используется как есть; если его нет — local DNS Android."
 }
 
 private fun TunMtuMode.displayName(): String = when (this) {

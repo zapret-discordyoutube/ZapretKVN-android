@@ -220,7 +220,7 @@ class ProfileUiInstrumentedTest {
         val modes = listOf(
             "Автоматически",
             "DNS Android",
-            "Защищённый через VPN",
+            "DNS узла через VPN",
             "Из JSON",
         )
         modes.forEach { label ->
@@ -229,8 +229,8 @@ class ProfileUiInstrumentedTest {
         }
 
         composeRule.onNodeWithTag("settings-list")
-            .performScrollToNode(hasText("Защищённый через VPN"))
-        composeRule.onNodeWithText("Защищённый через VPN").performClick()
+            .performScrollToNode(hasText("DNS узла через VPN"))
+        composeRule.onNodeWithText("DNS узла через VPN").performClick()
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
             runBlocking { container.uiSettingsStore.settings.first().dnsMode == DnsMode.Secure }
         }

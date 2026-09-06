@@ -455,40 +455,38 @@ object RuntimeConfigBuilder {
         put("server", DNS_OVERRIDE_TAG)
     }
 
+    /**
+     * Имена туннельного трафика обязан разрешать resolver узла, а не публичный
+     * резолвер. Узел перенаправляет любой plaintext DNS туннеля на собственный
+     * resolver и подменяет там адреса управляемых имён; зашифрованный запрос
+     * (DoH/DoT) этого перехвата не видит и возвращает настоящий origin, после
+     * чего соединение идёт с адреса узла и получает региональный отказ.
+     *
+     * Поэтому здесь именно `udp`/`tcp` на 53 через выбранный proxy outbound.
+     * Транспорт по TCP — не «безопаснее», а резерв для сетей, где UDP через
+     * прокси не проходит. Пара идёт `sequential`: параллельная гонка не даёт
+     * выигрыша на одном и том же resolver'е.
+     */
     private fun secureDnsServers(proxyTag: String): List<JsonObject> = listOf(
-        dohServer(DOH_1_TAG, "9.9.9.9", "dns.quad9.net", proxyTag),
-        dohServer(DOH_2_TAG, "8.8.8.8", "dns.google", proxyTag),
-        dohServer(DOH_3_TAG, "208.67.222.222", "dns.opendns.com", proxyTag),
-        dohServer(DOH_4_TAG, "1.1.1.1", "cloudflare-dns.com", proxyTag),
-        dohServer(DOH_5_TAG, "77.88.8.8", "common.dot.dns.yandex.net", proxyTag),
+        nodeDnsServer(NODE_DNS_UDP_TAG, "udp", proxyTag),
+        nodeDnsServer(NODE_DNS_TCP_TAG, "tcp", proxyTag),
         buildJsonObject {
             put("type", "fallback")
             put("tag", SECURE_DNS_TAG)
             put(
                 "servers",
-                JsonArray(
-                    listOf(DOH_1_TAG, DOH_2_TAG, DOH_3_TAG, DOH_4_TAG, DOH_5_TAG)
-                        .map(::JsonPrimitive),
-                ),
+                JsonArray(listOf(NODE_DNS_UDP_TAG, NODE_DNS_TCP_TAG).map(::JsonPrimitive)),
             )
-            // A sequential transport cannot advance when the first DoH hangs until the
-            // caller deadline. Parallel is the smallest reliable bounded fallback.
-            put("strategy", "parallel")
+            put("strategy", "sequential")
         },
     )
 
-    private fun dohServer(tag: String, address: String, serverName: String, proxyTag: String) =
+    private fun nodeDnsServer(tag: String, transport: String, proxyTag: String) =
         buildJsonObject {
-            put("type", "https")
+            put("type", transport)
             put("tag", tag)
-            put("server", address)
-            put(
-                "tls",
-                buildJsonObject {
-                    put("enabled", true)
-                    put("server_name", serverName)
-                },
-            )
+            put("server", NODE_DNS_SENTINEL)
+            put("server_port", 53)
             put("detour", proxyTag)
         }
 
@@ -840,25 +838,34 @@ object RuntimeConfigBuilder {
     private const val ANDROID_DNS_TAG = "zapret-android-dns"
     private const val ANDROID_WIREGUARD_MTU = 1280
     private const val RUNTIME_LOG_LEVEL = "warn"
-    private const val DOH_1_TAG = "zapret-doh-1"
-    private const val DOH_2_TAG = "zapret-doh-2"
-    private const val DOH_3_TAG = "zapret-doh-3"
-    private const val DOH_4_TAG = "zapret-doh-4"
-    private const val DOH_5_TAG = "zapret-doh-5"
+    private const val NODE_DNS_UDP_TAG = "zapret-node-dns-udp"
+    private const val NODE_DNS_TCP_TAG = "zapret-node-dns-tcp"
+
+    /**
+     * Адрес-указатель, а не резолвер, которому доверяют: узел перенаправляет на
+     * свой resolver любой DNS туннеля на порт 53. Канонические upstream самого
+     * узла (1.1.1.1 и 1.0.0.1) из этого перенаправления исключены, поэтому
+     * ставить их сюда нельзя — запрос ушёл бы к настоящему Cloudflare.
+     */
+    private const val NODE_DNS_SENTINEL = "8.8.8.8"
     private const val SECURE_DNS_TAG = "zapret-secure-dns"
     private const val BOOTSTRAP_DNS_TAG = "zapret-bootstrap-lkg"
     private const val DNS_OVERRIDE_TAG = "zapret-dns-override"
     private const val IPV4_ONLY_STRATEGY = "ipv4_only"
     private val GENERATED_DNS_SERVER_TAGS = setOf(
         ANDROID_DNS_TAG,
-        DOH_1_TAG,
-        DOH_2_TAG,
-        DOH_3_TAG,
-        DOH_4_TAG,
-        DOH_5_TAG,
+        NODE_DNS_UDP_TAG,
+        NODE_DNS_TCP_TAG,
         SECURE_DNS_TAG,
         BOOTSTRAP_DNS_TAG,
         DNS_OVERRIDE_TAG,
+        // Прежние теги managed DoH: рантайм-копия профиля, сохранённая старой
+        // версией, обязана терять их при следующем запуске.
+        "zapret-doh-1",
+        "zapret-doh-2",
+        "zapret-doh-3",
+        "zapret-doh-4",
+        "zapret-doh-5",
     )
     private val DOMAIN_MATCH_FIELDS = setOf(
         "domain",
