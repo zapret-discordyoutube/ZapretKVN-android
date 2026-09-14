@@ -52,6 +52,7 @@ import io.github.zapretkvn.android.engines.hysteria.HysteriaTargetGenerationFenc
 import io.github.zapretkvn.android.engines.hysteria.isFailoverEligible
 import io.github.zapretkvn.android.engines.failover.FailoverOutcome
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
+import io.github.zapretkvn.android.engines.failover.HealthFailureDebounce
 import io.github.zapretkvn.android.engines.failover.OutboundFailoverCoordinator
 import io.github.zapretkvn.android.engines.failover.OutboundFailureLogParser
 import io.github.zapretkvn.android.engines.singbox.ListStringIterator
@@ -780,6 +781,7 @@ class ZapretVpnService : VpnService() {
                 outboundFailoverCoordinator.onSessionReady()
             }
             showForeground(ForegroundNotificationState.Connected)
+            startSessionHealthMonitor(resources)
             if (VpnTestHooks.consumeHysteriaFailureObserverDisconnect()) {
                 serviceScope.launch {
                     yield()
@@ -1498,6 +1500,67 @@ class ZapretVpnService : VpnService() {
             val externalIp = runCatching { container.vpnExternalIpProbe.fetch() }.getOrNull()
             if (externalIp != null && activeSession === session) {
                 controller.publishExternalIp(session.generation, externalIp)
+            }
+        })
+    }
+
+    /**
+     * Proactively watches whether the established tunnel still carries traffic.
+     *
+     * The core only logs an outbound error when it actually tries to route
+     * through a dead server, so a server that goes silent mid-session would
+     * otherwise never be noticed while the Android network and the core stay
+     * alive. This periodic probe closes that gap for every protocol: on a
+     * debounced run of failures it feeds the shared failover path, which switches
+     * to a healthy server (and, for Hysteria only, may terminate). It never tears
+     * a tunnel down on its own — that policy lives in [onOutboundFailure].
+     */
+    private fun startSessionHealthMonitor(session: ActiveSession) {
+        val debounce = HealthFailureDebounce(HEALTH_MONITOR_FAILURE_THRESHOLD)
+        session.replaceHealthMonitorJob(serviceScope.launch {
+            while (true) {
+                delay(HEALTH_MONITOR_INTERVAL_MILLIS)
+                if (
+                    activeSession !== session ||
+                    session.generation != controller.currentGeneration() ||
+                    stopInProgress.get()
+                ) {
+                    return@launch
+                }
+                // A mid-flight switch or an unsettled Android network would make a
+                // probe meaningless; network changes are generic recovery's job.
+                if (
+                    outboundFailoverCoordinator.replacementInFlight() ||
+                    !networkMonitor.current.isSettledForConnect()
+                ) {
+                    debounce.reset()
+                    continue
+                }
+                val dnsServer = session.platform().internalDnsServer
+                if (dnsServer == null) {
+                    debounce.reset()
+                    continue
+                }
+                val healthy = runCatching {
+                    container.vpnHealthPipeline.verify(
+                        mode = session.runtimeDnsMode,
+                        internalDnsServer = dnsServer,
+                    )
+                }.isSuccess
+                if (
+                    activeSession !== session ||
+                    session.generation != controller.currentGeneration() ||
+                    stopInProgress.get()
+                ) {
+                    return@launch
+                }
+                if (!debounce.onProbe(healthy)) continue
+                session.currentFailureEvent(
+                    HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
+                    SystemClock.elapsedRealtime(),
+                )?.copy(
+                    originalMessage = "Проактивная проверка здоровья туннеля не прошла.",
+                )?.let(::onOutboundFailure)
             }
         })
     }
@@ -2485,6 +2548,7 @@ class ZapretVpnService : VpnService() {
         private var statusObserver: Job? = null
         private var diagnosticsObserver: Job? = null
         private var identityJob: Job? = null
+        private var healthMonitorJob: Job? = null
         private var statusClient: CommandClient? = null
         private var statusClientCounted = false
         private var logClient: CommandClient? = null
@@ -2643,6 +2707,18 @@ class ZapretVpnService : VpnService() {
                     null
                 } else {
                     identityJob.also { identityJob = candidate }
+                }
+            }
+            previous?.cancel()
+            if (closing.get()) candidate.cancel()
+        }
+
+        fun replaceHealthMonitorJob(candidate: Job) {
+            val previous = synchronized(resourceLock) {
+                if (closing.get()) {
+                    null
+                } else {
+                    healthMonitorJob.also { healthMonitorJob = candidate }
                 }
             }
             previous?.cancel()
@@ -2827,10 +2903,11 @@ class ZapretVpnService : VpnService() {
                 closeTun()
                 timedStopStage("close_observers", "Остановка callback и фоновых задач") {
                     val resources = synchronized(resourceLock) {
-                        listOfNotNull(statusObserver, diagnosticsObserver, identityJob).also {
+                        listOfNotNull(statusObserver, diagnosticsObserver, identityJob, healthMonitorJob).also {
                             statusObserver = null
                             diagnosticsObserver = null
                             identityJob = null
+                            healthMonitorJob = null
                         }
                     }
                     resources.forEach(Job::cancel)
@@ -3095,6 +3172,10 @@ class ZapretVpnService : VpnService() {
          */
         private val NON_FAILOVER_OUTBOUND_TYPES =
             setOf("direct", "block", "dns", "selector", "urltest")
+        // Proactive tunnel health monitor: probe the live tunnel on this cadence
+        // and act only after this many consecutive failed probes (blip tolerance).
+        private const val HEALTH_MONITOR_INTERVAL_MILLIS = 60_000L
+        private const val HEALTH_MONITOR_FAILURE_THRESHOLD = 2
         private const val STATUS_INTERVAL_NANOS = 1_000_000_000L
         private const val MAX_FAILURE_LOG_BATCH_LINES = 32
         private const val MAX_FAILURE_LOG_LINE_CHARS = 1_024
