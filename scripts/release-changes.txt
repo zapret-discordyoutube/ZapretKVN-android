@@ -1,0 +1,9 @@
+# User-facing changelog for the CURRENT release — the single source of truth.
+# Consumed by BOTH the Forgejo release notes (create-release-bundle.sh) and the
+# Telegram announcement (publish-local-stable.sh -> publish_zapretkvn_stable.py),
+# so both channels always say the same thing.
+# Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
+# blank lines and lines starting with '#' are ignored. Edit per release before
+# publishing (the worktree must be clean, so commit this with the release prep).
+Автоматическое переключение на резервный сервер теперь работает для всех протоколов (VLESS, VMess, Trojan, Shadowsocks, Hysteria2), а не только для Hysteria
+Исправлена ложная ошибка «совместимый резервный сервер не найден» после сбоя подключения

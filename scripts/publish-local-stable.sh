@@ -17,6 +17,11 @@ STAGING_OUTPUT_DIR="$PROJECT_ROOT/build/local-release/.$TAG.staging"
 RELEASE_REPOSITORY="${ZAPRET_UPDATE_REPOSITORY:-zapretkvn/ZapretKVN-android}"
 FORGEJO_URL="${ZAPRET_FORGEJO_URL:-https://git.zapret.moe}"
 FORGEJO_TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.config/forgejo/zapret-kvn-android-release-token}"
+# Single source of truth for the user-facing changelog, shared with the Forgejo
+# release notes (create-release-bundle.sh).
+RELEASE_CHANGES_FILE="${ZAPRET_RELEASE_CHANGES_FILE:-$PROJECT_ROOT/scripts/release-changes.txt}"
+# Host-local ZapretGPT delivery helper that posts the Telegram announcement.
+TELEGRAM_PUBLISHER="${ZAPRET_KVN_TG_PUBLISHER:-/home/codex-pve/zapretgpt/scripts/publish_zapretkvn_stable.py}"
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-approved ]]; then
     echo "Usage: $0 vMAJOR.MINOR.PATCH --final-gate-approved" >&2
@@ -248,6 +253,43 @@ fi
     "$TAG" \
     "$OUTPUT_DIR" \
     "$RELEASE_REPOSITORY"
+
+# Telegram announcement is the mandatory final step of a stable release (unless
+# explicitly skipped): the Forgejo release is now visible, so announce it once
+# through the host-local ZapretGPT bot using the SAME changelog the Forgejo notes
+# were built from. Idempotent via a per-bundle marker so a resumed publish does
+# not double-post.
+telegram_marker="$OUTPUT_DIR/.telegram-published"
+if [[ "${ZAPRET_SKIP_TELEGRAM:-0}" == 1 ]]; then
+    echo "Skipping Telegram announcement (ZAPRET_SKIP_TELEGRAM=1)."
+elif [[ -f "$telegram_marker" ]]; then
+    echo "Telegram announcement already sent for $TAG; skipping."
+else
+    [[ -f "$RELEASE_CHANGES_FILE" ]] || {
+        echo "Missing changelog source: $RELEASE_CHANGES_FILE" >&2
+        exit 1
+    }
+    [[ -f "$TELEGRAM_PUBLISHER" ]] || {
+        echo "Telegram publisher not found: $TELEGRAM_PUBLISHER" >&2
+        exit 1
+    }
+    telegram_changes=()
+    while IFS= read -r change_line || [[ -n "$change_line" ]]; do
+        [[ -z "${change_line// }" || "$change_line" == \#* ]] && continue
+        telegram_changes+=(--change "${change_line# }")
+    done < "$RELEASE_CHANGES_FILE"
+    if (( ${#telegram_changes[@]} == 0 )); then
+        echo "No changelog items to announce in $RELEASE_CHANGES_FILE" >&2
+        exit 1
+    fi
+    if python3 "$TELEGRAM_PUBLISHER" android "${TAG#v}" "${telegram_changes[@]}"; then
+        : > "$telegram_marker"
+        echo "Telegram announcement published for $TAG."
+    else
+        echo "Stable $TAG published, but the Telegram announcement failed; re-run to retry." >&2
+        exit 1
+    fi
+fi
 
 dispatch_payload="$(jq -n --arg tag "$TAG" '{ref:"main",inputs:{tag:$tag}}')"
 if forgejo_api \

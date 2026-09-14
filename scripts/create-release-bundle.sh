@@ -6,6 +6,13 @@ TAG="${1:?release tag is required}"
 SOURCE_DIR="${2:?directory containing the signed release APK matrix is required}"
 OUTPUT_DIR="${3:-$PROJECT_ROOT/release-out}"
 RELEASE_ABIS=(arm64-v8a armeabi-v7a x86_64)
+# Single source of truth for the user-facing changelog, shared with the Telegram
+# announcement in publish-local-stable.sh.
+RELEASE_CHANGES_FILE="${ZAPRET_RELEASE_CHANGES_FILE:-$PROJECT_ROOT/scripts/release-changes.txt}"
+[[ -f "$RELEASE_CHANGES_FILE" ]] || {
+    echo "Missing changelog source: $RELEASE_CHANGES_FILE" >&2
+    exit 1
+}
 
 # shellcheck disable=SC1090,SC1091
 source "$PROJECT_ROOT/core.properties"
@@ -152,10 +159,12 @@ jq -n \
     printf '%s\n' \
         '' \
         '### Что изменилось' \
-        '' \
-        '- Автоматическое переключение на резервный сервер теперь работает для всех протоколов (VLESS/VMess/Trojan/Shadowsocks/Hysteria2), а не только для Hysteria; переключение идёт через штатный selector без перезапуска ядра.' \
-        '- Исправлена ложная ошибка «совместимый резервный сервер не найден»: кулдаун упавшего узла больше не сохраняется между переподключениями.' \
-        '- Ядро failover вынесено в общий модуль, дублирующий код удалён.' \
+        ''
+    while IFS= read -r change_line || [[ -n "$change_line" ]]; do
+        [[ -z "${change_line// }" || "$change_line" == \#* ]] && continue
+        printf -- '- %s\n' "${change_line# }"
+    done < "$RELEASE_CHANGES_FILE"
+    printf '%s\n' \
         '' \
         '### Проверка релиза' \
         '' \
