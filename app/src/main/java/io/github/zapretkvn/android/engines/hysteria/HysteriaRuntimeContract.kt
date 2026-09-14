@@ -393,12 +393,6 @@ internal class HysteriaStateReducer(
     }
 }
 
-internal data class HysteriaFallbackTarget(
-    val id: String,
-    val capability: HysteriaCapability,
-    val maintenance: Boolean = false,
-)
-
 internal data class HysteriaFailureEvent(
     val sessionGeneration: Long,
     val targetGeneration: Long,
@@ -407,32 +401,6 @@ internal data class HysteriaFailureEvent(
     val observedAtMonotonic: Long,
     val originalMessage: String = "",
 )
-
-internal data class HysteriaTaggedFailure(
-    val outboundTag: String,
-    val failureCode: HysteriaFailureCode,
-    val originalMessage: String = "",
-)
-
-internal object HysteriaFailureLogParser {
-    private val outboundTagPattern =
-        Regex("outbound/(?:hysteria2|hy2)\\[([^]\\r\\n]+)]", RegexOption.IGNORE_CASE)
-
-    fun first(messages: List<String>): HysteriaTaggedFailure? = all(messages).firstOrNull()
-
-    fun all(messages: List<String>): List<HysteriaTaggedFailure> = messages.asSequence()
-        .mapNotNull { message ->
-            val failure = HysteriaFailureClassifier.classifyRuntime(message)
-                ?: return@mapNotNull null
-            val outboundTag = outboundTagPattern.find(message)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.takeIf(String::isNotBlank)
-                ?: return@mapNotNull null
-            HysteriaTaggedFailure(outboundTag, failure, message)
-        }
-        .toList()
-}
 
 internal class HysteriaTargetGenerationFence(
     private val sessionGeneration: Long,
@@ -483,88 +451,11 @@ internal class HysteriaTargetGenerationFence(
             event.targetGeneration == selectedTargetGeneration
 }
 
-internal sealed interface HysteriaReplacementOutcome {
-    data class Candidate(val target: HysteriaFallbackTarget) : HysteriaReplacementOutcome
-    data object NoCompatibleTarget : HysteriaReplacementOutcome
-    data object StaleFailureIgnored : HysteriaReplacementOutcome
-    data object TransitionAlreadyInFlight : HysteriaReplacementOutcome
-    data object FailureAlreadyHandled : HysteriaReplacementOutcome
-    data object FailureNotRecoverable : HysteriaReplacementOutcome
-}
-
-internal class HysteriaTransitionCoordinator(
-    private val monotonicMillis: () -> Long,
-    private val cooldownMillis: Long = 300_000,
-) {
-    private val cooldownUntil = mutableMapOf<String, Long>()
-    private var replacementInFlight = false
-    private var replacementAttempted = false
-    private var lastCommitAt = Long.MIN_VALUE
-    var failureEpisodeId: Long = 0
-        private set
-
-    fun chooseReplacement(
-        failedId: String,
-        failure: HysteriaFailureCode,
-        orderedTargets: List<HysteriaFallbackTarget>,
-        ignoreStaleLogFence: Boolean = false,
-    ): HysteriaReplacementOutcome {
-        if (failure !in AUTOMATIC_HYSTERIA_SWITCH_FAILURES) {
-            return HysteriaReplacementOutcome.FailureNotRecoverable
-        }
-        if (replacementInFlight) return HysteriaReplacementOutcome.TransitionAlreadyInFlight
-        if (replacementAttempted) return HysteriaReplacementOutcome.FailureAlreadyHandled
-        val now = monotonicMillis()
-        if (
-            !ignoreStaleLogFence &&
-            lastCommitAt != Long.MIN_VALUE &&
-            now - lastCommitAt < STALE_LOG_FENCE_MILLIS
-        ) {
-            return HysteriaReplacementOutcome.StaleFailureIgnored
-        }
-        val replacement = orderedTargets.firstOrNull { target ->
-            target.id != failedId &&
-                !target.maintenance &&
-                target.capability.valid &&
-                target.capability.executionKind == HysteriaExecutionKind.Native &&
-                cooldownUntil.getOrDefault(target.id, 0) <= now
-        }
-        failureEpisodeId++
-        replacementAttempted = true
-        cooldownUntil[failedId] = now + cooldownMillis
-        if (replacement == null) return HysteriaReplacementOutcome.NoCompatibleTarget
-        replacementInFlight = true
-        return HysteriaReplacementOutcome.Candidate(replacement)
-    }
-
-    fun commitReplacement() {
-        replacementInFlight = false
-        replacementAttempted = false
-        lastCommitAt = monotonicMillis()
-    }
-
-    fun failReplacement() {
-        replacementInFlight = false
-        // replacementAttempted intentionally stays true: one episode gets no
-        // automatic second target.
-    }
-
-    fun automaticAttempted(): Boolean = replacementAttempted
-
-    fun replacementInFlight(): Boolean = replacementInFlight
-
-    fun onSessionReady() {
-        replacementInFlight = false
-        replacementAttempted = false
-    }
-
-    fun reset() {
-        replacementInFlight = false
-        replacementAttempted = false
-        lastCommitAt = Long.MIN_VALUE
-    }
-
-    private companion object {
-        const val STALE_LOG_FENCE_MILLIS = 2_000L
-    }
-}
+/**
+ * Hysteria folds its URI-capability rules into the protocol-neutral
+ * [io.github.zapretkvn.android.engines.failover.FailoverTarget.valid] flag: a
+ * target is eligible only when the capability parsed cleanly and runs on the
+ * native libbox runtime.
+ */
+internal fun HysteriaCapability.isFailoverEligible(): Boolean =
+    valid && executionKind == HysteriaExecutionKind.Native

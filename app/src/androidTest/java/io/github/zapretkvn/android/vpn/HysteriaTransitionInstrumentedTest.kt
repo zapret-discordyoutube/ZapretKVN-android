@@ -15,13 +15,12 @@ import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
-import io.github.zapretkvn.android.engines.hysteria.HysteriaCapabilityClassifier
+import io.github.zapretkvn.android.engines.failover.FailoverOutcome
+import io.github.zapretkvn.android.engines.failover.FailoverTarget
+import io.github.zapretkvn.android.engines.failover.OutboundFailoverCoordinator
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
-import io.github.zapretkvn.android.engines.hysteria.HysteriaFallbackTarget
-import io.github.zapretkvn.android.engines.hysteria.HysteriaReplacementOutcome
 import io.github.zapretkvn.android.engines.hysteria.HysteriaRuntimeState
 import io.github.zapretkvn.android.engines.hysteria.HysteriaStateReducer
-import io.github.zapretkvn.android.engines.hysteria.HysteriaTransitionCoordinator
 import io.github.zapretkvn.android.importer.ImportCandidate
 import io.github.zapretkvn.android.importer.ImportParser
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
@@ -45,22 +44,21 @@ class HysteriaTransitionInstrumentedTest {
     fun reducerAndCoordinatorFenceOneReplacementOnDevice() {
         var now = 1_000L
         val reducer = HysteriaStateReducer { ++now }
-        val coordinator = HysteriaTransitionCoordinator({ now }, cooldownMillis = 60_000)
-        val valid = HysteriaCapabilityClassifier.classify("hy2://auth@example.test:443/")
+        val coordinator = OutboundFailoverCoordinator({ now }, cooldownMillis = 60_000)
         val targets = listOf(
-            HysteriaFallbackTarget("old", valid),
-            HysteriaFallbackTarget("maintenance", valid, maintenance = true),
-            HysteriaFallbackTarget("replacement", valid),
-            HysteriaFallbackTarget("second", valid),
+            FailoverTarget("old", valid = true),
+            FailoverTarget("maintenance", valid = true, maintenance = true),
+            FailoverTarget("replacement", valid = true),
+            FailoverTarget("second", valid = true),
         )
 
         reducer.begin(8, "old", targets.map { it.id }.toSet())
         reducer.advance(8, HysteriaRuntimeState.READY)
         val selected = coordinator.chooseReplacement(
                 "old",
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
-                targets,
-            ) as HysteriaReplacementOutcome.Candidate
+                recoverable = true,
+                orderedTargets = targets,
+            ) as FailoverOutcome.Candidate
         assertEquals("replacement", selected.target.id)
         reducer.fail(8, HysteriaFailureCode.TARGET_NETWORK_TIMEOUT, automaticSwitch = true)
         reducer.advance(8, HysteriaRuntimeState.PREPARING_REPLACEMENT)
@@ -68,11 +66,11 @@ class HysteriaTransitionInstrumentedTest {
         coordinator.failReplacement()
 
         assertEquals(
-            HysteriaReplacementOutcome.FailureAlreadyHandled,
+            FailoverOutcome.FailureAlreadyHandled,
             coordinator.chooseReplacement(
                 "old",
-                HysteriaFailureCode.TARGET_CONNECTION_REFUSED,
-                targets,
+                recoverable = true,
+                orderedTargets = targets,
             ),
         )
         assertFalse(reducer.advance(7, HysteriaRuntimeState.FAILED))

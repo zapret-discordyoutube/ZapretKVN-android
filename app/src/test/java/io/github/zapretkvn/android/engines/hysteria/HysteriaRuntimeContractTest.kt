@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.engines.hysteria
 
+import io.github.zapretkvn.android.engines.failover.OutboundFailureLogParser
 import io.github.zapretkvn.android.engines.singbox.consume
 import io.github.zapretkvn.android.vpn.VpnFailureCodeSanitizer
 import kotlinx.serialization.json.Json
@@ -82,77 +83,22 @@ class HysteriaRuntimeContractTest {
     }
 
     @Test
-    fun `coordinator selects one next target and never retries failed target`() {
-        var now = 1_000L
-        val coordinator = HysteriaTransitionCoordinator({ now }, cooldownMillis = 5_000)
-        val valid = HysteriaCapabilityClassifier.classify("hy2://auth@example.test:443/")
-        val invalid = HysteriaCapabilityClassifier.classify("hy2://auth@example.test:443/?insecure=1")
-        val targets = listOf(
-            HysteriaFallbackTarget("failed", valid),
-            HysteriaFallbackTarget("maintenance", valid, maintenance = true),
-            HysteriaFallbackTarget("invalid", invalid),
-            HysteriaFallbackTarget("replacement", valid),
-            HysteriaFallbackTarget("second", valid),
-        )
-
-        val selected = coordinator.chooseReplacement(
-                "failed",
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
-                targets,
-            ) as HysteriaReplacementOutcome.Candidate
-        assertEquals("replacement", selected.target.id)
-        coordinator.failReplacement()
-        assertEquals(
-            HysteriaReplacementOutcome.FailureAlreadyHandled,
-            coordinator.chooseReplacement(
-                "failed",
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
-                targets,
-            ),
-        )
-        now += 6_000
-        assertEquals(
-            "same episode must not consume a second target",
-            HysteriaReplacementOutcome.FailureAlreadyHandled,
-            coordinator.chooseReplacement(
-                "failed",
-                HysteriaFailureCode.TARGET_CONNECTION_REFUSED,
-                targets,
-            ),
-        )
-    }
-
-    @Test
-    fun `missing replacement is a typed terminal coordinator outcome`() {
-        val coordinator = HysteriaTransitionCoordinator({ 1_000L })
-        val valid = HysteriaCapabilityClassifier.classify("hy2://auth@example.test:443/")
-
-        assertEquals(
-            HysteriaReplacementOutcome.NoCompatibleTarget,
-            coordinator.chooseReplacement(
-                "only",
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
-                listOf(HysteriaFallbackTarget("only", valid)),
-            ),
-        )
-        assertTrue(coordinator.automaticAttempted())
-        assertFalse(coordinator.replacementInFlight())
-        assertEquals(1L, coordinator.failureEpisodeId)
-    }
-
-    @Test
     fun `late old-target operational and security logs are fenced after commit`() {
         val fence = HysteriaTargetGenerationFence(42, "old")
         val oldOperational = checkNotNull(
-            HysteriaFailureLogParser.first(
+            OutboundFailureLogParser.first(
                 listOf("outbound/hysteria2[old]: no recent network activity"),
             ),
-        ).let { parsed -> fence.event(parsed.outboundTag, parsed.failureCode, 1_000) }
+        ).let { line ->
+            fence.event(line.outboundTag, checkNotNull(HysteriaFailureClassifier.classifyRuntime(line.message)), 1_000)
+        }
         val oldSecurity = checkNotNull(
-            HysteriaFailureLogParser.first(
+            OutboundFailureLogParser.first(
                 listOf("outbound/hysteria2[old]: x509: certificate signed by unknown authority"),
             ),
-        ).let { parsed -> fence.event(parsed.outboundTag, parsed.failureCode, 1_001) }
+        ).let { line ->
+            fence.event(line.outboundTag, checkNotNull(HysteriaFailureClassifier.classifyRuntime(line.message)), 1_001)
+        }
 
         fence.commit("replacement")
 
