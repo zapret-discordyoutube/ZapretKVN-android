@@ -57,38 +57,6 @@ internal sealed interface FailoverOutcome {
     data object FailureNotRecoverable : FailoverOutcome
 }
 
-/**
- * Debounces the proactive session health monitor: a single failed probe is not
- * enough to switch away from a working server (a Wi-Fi blip or one slow endpoint
- * is common), so the monitor acts only after [threshold] consecutive failures.
- * Any healthy probe clears the streak.
- */
-internal class HealthFailureDebounce(private val threshold: Int) {
-    init {
-        require(threshold >= 1) { "threshold must be >= 1" }
-    }
-
-    private var consecutiveFailures = 0
-
-    /** @return true exactly when a fresh streak of [threshold] failures completes. */
-    fun onProbe(healthy: Boolean): Boolean {
-        if (healthy) {
-            consecutiveFailures = 0
-            return false
-        }
-        consecutiveFailures++
-        if (consecutiveFailures >= threshold) {
-            consecutiveFailures = 0
-            return true
-        }
-        return false
-    }
-
-    fun reset() {
-        consecutiveFailures = 0
-    }
-}
-
 internal class OutboundFailoverCoordinator(
     private val monotonicMillis: () -> Long,
     private val cooldownMillis: Long = 300_000,
