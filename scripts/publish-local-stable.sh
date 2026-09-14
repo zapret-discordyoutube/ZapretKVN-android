@@ -22,6 +22,25 @@ FORGEJO_TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.conf
 RELEASE_CHANGES_FILE="${ZAPRET_RELEASE_CHANGES_FILE:-$PROJECT_ROOT/scripts/release-changes.txt}"
 # Host-local ZapretGPT delivery helper that posts the Telegram announcement.
 TELEGRAM_PUBLISHER="${ZAPRET_KVN_TG_PUBLISHER:-/home/codex-pve/zapretgpt/scripts/publish_zapretkvn_stable.py}"
+# Bot-owned publish ledger; consulted after a publisher timeout to tell a false
+# client timeout (the bot finished the upload anyway) from a real failure.
+TELEGRAM_PUBLISHER_STATE="${ZAPRET_KVN_TG_STATE:-/home/codex-pve/zapretgpt/data/zapretkvn_publisher_state.json}"
+
+# Succeeds when the bot ledger already records an Android artifact for this tag.
+telegram_album_recorded() {
+    python3 - "$TELEGRAM_PUBLISHER_STATE" "android|$TAG|" <<'PY'
+import json, sys
+path, prefix = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(1)
+published = data.get("published", data)
+keys = published.keys() if isinstance(published, dict) else published
+sys.exit(0 if any(isinstance(k, str) and k.startswith(prefix) for k in keys) else 1)
+PY
+}
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-approved ]]; then
     echo "Usage: $0 vMAJOR.MINOR.PATCH --final-gate-approved" >&2
@@ -286,8 +305,22 @@ else
         : > "$telegram_marker"
         echo "Telegram announcement published for $TAG."
     else
-        echo "Stable $TAG published, but the Telegram announcement failed; re-run to retry." >&2
-        exit 1
+        # A client-side timeout is not proof of failure: over DPI-throttled MTProto
+        # the bot often finishes the upload after the client gives up. Give it a
+        # bounded grace period and trust the bot's publish ledger before failing.
+        echo "Telegram publisher exited non-zero; checking whether the album landed anyway…" >&2
+        for _ in $(seq 1 20); do
+            if telegram_album_recorded; then
+                : > "$telegram_marker"
+                echo "Telegram album for $TAG confirmed in the bot ledger despite the client timeout."
+                break
+            fi
+            sleep 30
+        done
+        if [[ ! -f "$telegram_marker" ]]; then
+            echo "Stable $TAG published, but the Telegram announcement failed; re-run to retry." >&2
+            exit 1
+        fi
     fi
 fi
 
