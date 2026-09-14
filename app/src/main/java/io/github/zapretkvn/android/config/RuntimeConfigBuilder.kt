@@ -410,9 +410,16 @@ object RuntimeConfigBuilder {
                 }
             }
             route["rules"] = JsonArray(generatedRouteRules + existing)
-            if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) {
-                route["default_domain_resolver"] = JsonPrimitive(ANDROID_DNS_TAG)
+            // sing-box >= 1.14 removed implicit domain resolution in dial fields:
+            // a config that dials any domain must name route.default_domain_resolver.
+            // Managed/fallback modes own the Android DNS; otherwise keep the
+            // profile's valid resolver or point at one of its own DNS servers.
+            val resolverTag = if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) {
+                ANDROID_DNS_TAG
+            } else {
+                resolveDefaultDomainResolverTag(servers, dns, route)
             }
+            resolverTag?.let { route["default_domain_resolver"] = JsonPrimitive(it) }
             next["route"] = JsonObject(route)
         }
         return RuntimeConfigResult.Ready(JsonConfig.format(JsonObject(next)))
@@ -429,6 +436,27 @@ object RuntimeConfigBuilder {
                 },
             )
         }
+
+    private fun resolveDefaultDomainResolverTag(
+        servers: List<JsonElement>,
+        dns: Map<String, JsonElement>,
+        route: Map<String, JsonElement>,
+    ): String? {
+        val dnsTags = servers.mapNotNull { server ->
+            ((server as? JsonObject)?.get("tag") as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
+        }
+        if (dnsTags.isEmpty()) return null
+        val current = resolverServerTag(route["default_domain_resolver"])
+        if (current != null && current in dnsTags) return null
+        val finalTag = resolverServerTag(dns["final"])
+        return finalTag?.takeIf { it in dnsTags } ?: dnsTags.first()
+    }
+
+    private fun resolverServerTag(value: JsonElement?): String? = when (value) {
+        is JsonPrimitive -> value.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+        is JsonObject -> (value["server"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank)
+        else -> null
+    }
 
     private fun androidDnsServer(): JsonObject = buildJsonObject {
         put("type", "local")

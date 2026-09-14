@@ -504,6 +504,9 @@ class RuntimeConfigBuilderTest {
             .map { it as JsonObject }
 
         assertEquals("profile-dns", dns.string("final"))
+        // sing-box >= 1.14 rejects configs that dial domains without a resolver;
+        // FromJson keeps the profile DNS and points the route default at it.
+        assertEquals("profile-dns", (root["route"] as JsonObject).string("default_domain_resolver"))
         assertEquals(1, (dns["servers"] as JsonArray).size)
         assertEquals("sniff", rules[0].string("action"))
         assertEquals("tcp", rules[0].string("network"))
