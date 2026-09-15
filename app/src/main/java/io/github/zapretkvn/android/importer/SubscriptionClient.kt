@@ -5,6 +5,7 @@ import io.github.zapretkvn.android.profiles.AndroidAtomicProfileWriter
 import io.github.zapretkvn.android.profiles.AtomicProfileWriter
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -29,12 +30,37 @@ fun interface SubscriptionFetcher {
 class HttpSubscriptionFetcher(
     private val device: DeviceIdentity = DeviceIdentity(),
     private val appVersion: String = "",
+    // Opens one connection for [url]. When [direct] is true the connection is
+    // bound to the non-VPN network so the fetch bypasses the tunnel. The
+    // subscription host answers the same on every path, so it is tried directly
+    // first; the default (VPN when connected) path is a fallback only when the
+    // direct attempt returns no answer.
+    private val openConnection: (url: URL, direct: Boolean) -> HttpURLConnection? =
+        { url, direct -> if (direct) null else url.openConnection() as? HttpURLConnection },
+    // Whether a non-VPN network exists right now, so a direct attempt is worth
+    // making. Default: never, so behaviour is unchanged until it is wired.
+    private val directAvailable: () -> Boolean = { false },
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
+        if (directAvailable()) {
+            try {
+                return fetchVia(source, direct = true)
+            } catch (transport: IOException) {
+                // No response reached us on the direct (non-VPN) path — only
+                // this "no answer" case is retried through the default network,
+                // which is the VPN tunnel when connected. A real HTTP answer
+                // (ImportException, e.g. a 404 for a revoked link) is
+                // authoritative and propagates instead of being masked here.
+            }
+        }
+        return fetchVia(source, direct = false)
+    }
+
+    private fun fetchVia(source: SubscriptionSource, direct: Boolean): String {
         var current = validatedUrl(source.url)
         val origin = URI(current).host.orEmpty()
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
-            val connection = (URL(current).openConnection() as? HttpURLConnection)
+            val connection = openConnection(URL(current), direct)
                 ?: throw ImportException("URL подписки не является HTTP(S).")
             try {
                 connection.instanceFollowRedirects = false

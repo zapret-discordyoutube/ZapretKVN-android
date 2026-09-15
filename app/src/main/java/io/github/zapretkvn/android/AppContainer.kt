@@ -1,6 +1,9 @@
 package io.github.zapretkvn.android
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Build
 import io.github.zapretkvn.android.apps.AndroidPackageAvailability
 import io.github.zapretkvn.android.apps.AppCatalog
@@ -34,6 +37,7 @@ import io.github.zapretkvn.android.updates.AppUpdateVpnFallback
 import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
+import java.net.HttpURLConnection
 
 class AppContainer(
     context: Context,
@@ -60,6 +64,17 @@ class AppContainer(
             ),
         ),
         appVersion = BuildConfig.VERSION_NAME,
+        // Fetch the subscription over a non-VPN network first, even while the
+        // tunnel is up: the subscription host answers the same directly, and a
+        // degraded tunnel egress must not turn a working link into a failure.
+        // Falls back to the default (VPN) path only when the direct attempt
+        // returns no answer.
+        openConnection = { url, direct ->
+            val connection =
+                if (direct) nonVpnNetwork(appContext)?.openConnection(url) else url.openConnection()
+            connection as? HttpURLConnection
+        },
+        directAvailable = { nonVpnNetwork(appContext) != null },
     )
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
@@ -118,4 +133,21 @@ class AppContainer(
             routingPolicyStore,
             vpnController,
         )
+}
+
+/**
+ * The current non-VPN network with internet, or null when only a VPN (or no
+ * usable network) is present. `allNetworks` keeps listing the underlying
+ * physical transports while a VPN is active, so filtering out TRANSPORT_VPN
+ * yields the path that bypasses the tunnel for one direct subscription fetch.
+ */
+@Suppress("DEPRECATION") // allNetworks is the only synchronous way to see the
+// underlying physical transports while a VPN holds the default network.
+private fun nonVpnNetwork(context: Context): Network? {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
+    return connectivity.allNetworks.firstOrNull { network ->
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    }
 }
