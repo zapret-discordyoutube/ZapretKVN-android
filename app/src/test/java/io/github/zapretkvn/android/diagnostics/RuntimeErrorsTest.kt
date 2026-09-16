@@ -24,6 +24,28 @@ class RuntimeErrorsTest {
     }
 
     @Test
+    fun `dns sink connection failures are recorded but never surfaced as the tunnel error`() {
+        val message =
+            "ERROR[0005] [3288805208 5.0s] connection: open connection to 172.19.0.2:853 " +
+                "using outbound/direct[direct]: dial wlan0 (47): dial tcp 172.19.0.2:853: i/o timeout"
+        val failure = RuntimeErrors.capture("sing-box", "route", message)
+        assertEquals("LOCAL_DNS_SINK_UNREACHABLE", failure.code)
+        assertEquals("record_only", failure.action)
+        assertNull("sink noise must not trigger recovery", HysteriaFailureClassifier.classify(message))
+
+        val journal = RuntimeErrorJournal()
+        journal.record(failure, 100)
+        assertNull("sink noise must never be surfaced as evidence", RuntimeErrors.bestEvidence(journal.forGeneration(0)))
+        assertEquals(1, journal.forGeneration(0).size)
+
+        // A genuine timeout to a public target still classifies as a real failure.
+        assertEquals(
+            "TARGET_NETWORK_TIMEOUT",
+            RuntimeErrors.capture("sing-box", "dial", "dial tcp 198.51.100.7:443: i/o timeout").code,
+        )
+    }
+
+    @Test
     fun originalMessagesAreNotReplacedWithDiagnosis() {
         val message = "unrecognized upstream error 781"
         val failure = RuntimeErrors.capture("xray", "dial", message)

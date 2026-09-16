@@ -396,14 +396,20 @@ object RuntimeConfigBuilder {
             val route = (root["route"] as? JsonObject)?.toMutableMap()
                 ?: return invalid("В конфигурации отсутствует route.")
             val existingRules = (route["rules"] as? JsonArray)?.toList().orEmpty()
-            val existing = if (mode in MANAGED_DNS_MODES) {
-                existingRules.filterNot(::isGeneratedRouteRule)
-            } else {
-                existingRules
-            }
+            val dnsSinkCidrs = tunSinkCidrs(root)
+            val existing = (
+                if (mode in MANAGED_DNS_MODES) {
+                    existingRules.filterNot(::isGeneratedRouteRule)
+                } else {
+                    existingRules
+                }
+                ).filterNot { isDnsSinkRejectRule(it, dnsSinkCidrs) }
             val generatedRouteRules = buildList {
                 addAll(packageRejectRules(blockedPackages))
-                if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) add(hijackDnsRule())
+                if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) {
+                    add(hijackDnsRule())
+                    dnsSinkRejectRule(dnsSinkCidrs)?.let(::add)
+                }
                 selectedProxyTag?.let { proxyTag ->
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
                     add(healthProbeRule(proxyTag, healthCheckPackageName))
@@ -659,6 +665,42 @@ object RuntimeConfigBuilder {
     private fun hijackDnsRule(): JsonObject = buildJsonObject {
         put("port", 53)
         put("action", "hijack-dns")
+    }
+
+    /**
+     * Android получает адрес самого TUN как сетевой DNS, а мы перехватываем на
+     * нём только порт 53. Приложения всё равно опрашивают этот приватный адрес
+     * по DoH/DoT/mDNS на других портах (например :853). Без этого правила
+     * политика «приватный IP → direct» набирает sink по физическому линку, где
+     * адреса TUN не существует: приложение висит весь таймаут соединения, а
+     * фейл отравляет диагностику ложной причиной. Правило идёт сразу за
+     * hijack-dns — порт 53 уже перехвачен, а любой другой порт к sink получает
+     * мгновенный reject, и клиент откатывается на plaintext 53.
+     */
+    private fun dnsSinkRejectRule(sinkCidrs: List<String>): JsonObject? {
+        if (sinkCidrs.isEmpty()) return null
+        return buildJsonObject {
+            put("ip_cidr", JsonArray(sinkCidrs.map(::JsonPrimitive)))
+            put("action", "reject")
+        }
+    }
+
+    private fun isDnsSinkRejectRule(element: JsonElement, sinkCidrs: List<String>): Boolean {
+        val rule = element as? JsonObject ?: return false
+        if (rule.string("action") != "reject") return false
+        val cidrs = stringArray(rule["ip_cidr"])
+        return cidrs.isNotEmpty() && cidrs.toSet() == sinkCidrs.toSet()
+    }
+
+    private fun tunSinkCidrs(root: JsonObject): List<String> {
+        val tun = (root["inbounds"] as? JsonArray).orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .firstOrNull { it.string("type") == "tun" } ?: return emptyList()
+        return (
+            stringArray(tun["address"]) +
+                stringArray(tun["inet4_address"]) +
+                stringArray(tun["inet6_address"])
+            ).filter { isIpv4Prefix(it) || isIpv6Prefix(it) }.distinct()
     }
 
     /**

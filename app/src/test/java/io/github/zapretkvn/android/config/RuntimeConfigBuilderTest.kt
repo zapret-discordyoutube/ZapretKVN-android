@@ -9,6 +9,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import io.github.zapretkvn.android.routing.InstalledRuleSets
@@ -537,8 +538,45 @@ class RuntimeConfigBuilderTest {
         assertEquals("local", ((dns["servers"] as JsonArray).single() as JsonObject).string("type"))
         assertEquals("zapret-android-dns", route.string("default_domain_resolver"))
         assertEquals("hijack-dns", rules[0].string("action"))
-        assertEquals("zapret-proxy", rules[1].string("outbound"))
+        // The DNS sink reject follows hijack-dns so only non-53 sink traffic is rejected.
+        assertEquals("reject", rules[1].string("action"))
+        assertEquals(
+            listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126"),
+            (rules[1]["ip_cidr"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+        assertEquals("zapret-proxy", rules.first { it.string("outbound") == "zapret-proxy" }.string("outbound"))
         assertFalse("stored profile must stay without a DNS section", "\"dns\"" in stored)
+    }
+
+    @Test
+    fun `managed DNS rejects non-53 traffic to the TUN DNS sink exactly once across rebuilds`() {
+        val stored = validConfig()
+        val first = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Secure),
+        ) as RuntimeConfigResult.Ready
+        val firstRules = ((JsonConfig.parse(first.json) as JsonObject)["route"] as JsonObject)["rules"] as JsonArray
+        val rules = firstRules.map { it as JsonObject }
+
+        assertEquals("hijack-dns", rules[0].string("action"))
+        val sink = rules[1]
+        assertEquals("reject", sink.string("action"))
+        assertEquals(
+            listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126"),
+            (sink["ip_cidr"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+        assertNull("sink reject must not narrow to port 53", sink["port"])
+
+        // Rebuilding from the runtime overlay strips the previous sink rule and regenerates one.
+        val second = RuntimeConfigBuilder.build(
+            first.json,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Secure),
+        ) as RuntimeConfigResult.Ready
+        val secondRules = ((JsonConfig.parse(second.json) as JsonObject)["route"] as JsonObject)["rules"] as JsonArray
+        val rejectsWithCidr = secondRules
+            .map { it as JsonObject }
+            .filter { it.string("action") == "reject" && it["ip_cidr"] != null }
+        assertEquals(1, rejectsWithCidr.size)
     }
 
     @Test
