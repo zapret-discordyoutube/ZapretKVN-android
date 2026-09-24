@@ -102,6 +102,10 @@ class HttpSubscriptionFetcher(
                         ),
                     )
                 }
+                SubscriptionIdentity.describeHwidRefusal(
+                    status,
+                    connection.headerFields.orEmpty().keys,
+                )?.let { throw ImportException(it) }
                 val declaredLength = connection.contentLengthLong
                 if (declaredLength > MAX_IMPORT_BYTES) {
                     throw ImportException("Подписка больше 4 МБ.")

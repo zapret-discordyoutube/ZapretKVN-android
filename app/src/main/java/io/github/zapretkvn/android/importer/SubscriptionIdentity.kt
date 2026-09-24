@@ -63,6 +63,18 @@ object SubscriptionIdentity {
 
     private val DEEP_LINK_SCHEMES = setOf("happ", "incy", "v2raytun")
 
+    // Веб-страница провайдера, которая лишь открывает клиент диплинком:
+    // `https://host/incy/https://sub.host/token` → `incy://import/<base64>`.
+    // Сам адрес подписки лежит в пути открытым текстом.
+    private val LAUNCHER_PAGE_PATH = Regex(
+        "/(happ|incy|v2raytun)(?:\\.html)?/+(https?(?::|%3a).+)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    // Remnawave отказывает по HWID ответом 2xx с узлами-заглушками `0.0.0.0:1`,
+    // а причину называет только этими заголовками.
+    private val HWID_REFUSAL_HEADERS = setOf("x-hwid-not-supported", "x-hwid-max-devices-reached")
+
     private val BASE64_ALPHABET = Regex("[A-Za-z0-9_+/=-]+")
 
     /**
@@ -181,15 +193,27 @@ object SubscriptionIdentity {
      */
     fun describeHttpFailure(status: Int, headerNames: Collection<String?>): String {
         val normalized = headerNames.filterNotNull().map { it.lowercase() }.toSet()
-        if ("x-hwid-max-devices-reached" in normalized || "x-hwid-limit" in normalized) {
-            return "Достигнут лимит устройств подписки. Отвяжите лишнее устройство " +
-                "в личном кабинете или у провайдера."
-        }
+        // Remnawave шлёт `x-hwid-limit` вместе с обеими причинами, поэтому
+        // отсутствие HWID проверяется первым: иначе оно выдаётся за лимит.
         if ("x-hwid-not-supported" in normalized) {
             return "Провайдер требует идентификатор устройства (HWID). " +
                 "Включите отправку HWID в настройках подписки."
         }
+        if ("x-hwid-max-devices-reached" in normalized || "x-hwid-limit" in normalized) {
+            return "Достигнут лимит устройств подписки. Отвяжите лишнее устройство " +
+                "в личном кабинете или у провайдера."
+        }
         return "Сервер подписки вернул HTTP $status."
+    }
+
+    /**
+     * Отказ по HWID под видом успешного ответа: тело содержит лишь узлы-заглушки,
+     * и импортировать их нельзя — они затрут рабочий список серверов подписки.
+     */
+    fun describeHwidRefusal(status: Int, headerNames: Collection<String?>): String? {
+        val normalized = headerNames.filterNotNull().map { it.lowercase() }.toSet()
+        if (HWID_REFUSAL_HEADERS.none { it in normalized }) return null
+        return describeHttpFailure(status, headerNames)
     }
 
     /** Развернуть открытую add/import-ссылку клиента в обычный HTTP(S) URL подписки. */
@@ -198,7 +222,8 @@ object SubscriptionIdentity {
         val lowered = text.lowercase()
         val scheme = text.substringBefore("://", missingDelimiterValue = "").lowercase()
         if (scheme == "http" || scheme == "https") {
-            return ResolvedSubscriptionSource(HttpSubscriptionFetcher.validatedUrl(text))
+            return resolveLauncherPage(text)
+                ?: ResolvedSubscriptionSource(HttpSubscriptionFetcher.validatedUrl(text))
         }
         if (HappCrypt.isCryptLink(text)) {
             val decrypted = decodeWrappedHttpUrl(HappCrypt.decrypt(text).trim())
@@ -249,6 +274,32 @@ object SubscriptionIdentity {
         throw ImportException(
             "URL подписки должен использовать HTTP/HTTPS или открытую add/import-ссылку " +
                 "Happ, INCY, v2RayTun.",
+        )
+    }
+
+    /**
+     * Достать подписку из страницы-запускалки клиента. Страница отвечает HTML с
+     * редиректом на диплинк, а правила панели настроены под клиента из пути, —
+     * поэтому возвращается и подсказка профиля.
+     */
+    private fun resolveLauncherPage(text: String): ResolvedSubscriptionSource? {
+        val afterAuthority = text.substringAfter("://")
+        val pathStart = afterAuthority.indexOf('/')
+        if (pathStart < 0) return null
+        val rest = afterAuthority.substring(pathStart)
+        val path = rest.substringBefore('?').substringBefore('#')
+        val match = LAUNCHER_PAGE_PATH.matchEntire(path) ?: return null
+        var tail = match.groupValues[2]
+        if (!tail.lowercase().startsWith("http:/") && !tail.lowercase().startsWith("https:/")) {
+            tail = urlDecode(tail)
+        }
+        // Прокси и мессенджеры склеивают «//» в пути: `https:/sub.host`.
+        tail = tail.replaceFirst(Regex("^(https?):/+", RegexOption.IGNORE_CASE), "$1://")
+        val candidate = tail + rest.substring(path.length)
+        if (!isHttpUrl(candidate)) return null
+        return ResolvedSubscriptionSource(
+            HttpSubscriptionFetcher.validatedUrl(candidate),
+            SubscriptionClientProfile.parse(match.groupValues[1].lowercase()),
         )
     }
 

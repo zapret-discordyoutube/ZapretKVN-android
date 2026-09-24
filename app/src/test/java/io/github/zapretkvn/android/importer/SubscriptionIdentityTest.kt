@@ -190,6 +190,51 @@ class SubscriptionIdentityTest {
     }
 
     @Test
+    fun `client launcher pages unwrap to the subscription url`() {
+        val cases = listOf(
+            "https://nn.example/incy/https://sub.example/profile?token=secret" to
+                ("https://sub.example/profile?token=secret" to SubscriptionClientProfile.Incy),
+            "https://nn.example/incy.html/https://sub.example/profile#x" to
+                ("https://sub.example/profile" to SubscriptionClientProfile.Incy),
+            "https://nn.example/happ/https:/sub.example/t" to
+                ("https://sub.example/t" to SubscriptionClientProfile.Happ),
+            "https://nn.example/v2raytun/https%3A%2F%2Fsub.example%2Ft" to
+                ("https://sub.example/t" to SubscriptionClientProfile.V2RayTun),
+        )
+        for ((source, expected) in cases) {
+            val resolved = SubscriptionIdentity.resolveSource(source)
+            assertEquals(source, expected.first, resolved.url)
+            assertEquals(source, expected.second, resolved.profileHint)
+        }
+
+        // Не запускалка: обычный путь и прокси-обёртки чужих сервисов не трогаем.
+        for (source in listOf(
+            "https://nn.example/incy/list",
+            "https://proxy.example/fetch/https://sub.example/profile",
+        )) {
+            val resolved = SubscriptionIdentity.resolveSource(source)
+            assertEquals(source, resolved.url)
+            assertNull(resolved.profileHint)
+        }
+    }
+
+    @Test
+    fun `hwid refusal disguised as success is reported`() {
+        val missing = SubscriptionIdentity.describeHwidRefusal(
+            200,
+            listOf(null, "x-hwid-not-supported", "x-hwid-limit"),
+        )
+        assertTrue(missing!!.contains("HWID"))
+        assertFalse(missing.contains("лимит устройств"))
+        val limit = SubscriptionIdentity.describeHwidRefusal(
+            200,
+            listOf("X-Hwid-Max-Devices-Reached", "x-hwid-limit"),
+        )
+        assertTrue(limit!!.contains("лимит устройств"))
+        assertNull(SubscriptionIdentity.describeHwidRefusal(200, listOf(null, "x-hwid-active")))
+    }
+
+    @Test
     fun `encrypted happ links resolve through the crypt decoder`() {
         val resolved = SubscriptionIdentity.resolveSource(CRYPT4_LINK)
 
