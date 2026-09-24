@@ -5,5 +5,4 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Подписки по ссылкам-страницам клиентов (/incy/, /happ/, /v2raytun/) теперь импортируются: ссылка разворачивается в настоящую подписку вместо ошибки «unsupported scheme»
-Понятная ошибка при отказе панели Remnawave по HWID (не поддерживается или превышен лимит устройств) вместо импорта нерабочих серверов-заглушек
+Если провайдер отозвал подписку или прислал вместо серверов заглушки, приложение показывает его сообщение и сохраняет рабочий профиль
