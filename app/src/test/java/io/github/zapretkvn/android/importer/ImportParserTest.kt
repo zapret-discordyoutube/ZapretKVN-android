@@ -28,6 +28,30 @@ import org.junit.Test
 
 class ImportParserTest {
     @Test
+    fun `provider stub nodes become the provider message`() {
+        val stub = "vless://00000000-0000-0000-0000-000000000000@0.0.0.0:1" +
+            "?encryption=none&type=tcp&security=none#"
+        val body = listOf("❌ Подписка сломана", "получите новую", "Добавить устройство")
+            .joinToString("\n") { stub + URLEncoder.encode(it, StandardCharsets.UTF_8).replace("+", "%20") }
+        val encoded = Base64.getEncoder().encodeToString(body.toByteArray())
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse(encoded, ProfileSource.Url)
+        }
+        assertEquals(
+            "Провайдер сообщает: ❌ Подписка сломана получите новую Добавить устройство",
+            error.message,
+        )
+
+        // Информационный узел рядом с настоящими серверами — не заглушка.
+        val mixed = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443?security=tls#One\n" +
+                stub + "Info",
+            ProfileSource.Url,
+        ) as ImportCandidate.Managed
+        assertEquals(2, mixed.servers.size)
+    }
+
+    @Test
     fun `wireguard conf maps directly to sing box endpoint`() {
         val candidate = ImportParser.parse(
             """

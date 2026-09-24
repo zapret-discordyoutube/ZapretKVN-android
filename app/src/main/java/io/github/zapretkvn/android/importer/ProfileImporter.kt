@@ -133,6 +133,7 @@ object ImportParser {
             }
         }
         val servers = extracted.links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
+        rejectProviderNotice(servers)
         return ImportCandidate.Managed(
             servers = servers,
             suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
@@ -171,6 +172,34 @@ object ImportParser {
             .take(MAX_IMPORT_WARNINGS)
     }
 
+    /**
+     * Панели (Remnawave и совместимые) сообщают об отозванной подписке, лимите
+     * устройств или неподдерживаемом клиенте обычным HTTP 200: узлы указывают на
+     * `0.0.0.0`, а текст для пользователя разбит по их именам. Такой ответ не
+     * должен затирать рабочий список серверов. Одиночный информационный узел
+     * рядом с настоящими серверами не мешает.
+     */
+    private fun rejectProviderNotice(servers: List<ManagedServer>) {
+        if (servers.isEmpty()) return
+        val allStubs = servers.all { server ->
+            (server.outbound["server"] as? JsonPrimitive)?.contentOrNull?.trim() == UNROUTABLE_SERVER
+        }
+        if (!allStubs) return
+        val text = servers
+            .map { it.displayName.split(Regex("\\s+")).filter(String::isNotEmpty).joinToString(" ") }
+            .filter(String::isNotEmpty)
+            .joinToString(" ")
+            .take(MAX_PROVIDER_NOTICE_LENGTH)
+            .trim()
+        throw ImportException(
+            if (text.isEmpty()) {
+                "Провайдер вернул только серверы-заглушки 0.0.0.0 вместо подписки."
+            } else {
+                "Провайдер сообщает: $text"
+            },
+        )
+    }
+
     private fun parseJsonCandidates(
         root: JsonElement,
         source: ProfileSource,
@@ -197,6 +226,7 @@ object ImportParser {
                 )
         }
         val servers = links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
+        rejectProviderNotice(servers)
         return ImportCandidate.Managed(
             servers = servers,
             suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
@@ -269,6 +299,8 @@ object ImportParser {
     private val LINK_BOUNDARIES = charArrayOf('"', '\'', '`', '<', '>', '\u200B')
     private val TRAILING_LINK_WRAPPERS = charArrayOf(',', ';', '.', ')', ']', '}')
     private val JSON_SUBSCRIPTION_KEYS = listOf("servers", "configs", "proxies", "nodes")
+    private const val UNROUTABLE_SERVER = "0.0.0.0"
+    private const val MAX_PROVIDER_NOTICE_LENGTH = 300
     private val JSON_LINK_KEYS = listOf("link", "url", "uri")
 
     private data class ExtractedLinks(
