@@ -324,6 +324,9 @@ else
     fi
 fi
 
+"$PROJECT_ROOT/scripts/prune-local-archive.sh" "$PROJECT_ROOT/build/local-release" "$TAG" \
+    || echo "Warning: local release archive pruning failed." >&2
+
 dispatch_payload="$(jq -n --arg tag "$TAG" '{ref:"main",inputs:{tag:$tag}}')"
 if forgejo_api \
     --request POST \

@@ -22,5 +22,9 @@ scripts/verify-project.sh
 scripts/build-apk-matrix.sh debug "$MATRIX_DIR"
 scripts/create-test-bundle.sh "$TAG" "$MATRIX_DIR" "$OUTPUT_DIR"
 scripts/verify-test-bundle.sh "$TAG" "$OUTPUT_DIR"
+# The per-tag debug matrix is only an input to the bundle; drop it and older bundles.
+rm -rf -- "$MATRIX_DIR"
+scripts/prune-local-archive.sh "$PROJECT_ROOT/build/local-test" "$TAG" \
+    || echo "Warning: local test archive pruning failed." >&2
 
 echo "Local emulator-only test bundle is ready: $OUTPUT_DIR"
