@@ -764,7 +764,7 @@ class RuntimeConfigBuilderTest {
             (it as JsonPrimitive).content
         }
         assertEquals(
-            listOf("cp.cloudflare.com", "connectivitycheck.gstatic.com", "dns.opendns.com"),
+            listOf("cp.cloudflare.com", "connectivitycheck.gstatic.com", "www.google.com"),
             healthDomains,
         )
         val rebuiltAndroid = RuntimeConfigBuilder.build(

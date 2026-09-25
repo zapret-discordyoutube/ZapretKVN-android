@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.diagnostics
 
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ManagedHealthProbe
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -81,6 +82,22 @@ class EffectiveOverlaySummaryTest {
         assertEquals("1", (summary["bootstrap_address_count"] as JsonPrimitive).content)
         assertTrue((summary["bootstrap_hosts_overlay"] as JsonPrimitive).boolean)
         assertFalse("bootstrap_lkg" in summary)
+    }
+
+    @Test
+    fun `current and legacy managed health routes are both recognized`() {
+        fun routeCount(domains: String): String {
+            val runtime = """
+                {"route":{"rules":[{"domain":[$domains],"action":"route","outbound":"server"}]},
+                 "outbounds":[{"type":"vless","tag":"server","server":"vpn.example"}]}
+            """.trimIndent()
+            val summary = JsonConfig.parse(EffectiveOverlaySummary.create(runtime, DnsMode.Automatic)) as JsonObject
+            return (summary["health_probe_route_count"] as JsonPrimitive).content
+        }
+        val current = ManagedHealthProbe.hosts.joinToString(",") { "\"$it\"" }
+        assertEquals("1", routeCount(current))
+        assertEquals("1", routeCount("\"cp.cloudflare.com\",\"connectivitycheck.gstatic.com\",\"dns.opendns.com\""))
+        assertEquals("0", routeCount("\"cp.cloudflare.com\""))
     }
 
     @Test

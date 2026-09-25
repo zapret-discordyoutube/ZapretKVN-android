@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
+import io.github.zapretkvn.android.config.ManagedHealthProbe
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.config.string
@@ -214,11 +215,14 @@ object EffectiveOverlaySummary {
             rule.string("outbound")?.startsWith(MANAGED_PREFIX) == true ||
             rule.values.any(::containsManagedTag)
 
-    private fun isHealthProbeRoute(rule: JsonObject): Boolean =
-        rule.string("action") == "route" &&
-            (rule["domain"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                ?.containsAll(HEALTH_PROBE_HOSTS) == true
+    private fun isHealthProbeRoute(rule: JsonObject): Boolean {
+        if (rule.string("action") != "route") return false
+        val domains = (rule["domain"] as? JsonArray)
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            ?: return false
+        return domains.containsAll(ManagedHealthProbe.hosts) ||
+            ManagedHealthProbe.legacyHostSets.any(domains::containsAll)
+    }
 
     private fun isHealthProbeSniff(rule: JsonObject): Boolean =
         rule.string("action") == "sniff" &&
@@ -266,9 +270,4 @@ object EffectiveOverlaySummary {
     private const val BOOTSTRAP_TAG = "zapret-bootstrap-lkg"
     private const val ANDROID_DNS_TAG = "zapret-android-dns"
     private const val WIREGUARD_DIRECT_PREFIX = "zapret-wireguard-direct"
-    private val HEALTH_PROBE_HOSTS = setOf(
-        "cp.cloudflare.com",
-        "connectivitycheck.gstatic.com",
-        "dns.opendns.com",
-    )
 }

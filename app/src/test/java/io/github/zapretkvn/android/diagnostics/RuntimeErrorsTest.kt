@@ -46,6 +46,33 @@ class RuntimeErrorsTest {
     }
 
     @Test
+    fun `destination refused by an authenticated server is evidence and never recovery`() {
+        for (message in listOf(
+            // sing-box/sing-quic hysteria2 outbound: the server reported a failed dial.
+            "outbound/hysteria2[hy]: remote error: dial tcp4 8.8.8.8:443: connect: connection refused",
+            "outbound/hysteria2[hy]: remote error: dial udp4 9.9.9.9:443: connect: connection refused",
+            "outbound/hysteria2[hy]: remote error: access denied by policy",
+            // Official Hysteria client (Windows sidecar) uses the same shared catalog.
+            "WARN\tSOCKS5 TCP error\t{\"reqAddr\": \"dns.google:443\", \"error\": \"dial error: connection refused\"}",
+        )) {
+            val failure = RuntimeErrors.capture("sing-box", "runtime", message)
+            assertEquals(message, "TARGET_DESTINATION_UNREACHABLE", failure.code)
+            assertEquals(message, "record_only", failure.action)
+            assertNull(message, HysteriaFailureClassifier.classify(message))
+            assertNull(message, HysteriaFailureClassifier.classifyRuntime(message))
+            val journal = RuntimeErrorJournal()
+            journal.record(failure, 100)
+            assertNull(message, RuntimeErrors.bestEvidence(journal.forGeneration(0)))
+        }
+        // Transport and TLS failures keep their recovery policy.
+        assertEquals("TARGET_TLS_REJECTED", HysteriaFailureClassifier.classify("remote error: tls: bad certificate")?.name)
+        assertEquals(
+            "TARGET_NETWORK_TIMEOUT",
+            HysteriaFailureClassifier.classify("connect error: timeout: no recent network activity")?.name,
+        )
+    }
+
+    @Test
     fun originalMessagesAreNotReplacedWithDiagnosis() {
         val message = "unrecognized upstream error 781"
         val failure = RuntimeErrors.capture("xray", "dial", message)
@@ -134,7 +161,7 @@ class RuntimeErrorsTest {
 
     @Test
     fun noCoreFailureBeforeCleanupMeansKeepOriginalHttpsError() {
-        val original = java.io.IOException("cloudflare:Read timed out; google:Read timed out; opendns:Read timed out")
+        val original = java.io.IOException("cloudflare:Read timed out; gstatic:Read timed out; google:Read timed out")
         val failure = RuntimeStartupFailure(original, null)
         val journal = RuntimeErrorJournal()
         journal.record(RuntimeErrors.capture("sing-box", "runtime", "context canceled", 8), 120)

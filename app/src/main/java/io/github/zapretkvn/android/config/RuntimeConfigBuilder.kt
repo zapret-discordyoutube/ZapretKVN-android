@@ -25,7 +25,13 @@ internal data class ManagedHealthEndpoint(
     val url: String,
 )
 
-/** One HTTPS request is made on connect; later endpoints are used only after real failures. */
+/**
+ * One HTTPS request is made on connect; later endpoints are used only after real failures.
+ *
+ * Only connectivity-check URLs: node network policy (VPnBot network-policy-v3) rejects
+ * public DoH resolvers and IP-discovery services on every node, so probing those
+ * measures the policy instead of the tunnel. ManagedHealthProbeTest guards this list.
+ */
 internal object ManagedHealthProbe {
     val endpoints = listOf(
         ManagedHealthEndpoint(
@@ -34,17 +40,22 @@ internal object ManagedHealthProbe {
             url = "https://cp.cloudflare.com/generate_204",
         ),
         ManagedHealthEndpoint(
-            code = "google",
+            code = "gstatic",
             host = "connectivitycheck.gstatic.com",
             url = "https://connectivitycheck.gstatic.com/generate_204",
         ),
         ManagedHealthEndpoint(
-            code = "opendns",
-            host = "dns.opendns.com",
-            url = "https://dns.opendns.com/dns-query",
+            code = "google",
+            host = "www.google.com",
+            url = "https://www.google.com/generate_204",
         ),
     )
     val hosts = endpoints.map(ManagedHealthEndpoint::host)
+
+    /** Host sets written by earlier releases, still recognized in exported configs. */
+    val legacyHostSets = listOf(
+        setOf("cp.cloudflare.com", "connectivitycheck.gstatic.com", "dns.opendns.com"),
+    )
 }
 
 data class RuntimeConfigOptions(
