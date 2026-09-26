@@ -85,7 +85,7 @@ internal object RuntimeErrors {
             if (messages.lastOrNull() != detail) messages += detail
             current = current.cause
         }
-        return SecretRedactor.redactInline(messages.joinToString("\nCaused by: "))
+        return ServerAddressRedactor.redact(SecretRedactor.redactInline(messages.joinToString("\nCaused by: ")))
     }
 
     fun capture(
@@ -99,9 +99,9 @@ internal object RuntimeErrors {
     ): RuntimeFailure {
         val rule = rules.firstOrNull { it.pattern.containsMatchIn(message) }
         return RuntimeFailure(
-            component, stage, SecretRedactor.redactInline(message),
+            component, stage, ServerAddressRedactor.redact(SecretRedactor.redactInline(message)),
             rule?.code ?: "CORE_UNCLASSIFIED", rule?.action ?: "stop",
-            sessionGeneration, targetGeneration, targetId, level,
+            sessionGeneration, targetGeneration, ServerAddressRedactor.redact(targetId), level,
         )
     }
 

@@ -18,7 +18,9 @@ internal object VpnFailureStates {
         return VpnConnectionState.Error(
             message = message,
             code = coded?.failureCode ?: RuntimeErrors.classify(message).orEmpty(),
-            technicalDetail = coded?.technicalDetail?.let(SecretRedactor::redactInline),
+            technicalDetail = coded?.technicalDetail
+                ?.let(SecretRedactor::redactInline)
+                ?.let(ServerAddressRedactor::redact),
         )
     }
 }

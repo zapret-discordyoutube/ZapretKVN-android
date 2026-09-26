@@ -55,7 +55,7 @@ internal class DiagnosticRuntimeMap private constructor(
                 rawTag to profile.copy(
                     outboundTag = safeTag(rawTag, "tag"),
                     protocol = safeProtocol,
-                    endpoint = safeEndpoint(safeProtocol, description),
+                    endpoint = safeEndpoint(profileId, rawTag, description),
                 )
             }.toMap()
             return DiagnosticRuntimeMap(
@@ -80,6 +80,7 @@ internal class DiagnosticRuntimeMap private constructor(
 
         private fun safeName(value: String?): String? {
             val candidate = value
+                ?.let(ServerAddressRedactor::redact)
                 ?.replace(Regex("[\\r\\n\\t]+"), " ")
                 ?.trim()
                 ?.take(80)
@@ -93,7 +94,8 @@ internal class DiagnosticRuntimeMap private constructor(
         private fun safeTag(value: String, prefix: String): String {
             val candidate = value.trim().takeIf(String::isNotBlank)
             if (candidate != null && SAFE_TAG.matches(candidate) &&
-                SecretRedactor.redactInline(candidate) == candidate
+                SecretRedactor.redactInline(candidate) == candidate &&
+                ServerAddressRedactor.redact(candidate) == candidate
             ) {
                 return candidate.take(80)
             }
@@ -106,13 +108,18 @@ internal class DiagnosticRuntimeMap private constructor(
             .takeIf(SAFE_PROTOCOL::matches)
             ?: "unknown"
 
+        /**
+         * Метка от случайного id профиля и тега, а не от адреса: хэш IPv4
+         * подбирается перебором. Совпадает с «<сервер ep-…>» в тексте логов.
+         */
         private fun safeEndpoint(
-            protocol: String,
+            profileId: String,
+            rawTag: String,
             description: OutboundDescription,
         ): String? {
             val raw = description.endpoint ?: description.serverHost ?: return null
             val port = PORT.find(raw)?.groupValues?.getOrNull(1)
-            return "ep-${digest("$protocol|$raw").take(12)}" +
+            return ServerAddressRedactor.serverRef(profileId, rawTag) +
                 port?.let { ":$it" }.orEmpty()
         }
 

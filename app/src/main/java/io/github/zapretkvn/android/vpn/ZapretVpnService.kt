@@ -43,6 +43,7 @@ import io.github.zapretkvn.android.diagnostics.EffectiveOverlaySummary
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.RuntimeStartupFailure
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.diagnostics.VpnFailureStates
 import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
@@ -584,6 +585,9 @@ class ZapretVpnService : VpnService() {
         showForeground(ForegroundNotificationState.CheckingNetwork)
         networkMonitor.start()
         controller.startConnectionDiagnosticStage(token, "bootstrap", "Bootstrap DNS и доступность сервера")
+        // До bootstrap: его ошибки («VPN-сервер не отвечает: host:port») уже
+        // показывают адрес сервера как «<сервер ep-…>».
+        ServerAddressRedactor.registerProfile(profileId, profile.json)
         val networkBootstrap = networkMonitor.runOnStableNetwork(
             maxNetworkChanges = BOOTSTRAP_MAX_NETWORK_CHANGES,
             timeoutMillis = NETWORK_USABLE_WAIT_MILLIS,
@@ -625,6 +629,12 @@ class ZapretVpnService : VpnService() {
         }
         val underlying = networkBootstrap.network
         val preparedBootstrap = networkBootstrap.value
+        preparedBootstrap.target?.let { target ->
+            ServerAddressRedactor.registerAliases(
+                target.hostname,
+                preparedBootstrap.addresses.mapNotNull { it.hostAddress },
+            )
+        }
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
         val runtimeJson =
@@ -2006,7 +2016,7 @@ class ZapretVpnService : VpnService() {
             fromBytesPerSecond: Long,
             toBytesPerSecond: Long,
         ) {
-            val server = SecretRedactor.redactInline(toId)
+            val server = ServerAddressRedactor.redact(SecretRedactor.redactInline(toId))
             controller.publishMessage(
                 session.generation,
                 "Низкая скорость: сервер $server выбран автоматически " +

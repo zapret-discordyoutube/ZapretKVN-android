@@ -3,6 +3,8 @@ package io.github.zapretkvn.android.diagnostics
 /** Export-only privacy pass. UI errors may still name the app the user must fix. */
 object DiagnosticReportRedactor {
     fun redact(text: String): String = SecretRedactor.redact(text)
+        // Адрес известного сервера — «<сервер ep-…>», остальные хосты — маска.
+        .let(ServerAddressRedactor::redact)
         .replace(IPV6, SecretRedactor.MASK)
         .replace(IPV4, SecretRedactor.MASK)
         .replace(HOST_OR_PACKAGE, SecretRedactor.MASK)

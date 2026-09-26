@@ -33,6 +33,7 @@ import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STARTUP_LOG_LINES
 import io.github.zapretkvn.android.diagnostics.RuntimeErrorJournal
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.diagnostics.SessionTrafficAccumulator
 import io.github.zapretkvn.android.diagnostics.appendPrioritizedBounded
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
@@ -179,13 +180,14 @@ class VpnController(
             if (latestGeneration.compareAndSet(previous, generation)) break
         }
         val safeState = if (state is VpnConnectionState.Error) {
-            val message = SecretRedactor.redactInline(state.message)
+            val message = ServerAddressRedactor.redact(SecretRedactor.redactInline(state.message))
             val fallbackCode = DiagnosticFailureClassifier.classify(message).supportCode
             state.copy(
                 message = message,
                 code = VpnFailureCodeSanitizer.sanitize(state.code).ifBlank { fallbackCode },
                 technicalDetail = state.technicalDetail
                     ?.let(SecretRedactor::redactInline)
+                    ?.let(ServerAddressRedactor::redact)
                     ?.takeIf(String::isNotBlank),
             )
         } else {
