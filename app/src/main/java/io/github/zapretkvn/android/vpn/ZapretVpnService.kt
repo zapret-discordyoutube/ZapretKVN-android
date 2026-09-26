@@ -38,6 +38,7 @@ import io.github.zapretkvn.android.diagnostics.EffectiveOverlaySummary
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.RuntimeStartupFailure
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.diagnostics.VpnFailureStates
 import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.engines.hysteria.AUTOMATIC_HYSTERIA_SWITCH_FAILURES
@@ -2418,18 +2419,7 @@ class ZapretVpnService : VpnService() {
         )
     }
 
-    private fun safeError(error: Throwable): VpnConnectionState.Error {
-        val causes = generateSequence(error) { it.cause }.toList()
-        val coded = causes.filterIsInstance<CodedFailure>().firstOrNull()
-        val message = RuntimeErrors.describe(error)
-        val technicalDetail = coded?.technicalDetail
-            ?.let(SecretRedactor::redactInline)
-        return VpnConnectionState.Error(
-            message = message,
-            code = RuntimeErrors.classify(message) ?: coded?.failureCode.orEmpty(),
-            technicalDetail = technicalDetail,
-        )
-    }
+    private fun safeError(error: Throwable): VpnConnectionState.Error = VpnFailureStates.from(error)
 
     private data class PausedAutomationSession(
         val profileId: String,

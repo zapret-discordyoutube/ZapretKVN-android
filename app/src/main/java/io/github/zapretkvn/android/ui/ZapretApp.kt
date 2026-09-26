@@ -274,6 +274,7 @@ fun ZapretApp(
                 onRestart = onVpnRestart,
                 onSelectOutbound = onSelectOutbound,
                 onMeasureGroup = onMeasureGroup,
+                onCreateDiagnosticShare = onCreateDiagnosticShare,
             )
             AppTab.Profiles -> ProfilesScreen(
                 contentPadding = contentPadding,

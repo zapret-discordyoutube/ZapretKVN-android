@@ -35,6 +35,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.AtomicBoolean
@@ -490,12 +491,20 @@ class VpnHealthPipeline(
         proxyIpFamily: ProxyIpFamily,
         deadlineElapsedRealtimeMillis: Long,
     ): HttpsProbeResult {
+        // Время до отказа отделяет «ждали весь тайм-аут» от «сразу отказ».
+        val failedAfterMillis = ConcurrentHashMap<String, Long>()
         val outcome = HealthProbeRace.firstSuccess(
             candidates = ManagedHealthProbe.endpoints,
             staggerMillis = HTTPS_PROBE_STAGGER_MILLIS,
             isFatal = { false },
         ) { endpoint ->
-            httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily)
+            val startedAt = SystemClock.elapsedRealtime()
+            try {
+                httpsProbeOne(vpnNetwork, endpoint, proxyIpFamily)
+            } catch (error: Throwable) {
+                failedAfterMillis[endpoint.code] = SystemClock.elapsedRealtime() - startedAt
+                throw error
+            }
         }
         return when (outcome) {
             is HealthProbeRace.Outcome.Success -> HttpsProbeResult(
@@ -510,7 +519,9 @@ class VpnHealthPipeline(
                 rescueSlowTunnel(
                     vpnNetwork = vpnNetwork,
                     proxyIpFamily = proxyIpFamily,
-                    failures = outcome.failures,
+                    failures = outcome.failures.map { (endpoint, error) ->
+                        ProbeFailure(endpoint, error, failedAfterMillis[endpoint.code])
+                    },
                     deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
                 )
             }
@@ -525,7 +536,7 @@ class VpnHealthPipeline(
     private suspend fun rescueSlowTunnel(
         vpnNetwork: Network,
         proxyIpFamily: ProxyIpFamily,
-        failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
+        failures: List<ProbeFailure>,
         deadlineElapsedRealtimeMillis: Long,
     ): HttpsProbeResult {
         val budget = HttpsRescueBudget.of(
@@ -534,6 +545,7 @@ class VpnHealthPipeline(
         val rescueEndpoint = ManagedHealthProbe.endpoints.first()
         // Собственный лимит пробы короче общего deadline: иначе его отмена
         // закрывает сокет пробы, и в отчёт уходит ложное «Socket closed».
+        val rescueStartedAt = SystemClock.elapsedRealtime()
         val attempt = withTimeoutOrNull(budget.wallMillis) {
             try {
                 Result.success(
@@ -567,27 +579,49 @@ class VpnHealthPipeline(
             )
             else -> checkNotNull(attempt.exceptionOrNull())
         }
-        throw httpsProbeFailure(failures, rescueEndpoint to rescueError)
-    }
-
-    private fun httpsProbeFailure(
-        failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
-        rescue: Pair<ManagedHealthEndpoint, Throwable>?,
-    ): HttpsProbeFailure {
-        val detail = (
-            failures.map { (endpoint, error) ->
-                "${endpoint.code}:${RuntimeErrors.describe(error)}"
-            } + listOfNotNull(rescue?.let { (endpoint, error) ->
-                "rescue-${endpoint.code}:${RuntimeErrors.describe(error)}"
-            })
-            )
-            .joinToString("; ")
-        return HttpsProbeFailure(
-            diagnosticDetail = detail,
-            message = "HTTPS через VPN: $detail",
-            cause = rescue?.second ?: failures.lastOrNull()?.second,
+        throw httpsProbeFailure(
+            failures,
+            ProbeFailure(
+                rescueEndpoint,
+                rescueError,
+                SystemClock.elapsedRealtime() - rescueStartedAt,
+            ),
         )
     }
+
+    /**
+     * technicalDetail начинается с `verdict=<вид>`: по нему главный экран
+     * выбирает объяснение, и усечение хвоста диагностикой его не теряет.
+     * Дальше компактно `<endpoint>:<вид>@<мс>` для каждой пробы; полные
+     * тексты исключений остаются в сообщении ошибки.
+     */
+    private fun httpsProbeFailure(
+        failures: List<ProbeFailure>,
+        rescue: ProbeFailure?,
+    ): HttpsProbeFailure {
+        val all = failures + listOfNotNull(rescue)
+        val verdict = HttpsProbeVerdict.of(all.map { HttpsProbeFailureKind.of(it.error) })
+        val compact = all.joinToString(" ") { failure ->
+            val name = if (failure === rescue) "rescue-${failure.endpoint.code}" else failure.endpoint.code
+            val kind = HttpsProbeFailureKind.of(failure.error).token
+            name + ":" + kind + (failure.elapsedMillis?.let { "@$it" } ?: "")
+        }
+        val messages = all.joinToString("; ") { failure ->
+            val name = if (failure === rescue) "rescue-${failure.endpoint.code}" else failure.endpoint.code
+            "$name:${RuntimeErrors.describe(failure.error)}"
+        }
+        return HttpsProbeFailure(
+            diagnosticDetail = "${HttpsProbeVerdict.DETAIL_PREFIX}${verdict.token} $compact",
+            message = "HTTPS через VPN: $messages",
+            cause = rescue?.error ?: failures.lastOrNull()?.error,
+        )
+    }
+
+    private class ProbeFailure(
+        val endpoint: ManagedHealthEndpoint,
+        val error: Throwable,
+        val elapsedMillis: Long?,
+    )
 
     private suspend fun httpsProbeOne(
         vpnNetwork: Network,

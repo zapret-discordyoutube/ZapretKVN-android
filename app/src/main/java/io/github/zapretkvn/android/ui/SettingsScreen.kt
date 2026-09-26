@@ -713,16 +713,12 @@ private fun DiagnosticsSettings(
         onSelected(true)
         onDispose { onSelected(false) }
     }
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var timelineExpanded by rememberSaveable { mutableStateOf(false) }
     var stopTimelineExpanded by rememberSaveable { mutableStateOf(false) }
     var crashExpanded by rememberSaveable { mutableStateOf(false) }
     var logsExpanded by rememberSaveable { mutableStateOf(false) }
     var errorsExpanded by rememberSaveable { mutableStateOf(false) }
     var overlayExpanded by rememberSaveable { mutableStateOf(false) }
-    var exporting by remember { mutableStateOf(false) }
-    var exportError by remember { mutableStateOf<String?>(null) }
 
     SettingsSubpage(contentPadding, "Диагностика", onBack) {
         Column(
@@ -738,43 +734,11 @@ private fun DiagnosticsSettings(
                 Text(vpnState.diagnosticLabel(), fontWeight = FontWeight.SemiBold)
             }
         }
-        OutlinedButton(
-            enabled = !exporting,
-            onClick = {
-                scope.launch {
-                    exporting = true
-                    exportError = null
-                    try {
-                        val shareIntent = onCreateDiagnosticShare()
-                        context.startActivity(
-                            Intent.createChooser(shareIntent, "Передать диагностику"),
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: ActivityNotFoundException) {
-                        exportError = "Не найдено приложение для передачи файла."
-                    } catch (_: SecurityException) {
-                        exportError = "Android запретил передачу файла."
-                    } catch (_: Throwable) {
-                        exportError = "Не удалось создать диагностический файл."
-                    } finally {
-                        exporting = false
-                    }
-                }
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("export-diagnostics"),
-        ) {
-            if (exporting) {
-                CircularProgressIndicator(
-                    modifier = Modifier.padding(end = 8.dp),
-                    strokeWidth = 2.dp,
-                )
-            }
-            Text("Экспортировать диагностику")
-        }
-        exportError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        DiagnosticShareButton(
+            label = "Экспортировать диагностику",
+            onCreateDiagnosticShare = onCreateDiagnosticShare,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Text(
             "Создаёт временный redacted diagnostic JSON и открывает системное окно отправки.",
             style = MaterialTheme.typography.bodySmall,

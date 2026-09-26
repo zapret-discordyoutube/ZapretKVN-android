@@ -127,7 +127,11 @@ class HomeUiInstrumentedTest {
             VpnConnectionState.Error("DNS через VPN заблокирован token=home-secret"),
         )
         composeRule.onNodeWithText("Ошибка VPN").assertExists()
+        composeRule.onNodeWithText("VPN подключился, но DNS через него не отвечает").assertExists()
         composeRule.onNodeWithText("Код: DNS-200").assertExists()
+        composeRule.onNodeWithText("Отправить диагностику").assertExists()
+        composeRule.onNodeWithText("DNS через VPN заблокирован token=•••").assertDoesNotExist()
+        composeRule.onNodeWithText("Подробности").performClick()
         composeRule.onNodeWithText("DNS через VPN заблокирован token=•••").assertExists()
         composeRule.onNodeWithText("home-secret", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("Подключить").assertExists()

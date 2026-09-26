@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.ui
 
+import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.diagnostics.VpnErrorContext
+import io.github.zapretkvn.android.diagnostics.VpnErrorExplainer
 import io.github.zapretkvn.android.network.probes.primaryGroup
 import io.github.zapretkvn.android.profiles.ProfileMetadata
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
@@ -87,6 +90,7 @@ internal fun HomeScreen(
     onRestart: () -> Unit,
     onSelectOutbound: (String, String, String) -> Unit,
     onMeasureGroup: (String) -> Unit,
+    onCreateDiagnosticShare: suspend () -> Intent,
 ) {
     var serverSheetOpen by rememberSaveable { mutableStateOf(false) }
     val connected = vpnState as? VpnConnectionState.Connected
@@ -171,17 +175,11 @@ internal fun HomeScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    is VpnConnectionState.Error -> Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            "Код: ${vpnState.code.ifBlank { "VPN-000" }}",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(vpnState.message, color = MaterialTheme.colorScheme.error)
-                    }
+                    is VpnConnectionState.Error -> VpnErrorDetails(
+                        error = vpnState,
+                        context = activeProfileServers.errorContext(),
+                        onCreateDiagnosticShare = onCreateDiagnosticShare,
+                    )
                     is VpnConnectionState.Reconnecting -> Column(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
@@ -190,8 +188,12 @@ internal fun HomeScreen(
                             color = MaterialTheme.colorScheme.tertiary,
                         )
                         if (vpnState.code.isNotBlank()) {
+                            val reason = VpnErrorExplainer.explain(
+                                vpnState.code,
+                                context = activeProfileServers.errorContext(),
+                            )
                             Text(
-                                "Причина: ${vpnState.code}",
+                                "Причина: ${reason.title} (${vpnState.code})",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -732,4 +734,73 @@ private fun LatencyProbeState.sampleIdentity(): String? = when (this) {
     is LatencyProbeState.Success -> sample.networkIdentity
     is LatencyProbeState.Failed -> previous?.networkIdentity
     is LatencyProbeState.Stale -> sample.networkIdentity
+}
+
+private fun ProfileServerSummary?.errorContext(): VpnErrorContext {
+    if (this == null) return VpnErrorContext()
+    val group = primaryGroup
+    val selected = group?.options?.firstOrNull { it.tag == selectedLabel }
+    return VpnErrorContext(
+        protocol = selected?.type?.takeIf(String::isNotBlank),
+        hasOtherServers = switchable,
+    )
+}
+
+/**
+ * Ошибка подключения: сначала понятное объяснение и что делать, затем код
+ * для поддержки. Технический текст скрыт под «Подробности», а диагностику
+ * можно отправить прямо отсюда, не открывая настройки.
+ */
+@Composable
+private fun VpnErrorDetails(
+    error: VpnConnectionState.Error,
+    context: VpnErrorContext,
+    onCreateDiagnosticShare: suspend () -> Intent,
+) {
+    val code = error.code.ifBlank { "VPN-000" }
+    val explanation = VpnErrorExplainer.explain(code, error.technicalDetail, context)
+    var detailsOpen by rememberSaveable(error) { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.testTag("vpn-error"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            explanation.title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(explanation.hint, style = MaterialTheme.typography.bodyMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Код: $code",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { detailsOpen = !detailsOpen }) {
+                Text(if (detailsOpen) "Скрыть подробности" else "Подробности")
+            }
+        }
+        if (detailsOpen) {
+            Text(
+                error.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            error.technicalDetail?.takeIf { it != error.message }?.let { detail ->
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DiagnosticShareButton(
+            label = "Отправить диагностику",
+            onCreateDiagnosticShare = onCreateDiagnosticShare,
+            modifier = Modifier.fillMaxWidth(),
+            testTag = "vpn-error-share-diagnostics",
+        )
+    }
 }
