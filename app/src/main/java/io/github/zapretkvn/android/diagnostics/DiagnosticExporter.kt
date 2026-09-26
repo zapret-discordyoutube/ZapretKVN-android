@@ -286,6 +286,7 @@ class DiagnosticExporter(
             )
             put("network_callbacks", resources.activeNetworkCallbacks)
             put("status_clients", resources.activeStatusClients)
+            put("speed_monitor_clients", resources.activeSpeedMonitorClients)
             put("log_clients", resources.activeLogClients)
         }
     }

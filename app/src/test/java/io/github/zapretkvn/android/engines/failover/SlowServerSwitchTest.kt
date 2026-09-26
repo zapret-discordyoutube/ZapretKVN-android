@@ -5,6 +5,7 @@ import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.HOU
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.POST_SWITCH_HOLD_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.SLOW_MARK_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.THRESHOLD_BYTES_PER_SECOND
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -65,7 +66,7 @@ class SlowServerSwitchTest {
     }
 
     private fun engine(host: FakeHost, enabled: Boolean = true) =
-        SlowServerSwitchEngine(policy, host) { enabled }
+        SlowServerSwitchEngine(policy, host, enabled = { enabled })
 
     @Test
     fun `suspicion requires demand and a full continuous window`() {
@@ -273,7 +274,32 @@ class SlowServerSwitchTest {
                 return true
             }
         }
-        assertEquals(SlowSwitchOutcome.Superseded, SlowServerSwitchEngine(policy, host) { true }.runEpisode())
+        assertEquals(SlowSwitchOutcome.Superseded, SlowServerSwitchEngine(policy, host, enabled = { true }).runEpisode())
         assertEquals(0, host.trials)
+    }
+
+    @Test
+    fun `deadline rolls back an unfinished trial and counts as inconclusive`() = runBlocking {
+        val hanging = CompletableDeferred<Long?>()
+        val fake = FakeHost()
+        val host = object : SlowSwitchHost by fake {
+            var calls = 0
+            override suspend fun measureThroughput(): Long? {
+                calls++
+                return if (calls == 1) slow else hanging.await()
+            }
+        }
+        val outcome = SlowServerSwitchEngine(policy, host, { true }, deadlineMillis = 200).runEpisode()
+        assertEquals(SlowSwitchOutcome.Inconclusive, outcome)
+        assertEquals(listOf("b"), fake.trials)
+        assertEquals(1, fake.rollbacks)
+        assertEquals("a", fake.current)
+        assertTrue(fake.commits.isEmpty())
+    }
+
+    @Test
+    fun `a download without a single byte is inconclusive`() {
+        assertEquals(null, io.github.zapretkvn.android.network.probes.ThroughputRate.bytesPerSecondOrNull(0, 6_000))
+        assertEquals(1_000L, io.github.zapretkvn.android.network.probes.ThroughputRate.bytesPerSecondOrNull(6_000, 6_000))
     }
 }

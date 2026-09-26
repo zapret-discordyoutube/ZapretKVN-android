@@ -751,6 +751,10 @@ class ProfilesViewModel(
         settingsStore.setHideServerAddresses(enabled)
     }
 
+    fun setSlowServerSwitch(enabled: Boolean) = operation(markBusy = false) {
+        settingsStore.setSlowServerSwitch(enabled)
+    }
+
     fun setDnsMode(mode: DnsMode) = operation(markBusy = false) {
         settingsStore.setDnsMode(mode)
         vpnController.restartIfConnected("Смена режима DNS")

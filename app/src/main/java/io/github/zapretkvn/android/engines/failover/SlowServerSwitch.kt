@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.engines.failover
 import java.util.Locale
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * «Умная проверка»: переключение сервера при низкой скорости.
@@ -25,8 +26,11 @@ internal object SlowServerSwitchDefaults {
     /** Сколько подряд должен держаться «спрос при низкой скорости». */
     const val SUSPICION_WINDOW_MILLIS = 20_000L
 
-    /** Разрыв между отсчётами больше этого (сон устройства) обнуляет окно. */
-    const val MAX_SAMPLE_GAP_MILLIS = 15_000L
+    /**
+     * Разрыв между отсчётами больше этого (пропущенный отсчёт, сон устройства)
+     * обнуляет окно: данные о спросе устарели. Отсчёт приходит раз в 5 с.
+     */
+    const val MAX_SAMPLE_GAP_MILLIS = 11_000L
 
     /** Ложная тревога или неубедительный замер: пауза перед следующей проверкой. */
     const val FALSE_ALARM_COOLDOWN_MILLIS = 5 * 60_000L
@@ -45,6 +49,9 @@ internal object SlowServerSwitchDefaults {
 
     /** Кандидат должен быть минимум во столько раз быстрее текущего. */
     const val REQUIRED_SPEEDUP = 2L
+
+    /** Жёсткий дедлайн всей проверки; пробное переключение при этом откатывается. */
+    const val EPISODE_DEADLINE_MILLIS = 120_000L
 }
 
 /**
@@ -286,8 +293,17 @@ internal class SlowServerSwitchEngine(
     private val policy: SlowServerSwitchPolicy,
     private val host: SlowSwitchHost,
     private val enabled: () -> Boolean,
+    private val deadlineMillis: Long = SlowServerSwitchDefaults.EPISODE_DEADLINE_MILLIS,
 ) {
-    suspend fun runEpisode(): SlowSwitchOutcome {
+    suspend fun runEpisode(): SlowSwitchOutcome =
+        withTimeoutOrNull(deadlineMillis) { runEpisodeWithinDeadline() }
+            ?: run {
+                policy.onCooldown()
+                host.log("Проверка скорости не уложилась в 120 с; переключения нет.")
+                SlowSwitchOutcome.Inconclusive
+            }
+
+    private suspend fun runEpisodeWithinDeadline(): SlowSwitchOutcome {
         val snapshot = host.snapshot() ?: return SlowSwitchOutcome.SessionGone
         policy.gate(enabled(), snapshot.busy).takeIf { it != SlowSwitchGate.Ready }?.let { gate ->
             return SlowSwitchOutcome.Skipped(gate)
@@ -339,8 +355,8 @@ internal class SlowServerSwitchEngine(
                 return SlowSwitchOutcome.NoBetter
             }
             if (!host.commit(candidate.id)) {
-                committed = true // проба уже не наша: откатывать нечего
-                host.log("Проба на ${candidate.id} прервана пользователем или failover.")
+                committed = true // проба уже не наша или хост сам вернул прежний сервер
+                host.log("Проба на ${candidate.id} не закреплена.")
                 return SlowSwitchOutcome.Superseded
             }
             committed = true

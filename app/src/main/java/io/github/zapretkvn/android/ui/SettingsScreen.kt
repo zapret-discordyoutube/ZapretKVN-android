@@ -376,6 +376,43 @@ private fun SettingsMain(
             }
         }
 
+        item(key = "servers") {
+            SettingsCard(title = "Серверы") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Переключать при низкой скорости")
+                        Text(
+                            "Срабатывает, только когда приложения активно качают через VPN, " +
+                                "а скорость ниже ~1 Мбит/с дольше 20 секунд. Сначала скорость " +
+                                "проверяется короткой загрузкой (до 3 МБ); сервер из этого же " +
+                                "профиля выбирается, только если он минимум вдвое быстрее. " +
+                                "Не чаще 3 раз в час. Переключение рвёт текущие соединения.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = state.settings.slowServerSwitch,
+                        onCheckedChange = viewModel::setSlowServerSwitch,
+                        modifier = Modifier
+                            .testTag("slow-server-switch")
+                            .semantics { contentDescription = "Переключать при низкой скорости" },
+                    )
+                }
+                Text(
+                    "Автоматический переход на резервный сервер при отказе текущего работает всегда.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         item(key = "sections") {
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 SettingsLinkRow(

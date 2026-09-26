@@ -4,15 +4,20 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.hardware.display.DisplayManager
 import android.net.VpnService
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.view.Display
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.R
@@ -55,6 +60,12 @@ import io.github.zapretkvn.android.engines.failover.FailoverOutcome
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
 import io.github.zapretkvn.android.engines.failover.OutboundFailoverCoordinator
 import io.github.zapretkvn.android.engines.failover.OutboundFailureLogParser
+import io.github.zapretkvn.android.engines.failover.SlowServerSwitchEngine
+import io.github.zapretkvn.android.engines.failover.SlowServerSwitchPolicy
+import io.github.zapretkvn.android.engines.failover.SlowSwitchGate
+import io.github.zapretkvn.android.engines.failover.SlowSwitchHost
+import io.github.zapretkvn.android.engines.failover.SlowSwitchSnapshot
+import io.github.zapretkvn.android.engines.failover.SlowThroughputDetector
 import io.github.zapretkvn.android.engines.singbox.ListStringIterator
 import io.github.zapretkvn.android.engines.singbox.SelectorCacheReconciliation
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
@@ -242,6 +253,31 @@ class ZapretVpnService : VpnService() {
         OutboundFailoverCoordinator(SystemClock::elapsedRealtime)
     private var pendingHysteriaReplacement: PendingHysteriaReplacement? = null
 
+    /** «Умная проверка»: антифлап общий для всех сессий сервиса. */
+    private val slowServerSwitchPolicy = SlowServerSwitchPolicy(SystemClock::elapsedRealtime)
+    @Volatile
+    private var slowServerSwitchEnabled = true
+    private var slowServerSwitchSettingsJob: Job? = null
+    private val slowSwitchLock = Any()
+    private var slowSwitchJob: Job? = null
+
+    /** Пробное переключение «умной проверки», ещё не сохранённое в профиле. */
+    @Volatile
+    private var slowSwitchTrial: SlowSwitchTrial? = null
+    @Volatile
+    private var screenInteractive = true
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            screenInteractive = when (intent.action) {
+                Intent.ACTION_SCREEN_ON -> true
+                Intent.ACTION_SCREEN_OFF -> false
+                else -> return
+            }
+            // connect() command client-а — IPC; не на главном потоке.
+            serviceScope.launch { applySpeedMonitor() }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -256,7 +292,47 @@ class ZapretVpnService : VpnService() {
                     if (changed) reevaluateNetworkAutomation()
                 }
         }
+        slowServerSwitchSettingsJob = serviceScope.launch {
+            container.uiSettingsStore.settings
+                .map { it.slowServerSwitch }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    slowServerSwitchEnabled = enabled
+                    if (!enabled) cancelSlowSwitchEpisode()
+                    applySpeedMonitor()
+                }
+        }
+        screenInteractive = isDefaultDisplayOn()
+        ContextCompat.registerReceiver(
+            this,
+            screenStateReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
+
+    /**
+     * Монитор скорости нужен, только пока настройка включена и экран горит:
+     * при погашенном экране и простое VPN у сервиса нет периодической работы,
+     * как требует энергетический release-gate.
+     */
+    private fun applySpeedMonitor(session: ActiveSession? = activeSession) {
+        session ?: return
+        if (slowServerSwitchEnabled && screenInteractive) {
+            session.openSpeedMonitorClient(::onSpeedSample)
+        } else {
+            session.closeSpeedMonitorClient()
+        }
+    }
+
+    private fun isDefaultDisplayOn(): Boolean =
+        getSystemService(DisplayManager::class.java)
+            ?.getDisplay(Display.DEFAULT_DISPLAY)
+            ?.state
+            ?.let { it == Display.STATE_ON } ?: true
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!foregroundActive.get()) showForeground(ForegroundNotificationState.Preparing)
@@ -323,6 +399,9 @@ class ZapretVpnService : VpnService() {
         clearPausedAutomation()
         automationSettingsJob?.cancel()
         automationSettingsJob = null
+        slowServerSwitchSettingsJob?.cancel()
+        slowServerSwitchSettingsJob = null
+        runCatching { unregisterReceiver(screenStateReceiver) }
         controller.cancelCurrentConnectionDiagnostic()
         cancelLifecycleJob()
         val remaining = detachSessions()
@@ -740,6 +819,8 @@ class ZapretVpnService : VpnService() {
             })
             startHomeStatusObserver(resources)
             startDiagnosticsObserver(resources)
+            slowServerSwitchPolicy.bindProfile(profileId)
+            applySpeedMonitor(resources)
             if (!controller.diagnosticsVisible.value) resources.closeLogClient(controller)
             if (health.externalIpProbeAllowed) startConnectionIdentityProbe(resources)
             // Persist the selected target only after config/core/TUN/DNS/HTTPS
@@ -977,7 +1058,10 @@ class ZapretVpnService : VpnService() {
     private fun onUnderlyingNetworkEvent(session: ActiveSession, state: UnderlyingNetworkState) {
         if (activeSession !== session) return
         controller.publishDiagnosticNetwork(session.generation, state)
-        if (state.identity != session.networkPolicyKey.identity) session.onNetworkChanged()
+        if (state.identity != session.networkPolicyKey.identity) {
+            session.onNetworkChanged()
+            cancelSlowSwitchEpisode()
+        }
         val automationDecision = networkAutomationDecision(state, session.updaterRouting)
         if (automationDecision is NetworkAutomationDecision.PauseVpn) {
             scheduleAutomationPause(session, state)
@@ -1399,6 +1483,10 @@ class ZapretVpnService : VpnService() {
                 }
                 outboundFailoverCoordinator.reset()
                 pendingHysteriaReplacement = null
+                // Ручной выбор главнее пробы «умной проверки»: её откат не должен
+                // перезаписать выбор пользователя.
+                cancelSlowSwitchEpisode(superseded = true)
+                session.resetThroughputWindow()
                 try {
                     selectLocked(session, groupTag, outboundTag)
                     showForeground(ForegroundNotificationState.Connected)
@@ -1666,6 +1754,8 @@ class ZapretVpnService : VpnService() {
                     -> return@withLock
                 }
 
+                // Failover главнее пробы «умной проверки».
+                cancelSlowSwitchEpisode(superseded = true)
                 hysteriaStateReducer.fail(generation, failure, automaticSwitch = true)
                 hysteriaStateReducer.advance(
                     generation,
@@ -1750,6 +1840,168 @@ class ZapretVpnService : VpnService() {
             onStageStarted = {},
             onStageFinished = { _, _, _ -> },
         )
+    }
+
+    /**
+     * Отсчёт CommandStatus «умной проверки». Пассивное подозрение само ничего
+     * не переключает: оно лишь запускает один эпизод с активным замером.
+     */
+    private fun onSpeedSample(session: ActiveSession, downlinkTotal: Long, connections: Int) {
+        if (activeSession !== session || !slowServerSwitchEnabled) return
+        if (!session.onThroughputSample(SystemClock.elapsedRealtime(), downlinkTotal, connections)) return
+        // Пауза антифлапа: подозрение остаётся, эпизод начнётся, когда она закончится.
+        if (slowServerSwitchPolicy.gate(enabled = true, busy = false) != SlowSwitchGate.Ready) return
+        synchronized(slowSwitchLock) {
+            if (slowSwitchJob?.isActive == true) return
+            session.resetThroughputWindow()
+            slowSwitchJob = serviceScope.launch {
+                SlowServerSwitchEngine(
+                    policy = slowServerSwitchPolicy,
+                    host = SessionSlowSwitchHost(session),
+                    enabled = { slowServerSwitchEnabled },
+                ).runEpisode()
+            }
+        }
+    }
+
+    /**
+     * Отменяет эпизод. [superseded] — ручной выбор или failover уже меняют
+     * сервер: проба забывается без отката, чтобы не перезаписать их выбор.
+     * Иначе (смена сети, выключение настройки, остановка) отменённый эпизод сам
+     * откатывает пробу, если сессия ещё жива.
+     */
+    private fun cancelSlowSwitchEpisode(superseded: Boolean = false) {
+        if (superseded) slowSwitchTrial = null
+        synchronized(slowSwitchLock) {
+            slowSwitchJob?.cancel()
+            slowSwitchJob = null
+        }
+    }
+
+    private fun isCurrentSession(session: ActiveSession): Boolean =
+        activeSession === session &&
+            session.generation == controller.currentGeneration() &&
+            !stopInProgress.get()
+
+    /** Подключение, переподключение или failover — не время для «умной проверки». */
+    private fun lifecycleBusy(session: ActiveSession): Boolean {
+        val state = controller.state.value
+        return state !is VpnConnectionState.Connected ||
+            state.profileId != session.profileId ||
+            outboundFailoverCoordinator.replacementInFlight() ||
+            pendingHysteriaReplacement != null ||
+            synchronized(recoveryLock) { recoveryJob?.isActive == true } ||
+            synchronized(restartScheduleLock) { networkRestartJob?.isActive == true }
+    }
+
+    /**
+     * Операции «умной проверки» над сессией. Смена сервера идёт тем же путём
+     * selector hot-switch, что у failover и ручного выбора
+     * ([switchSelectorRuntimeLocked], [persistSelectorSelectionLocked],
+     * [rollbackSelectorRuntimeLocked]); кандидаты — цели [selectorFailoverPlan].
+     * serviceLock берётся только на переключение, не на время замера, чтобы
+     * остановка VPN не ждала загрузку.
+     */
+    private inner class SessionSlowSwitchHost(
+        private val session: ActiveSession,
+    ) : SlowSwitchHost {
+        @Volatile private var groupTag: String? = null
+
+        override suspend fun snapshot(): SlowSwitchSnapshot? = serviceLock.withLock {
+            if (!isCurrentSession(session)) return@withLock null
+            val busy = lifecycleBusy(session)
+            val stored = runCatching { container.profileStore.read(session.profileId) }.getOrNull()
+            val plan = stored?.let { selectorFailoverPlan(it.json, session.primaryGroupTag) }
+            groupTag = plan?.groupTag
+            val hints = container.serverLatencyStore.forProfile(session.profileId)
+                .mapNotNull { (tag, entry) -> entry.hint()?.let { tag to it } }
+                .toMap()
+            SlowSwitchSnapshot(
+                currentId = plan?.currentTag ?: session.selectedOutboundTag().orEmpty(),
+                targets = plan?.targets.orEmpty(),
+                hints = hints,
+                busy = busy,
+            )
+        }
+
+        override suspend fun measureThroughput(): Long? {
+            if (!isCurrentSession(session)) return null
+            return container.vpnThroughputProbe.measure()
+        }
+
+        override suspend fun trialSwitch(currentId: String, candidateId: String): Boolean =
+            serviceLock.withLock {
+                val group = groupTag ?: return@withLock false
+                if (!isCurrentSession(session) || lifecycleBusy(session) ||
+                    (session.selectedOutboundTag() ?: currentId) != currentId
+                ) {
+                    return@withLock false
+                }
+                try {
+                    val prepared = switchSelectorRuntimeLocked(session, group, candidateId)
+                    slowSwitchTrial = SlowSwitchTrial(session, group, currentId, candidateId, prepared)
+                    true
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    // Команда selector могла пройти частично: вернуть прежний сервер.
+                    rollbackSelectorRuntimeLocked(session, group, currentId)
+                    log("Пробное переключение не выполнено: ${error.message.orEmpty()}")
+                    false
+                }
+            }
+
+        override suspend fun commit(candidateId: String): Boolean = serviceLock.withLock {
+            val trial = slowSwitchTrial
+            if (trial == null || trial.session !== session || trial.candidateId != candidateId ||
+                !isCurrentSession(session) || outboundFailoverCoordinator.replacementInFlight()
+            ) {
+                return@withLock false
+            }
+            slowSwitchTrial = null
+            try {
+                persistSelectorSelectionLocked(session, trial.groupTag, candidateId, trial.prepared)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                rollbackSelectorRuntimeLocked(session, trial.groupTag, trial.previousId)
+                log("Выбор ${candidateId} не сохранён в профиле; возврат на ${trial.previousId}.")
+                return@withLock false
+            }
+            session.resetThroughputWindow()
+            controller.clearConnectionIdentity(session.generation)
+            startConnectionIdentityProbe(session)
+            true
+        }
+
+        override suspend fun rollback() {
+            serviceLock.withLock {
+                val trial = slowSwitchTrial ?: return@withLock
+                if (trial.session !== session) return@withLock
+                slowSwitchTrial = null
+                if (!isCurrentSession(session)) return@withLock
+                rollbackSelectorRuntimeLocked(session, trial.groupTag, trial.previousId)?.let { error ->
+                    log("Возврат на ${trial.previousId} не удался: ${error.message.orEmpty()}")
+                }
+                session.resetThroughputWindow()
+            }
+        }
+
+        override fun log(message: String) {
+            controller.publishDiagnosticInfo(SecretRedactor.redactInline(message))
+        }
+
+        override fun announceSwitch(
+            fromId: String,
+            toId: String,
+            fromBytesPerSecond: Long,
+            toBytesPerSecond: Long,
+        ) {
+            controller.publishMessage(
+                session.generation,
+                "Низкая скорость: сервер ${SecretRedactor.redactInline(toId)} выбран автоматически " +
+                    "(${SlowServerSwitchEngine.formatRate(fromBytesPerSecond)} → " +
+                    "${SlowServerSwitchEngine.formatRate(toBytesPerSecond)}).",
+            )
+        }
     }
 
     private fun terminateFailedSession(
@@ -2403,6 +2655,7 @@ class ZapretVpnService : VpnService() {
         val sessions = listOfNotNull(activeSession, pendingSession).distinct()
         activeSession = null
         pendingSession = null
+        cancelSlowSwitchEpisode()
         sessions
     }
 
@@ -2431,6 +2684,14 @@ class ZapretVpnService : VpnService() {
         val updaterRouting: Boolean,
         val generation: Long,
         val reason: NetworkPauseReason,
+    )
+
+    private class SlowSwitchTrial(
+        val session: ActiveSession,
+        val groupTag: String,
+        val previousId: String,
+        val candidateId: String,
+        val prepared: PreparedSelectorSelection,
     )
 
     private data class FailoverPlan(
@@ -2525,7 +2786,58 @@ class ZapretVpnService : VpnService() {
         fun hydrateLatency(groups: List<RuntimeSelectorGroup>): List<RuntimeSelectorGroup> =
             ServerLatencyReducer.hydrate(groups, latencyStore.forProfile(profileId), serverFingerprints)
 
-        fun onNetworkChanged() = latencyProbeCoordinator.onNetworkChanged()
+        fun onNetworkChanged() {
+            latencyProbeCoordinator.onNetworkChanged()
+            throughputDetector.reset()
+        }
+
+        private val throughputDetector = SlowThroughputDetector()
+        private var speedMonitorClient: CommandClient? = null
+
+        fun onThroughputSample(nowMillis: Long, downlinkTotal: Long, connections: Int): Boolean =
+            throughputDetector.onSample(nowMillis, downlinkTotal, connections)
+
+        fun resetThroughputWindow() = throughputDetector.reset()
+
+        /**
+         * Отдельный CommandStatus «умной проверки»: раз в 5 с, пока сессия жива и
+         * настройка включена. Главный status-клиент (1 Гц) по-прежнему живёт
+         * только при видимой главной.
+         */
+        @Synchronized
+        fun openSpeedMonitorClient(onSample: (ActiveSession, Long, Int) -> Unit) {
+            if (closing.get() || speedMonitorClient != null) return
+            throughputDetector.reset()
+            val candidate = Libbox.newCommandClient(
+                SpeedMonitorClientHandler(controller, generation) { total, connections ->
+                    onSample(this, total, connections)
+                },
+                CommandClientOptions().apply {
+                    addCommand(Libbox.CommandStatus)
+                    statusInterval = SPEED_MONITOR_INTERVAL_NANOS
+                },
+            )
+            try {
+                candidate.connect()
+                if (closing.get()) {
+                    runCatching { candidate.disconnect() }
+                    return
+                }
+                speedMonitorClient = candidate
+                VpnRuntimeMetrics.speedMonitorClientOpened()
+            } catch (_: Throwable) {
+                runCatching { candidate.disconnect() }
+            }
+        }
+
+        @Synchronized
+        fun closeSpeedMonitorClient() {
+            val current = speedMonitorClient ?: return
+            speedMonitorClient = null
+            runCatching { current.disconnect() }
+            VpnRuntimeMetrics.speedMonitorClientClosed()
+            throughputDetector.reset()
+        }
 
         fun selectedOutboundTag(): String? = selectedOutboundTag
 
@@ -2843,6 +3155,7 @@ class ZapretVpnService : VpnService() {
                 }
                 timedStopStage("close_clients", "Отключение клиентов libbox") {
                     closeStatusClient(controller)
+                    closeSpeedMonitorClient()
                     closeLogClient(controller)
                     val failureClient = synchronized(resourceLock) {
                         runtimeErrorClient.also { runtimeErrorClient = null }
@@ -2986,6 +3299,17 @@ class ZapretVpnService : VpnService() {
         }
     }
 
+    private class SpeedMonitorClientHandler(
+        private val controller: VpnController,
+        private val generation: Long,
+        private val onSample: (downlinkTotal: Long, connections: Int) -> Unit,
+    ) : BaseClientHandler() {
+        override fun writeStatus(message: StatusMessage) {
+            if (generation != controller.currentGeneration() || !message.trafficAvailable) return
+            onSample(message.downlinkTotal, message.connectionsOut)
+        }
+    }
+
     private class DiagnosticLogClientHandler(
         private val controller: VpnController,
         private val generation: Long,
@@ -3103,6 +3427,9 @@ class ZapretVpnService : VpnService() {
         private val NON_FAILOVER_OUTBOUND_TYPES =
             setOf("direct", "block", "dns", "selector", "urltest")
         private const val STATUS_INTERVAL_NANOS = 1_000_000_000L
+
+        /** Отсчёт «умной проверки»: окно 20 с — это 4 отсчёта. */
+        private const val SPEED_MONITOR_INTERVAL_NANOS = 5_000_000_000L
         private const val MAX_FAILURE_LOG_BATCH_LINES = 32
         private const val MAX_FAILURE_LOG_LINE_CHARS = 1_024
         private const val ACTION_START = "io.github.zapretkvn.android.vpn.START"

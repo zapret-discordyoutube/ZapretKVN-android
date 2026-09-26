@@ -42,6 +42,8 @@ data class UiSettings(
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
     val networkAutomation: NetworkAutomationSettings = NetworkAutomationSettings(),
+    /** «Умная проверка»: переключать сервер при подтверждённой низкой скорости. */
+    val slowServerSwitch: Boolean = true,
 )
 
 private val Context.uiSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -104,6 +106,7 @@ class UiSettingsStore(
                         .take(TrustedWifiName.MAX_NETWORKS)
                         .toSet(),
                 ),
+                slowServerSwitch = preferences[SLOW_SERVER_SWITCH] ?: true,
             )
         }
 
@@ -182,6 +185,10 @@ class UiSettingsStore(
         }
     }
 
+    suspend fun setSlowServerSwitch(enabled: Boolean) {
+        dataStore.edit { it[SLOW_SERVER_SWITCH] = enabled }
+    }
+
     suspend fun setPauseOnTrustedWifi(enabled: Boolean) {
         dataStore.edit { it[NETWORK_AUTOMATION_TRUSTED_WIFI] = enabled }
     }
@@ -253,6 +260,7 @@ class UiSettingsStore(
         val NETWORK_AUTOMATION_TRUSTED_SSIDS =
             stringSetPreferencesKey("network_automation_trusted_ssids")
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
+        val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
     }
 }
 

@@ -673,6 +673,12 @@ class VpnController(
         if (generation == currentGeneration()) publishMessage(message)
     }
 
+    /** Решение автоматики без ошибки: только в диагностику, без snackbar. */
+    internal fun publishDiagnosticInfo(message: String) {
+        val safe = sanitizeDiagnosticText(message, 360)
+        appendApplicationDiagnosticLog(level = 4, message = safe, generation = currentGeneration())
+    }
+
     internal fun publishDiagnosticWarning(message: String) {
         val safe = sanitizeDiagnosticText(message, 360)
         appendApplicationDiagnosticLog(level = 3, message = safe, generation = currentGeneration())

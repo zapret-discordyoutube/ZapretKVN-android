@@ -25,6 +25,7 @@ internal object VpnRuntimeMetrics {
     private val trafficStatusUpdates = AtomicInteger()
     private val statusClients = AtomicInteger()
     private val logClients = AtomicInteger()
+    private val speedMonitorClients = AtomicInteger()
 
     fun snapshot(): VpnRuntimeSnapshot = VpnRuntimeSnapshot(
         activeSessions = sessions.get(),
@@ -35,6 +36,7 @@ internal object VpnRuntimeMetrics {
         activeNetworkCallbacks = networkCallbacks.get(),
         activeStatusClients = statusClients.get(),
         activeLogClients = logClients.get(),
+        activeSpeedMonitorClients = speedMonitorClients.get(),
     )
 
     fun sessionOpened() {
@@ -75,6 +77,10 @@ internal object VpnRuntimeMetrics {
     fun trafficUpdateCount(): Int = trafficStatusUpdates.get()
     fun statusClientOpened() = statusClients.incrementAndGet()
     fun statusClientClosed() = statusClients.decrementAndGet().requireNonNegative("status client")
+    /** Отдельный счётчик: status-клиент главной экрана остаётся «0 при скрытой главной». */
+    fun speedMonitorClientOpened() = speedMonitorClients.incrementAndGet()
+    fun speedMonitorClientClosed() =
+        speedMonitorClients.decrementAndGet().requireNonNegative("speed monitor client")
     fun logClientOpened() = logClients.incrementAndGet()
     fun logClientClosed() = logClients.decrementAndGet().requireNonNegative("log client")
 
@@ -92,6 +98,8 @@ internal data class VpnRuntimeSnapshot(
     val activeNetworkCallbacks: Int,
     val activeStatusClients: Int,
     val activeLogClients: Int,
+    /** CommandStatus «умной проверки» (раз в 5 с, только при включённой настройке). */
+    val activeSpeedMonitorClients: Int = 0,
 ) {
     val isIdle: Boolean
         get() = this == Idle
