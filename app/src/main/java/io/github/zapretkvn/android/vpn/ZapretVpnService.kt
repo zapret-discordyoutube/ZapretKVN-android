@@ -1693,6 +1693,13 @@ class ZapretVpnService : VpnService() {
                 val generation = event.sessionGeneration
                 val failedTag = event.outboundTag
                 val failure = event.failureCode
+                // Пробное переключение «умной проверки» само рвёт соединения
+                // покинутого сервера (interrupt_exist_connections): их строки в
+                // логе — не отказ сервера.
+                val trial = slowSwitchTrial
+                if (trial != null && trial.session === session && trial.previousId == failedTag) {
+                    return@withLock
+                }
                 // Hysteria has a typed per-target failure observer, so a single
                 // signal is trusted enough to tear the tunnel down when recovery
                 // is impossible. Other protocols are classified from noisy core
@@ -1995,12 +2002,20 @@ class ZapretVpnService : VpnService() {
             fromBytesPerSecond: Long,
             toBytesPerSecond: Long,
         ) {
+            val server = SecretRedactor.redactInline(toId)
             controller.publishMessage(
                 session.generation,
-                "Низкая скорость: сервер ${SecretRedactor.redactInline(toId)} выбран автоматически " +
+                "Низкая скорость: сервер $server выбран автоматически " +
                     "(${SlowServerSwitchEngine.formatRate(fromBytesPerSecond)} → " +
                     "${SlowServerSwitchEngine.formatRate(toBytesPerSecond)}).",
             )
+            // Пользователь обычно в другом приложении: сообщение видно и в уведомлении.
+            if (isCurrentSession(session)) {
+                showForeground(
+                    ForegroundNotificationState.Connected,
+                    detail = "низкая скорость, выбран сервер $server",
+                )
+            }
         }
     }
 
@@ -2533,7 +2548,8 @@ class ZapretVpnService : VpnService() {
         }
     }
 
-    private fun showForeground(state: ForegroundNotificationState) {
+    /** [detail] — пояснение к состоянию до следующего обновления уведомления. */
+    private fun showForeground(state: ForegroundNotificationState, detail: String? = null) {
         val openIntent = PendingIntent.getActivity(
             this,
             1,
@@ -2549,7 +2565,7 @@ class ZapretVpnService : VpnService() {
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_vpn_notification)
             .setContentTitle("Zapret KVN")
-            .setContentText(state.text)
+            .setContentText(detail?.let { "${state.text} · $it" } ?: state.text)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -3306,7 +3322,9 @@ class ZapretVpnService : VpnService() {
     ) : BaseClientHandler() {
         override fun writeStatus(message: StatusMessage) {
             if (generation != controller.currentGeneration() || !message.trafficAvailable) return
-            onSample(message.downlinkTotal, message.connectionsOut)
+            // connectionsIn — трекеры traffic manager-а: каждое маршрутизированное
+            // соединение; connectionsOut — только соединения route ConnectionManager.
+            onSample(message.downlinkTotal, maxOf(message.connectionsIn, message.connectionsOut))
         }
     }
 
