@@ -86,6 +86,8 @@ sealed interface LatencyProbeState {
     data class Failed(
         val reason: LatencyFailure,
         val previous: LatencySample? = null,
+        /** Когда проба не удалась; известно для сохранённых между запусками результатов. */
+        val failedAtEpochMillis: Long? = null,
     ) : LatencyProbeState
     data class Unsupported(val reason: LatencyUnsupportedReason) : LatencyProbeState
     data class Stale(val sample: LatencySample) : LatencyProbeState

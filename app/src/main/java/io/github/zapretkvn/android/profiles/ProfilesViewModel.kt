@@ -25,6 +25,9 @@ import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSource
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.network.BootstrapCache
+import io.github.zapretkvn.android.network.probes.ServerLatencyEntries
+import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
+import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.routing.RuleSetAssetManager
@@ -190,10 +193,15 @@ class ProfilesViewModel(
     private val vpnController: VpnController,
     private val bootstrapCache: BootstrapCache,
     private val ruleSetAssets: RuleSetAssetManager,
+    private val serverLatencyStore: ServerLatencyStore? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ProfilesUiState())
     private var serverSummaryKey: List<Pair<String, Long>>? = null
     val state: StateFlow<ProfilesUiState> = mutableState.asStateFlow()
+
+    /** Последний пинг серверов всех профилей, сохранённый между запусками. */
+    val serverLatency: StateFlow<ServerLatencyEntries> =
+        serverLatencyStore?.entries ?: MutableStateFlow<ServerLatencyEntries>(emptyMap()).asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -1100,13 +1108,25 @@ class ProfilesViewModel(
         serverSummaryKey = key
         viewModelScope.launch {
             val summaries = mutableMapOf<String, ProfileServerSummary>()
+            val fingerprints = mutableMapOf<String, Map<String, String>>()
+            var complete = true
             for (profile in profiles) {
-                val json = runCatching { store.read(profile.id).json }.getOrNull() ?: continue
+                val json = runCatching { store.read(profile.id).json }.getOrNull()
+                if (json == null) {
+                    complete = false
+                    continue
+                }
                 val summary = withContext(Dispatchers.Default) { ProfileServerCatalog.summarize(json) }
                 if (summary.groups.isNotEmpty()) summaries[profile.id] = summary
+                fingerprints[profile.id] = summary.groups
+                    .flatMap(ProfileServerGroup::options)
+                    .associate { it.tag to ServerLatencyFingerprint.of(it.type, it.endpoint) }
             }
             if (serverSummaryKey != key) return@launch
             mutableState.update { it.copy(serverSummaries = summaries) }
+            // Пинг исчезнувших профилей и серверов удаляется; при сбое чтения
+            // любого профиля ничего не трогаем, чтобы не потерять его историю.
+            if (complete) serverLatencyStore?.retain(fingerprints)
         }
     }
 
@@ -1215,6 +1235,7 @@ class ProfilesViewModel(
         private val vpnController: VpnController,
         private val bootstrapCache: BootstrapCache,
         private val ruleSetAssets: RuleSetAssetManager,
+        private val serverLatencyStore: ServerLatencyStore? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1229,6 +1250,7 @@ class ProfilesViewModel(
                 vpnController,
                 bootstrapCache,
                 ruleSetAssets,
+                serverLatencyStore,
             ) as T
         }
     }

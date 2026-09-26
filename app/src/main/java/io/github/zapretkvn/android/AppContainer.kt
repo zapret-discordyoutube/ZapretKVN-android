@@ -24,6 +24,7 @@ import io.github.zapretkvn.android.network.BootstrapResolver
 import io.github.zapretkvn.android.network.VpnNetworkProvider
 import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
+import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
 import io.github.zapretkvn.android.network.probes.VpnHealthPipeline
 import io.github.zapretkvn.android.profiles.ProfileStore
@@ -38,6 +39,9 @@ import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
 import java.net.HttpURLConnection
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class AppContainer(
     context: Context,
@@ -109,6 +113,13 @@ class AppContainer(
     val vpnExternalIpProbe = VpnExternalIpProbe(vpnNetworkProvider)
     val icmpPingProbe = IcmpPingProbe()
 
+    /** Фоновые записи хранилищ, живущие вместе с процессом. */
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val serverLatencyStore = ServerLatencyStore(
+        File(appContext.noBackupFilesDir, "server-latency.json"),
+        backgroundScope,
+    )
+
     val profilesViewModelFactory: ProfilesViewModel.Factory
         get() = ProfilesViewModel.Factory(
             profileStore,
@@ -120,6 +131,7 @@ class AppContainer(
             vpnController,
             bootstrapCache,
             ruleSetAssetManager,
+            serverLatencyStore,
         )
 
     val appsViewModelFactory: AppsViewModel.Factory

@@ -37,6 +37,11 @@ internal class LatencyProbeCoordinator(
     private val targetResolver: ServerPingTargetResolver,
     private val icmpProbe: IcmpPingProbe,
     private val controller: VpnController,
+    /** Готовые результаты (успех или отказ) для сохранения между запусками. */
+    private val onResults: (
+        relay: Map<String, LatencyProbeState>,
+        icmp: Map<String, LatencyProbeState>,
+    ) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     private val lock = Any()
     private val nextRequestId = AtomicLong(0)
@@ -154,13 +159,15 @@ internal class LatencyProbeCoordinator(
 
         fun flush() {
             if (pendingBatch.isEmpty()) return
+            val batch = pendingBatch.toMap()
             controller.publishLatencyBatch(
                 generation = generation,
                 requestId = probe.requestId,
                 groupTag = probe.group.tag,
                 networkIdentity = probe.networkIdentity,
-                relay = pendingBatch.toMap(),
+                relay = batch,
             )
+            onResults(batch, emptyMap())
             pendingBatch.clear()
         }
 
@@ -245,6 +252,7 @@ internal class LatencyProbeCoordinator(
                 networkIdentity = probe.networkIdentity,
                 icmp = states,
             )
+            onResults(emptyMap(), states)
         }
         return ProbeSummary("ICMP", success, failed, unsupported)
     }

@@ -54,6 +54,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -87,6 +88,7 @@ import io.github.zapretkvn.android.profiles.ImportPreviewState
 import io.github.zapretkvn.android.profiles.MAX_SPLIT_PROFILES
 import io.github.zapretkvn.android.profiles.ProfileEditorState
 import io.github.zapretkvn.android.profiles.ProfileMetadata
+import io.github.zapretkvn.android.network.probes.PersistedServerLatency
 import io.github.zapretkvn.android.profiles.ProfileServerPickerState
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.profiles.ProfileSource
@@ -145,6 +147,7 @@ fun ZapretApp(
     onInstallUpdate: () -> Unit,
     onCancelUpdate: () -> Unit,
 ) {
+    val serverLatency by profilesViewModel.serverLatency.collectAsState()
     var appPickerMode by rememberSaveable { mutableStateOf<AppPickerMode?>(null) }
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.Home) }
     var dismissedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
@@ -275,6 +278,7 @@ fun ZapretApp(
                 onSelectOutbound = onSelectOutbound,
                 onMeasureGroup = onMeasureGroup,
                 onCreateDiagnosticShare = onCreateDiagnosticShare,
+                activeProfileLatency = activeProfile?.let { serverLatency[it.id] }.orEmpty(),
             )
             AppTab.Profiles -> ProfilesScreen(
                 contentPadding = contentPadding,
@@ -326,6 +330,7 @@ fun ZapretApp(
         ModalBottomSheet(onDismissRequest = profilesViewModel::dismissServerPicker) {
             ProfileServerPickerSheet(
                 picker = picker,
+                latency = serverLatency[picker.profileId].orEmpty(),
                 hideServerAddresses = state.settings.hideServerAddresses,
                 busy = state.busy,
                 onSelect = profilesViewModel::selectProfileServer,
@@ -337,11 +342,13 @@ fun ZapretApp(
 @Composable
 private fun ProfileServerPickerSheet(
     picker: ProfileServerPickerState,
+    latency: Map<String, PersistedServerLatency>,
     hideServerAddresses: Boolean,
     busy: Boolean,
     onSelect: (String, String) -> Unit,
 ) {
     var filter by remember(picker.profileId) { mutableStateOf("") }
+    val nowEpochMillis = remember(latency) { System.currentTimeMillis() }
     LazyColumn(
         modifier = Modifier
             .fillMaxWidth()
@@ -443,6 +450,19 @@ private fun ProfileServerPickerSheet(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                    }
+                    // Последний пинг из прошлых запусков: виден и без подключения.
+                    latency[option.tag]?.displayState()?.let { saved ->
+                        Text(
+                            formatLatency(saved, nowEpochMillis),
+                            modifier = Modifier.padding(start = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = latencyColor(
+                                saved,
+                                nowEpochMillis,
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
+                        )
                     }
                 }
             }

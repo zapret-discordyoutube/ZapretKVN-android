@@ -74,6 +74,9 @@ import io.github.zapretkvn.android.network.isUsableForConnect
 import io.github.zapretkvn.android.network.policyKey
 import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.LatencyProbeCoordinator
+import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
+import io.github.zapretkvn.android.network.probes.ServerLatencyReducer
+import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.ServerPingTargetResolver
 import io.github.zapretkvn.android.network.probes.VpnDnsHealthException
 import io.github.zapretkvn.android.network.probes.VpnHealthStageOutcome
@@ -613,6 +616,7 @@ class ZapretVpnService : VpnService() {
             controller = controller,
             scope = serviceScope,
             icmpPingProbe = container.icmpPingProbe,
+            latencyStore = container.serverLatencyStore,
         )
         if (!registerPendingSession(resources, token)) {
             resources.close()
@@ -667,6 +671,7 @@ class ZapretVpnService : VpnService() {
                     token,
                     resources.outboundDescriptions,
                     resources.primaryGroupTag,
+                    resources::hydrateLatency,
                 ),
                 CommandClientOptions().apply {
                     addCommand(Libbox.CommandGroup)
@@ -2460,6 +2465,7 @@ class ZapretVpnService : VpnService() {
         private val controller: VpnController,
         scope: CoroutineScope,
         icmpPingProbe: IcmpPingProbe,
+        private val latencyStore: ServerLatencyStore,
     ) : AutoCloseable {
         private val closing = AtomicBoolean(false)
         private val tunCloseStarted = AtomicBoolean(false)
@@ -2489,6 +2495,9 @@ class ZapretVpnService : VpnService() {
             initialSelectedOutboundTag,
         )
         @Volatile private var stopDiagnosticGeneration = Long.MIN_VALUE
+        /** Отпечатки адресов серверов профиля: ключ сохранённого пинга. */
+        val serverFingerprints: Map<String, String> =
+            ServerLatencyFingerprint.of(outboundDescriptions)
         private val pingTargetResolver = ServerPingTargetResolver(
             outboundDescriptions,
             selectorGroups,
@@ -2501,6 +2510,9 @@ class ZapretVpnService : VpnService() {
             targetResolver = pingTargetResolver,
             icmpProbe = icmpPingProbe,
             controller = controller,
+            onResults = { relay, icmp ->
+                latencyStore.record(profileId, serverFingerprints, relay, icmp)
+            },
         )
 
         init {
@@ -2508,6 +2520,10 @@ class ZapretVpnService : VpnService() {
         }
 
         fun toggleLatencyProbe(group: RuntimeSelectorGroup) = latencyProbeCoordinator.toggle(group)
+
+        /** Пинг, сохранённый в прошлых запусках, виден сразу, до новой проверки. */
+        fun hydrateLatency(groups: List<RuntimeSelectorGroup>): List<RuntimeSelectorGroup> =
+            ServerLatencyReducer.hydrate(groups, latencyStore.forProfile(profileId), serverFingerprints)
 
         fun onNetworkChanged() = latencyProbeCoordinator.onNetworkChanged()
 
@@ -3027,6 +3043,7 @@ class ZapretVpnService : VpnService() {
         private val generation: Long,
         private val descriptions: Map<String, OutboundDescription>,
         private val primaryGroupTag: String?,
+        private val hydrateLatency: (List<RuntimeSelectorGroup>) -> List<RuntimeSelectorGroup>,
     ) : BaseClientHandler() {
 
         override fun writeGroups(message: OutboundGroupIterator) {
@@ -3059,7 +3076,7 @@ class ZapretVpnService : VpnService() {
                     )
                 }
             }
-            controller.publishGroups(generation, groups)
+            controller.publishGroups(generation, hydrateLatency(groups))
         }
     }
 

@@ -41,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -56,6 +57,7 @@ import io.github.zapretkvn.android.diagnostics.VpnErrorContext
 import io.github.zapretkvn.android.diagnostics.VpnErrorExplainer
 import io.github.zapretkvn.android.network.probes.primaryGroup
 import io.github.zapretkvn.android.profiles.ProfileMetadata
+import io.github.zapretkvn.android.network.probes.PersistedServerLatency
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.vpn.LatencyProbeState
@@ -65,6 +67,7 @@ import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
+import io.github.zapretkvn.android.vpn.LATENCY_FRESHNESS_MILLIS
 import io.github.zapretkvn.android.vpn.withFreshness
 import kotlin.math.max
 import kotlinx.coroutines.delay
@@ -91,6 +94,7 @@ internal fun HomeScreen(
     onSelectOutbound: (String, String, String) -> Unit,
     onMeasureGroup: (String) -> Unit,
     onCreateDiagnosticShare: suspend () -> Intent,
+    activeProfileLatency: Map<String, PersistedServerLatency> = emptyMap(),
 ) {
     var serverSheetOpen by rememberSaveable { mutableStateOf(false) }
     val connected = vpnState as? VpnConnectionState.Connected
@@ -134,6 +138,7 @@ internal fun HomeScreen(
                 ) {
                     OfflineServerSummary(
                         summary = activeProfileServers,
+                        latency = activeProfileLatency,
                         hideServerAddresses = hideServerAddresses,
                         onClick = onOpenServers.takeIf { activeProfileServers.switchable },
                     )
@@ -322,6 +327,7 @@ private fun ServerSummary(
                 Text(
                     "Relay HTTPS · ${formatLatency(server.relay, nowEpochMillis)}",
                     style = MaterialTheme.typography.labelLarge,
+                    color = latencyColor(server.relay, nowEpochMillis, Color.Unspecified),
                 )
                 Text(
                     "ICMP · ${formatLatency(server.icmp, nowEpochMillis)}",
@@ -338,9 +344,12 @@ private fun ServerSummary(
 @Composable
 private fun OfflineServerSummary(
     summary: ProfileServerSummary,
+    latency: Map<String, PersistedServerLatency>,
     hideServerAddresses: Boolean,
     onClick: (() -> Unit)?,
 ) {
+    val nowEpochMillis = remember(latency) { System.currentTimeMillis() }
+    val selectedLatency = summary.selectedLabel?.let(latency::get)?.displayState()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -373,6 +382,18 @@ private fun OfflineServerSummary(
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (selectedLatency != null) {
+                Text(
+                    formatLatency(selectedLatency, nowEpochMillis),
+                    modifier = Modifier.testTag("home-offline-server-latency"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = latencyColor(
+                        selectedLatency,
+                        nowEpochMillis,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
                 )
             }
             if (onClick != null) Text("  ›", style = MaterialTheme.typography.titleLarge)
@@ -644,11 +665,16 @@ private fun ServerSelectorSheet(
                         Text(
                             "Relay HTTPS · ${formatLatency(item.relay, nowEpochMillis)}",
                             style = MaterialTheme.typography.labelLarge,
+                            color = latencyColor(item.relay, nowEpochMillis, Color.Unspecified),
                         )
                         Text(
                             "ICMP · ${formatLatency(item.icmp, nowEpochMillis)}",
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = latencyColor(
+                                item.icmp,
+                                nowEpochMillis,
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                            ),
                         )
                     }
                 }
@@ -716,14 +742,64 @@ internal fun formatLatency(
                 LatencyFailure.Dns -> "Ошибка DNS"
                 LatencyFailure.Failed -> "Ошибка"
             }
-            state.previous?.let { "$label · было ${formatPing(it.millis.toLong())}" } ?: label
+            val failedAge = state.failedAtEpochMillis?.let { nowEpochMillis - it }
+            when {
+                failedAge != null && failedAge >= LATENCY_FRESHNESS_MILLIS ->
+                    "$label · ${formatAge(failedAge)}"
+                state.previous != null -> "$label · было ${formatPing(state.previous.millis.toLong())}"
+                else -> label
+            }
         }
         is LatencyProbeState.Unsupported -> when (state.reason) {
             LatencyUnsupportedReason.MissingEndpoint -> "Нет endpoint"
             LatencyUnsupportedReason.NestedGroup -> "Группа · откройте отдельно"
         }
-        is LatencyProbeState.Stale -> "Устарело · ${formatPing(state.sample.millis.toLong())}"
+        is LatencyProbeState.Stale -> {
+            val age = nowEpochMillis - state.sample.measuredAtEpochMillis
+            if (age < LATENCY_FRESHNESS_MILLIS) {
+                // Свежий замер из другой сети Android.
+                "Устарело · ${formatPing(state.sample.millis.toLong())}"
+            } else {
+                "${formatPing(state.sample.millis.toLong())} · ${formatAge(age)}"
+            }
+        }
     }
+}
+
+/** Возраст сохранённого пинга: «только что», «12 мин назад», «3 ч назад», «2 д назад». */
+internal fun formatAge(ageMillis: Long): String {
+    val age = ageMillis.coerceAtLeast(0)
+    return when {
+        age < 60_000L -> "только что"
+        age < 3_600_000L -> "${age / 60_000L} мин назад"
+        age < LATENCY_OLD_MILLIS -> "${age / 3_600_000L} ч назад"
+        else -> "${age / LATENCY_OLD_MILLIS} д назад"
+    }
+}
+
+@Composable
+internal fun latencyColor(state: LatencyProbeState?, nowEpochMillis: Long, default: Color): Color =
+    if (isLatencyOld(state, nowEpochMillis)) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    } else {
+        default
+    }
+
+/** Пинг старше суток показывается приглушённо: сервер мог сильно измениться. */
+internal const val LATENCY_OLD_MILLIS = 24 * 60 * 60 * 1_000L
+
+internal fun isLatencyOld(state: LatencyProbeState?, nowEpochMillis: Long): Boolean {
+    val measuredAt = when (state) {
+        null,
+        LatencyProbeState.NotTested,
+        is LatencyProbeState.Unsupported,
+        is LatencyProbeState.Running,
+        -> null
+        is LatencyProbeState.Success -> state.sample.measuredAtEpochMillis
+        is LatencyProbeState.Stale -> state.sample.measuredAtEpochMillis
+        is LatencyProbeState.Failed -> state.failedAtEpochMillis
+    } ?: return false
+    return nowEpochMillis - measuredAt >= LATENCY_OLD_MILLIS
 }
 
 private fun LatencyProbeState.sampleIdentity(): String? = when (this) {
