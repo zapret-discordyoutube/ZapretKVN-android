@@ -47,6 +47,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -527,30 +528,44 @@ class VpnHealthPipeline(
         failures: List<Pair<ManagedHealthEndpoint, Throwable>>,
         deadlineElapsedRealtimeMillis: Long,
     ): HttpsProbeResult {
-        val remainingMillis = deadlineElapsedRealtimeMillis - SystemClock.elapsedRealtime()
-        if (remainingMillis < MIN_HTTPS_RESCUE_BUDGET_MILLIS) {
-            throw httpsProbeFailure(failures, null)
-        }
+        val budget = HttpsRescueBudget.of(
+            deadlineElapsedRealtimeMillis - SystemClock.elapsedRealtime(),
+        ) ?: throw httpsProbeFailure(failures, null)
         val rescueEndpoint = ManagedHealthProbe.endpoints.first()
-        val rescueError = try {
-            return HttpsProbeResult(
+        // Собственный лимит пробы короче общего deadline: иначе его отмена
+        // закрывает сокет пробы, и в отчёт уходит ложное «Socket closed».
+        val attempt = withTimeoutOrNull(budget.wallMillis) {
+            try {
+                Result.success(
+                    httpsProbeOne(
+                        vpnNetwork = vpnNetwork,
+                        endpoint = rescueEndpoint,
+                        proxyIpFamily = proxyIpFamily,
+                        hostResolver = rescueResolver,
+                        timeoutMillis = budget.socketTimeoutMillis,
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: VpnHealthAddressFamilyException) {
+                throw error
+            } catch (error: Throwable) {
+                // Сокет закрыт нашей же отменой: это тайм-аут, а не ответ сети.
+                ensureActive()
+                Result.failure(error)
+            }
+        }
+        val rescueError = when {
+            attempt == null -> SocketTimeoutException(
+                "no response within ${budget.wallMillis} ms",
+            )
+            attempt.isSuccess -> return HttpsProbeResult(
                 endpoint = rescueEndpoint,
-                status = httpsProbeOne(
-                    vpnNetwork = vpnNetwork,
-                    endpoint = rescueEndpoint,
-                    proxyIpFamily = proxyIpFamily,
-                    hostResolver = rescueResolver,
-                    timeoutMillis = HTTPS_RESCUE_TIMEOUT_MILLIS,
-                ),
+                status = attempt.getOrThrow(),
                 addressFamily = proxyIpFamily,
                 rescued = true,
             )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: VpnHealthAddressFamilyException) {
-            throw error
-        } catch (error: Throwable) {
-            error
+            else -> checkNotNull(attempt.exceptionOrNull())
         }
         throw httpsProbeFailure(failures, rescueEndpoint to rescueError)
     }
@@ -818,9 +833,7 @@ class VpnHealthPipeline(
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
         const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L
-        const val HTTPS_RESCUE_TIMEOUT_MILLIS = 8_000
         const val HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS = 5_000L
-        const val MIN_HTTPS_RESCUE_BUDGET_MILLIS = 8_500L
         const val MAX_HTTP_STATUS_LINE_BYTES = 512
         const val MAX_DNS_PACKET = 65_535
         val HTTP_REACHABLE_STATUS_RANGE = 200..599
@@ -887,6 +900,33 @@ internal object DnsHealthResponseValidator {
     private const val QR_RESPONSE = 0x8000
     private const val TRUNCATED_RESPONSE = 0x0200
     private const val RCODE_MASK = 0x000f
+}
+
+/**
+ * Бюджет спасательной HTTPS-пробы внутри общего health deadline. Резолв,
+ * connect и чтение по отдельности ограничены [socketTimeoutMillis], но вместе
+ * могут превысить остаток deadline; [wallMillis] ограничивает всю пробу и
+ * оставляет запас, чтобы её исход успел попасть в отчёт.
+ */
+internal data class HttpsRescueBudget(
+    val wallMillis: Long,
+    val socketTimeoutMillis: Int,
+) {
+    companion object {
+        const val SOCKET_TIMEOUT_MILLIS = 8_000
+        const val MIN_REMAINING_MILLIS = 8_500L
+        const val DEADLINE_MARGIN_MILLIS = 500L
+
+        /** null — до общего deadline не хватает времени на осмысленную пробу. */
+        fun of(remainingMillis: Long): HttpsRescueBudget? {
+            if (remainingMillis < MIN_REMAINING_MILLIS) return null
+            val wallMillis = remainingMillis - DEADLINE_MARGIN_MILLIS
+            return HttpsRescueBudget(
+                wallMillis = wallMillis,
+                socketTimeoutMillis = minOf(SOCKET_TIMEOUT_MILLIS.toLong(), wallMillis).toInt(),
+            )
+        }
+    }
 }
 
 internal fun selectHealthAddress(
