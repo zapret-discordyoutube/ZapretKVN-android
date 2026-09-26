@@ -44,3 +44,15 @@ class HttpsProbeVerdictTest {
         assertNull(HttpsProbeVerdict.parse(null))
     }
 }
+
+class HttpsProbeDetailRedactionTest {
+    @Test
+    fun `compact detail survives secret redaction twice`() {
+        val detail = "verdict=tls cloudflare:tls@12 gstatic:timeout@4001 rescue-cloudflare:timeout@13500"
+        val redacted = io.github.zapretkvn.android.diagnostics.SecretRedactor.redactInline(
+            io.github.zapretkvn.android.diagnostics.SecretRedactor.redactInline(detail),
+        )
+        assertEquals(detail, redacted)
+        assertEquals(HttpsProbeVerdict.Tls, HttpsProbeVerdict.parse(redacted))
+    }
+}
