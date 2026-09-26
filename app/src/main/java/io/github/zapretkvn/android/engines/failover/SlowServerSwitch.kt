@@ -38,6 +38,12 @@ internal object SlowServerSwitchDefaults {
     /** После любого переключения (в том числе пробного) — без умных переключений. */
     const val POST_SWITCH_HOLD_MILLIS = 10 * 60_000L
 
+    /**
+     * После ручного выбора сервера «умная проверка» его не трогает
+     * (SMART_SWITCH_MANUAL_HOLD на ПК). Failover при отказе это не затрагивает.
+     */
+    const val MANUAL_HOLD_MILLIS = 30 * 60_000L
+
     /** Покинутый или не оправдавший себя сервер считается медленным. */
     const val SLOW_MARK_MILLIS = 30 * 60_000L
 
@@ -115,6 +121,7 @@ internal enum class SlowSwitchGate {
     Ready,
     Disabled,
     Busy,
+    ManualHold,
     Cooldown,
     PostSwitchHold,
     HourlyLimit,
@@ -135,6 +142,7 @@ internal class SlowServerSwitchPolicy(
 ) {
     private var cooldownUntil = Long.MIN_VALUE
     private var lastSwitchAt = Long.MIN_VALUE
+    private var manualHoldUntil = Long.MIN_VALUE
     private val switchTimes = ArrayDeque<Long>()
     private val slowUntil = mutableMapOf<String, Long>()
     private var profileId: String? = null
@@ -152,6 +160,7 @@ internal class SlowServerSwitchPolicy(
         if (!enabled) return SlowSwitchGate.Disabled
         if (busy) return SlowSwitchGate.Busy
         val now = monotonicMillis()
+        if (manualHoldUntil != Long.MIN_VALUE && now < manualHoldUntil) return SlowSwitchGate.ManualHold
         if (lastSwitchAt != Long.MIN_VALUE &&
             now - lastSwitchAt < SlowServerSwitchDefaults.POST_SWITCH_HOLD_MILLIS
         ) {
@@ -199,6 +208,21 @@ internal class SlowServerSwitchPolicy(
 
     fun isSlow(bytesPerSecond: Long): Boolean =
         bytesPerSecond < SlowServerSwitchDefaults.THRESHOLD_BYTES_PER_SECOND
+
+    /**
+     * Пользователь сам выбрал сервер: 30 минут без умных переключений.
+     * Автоматические переключения (умное и failover) эту фиксацию не взводят.
+     */
+    @Synchronized
+    fun onManualSelection() {
+        manualHoldUntil = monotonicMillis() + SlowServerSwitchDefaults.MANUAL_HOLD_MILLIS
+    }
+
+    /** Выключение/включение настройки сбрасывает фиксацию ручного выбора. */
+    @Synchronized
+    fun resetManualHold() {
+        manualHoldUntil = Long.MIN_VALUE
+    }
 
     /** Ложная тревога, неубедительный замер или нет кандидатов. */
     @Synchronized

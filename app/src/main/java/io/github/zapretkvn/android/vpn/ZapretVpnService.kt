@@ -298,6 +298,8 @@ class ZapretVpnService : VpnService() {
                 .distinctUntilChanged()
                 .collect { enabled ->
                     slowServerSwitchEnabled = enabled
+                    // Выключение и включение настройки сбрасывают фиксацию ручного выбора.
+                    slowServerSwitchPolicy.resetManualHold()
                     if (!enabled) cancelSlowSwitchEpisode()
                     applySpeedMonitor()
                 }
@@ -1487,6 +1489,8 @@ class ZapretVpnService : VpnService() {
                 // перезаписать выбор пользователя.
                 cancelSlowSwitchEpisode(superseded = true)
                 session.resetThroughputWindow()
+                // Ручной выбор фиксируется на 30 минут; failover это не затрагивает.
+                slowServerSwitchPolicy.onManualSelection()
                 try {
                     selectLocked(session, groupTag, outboundTag)
                     showForeground(ForegroundNotificationState.Connected)

@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.engines.failover
 
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.FALSE_ALARM_COOLDOWN_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.HOUR_MILLIS
+import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.MANUAL_HOLD_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.POST_SWITCH_HOLD_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.SLOW_MARK_MILLIS
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.THRESHOLD_BYTES_PER_SECOND
@@ -301,5 +302,55 @@ class SlowServerSwitchTest {
     fun `a download without a single byte is inconclusive`() {
         assertEquals(null, io.github.zapretkvn.android.network.probes.ThroughputRate.bytesPerSecondOrNull(0, 6_000))
         assertEquals(1_000L, io.github.zapretkvn.android.network.probes.ThroughputRate.bytesPerSecondOrNull(6_000, 6_000))
+    }
+
+    @Test
+    fun `manual selection holds smart switching for exactly thirty minutes`() = runBlocking {
+        policy.onManualSelection()
+        assertEquals(SlowSwitchGate.ManualHold, policy.gate(enabled = true, busy = false))
+        val held = FakeHost(measurements = ArrayDeque(listOf(slow, fast)))
+        assertEquals(SlowSwitchOutcome.Skipped(SlowSwitchGate.ManualHold), engine(held).runEpisode())
+        assertEquals(0, held.measureCalls)
+        now += MANUAL_HOLD_MILLIS - 1
+        assertEquals(SlowSwitchGate.ManualHold, policy.gate(enabled = true, busy = false))
+        now += 1
+        assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+        val host = FakeHost(measurements = ArrayDeque(listOf(slow, fast)))
+        assertEquals(SlowSwitchOutcome.Switched("a", "b"), engine(host).runEpisode())
+    }
+
+    @Test
+    fun `automatic switches never arm the manual hold`() = runBlocking {
+        val host = FakeHost(measurements = ArrayDeque(listOf(slow, fast)))
+        assertEquals(SlowSwitchOutcome.Switched("a", "b"), engine(host).runEpisode())
+        // Only the 10-minute post-switch hold applies, never the 30-minute manual one.
+        now += POST_SWITCH_HOLD_MILLIS
+        assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+        // A failover commit goes through its own coordinator and leaves the gate alone.
+        val failover = OutboundFailoverCoordinator({ now })
+        failover.chooseReplacement("b", recoverable = true, orderedTargets = listOf(FailoverTarget("b", true), FailoverTarget("c", true)))
+        failover.commitReplacement()
+        assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+    }
+
+    @Test
+    fun `failover still works during the manual hold`() {
+        policy.onManualSelection()
+        val failover = OutboundFailoverCoordinator({ now })
+        val outcome = failover.chooseReplacement(
+            "a",
+            recoverable = true,
+            orderedTargets = listOf(FailoverTarget("a", true), FailoverTarget("b", true)),
+        )
+        assertEquals(FailoverOutcome.Candidate(FailoverTarget("b", true)), outcome)
+        assertEquals(SlowSwitchGate.ManualHold, policy.gate(enabled = true, busy = false))
+    }
+
+    @Test
+    fun `toggling the setting resets the manual hold`() {
+        policy.onManualSelection()
+        assertEquals(SlowSwitchGate.Disabled, policy.gate(enabled = false, busy = false))
+        policy.resetManualHold()
+        assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
     }
 }
