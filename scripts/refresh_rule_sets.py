@@ -22,6 +22,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,10 +44,18 @@ EXPECT_MATCH = ("5.255.255.5", "2a02:6b8::feed:0ff")
 EXPECT_NO_MATCH = ("1.1.1.1", "2606:4700:4700::1111")
 
 
-def fetch(url: str, *, timeout: float = 60.0) -> bytes:
+def fetch(url: str, *, timeout: float = 60.0, attempts: int = 3) -> bytes:
+    """GET with retries; a network failure fails closed with a clear message."""
     request = urllib.request.Request(url, headers={"User-Agent": "zapret-kvn-android-rule-sets"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read()
+        except (OSError, urllib.error.URLError) as error:
+            if attempt == attempts:
+                raise SystemExit(f"Cannot reach {url} after {attempts} attempts: {error}") from None
+            time.sleep(5 * attempt)
+    raise AssertionError("unreachable")
 
 
 def latest_commit() -> str:
