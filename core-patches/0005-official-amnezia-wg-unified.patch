@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index d26a1669..6cc743f1 100644
+index 44142061..6b02f5be 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -7,6 +7,7 @@ require (
@@ -9,13 +9,13 @@ index d26a1669..6cc743f1 100644
 +	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
  	github.com/anthropics/anthropic-sdk-go v1.26.0
  	github.com/anytls/sing-anytls v0.0.11
- 	github.com/apernet/hysteria/core/v2 v2.12.2
+ 	github.com/apernet/hysteria/core/v2 v2.12.3
 @@ -108,7 +109,6 @@ require (
  	filippo.io/hpke v0.4.0 // indirect
  	github.com/OneOfOne/xxhash v1.2.8 // indirect
  	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 -	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 // indirect
- 	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e // indirect
+ 	github.com/apernet/quic-go v0.62.1-0.20260912175848-73339f7edbb9 // indirect
  	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
  	github.com/bahlo/generic-list-go v0.2.0 // indirect
 @@ -126,7 +126,6 @@ require (
@@ -27,7 +27,7 @@ index d26a1669..6cc743f1 100644
  	github.com/opencontainers/image-spec v1.1.1 // indirect
  	github.com/panjf2000/ants/v2 v2.12.0 // indirect
 diff --git a/go.sum b/go.sum
-index fe647b54..b8576594 100644
+index 854886e2..14a68ae3 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -32,8 +32,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V

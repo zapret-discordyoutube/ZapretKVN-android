@@ -68,7 +68,7 @@
 - `spx`, `headerType=none`, `fp` и `security=tls` у QUIC-протоколов теряются с
   предупреждением: `spx` относится к реализации REALITY в Xray, а uTLS неприменим к QUIC —
   рукопожатие идёт внутри ядра, и sing-box уже имитирует QUIC-профиль Chrome сам;
-- Hysteria2 исполняется официальным встроенным core/extras `app/v2.12.2` внутри
+- Hysteria2 исполняется официальным встроенным core/extras `app/v2.12.3` внутри
   `libbox.so`: plain, `salamander` и `gecko`, полный certificate pin, ECH и port
   hopping используют защищённый Android dialer sing-box без sidecar или второго TUN;
 - `headerType` с любым другим значением и чужой транспорт Shadowsocks отклоняются:

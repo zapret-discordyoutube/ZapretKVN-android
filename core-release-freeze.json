@@ -2,9 +2,9 @@
   "schema": 1,
   "releases": {
     "windows": "0.6.5",
-    "android": "v0.4.3"
+    "android": "v0.4.4"
   },
-  "checked_at_utc": "2026-09-27T10:46:14.886246+00:00",
+  "checked_at_utc": "2026-09-27T11:13:54.061198+00:00",
   "amnezia": {
     "id": "amnezia",
     "repository": "amnezia-vpn/amneziawg-go",
@@ -19,15 +19,18 @@
     "release_prerelease": false,
     "url": "https://github.com/amnezia-vpn/amneziawg-go/tree/b5928efb6ca19f0153958460c3d141f04abc5c2e",
     "toolchain": {
-      "version": "go1.26.4",
-      "archive": "go1.26.4.windows-amd64.zip",
-      "sha256": "3ca8fb4630b07c419cbdd51f754e31363cfcfb83b3a5354d9e895c90be2cc345",
-      "url": "https://go.dev/dl/go1.26.4.windows-amd64.zip"
+      "version": "go1.26.8",
+      "archive": "go1.26.8.windows-amd64.zip",
+      "sha256": "b92c3b2adae85a11ba71fe7216daf0d84e82af4c8ab6c5625807f28622043a59",
+      "url": "https://go.dev/dl/go1.26.8.windows-amd64.zip"
     }
   },
   "singbox": {
     "version": "v1.14.1-extended-2.7.2",
     "commit": "55faa763f986f4ca8a492d9b2719bc6330d2bef5"
+  },
+  "hysteria": {
+    "version": "app/v2.12.3"
   },
   "inputs": {
     "windows": {
@@ -36,9 +39,9 @@
       "runtime/amnezia/go.sum": "b6e8c738a3eec160d0cc58d10ea6dbbf17886b122ed140a379bd9a29eec8df82"
     },
     "android": {
-      "core.properties": "d66d8587e2b118aa8bbc0fd25d654baeacf301f3d915fc6f6c12000e549ae4f2",
-      "core-patches/series.sha256": "c1a71b3277288bbf04a03fc80f46d167ef2d5665d15606d503ce71b89394ff18",
-      "core-patches/0005-official-amnezia-wg-unified.patch": "bfbdaa5e7b2884070022e17c484590fab4e6d3b7e0b96cc03dfd27cdd80ffb16"
+      "core.properties": "cd68234fee4c1bf79c0195201cad46c86d44433421d0c90402b6d6632e82d7a6",
+      "core-patches/series.sha256": "29abfe9917d66f70d7af2808fa0f1b898769c25cfc0452bb4ca2629275fae355",
+      "core-patches/0005-official-amnezia-wg-unified.patch": "3ec19f331b07c00dd66cd8d2761a946d4bf6f3bb9c118ba1276923ba556b2e59"
     }
   }
 }

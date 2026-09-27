@@ -33,10 +33,10 @@ are included in `core-patches/0004-protocol-runtime-modules.patch`.
 ## Hysteria core and extras
 
 - Source: <https://github.com/HyNetworks/hysteria>
-- Pinned tag: `app/v2.12.2`
-- Pinned commit: `619a6f856b69fb7ee6a7a379e810e68b84004605`
-- Modules: `github.com/apernet/hysteria/core/v2@v2.12.2` and
-  `github.com/apernet/hysteria/extras/v2@v2.12.2`.
+- Pinned tag: `app/v2.12.3`
+- Pinned commit: `e1366b173ccf5706e1e4630fe8aa654a4b574085`
+- Modules: `github.com/apernet/hysteria/core/v2@v2.12.3` and
+  `github.com/apernet/hysteria/extras/v2@v2.12.3`.
 - License: MIT.
 - Copyright: 2023 Toby.
 

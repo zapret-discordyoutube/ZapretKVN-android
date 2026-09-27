@@ -6,6 +6,7 @@
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
 Ядро sing-box обновлено до 1.14.1 — та же версия, что в приложении для Windows
+Встроенная Hysteria обновлена до 2.12.3
 Адреса серверов больше не видны в ошибках, журнале ядер, уведомлениях и диагностике
 Ручное правило «IP rule-set» в маршрутизации больше не мешает подключению
 Ссылки VLESS с устаревшим транспортом HTTP/2 отклоняются при импорте с подсказкой перейти на XHTTP
