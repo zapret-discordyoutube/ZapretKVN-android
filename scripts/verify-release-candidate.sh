@@ -160,9 +160,10 @@ if [[ -n "$EXPECTED_ABI" && "$ABI" != "$EXPECTED_ABI" ]]; then
     exit 1
 fi
 case "$ABI" in
-    arm64-v8a|armeabi-v7a) APK_LIMIT_MIB=96 ;;
-    # Owner-approved budget for the larger x86_64 official Xray integration.
-    x86_64) APK_LIMIT_MIB=112 ;;
+    # Owner-approved budgets (27.09.2026) for sing-box-extended 1.14.1: the
+    # larger core took arm64 to 111 MiB, armv7 to 102 MiB, x86_64 to 117.5 MiB.
+    arm64-v8a|armeabi-v7a) APK_LIMIT_MIB=120 ;;
+    x86_64) APK_LIMIT_MIB=128 ;;
     *) echo "Unsupported release APK ABI: $ABI" >&2; exit 1 ;;
 esac
 (( APK_SIZE > 0 && APK_SIZE <= APK_LIMIT_MIB * 1024 * 1024 )) || {

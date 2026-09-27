@@ -125,9 +125,9 @@ remote_tag_commit="$(
         git ls-remote origin "refs/tags/$TAG"
     } | awk 'NR == 1 {print $1}'
 )"
-if [[ -z "$remote_tag_commit" ]]; then
-    git push origin "refs/tags/$TAG"
-elif [[ "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
+# The tag is pushed only after the bundle is built and verified (below): a
+# pushed tag is immutable, so a build or gate failure must not burn it.
+if [[ -n "$remote_tag_commit" && "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
     echo "Remote tag points to a different commit: $TAG" >&2
     exit 1
 fi
@@ -266,6 +266,10 @@ else
     "$PROJECT_ROOT/scripts/verify-release-bundle.sh" "$TAG" "$STAGING_OUTPUT_DIR"
     mv "$STAGING_OUTPUT_DIR" "$OUTPUT_DIR"
     echo "Promoted verified release bundle atomically: $OUTPUT_DIR"
+fi
+
+if [[ -z "$remote_tag_commit" ]]; then
+    git push origin "refs/tags/$TAG"
 fi
 
 "$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" \
