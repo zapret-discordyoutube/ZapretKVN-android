@@ -100,18 +100,24 @@ jq -n \
         artifacts:$artifacts
     }' > "$OUTPUT_DIR/build-metadata.json"
 
+# The change list belongs to this build; a stale hard-coded list would
+# describe some earlier test build. Pass it as a Markdown bullet file.
+CHANGES_FILE="${ZAPRET_TEST_CHANGES_FILE:-}"
+if [[ -n "$CHANGES_FILE" ]]; then
+    [[ -f "$CHANGES_FILE" ]] || { echo "Missing test changes file: $CHANGES_FILE" >&2; exit 1; }
+    CHANGES="$(cat "$CHANGES_FILE")"
+else
+    CHANGES="- Test build of $(git -C "$PROJECT_ROOT" rev-parse --short HEAD)."
+fi
+
 cat > "$OUTPUT_DIR/RELEASE_NOTES.md" <<EOF
 # Zapret KVN $ZAPRET_VERSION_NAME
 
-host/emulator-verified; physical Android device not verified.
-Hysteria2 URI, TLS and diagnostics emulator-only test build.
+Test build; physical Android device not verified.
 
-- Embeds official Hysteria core/extras app/v2.12.2 for plain, Salamander and Gecko.
-- Preserves the exact imported URI and uses a secret-safe transport fingerprint for subscription identity.
-- Preserves certificate SHA-256 pinning, ECH, port hopping and Android-protected sockets; native JSON also supports custom CA and mTLS.
-- Adds diagnostic schema v6 with attempt/stage/profile/outbound/protocol context and opaque endpoints.
-- Uses synthetic test credentials only; Gecko is not confirmed on a physical Android device.
+$CHANGES
 
+- Core: sing-box-extended $CORE_TAG ($CORE_COMMIT).
 - Not a Stable or Beta-updater release.
 - Not for F-Droid or Telegram distribution.
 - Tested emulator APIs: $TESTED_APIS.
