@@ -69,6 +69,7 @@ class ImportException(message: String, cause: Throwable? = null) : Exception(mes
 /** Больше предупреждений пользователь всё равно не прочитает перед подтверждением. */
 private const val MAX_IMPORT_WARNINGS = 8
 private const val HYSTERIA2_MAX_PACKET_SIZE = 2048
+private val VLESS_REMOVED_TRANSPORTS = setOf("http", "h2")
 private val HYSTERIA2_SUPPORTED_OBFS_TYPES = setOf("none", "plain", "salamander", "gecko")
 private val HYSTERIA2_PASSWORD_OBFS_TYPES = setOf("salamander", "gecko")
 private val HYSTERIA2_DURATION = Regex(
@@ -336,6 +337,14 @@ object ShareLinkParser {
         val name = displayName(uri, "VLESS ${index + 1}")
         val uuid = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В VLESS отсутствует UUID.")
+        // VLESS работает на встроенном Xray-core, а он удалил HTTP/2-транспорт
+        // (type=http/h2) в пользу XHTTP; ядро отвергло бы такой профиль при запуске.
+        if (query["type"]?.lowercase() in VLESS_REMOVED_TRANSPORTS) {
+            throw ImportException(
+                "VLESS с транспортом '${query["type"]}' (HTTP/2) больше не поддерживается Xray-core. " +
+                    "Попросите у провайдера ссылку с type=xhttp.",
+            )
+        }
         return ProtocolOutboundBuilders.vless(
             uri = link,
             displayName = name,

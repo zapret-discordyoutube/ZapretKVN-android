@@ -119,6 +119,32 @@ class RoutingConfigEditorTest {
     }
 
     @Test
+    fun `IP rule-set rule is valid for the core and legacy ip_version array is replaced`() {
+        val rules = listOf(
+            ManagedRoutingRule(RoutingMatchType.IpRuleSet, listOf("user-ip"), RoutingRuleAction.Direct),
+        )
+        val result = RoutingConfigEditor.apply(profileWithRuleSet(), RoutingPreset.AllThroughVpn, rules, installed)
+        val ipRule = routeRules(result.json).single { rule ->
+            (rule["rule_set"] as? JsonArray)?.map { (it as JsonPrimitive).content } == listOf("user-ip")
+        }
+        // sing-box: ip_version — одно число; массив ядро отвергает при разборе.
+        assertFalse(ipRule.containsKey("ip_version"))
+        assertEquals("false", (ipRule["rule_set_ip_cidr_match_source"] as JsonPrimitive).content)
+        assertEquals(RoutingMatchType.IpRuleSet, result.inspection.rules.single().matchType)
+
+        // Конфиг, сохранённый старой версией, перегенерируется без старой метки.
+        val legacy = result.json.replace(
+            "\"rule_set_ip_cidr_match_source\": false",
+            "\"ip_version\": [4, 6]",
+        )
+        assertTrue(legacy.contains("\"ip_version\""))
+        assertEquals(RoutingMatchType.IpRuleSet, RoutingConfigEditor.inspect(legacy).rules.single().matchType)
+        val migrated = RoutingConfigEditor.apply(legacy, RoutingPreset.AllThroughVpn, rules, installed).json
+        assertFalse(migrated.contains("ip_version"))
+        assertEquals(1, routeRules(migrated).count { it.containsKey("rule_set_ip_cidr_match_source") })
+    }
+
+    @Test
     fun `unknown JSON and user remote rule-set survive managed edit`() {
         val source = profileWithRuleSet().replace(
             "\"route\": {",

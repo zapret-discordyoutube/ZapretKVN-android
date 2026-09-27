@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.config
 
+import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.hardening.RuntimeHardeningResult
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
@@ -624,7 +625,7 @@ object RuntimeConfigBuilder {
 
     private fun domainMatchForDns(root: JsonObject, rule: JsonObject): Map<String, JsonElement> {
         val match = rule.filterKeys(DOMAIN_MATCH_FIELDS::contains).toMutableMap()
-        if (rule["ip_version"] != null) {
+        if (RoutingConfigEditor.isIpRuleSetRule(rule)) {
             match.remove("rule_set")
         } else {
             val domainTags = stringArray(match["rule_set"]).filter { tag ->

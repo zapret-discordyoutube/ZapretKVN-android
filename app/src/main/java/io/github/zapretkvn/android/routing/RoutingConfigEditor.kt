@@ -261,7 +261,9 @@ object RoutingConfigEditor {
         fun routeRule(proxyTag: String, directTag: String): JsonObject = buildJsonObject {
             put("rule_set", JsonArray(tags.map(::JsonPrimitive)))
             if (source.matchType == RoutingMatchType.IpRuleSet) {
-                put("ip_version", JsonArray(listOf(JsonPrimitive(4), JsonPrimitive(6))))
+                // Метка IP-набора для обратного разбора. false — значение ядра по
+                // умолчанию (IP набора сверяется с адресом назначения), поведение не меняет.
+                put(IP_RULE_SET_MARKER, false)
             }
             when (source.action) {
                 RoutingRuleAction.Block -> put("action", "reject")
@@ -309,7 +311,7 @@ object RoutingConfigEditor {
             return null // Parsed together with its inline set below.
         }
         return ManagedRoutingRule(
-            matchType = if (rule["ip_version"] != null) {
+            matchType = if (isIpRuleSetRule(rule)) {
                 RoutingMatchType.IpRuleSet
             } else {
                 RoutingMatchType.DomainRuleSet
@@ -542,5 +544,22 @@ object RoutingConfigEditor {
         RoutingMatchType.DomainSuffix,
         RoutingMatchType.DomainRuleSet,
     )
-    private val SIMPLE_RULE_FIELDS = setOf("rule_set", "ip_version", "action", "outbound", "server")
+    private const val IP_RULE_SET_MARKER = "rule_set_ip_cidr_match_source"
+
+    // До 27.09.2026 метка была `ip_version: [4, 6]`, которую ядро отвергает
+    // (ip_version — одно число). Старую метку распознаём, чтобы apply()
+    // заменил такие правила новыми при следующем старте.
+    private const val LEGACY_IP_RULE_SET_MARKER = "ip_version"
+
+    fun isIpRuleSetRule(rule: JsonObject): Boolean =
+        rule[IP_RULE_SET_MARKER] != null || rule[LEGACY_IP_RULE_SET_MARKER] != null
+
+    private val SIMPLE_RULE_FIELDS = setOf(
+        "rule_set",
+        IP_RULE_SET_MARKER,
+        LEGACY_IP_RULE_SET_MARKER,
+        "action",
+        "outbound",
+        "server",
+    )
 }

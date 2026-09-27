@@ -432,6 +432,25 @@ class ImportParserTest {
     }
 
     @Test
+    fun `vless http2 transport removed from xray fails at import while trojan keeps it`() {
+        for (type in listOf("http", "h2")) {
+            val error = assertThrows(ImportException::class.java) {
+                ImportParser.parse(
+                    "vless://11111111-1111-4111-8111-111111111111@h2.example:443" +
+                        "?security=tls&type=$type&path=%2Fh2&host=h2.example",
+                    ProfileSource.Clipboard,
+                )
+            }
+            assertTrue(error.message.orEmpty().contains("type=xhttp"))
+        }
+        // Trojan работает на нативном sing-box, где HTTP/2-транспорт есть.
+        ImportParser.parse(
+            "trojan://secret@h2.example:443?security=tls&type=http&path=%2Fh2&host=h2.example",
+            ProfileSource.Clipboard,
+        )
+    }
+
+    @Test
     fun `vless xhttp maps XTLS URL encoded extra to pinned sing box transport`() {
         val extra = encodeURIComponent(
             """{"headers":{"Referer":"https://cdn.example/a+b"},"xmux":{"maxConcurrency":"16-32","hKeepAlivePeriod":10},"noGRPCHeader":true,"noSSEHeader":true,"xPaddingBytes":"100-1000","scMaxEachPostBytes":1000000,"scMinPostsIntervalMs":"20-40","scMaxBufferedPosts":30,"xPaddingPlacement":"header","uplinkHTTPMethod":"POST"}""",
