@@ -1,6 +1,6 @@
 # Zapret KVN
 
-![Zapret KVN для Android](assets/zapret-kvn-android-overview.png)
+![Zapret KVN для Android](assets/zapret-kvn-android-overview.webp)
 
 ### VPN, который пропускает только необходимое
 
