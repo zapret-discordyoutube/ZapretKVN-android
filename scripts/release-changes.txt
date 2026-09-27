@@ -5,4 +5,4 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Обновления публикуются только полным набором файлов — релиза с недостающими APK, как у 0.4.4, больше не будет
+Обновлён список российских IP-адресов для режима «Россия напрямую» — новые российские сети больше не идут через VPN
