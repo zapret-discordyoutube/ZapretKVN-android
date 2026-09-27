@@ -58,7 +58,6 @@ def comparison($name;$current;$candidate):
     ($rows | comparison("diagnostics_visible_vs_closed";"ui_closed";"ui_diagnostics_visible")),
     ($rows | comparison("dns_sequential_vs_parallel";"dns_sequential";"dns_parallel")),
     ($rows | comparison("mixed_vs_system";"stack_current_mixed";"stack_system")),
-    ($rows | comparison("mtu_default_vs_1500";"mtu_default_9000";"mtu_1500")),
-    ($rows | comparison("gc100_vs_gc10";"gc100_default";"gc10_experimental"))
+    ($rows | comparison("mtu_default_vs_1500";"mtu_default_9000";"mtu_1500"))
   ]
 }

@@ -165,7 +165,7 @@ done
 
 # The host-only verifier does not need naive/Cronet. Android libbox below is still
 # built by the pinned upstream builder with its complete Android tag set.
-CORE_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_trusttunnel,with_openvpn,with_sudoku,with_snell,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
+CORE_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_trusttunnel,with_openvpn,with_openconnect,with_usbip,with_sudoku,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
 go build \
     -trimpath \
     -tags "$CORE_TAGS" \
@@ -195,7 +195,9 @@ ZAPRET_RU_IP_SRS="$PROJECT_ROOT/app/src/main/assets/rule-sets/zapret-ru-ip.srs" 
         -count=1 \
         | tee "$OUTPUT_DIR/rule-set-benchmark.txt"
 rm -f "$SOURCE_DIR/route/rule/zapret_performance_test.go"
-go test ./dns/... ./route/rule ./experimental/libbox
+# libbox links runtime internals (oomprofile) and, like the upstream builder,
+# needs -checklinkname=0 for its test binary.
+go test -ldflags=-checklinkname=0 ./dns/... ./route/rule ./experimental/libbox
 install -m 0644 "$PROJECT_ROOT/audit/runtime_log_observer_test.go" "$SOURCE_DIR/daemon/zapret_observer_test.go"
 go test ./daemon -run '^TestZapretRuntimeLogObserver' -count=1
 rm -f "$SOURCE_DIR/daemon/zapret_observer_test.go"

@@ -1,76 +1,66 @@
 diff --git a/go.mod b/go.mod
-index 3fc14517..cd45c90f 100644
+index 23092463..ff070258 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -31,6 +31,7 @@ require (
- 	github.com/libdns/cloudflare v0.2.2
- 	github.com/logrusorgru/aurora v2.0.3+incompatible
- 	github.com/metacubex/utls v1.8.4
-+	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f
- 	github.com/mholt/acmez/v3 v3.1.6
- 	github.com/miekg/dns v1.1.72
- 	github.com/openai/openai-go/v3 v3.26.0
-@@ -136,6 +137,7 @@ require (
- 	github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa // indirect
- 	github.com/ameshkov/dnscrypt/v2 v2.4.0
- 	github.com/ameshkov/dnsstamps v1.0.3 // indirect
-+	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814
- 	github.com/andybalholm/brotli v1.2.1 // indirect
- 	github.com/caddyserver/zerossl v0.1.5 // indirect
- 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+@@ -105,6 +105,7 @@ require (
+ 	filippo.io/hpke v0.4.0 // indirect
+ 	github.com/OneOfOne/xxhash v1.2.8 // indirect
+ 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
++	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 // indirect
+ 	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
+ 	github.com/bahlo/generic-list-go v0.2.0 // indirect
+ 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+@@ -117,6 +118,7 @@ require (
+ 	github.com/go4org/hashtriemap v0.0.0-20251130024219-545ba229f689 // indirect
+ 	github.com/klauspost/reedsolomon v1.12.0 // indirect
+ 	github.com/lib/pq v1.10.9 // indirect
++	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f // indirect
+ 	github.com/ncruces/go-strftime v1.0.0 // indirect
+ 	github.com/opencontainers/image-spec v1.1.1 // indirect
+ 	github.com/panjf2000/ants/v2 v2.12.0 // indirect
 diff --git a/go.sum b/go.sum
-index 8538998b..670efe28 100644
+index f456520e..f73992ad 100644
 --- a/go.sum
 +++ b/go.sum
-@@ -22,6 +22,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V
+@@ -32,6 +32,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V
  github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa/go.mod h1:cEWa1LVoE5KvSD9ONXsZrj0z6KqySlCCNKHlLzbqAt4=
  github.com/ameshkov/dnsstamps v1.0.3 h1:Srzik+J9mivH1alRACTbys2xOxs0lRH9qnTA7Y1OYVo=
  github.com/ameshkov/dnsstamps v1.0.3/go.mod h1:Ii3eUu73dx4Vw5O4wjzmT5+lkCwovjzaEZZ4gKyIH5A=
 +github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 h1:l2AhBD+sFycU8Im81n/bZORMxW7fWtlZJEuJ4Hh0+z0=
 +github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814/go.mod h1:YoPc6qcOZqD7TXZ1xpedD8Sx3aSKsxN05ZqEFmXDNHk=
- github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
- github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
- github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAfT7CoSYSac11PY=
-@@ -252,6 +254,8 @@ github.com/mdlayher/socket v0.5.1 h1:VZaqt6RkGkt2OE9l3GcC6nZkqD3xKeQLyfleW/uBcos
- github.com/mdlayher/socket v0.5.1/go.mod h1:TjPLHI1UgwEv5J1B5q0zTZq12A/6H7nKmtTanQE37IQ=
- github.com/metacubex/utls v1.8.4 h1:HmL9nUApDdWSkgUyodfwF6hSjtiwCGGdyhaSpEejKpg=
- github.com/metacubex/utls v1.8.4/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
+ github.com/anchore/go-lzo v0.1.0 h1:NgAacnzqPeGH49Ky19QKLBZEuFRqtTG9cdaucc3Vncs=
+ github.com/anchore/go-lzo v0.1.0/go.mod h1:3kLx0bve2oN1iDwgM1U5zGku1Tfbdb0No5qp1eL1fIk=
+ github.com/andybalholm/brotli v1.1.1 h1:PR2pgnyFznKEugtsUo0xLdDop5SKXd5Qf5ysW+7XdTA=
+@@ -300,6 +302,8 @@ github.com/mdlayher/socket v0.6.0 h1:ScZPaAGyO1icQnbFrhPM8mnXyMu9qukC1K4ZoM2IQKU
+ github.com/mdlayher/socket v0.6.0/go.mod h1:q7vozUAnxSqnjHc12Fik5yUKIzfZ8ITCfMkhOtE9z18=
+ github.com/metacubex/utls v1.8.7 h1:Cp+yWkNTFkSihETgGWq34hlVFds5HpYWVOR1xovUVTs=
+ github.com/metacubex/utls v1.8.7/go.mod h1:kncGGVhFaoGn5M3pFe3SXhZCzsbCJayNOH4UEqTKTko=
 +github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f h1:FGBPRb1zUabhPhDrlKEjQ9lgIwQ6cHL4x8M9lrERhbk=
 +github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f/go.mod h1:oPGcV994OGJedmmxrcK9+ni7jUEMGhR+uVQAdaduIP4=
  github.com/mholt/acmez/v3 v3.1.6 h1:eGVQNObP0pBN4sxqrXeg7MYqTOWyoiYpQqITVWlrevk=
  github.com/mholt/acmez/v3 v3.1.6/go.mod h1:5nTPosTGosLxF3+LU4ygbgMRFDhbAVpqMI4+a4aHLBY=
  github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
-@@ -547,6 +551,8 @@ go.opentelemetry.io/otel/sdk/metric v1.44.0 h1:3LlKgI+VjbVsjNRFZJZAJ30WjXC5VkNRk
- go.opentelemetry.io/otel/sdk/metric v1.44.0/go.mod h1:5B5pMARnXxKhltooO4xUuCBorl65a4EpnTalObqOigA=
- go.opentelemetry.io/otel/trace v1.44.0 h1:jxF5CsGYCe74MCRx2X4g7WsY/VBKRqqpNvXlX/6gtIk=
- go.opentelemetry.io/otel/trace v1.44.0/go.mod h1:oLl1jrMQAVo6v3GAggN+1VH9VIz9iUSvW53sW1Q8PIE=
-+go.uber.org/atomic v1.11.0 h1:ZvwS0R+56ePWxUNi+Atn9dWONBPp/AUETXlHW0DxSjE=
-+go.uber.org/atomic v1.11.0/go.mod h1:LUxbIzbOniOlMKjJjyPfpl4v+PKK2cNJn91OQbhoJI0=
- go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
- go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
- go.uber.org/mock v0.5.2 h1:LbtPTcP8A5k9WPXj54PPPbjcI4Y6lhyOZXn+VS7wNko=
-@@ -668,6 +674,8 @@ gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
- gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
- gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
- gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
-+gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489 h1:ze1vwAdliUAr68RQ5NtufWaXaOg8WUO2OACzEV+TNdE=
-+gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489/go.mod h1:10sU+Uh5KKNv1+2x2A0Gvzt8FjD3ASIhorV3YsauXhk=
- honnef.co/go/tools v0.0.0-20190102054323-c2f93a96b099/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
- honnef.co/go/tools v0.0.0-20190523083050-ea95bdfd59fc/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
- howett.net/plist v1.0.1 h1:37GdZ8tP09Q35o9ych3ehygcsL+HqKSwzctveSlarvM=
 diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
-index 9a4a7d9d..ef5b7e04 100644
+index c2263a74..e31d0e1a 100644
 --- a/protocol/wireguard/endpoint.go
 +++ b/protocol/wireguard/endpoint.go
-@@ -307,7 +307,7 @@ func (w *Endpoint) PreferredAddress(address netip.Addr) bool {
+@@ -205,6 +205,9 @@ func (w *Endpoint) updateBind(ctx context.Context) {
+ }
+ 
+ func (w *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
++	if !w.endpoint.SupportsFlow() {
++		return adapter.PreMatchContinue
++	}
+ 	return adapter.PreMatchFlow
+ }
+ 
+@@ -364,5 +367,5 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
  	if !w.started.Load() {
  		return false
  	}
 -	return w.endpoint.Lookup(address) != nil
 +	return w.endpoint.Contains(address)
  }
- 
- func (w *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
 diff --git a/transport/wireguard/android_client_bind.go b/transport/wireguard/android_client_bind.go
 new file mode 100644
 index 00000000..5c151c82
@@ -446,10 +436,10 @@ index 00000000..5a835582
 +func (a testAddress) String() string  { return string(a) }
 diff --git a/transport/wireguard/android_engine.go b/transport/wireguard/android_engine.go
 new file mode 100644
-index 00000000..29b5f639
+index 00000000..027a215c
 --- /dev/null
 +++ b/transport/wireguard/android_engine.go
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,123 @@
 +package wireguard
 +
 +import (
@@ -470,6 +460,7 @@ index 00000000..29b5f639
 +	Up() error
 +	Down() error
 +	Close()
++	BindUpdate() error
 +	DisableSomeRoamingForBrokenMobileSemantics()
 +}
 +
@@ -573,79 +564,148 @@ index 00000000..29b5f639
 +	return err
 +}
 diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
-index 648d73f2..358832a1 100644
+index a2108279..62702e8f 100644
 --- a/transport/wireguard/endpoint.go
 +++ b/transport/wireguard/endpoint.go
-@@ -8,11 +8,10 @@ import (
+@@ -8,6 +8,7 @@ import (
  	"net"
  	"net/netip"
  	"os"
--	"reflect"
 +	"runtime"
  	"strconv"
  	"strings"
- 	"time"
--	"unsafe"
  
- 	"github.com/sagernet/sing-box/adapter"
- 	"github.com/sagernet/sing-box/common/dialer"
-@@ -37,8 +36,7 @@ type Endpoint struct {
+@@ -33,9 +34,10 @@ type Endpoint struct {
  	allowedAddress []netip.Prefix
  	tunDevice      Device
- 	natDevice      NatDevice
+ 	returnDevice   *returnDeviceWrapper
 -	device         *device.Device
--	allowedIPs     *device.AllowedIPs
 +	device         wireGuardEngine
+ 	allowedIPs     *device.AllowedIPs
+ 	egressPool     *tun.UDPEgressPool
++	androidEngine  bool
  	pause          pause.Manager
  	pauseCallback  *list.Element[pause.Callback]
  }
-@@ -182,8 +180,15 @@ func (e *Endpoint) Start(resolve bool) error {
- 	} else {
- 		deviceInput = e.tunDevice
+@@ -123,6 +125,7 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
+ 		allowedAddress: allowedAddresses,
+ 		tunDevice:      tunDevice,
+ 		returnDevice:   &returnDeviceWrapper{Device: tunDevice},
++		androidEngine:  runtime.GOOS == "android" && !options.System,
+ 	}, nil
+ }
+ 
+@@ -161,8 +164,20 @@ func (e *Endpoint) Start(postStart bool) error {
+ 			e.options.Logger.Error(fmt.Sprintf(strings.ToLower(format), args...))
+ 		},
  	}
--	wgDevice := device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
+-	wgDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
 -	e.tunDevice.SetDevice(wgDevice)
 +	var wgDevice wireGuardEngine
-+	if runtime.GOOS == "android" && !e.options.System {
++	if e.androidEngine {
++		err = e.resolveAndroidPeers()
++		if err != nil {
++			return err
++		}
 +		androidBind := NewAndroidClientBind(e.options.Context, e.options.Logger, e.options.Dialer, e.peers)
-+		wgDevice = NewAndroidWireGuardEngine(deviceInput, androidBind, logger, e.options.Amnezia != nil, e.options.Workers)
++		wgDevice = NewAndroidWireGuardEngine(e.tunDevice, androidBind, logger, e.options.Amnezia != nil, e.options.Workers)
 +		e.options.Logger.Info("wireguard engine: android split data-plane")
 +	} else {
-+		wgDevice = device.NewDevice(e.options.Context, deviceInput, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
-+		e.tunDevice.SetDevice(wgDevice.(*device.Device))
++		sagerDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
++		e.tunDevice.SetDevice(sagerDevice)
++		wgDevice = sagerDevice
 +	}
  	var ipcConf strings.Builder
  	ipcConf.WriteString(e.ipcConf)
  	if e.options.Amnezia != nil {
-@@ -269,12 +274,14 @@ func (e *Endpoint) Start(resolve bool) error {
+@@ -248,13 +263,17 @@ func (e *Endpoint) Start(postStart bool) error {
  		wgDevice.Close()
  		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
  	}
 +	if activator, isAndroidEngine := wgDevice.(androidEngineActivator); isAndroidEngine {
 +		activator.activate()
 +	}
- 	e.device = wgDevice
- 	e.pause = service.FromContext[pause.Manager](e.options.Context)
+ 	for _, peer := range e.peers {
+-		if !peer.destination.IsDomain() {
++		if e.androidEngine || !peer.destination.IsDomain() {
+ 			continue
+ 		}
++		sagerDevice := wgDevice.(*device.Device)
+ 		var publicKey device.NoisePublicKey
+ 		common.Must(publicKey.FromHex(peer.publicKeyHex))
+-		wgPeer, found := wgDevice.LookupActivePeer(publicKey)
++		wgPeer, found := sagerDevice.LookupActivePeer(publicKey)
+ 		if !found {
+ 			wgDevice.Close()
+ 			return E.New("missing configured peer: ", peer.destination)
+@@ -281,10 +300,39 @@ func (e *Endpoint) Start(postStart bool) error {
  	if e.pause != nil {
  		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
  	}
--	e.allowedIPs = (*device.AllowedIPs)(unsafe.Pointer(reflect.Indirect(reflect.ValueOf(wgDevice)).FieldByName("allowedips").UnsafeAddr()))
+-	e.allowedIPs = wgDevice.AllowedIPs()
++	if sagerDevice, isSagerDevice := wgDevice.(*device.Device); isSagerDevice {
++		e.allowedIPs = sagerDevice.AllowedIPs()
++	}
++	return nil
++}
++
++// resolveAndroidPeers pins domain peers to one resolved address. The official
++// engine used on Android has no per-peer endpoint resolver, so the address is
++// chosen once per start, as it was before sing-box 1.14.
++func (e *Endpoint) resolveAndroidPeers() error {
++	for peerIndex, peer := range e.peers {
++		if peer.endpoint.IsValid() || !peer.destination.IsDomain() {
++			continue
++		}
++		addresses, err := e.options.ResolvePeer(peer.destination.Fqdn)
++		if err != nil {
++			return E.Cause(err, "resolve endpoint domain for peer[", peerIndex, "]: ", peer.destination)
++		}
++		if len(addresses) == 0 {
++			return E.New("resolve endpoint domain for peer[", peerIndex, "]: ", peer.destination, ": no addresses")
++		}
++		e.peers[peerIndex].endpoint = netip.AddrPortFrom(addresses[0], peer.destination.Port)
++	}
  	return nil
  }
  
-@@ -305,11 +312,10 @@ func (e *Endpoint) Close() error {
- 	return nil
++// SupportsFlow reports whether TUN packets may be written straight into the
++// engine. Only the sagernet engine implements InputPackets; the Android
++// official engine keeps the stack data plane.
++func (e *Endpoint) SupportsFlow() bool {
++	return !e.androidEngine
++}
++
+ func (e *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+ 	if !destination.Addr.IsValid() {
+ 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
+@@ -324,6 +372,14 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
+ 	return e.allowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
  }
  
--func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
--	if e.allowedIPs == nil {
--		return nil
--	}
--	return e.allowedIPs.Lookup(address.AsSlice())
++// Contains reports whether address is routed into the tunnel. It does not
++// depend on the engine, so the Android official engine answers it as well.
 +func (e *Endpoint) Contains(address netip.Addr) bool {
 +	return common.Any(e.allowedAddress, func(prefix netip.Prefix) bool {
 +		return prefix.Contains(address)
 +	})
++}
++
+ func (e *Endpoint) BindUpdate() error {
+ 	if e.device == nil {
+ 		return nil
+diff --git a/transport/wireguard/port.go b/transport/wireguard/port.go
+index f410bad5..89707dbf 100644
+--- a/transport/wireguard/port.go
++++ b/transport/wireguard/port.go
+@@ -19,8 +19,8 @@ func (e *Endpoint) PortMTU() uint32 {
  }
  
- func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
+ func (e *Endpoint) WritePackets(packets [][]byte) error {
+-	wgDevice := e.device
+-	if wgDevice == nil {
++	wgDevice, isSagerDevice := e.device.(*device.Device)
++	if !isSagerDevice || wgDevice == nil {
+ 		return E.New("WireGuard device is not ready")
+ 	}
+ 	packetRefs := make([]*device.InputPacketRef, 0, len(packets))

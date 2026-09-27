@@ -72,7 +72,6 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         val mtu = intent.getIntExtra(EXTRA_MTU, 0)
         val dnsStrategy = intent.getStringExtra(EXTRA_DNS_STRATEGY).orEmpty().ifBlank { DNS_NONE }
         val proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 0)
-        val memoryLimit = intent.getBooleanExtra(EXTRA_MEMORY_LIMIT, false)
         require(routeMode in setOf(ROUTE_DIRECT, ROUTE_PROXY)) { "invalid-route-mode" }
         require(stack in setOf("", "mixed", "system")) { "invalid-stack" }
         require(mtu == 0 || mtu in 1280..9000) { "invalid-mtu" }
@@ -80,8 +79,6 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         if (routeMode == ROUTE_PROXY) require(proxyPort in 1..65535) { "invalid-proxy-port" }
 
         container.libboxRuntime.initialize().getOrThrow()
-        Libbox.setMemoryLimit(memoryLimit)
-        currentMemoryLimit = memoryLimit
         val base = baseConfig(routeMode, stack, mtu, proxyPort)
         val profileJson = if (dnsStrategy == DNS_NONE) {
             base
@@ -104,7 +101,7 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         container.uiSettingsStore.setDnsMode(DnsMode.FromJson)
         container.appSelectionStore.setMode(AppScopeMode.Include)
         container.appSelectionStore.replaceAllowlist(setOf(SETTINGS_PACKAGE))
-        return status(container) + ";route=$routeMode;stack=${stack.ifBlank { "default" }};mtu=$mtu;dns=$dnsStrategy;gc10=$memoryLimit"
+        return status(container) + ";route=$routeMode;stack=${stack.ifBlank { "default" }};mtu=$mtu;dns=$dnsStrategy"
     }
 
     private suspend fun connect(container: AppContainer): String {
@@ -148,8 +145,6 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         container.appSelectionStore.replaceAllowlist(emptySet())
         container.appSelectionStore.setMode(AppScopeMode.Include)
         VpnTestHooks.reset()
-        if (currentMemoryLimit) Libbox.setMemoryLimit(false)
-        currentMemoryLimit = false
         return status(container)
     }
 
@@ -257,7 +252,6 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
             "uidTxBytes=${TrafficStats.getUidTxBytes(Process.myUid())}",
             "fds=${File("/proc/self/fd").list().orEmpty().size}",
             "threads=${File("/proc/self/task").list().orEmpty().size}",
-            "gc10=$currentMemoryLimit",
         ).joinToString(";")
     }
 
@@ -350,7 +344,6 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         private const val EXTRA_MTU = "mtu"
         private const val EXTRA_DNS_STRATEGY = "dns_strategy"
         private const val EXTRA_PROXY_PORT = "proxy_port"
-        private const val EXTRA_MEMORY_LIMIT = "memory_limit"
         private const val EXTRA_ADDRESS = "address"
         private const val EXTRA_PORT = "port"
         private const val EXTRA_BYTES = "bytes"
@@ -376,8 +369,5 @@ class Gate8PerformanceProbeReceiver : BroadcastReceiver() {
         private const val CONNECTION_TIMEOUT_MILLIS = 30_000L
         private const val STOP_TIMEOUT_MILLIS = 20_000L
         private const val STREAM_TIMEOUT_MILLIS = 5_000L
-
-        @Volatile
-        private var currentMemoryLimit = false
     }
 }

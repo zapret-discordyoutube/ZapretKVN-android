@@ -108,6 +108,7 @@ import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.ConnectionEvents
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LogIterator
+import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.RelayDelayProbeHandler
@@ -3297,6 +3298,8 @@ class ZapretVpnService : VpnService() {
             check(!enabled) { "Системный proxy не поддерживается." }
         }
         override fun writeDebugMessage(message: String) = Unit
+        override fun triggerNativeCrash() = throw UnsupportedOperationException("Отладочный крэш ядра отключён.")
+        override fun connectSSHAgent(): Int = throw UnsupportedOperationException("SSH-агент недоступен на Android.")
     }
 
     internal abstract class BaseClientHandler : CommandClientHandler {
@@ -3310,6 +3313,7 @@ class ZapretVpnService : VpnService() {
         override fun updateClashMode(newMode: String) = Unit
         override fun writeConnectionEvents(events: ConnectionEvents) = Unit
         override fun writeGroups(message: OutboundGroupIterator) = Unit
+        override fun writeOutbounds(message: OutboundGroupItemIterator) = Unit
     }
 
     private class StatusClientHandler(

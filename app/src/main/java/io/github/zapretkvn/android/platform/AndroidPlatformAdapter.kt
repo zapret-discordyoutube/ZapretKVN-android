@@ -21,14 +21,19 @@ import io.github.zapretkvn.android.engines.singbox.consume
 import io.github.zapretkvn.android.network.AndroidLocalDnsTransport
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.vpn.ZapretVpnService
+import io.nekohasekai.libbox.BridgeOptions
+import io.nekohasekai.libbox.BridgeSession
 import io.nekohasekai.libbox.ConnectionOwner
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.LocalDNSTransport
+import io.nekohasekai.libbox.NeighborUpdateListener
 import io.nekohasekai.libbox.NetworkInterface as BoxNetworkInterface
 import io.nekohasekai.libbox.NetworkInterfaceIterator
 import io.nekohasekai.libbox.Notification
 import io.nekohasekai.libbox.PlatformInterface
+import io.nekohasekai.libbox.PlatformUser
+import io.nekohasekai.libbox.ShellSession
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
@@ -119,12 +124,13 @@ internal class AndroidPlatformAdapter(
         inet4Addresses.forEach { builder.addAddress(it.address, it.prefix) }
         inet6Addresses.forEach { builder.addAddress(it.address, it.prefix) }
 
-        options.dnsServerAddress.value
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
-            ?.also { internalDnsServer = it }
-            ?.let(builder::addDnsServer)
-            ?: error("libbox не вернул внутренний DNS-адрес TUN.")
+        // sing-box 1.14 отдаёт по адресу на каждое семейство TUN; зонды берут IPv4.
+        val dnsServers = options.dnsServerAddress.consume()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+        check(dnsServers.isNotEmpty()) { "libbox не вернул внутренний DNS-адрес TUN." }
+        dnsServers.forEach(builder::addDnsServer)
+        internalDnsServer = dnsServers.firstOrNull { !it.contains(':') } ?: dnsServers.first()
 
         val inet4Routes = options.inet4RouteRange.consume()
         val inet6Routes = options.inet6RouteRange.consume()
@@ -266,8 +272,35 @@ internal class AndroidPlatformAdapter(
     override fun localDNSTransport(): LocalDNSTransport = AndroidLocalDnsTransport {
         networkMonitor.current.network
     }
-    override fun systemCertificates(): StringIterator? = null
     override fun sendNotification(notification: Notification) = Unit
+    override fun cancelNotification(identifier: String, typeID: Int) = Unit
+    override fun registerMyInterface(name: String) = Unit
+
+    // Соседи (MAC/hostname) нужны только правилам по source MAC, их нет в наших
+    // конфигурациях. Пустая таблица вместо ошибки не засоряет журнал ядра.
+    override fun startNeighborMonitor(listener: NeighborUpdateListener) = Unit
+    override fun closeNeighborMonitor(listener: NeighborUpdateListener) = Unit
+
+    // SSH-сервер, Tailscale и bridge ядра на телефоне не используются.
+    override fun usePlatformShell(): Boolean = false
+    override fun checkPlatformShell() = unsupported("platform shell")
+    override fun openShellSession(
+        user: PlatformUser,
+        command: String,
+        environ: StringIterator,
+        term: String,
+        rows: Int,
+        cols: Int,
+    ): ShellSession = unsupported("platform shell")
+    override fun lookupUser(username: String): PlatformUser = unsupported("platform users")
+    override fun lookupSFTPServer(): String = unsupported("SFTP server")
+    override fun readSystemSSHHostKey(): String = unsupported("SSH host key")
+    override fun tailscaleHostname(): String = ""
+    override fun usePlatformBridge(): Boolean = false
+    override fun createBridge(options: BridgeOptions): BridgeSession = unsupported("platform bridge")
+
+    private fun unsupported(feature: String): Nothing =
+        throw UnsupportedOperationException("$feature недоступен на Android")
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

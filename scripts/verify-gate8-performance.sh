@@ -223,7 +223,6 @@ prepare() {
     local stack="$2"
     local mtu="$3"
     local dns="$4"
-    local gc10="$5"
     adb_call shell am force-stop "$PACKAGE" >/dev/null
     adb_call shell am start -W -n "$PACKAGE/io.github.zapretkvn.android.MainActivity" >/dev/null
     sleep 1
@@ -232,8 +231,7 @@ prepare() {
         --es stack "${stack:-default}" \
         --ei mtu "$mtu" \
         --es dns_strategy "$dns" \
-        --ei proxy_port "$PROXY_PORT" \
-        --ez memory_limit "$gc10" >/dev/null
+        --ei proxy_port "$PROXY_PORT" >/dev/null
     connected="$(probe "io.github.zapretkvn.android.debug.GATE8_PERF_CONNECT")"
     [[ ";$connected;" == *";state=connected;"* ]] || { echo "VPN did not connect: $connected" >&2; exit 1; }
     adb_call shell input keyevent KEYCODE_HOME >/dev/null
@@ -411,18 +409,18 @@ adb_call shell input keyevent KEYCODE_HOME >/dev/null
 adb_call shell input keyevent KEYCODE_SLEEP >/dev/null
 run_repeats "vpn_off_idle" idle
 
-prepare direct "" 0 none false
+prepare direct "" 0 none
 adb_call shell input keyevent KEYCODE_SLEEP >/dev/null
 run_repeats "vpn_idle" idle
 run_repeats "unselected_direct" unselected
 run_repeats "selected_direct" selected
 stop_vpn
 
-prepare proxy "" 0 none false
+prepare proxy "" 0 none
 run_repeats "selected_proxy" selected
 stop_vpn
 
-prepare direct "" 0 none false
+prepare direct "" 0 none
 adb_call shell input keyevent KEYCODE_WAKEUP >/dev/null
 adb_call shell wm dismiss-keyguard >/dev/null 2>&1 || true
 adb_call shell am start -W -n "$PACKAGE/io.github.zapretkvn.android.MainActivity" >/dev/null
@@ -444,37 +442,36 @@ adb_call shell input keyevent KEYCODE_HOME >/dev/null
 sleep 1
 stop_vpn
 
-prepare direct "" 0 sequential false
+prepare direct "" 0 sequential
 run_repeats "dns_sequential" dns
 stop_vpn
-prepare direct "" 0 parallel false
+prepare direct "" 0 parallel
 run_repeats "dns_parallel" dns
 stop_vpn
 
-prepare direct "" 0 none false
+prepare direct "" 0 none
 run_repeats "stack_current_mixed" selected
 stop_vpn
-prepare direct system 0 none false
+prepare direct system 0 none
 run_repeats "stack_system" selected
 stop_vpn
 
-prepare direct "" 0 none false
+prepare direct "" 0 none
 run_repeats "mtu_default_9000" selected
 stop_vpn
-prepare direct "" 1500 none false
+prepare direct "" 1500 none
 run_repeats "mtu_1500" selected
 stop_vpn
 
-prepare direct "" 0 none false
+# sing-box 1.14 no longer exposes the GC-percent switch (Libbox.setMemoryLimit),
+# so the gc10 experiment is gone; the default-GC run still owns the idle trace.
+prepare direct "" 0 none
 run_repeats "gc100_default" selected
-stop_vpn
-prepare direct "" 0 none true
-run_repeats "gc10_experimental" selected
 
 mkdir -p "$RAW_ROOT/system-trace"
 adb_call shell atrace -z -b 16384 -t 10 sched freq idle am wm gfx view binder_driver \
     > "$RAW_ROOT/system-trace/vpn-idle.atrace" 2> "$RAW_ROOT/system-trace/atrace.stderr" || true
-finish_raw_window "gc10_experimental"
+finish_raw_window "gc100_default"
 stop_vpn
 
 jq -s --argjson threshold "$SIGNIFICANCE_PERCENT" \

@@ -35,8 +35,9 @@ class LibboxRuntime(private val context: Context) {
                     debug = BuildConfig.DEBUG
                 },
             )
-            Libbox.setLocale(Locale.getDefault().toLanguageTag())
-            Libbox.setMemoryLimit(false)
+            // Локаль ядра косметическая (только тексты предупреждений); с 1.14
+            // неизвестная локаль — ошибка, и она не должна ронять запуск ядра.
+            runCatching { Libbox.setLocale(Locale.getDefault().toLanguageTag()) }
             initialized = true
             Result.success(Unit)
         } catch (error: Throwable) {

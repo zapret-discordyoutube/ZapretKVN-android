@@ -40,6 +40,10 @@ func (t *zapretAuditTransport) Exchange(ctx context.Context, message *dns.Msg) (
 	return t.exchange(ctx, message)
 }
 
+func (t *zapretAuditTransport) ExchangeAsync(ctx context.Context, message *dns.Msg, callback func(*dns.Msg, error)) {
+	callback(t.Exchange(ctx, message))
+}
+
 func zapretRequireInherited(t *testing.T, ctx context.Context, who string) {
 	t.Helper()
 	if ctx.Value(zapretAuditKey{}) != "shared" {

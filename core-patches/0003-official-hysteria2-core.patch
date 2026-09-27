@@ -61,95 +61,55 @@ index 21fe38d5..66282674 100644
  	return d.queryOptions
  }
 diff --git a/go.mod b/go.mod
-index cd45c90f..c7b37578 100644
+index ff070258..1236be58 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -7,10 +7,12 @@ require (
+@@ -9,12 +9,14 @@ require (
  	github.com/Diniboy1123/connect-ip-go v0.0.0-20260409225322-8d7bb0a858a2
  	github.com/anthropics/anthropic-sdk-go v1.26.0
  	github.com/anytls/sing-anytls v0.0.11
 +	github.com/apernet/hysteria/core/v2 v2.12.2
 +	github.com/apernet/hysteria/extras/v2 v2.12.2
  	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
+ 	github.com/caddyserver/zerossl v0.1.5
  	github.com/coder/websocket v1.8.14
+ 	github.com/creack/pty v1.1.24
  	github.com/cretz/bine v0.2.0
 -	github.com/database64128/tfo-go/v2 v2.3.2
 +	github.com/database64128/tfo-go/v2 v2.3.3
  	github.com/dblohm7/wingoes v0.0.0-20240119213807-a09d6be7affa
  	github.com/enfein/mieru/v3 v3.33.0
  	github.com/go-chi/chi/v5 v5.2.5
-@@ -72,12 +74,12 @@ require (
- 	github.com/yosida95/uritemplate/v3 v3.0.2
- 	go.uber.org/zap v1.28.0
- 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
--	golang.org/x/crypto v0.53.0
-+	golang.org/x/crypto v0.54.0
- 	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90
--	golang.org/x/mod v0.36.0
--	golang.org/x/net v0.56.0
--	golang.org/x/sync v0.21.0
--	golang.org/x/sys v0.46.0
-+	golang.org/x/mod v0.37.0
-+	golang.org/x/net v0.57.0
-+	golang.org/x/sync v0.22.0
-+	golang.org/x/sys v0.47.0
- 	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
- 	google.golang.org/grpc v1.79.1
- 	google.golang.org/protobuf v1.36.11
-@@ -87,6 +89,7 @@ require (
- 
- require (
+@@ -106,6 +108,7 @@ require (
  	github.com/OneOfOne/xxhash v1.2.8 // indirect
+ 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
+ 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814 // indirect
 +	github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e // indirect
+ 	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
  	github.com/bahlo/generic-list-go v0.2.0 // indirect
  	github.com/cespare/xxhash/v2 v2.3.0 // indirect
- 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-@@ -100,7 +103,7 @@ require (
- 	github.com/ncruces/go-strftime v1.0.0 // indirect
- 	github.com/opencontainers/image-spec v1.1.1 // indirect
- 	github.com/panjf2000/ants/v2 v2.12.0 // indirect
--	github.com/pion/dtls/v3 v3.1.2 // indirect
-+	github.com/pion/dtls/v3 v3.1.4 // indirect
- 	github.com/pion/ice/v4 v4.2.1 // indirect
- 	github.com/pion/logging v0.2.4 // indirect
- 	github.com/pion/mdns/v2 v2.1.0 // indirect
-@@ -109,12 +112,14 @@ require (
- 	github.com/pion/sctp v1.9.2 // indirect
+@@ -131,7 +134,7 @@ require (
+ 	github.com/pion/sctp v1.9.4 // indirect
  	github.com/pion/sdp/v3 v3.0.18 // indirect
  	github.com/pion/srtp/v3 v3.0.10 // indirect
 -	github.com/pion/stun/v3 v3.1.1 // indirect
--	github.com/pion/transport/v4 v4.0.1 // indirect
 +	github.com/pion/stun/v3 v3.1.6 // indirect
-+	github.com/pion/transport/v4 v4.0.2 // indirect
+ 	github.com/pion/transport/v4 v4.1.0 // indirect
  	github.com/pion/turn/v4 v4.1.4 // indirect
  	github.com/pkg/errors v0.9.1 // indirect
+@@ -139,6 +142,7 @@ require (
  	github.com/redis/go-redis/v9 v9.8.0 // indirect
-+	github.com/refraction-networking/utls v1.8.2 // indirect
+ 	github.com/refraction-networking/utls v1.8.2 // indirect
  	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-+	github.com/stretchr/objx v0.5.2 // indirect
++	github.com/stretchr/objx v0.5.3 // indirect
  	github.com/tjfoc/gmsm v1.4.1 // indirect
  	github.com/tylertreat/BoomFilters v0.0.0-20251117164519-53813c36cc1b // indirect
  	github.com/wlynxg/anet v0.0.5 // indirect
-@@ -237,10 +242,10 @@ require (
- 	go.uber.org/zap/exp v0.3.0 // indirect
- 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
- 	golang.org/x/oauth2 v0.34.0 // indirect
--	golang.org/x/term v0.44.0 // indirect
--	golang.org/x/text v0.38.0 // indirect
--	golang.org/x/time v0.14.0
--	golang.org/x/tools v0.45.0 // indirect
-+	golang.org/x/term v0.45.0 // indirect
-+	golang.org/x/text v0.40.0 // indirect
-+	golang.org/x/time v0.15.0
-+	golang.org/x/tools v0.47.0 // indirect
- 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
- 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
- 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 diff --git a/go.sum b/go.sum
-index 670efe28..ac68f18d 100644
+index f73992ad..b84f2abb 100644
 --- a/go.sum
 +++ b/go.sum
-@@ -30,6 +30,12 @@ github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAf
+@@ -44,6 +44,12 @@ github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAf
  github.com/anthropics/anthropic-sdk-go v1.26.0/go.mod h1:qUKmaW+uuPB64iy1l+4kOSvaLqPXnHTTBKH6RVZ7q5Q=
  github.com/anytls/sing-anytls v0.0.11 h1:w8e9Uj1oP3m4zxkyZDewPk0EcQbvVxb7Nn+rapEx4fc=
  github.com/anytls/sing-anytls v0.0.11/go.mod h1:7rjN6IukwysmdusYsrV51Fgu1uW6vsrdd6ctjnEAln8=
@@ -159,167 +119,46 @@ index 670efe28..ac68f18d 100644
 +github.com/apernet/hysteria/extras/v2 v2.12.2/go.mod h1:QzIFayY1vN8qxX/VpZF+7CGguFpbKDvxbSRp9FmX9V4=
 +github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e h1:5mgtR5gwIgBKMiGI1QdXldZZ+SNor06Nbu1wCBulQBg=
 +github.com/apernet/quic-go v0.61.1-0.20260806010916-184d081eef3e/go.mod h1:x7qxEvX6MCVtDuBKHj3E+88+BtrbEMuAL5qGUKItjW8=
+ github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 h1:bXAPYSbdYbS5VTy92NIUbeDI1qyggi+JYh5op9IFlcQ=
+ github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02/go.mod h1:k08r+Yj1PRAmuayFiRK6MYuR5Ve4IuZtTfxErMIh0+c=
  github.com/babolivier/go-doh-client v0.0.0-20201028162107-a76cff4cb8b6 h1:4NNbNM2Iq/k57qEu7WfL67UrbPq1uFWxW4qODCohi+0=
- github.com/babolivier/go-doh-client v0.0.0-20201028162107-a76cff4cb8b6/go.mod h1:J29hk+f9lJrblVIfiJOtTFk+OblBawmib4uz/VdKzlg=
- github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
-@@ -66,8 +72,8 @@ github.com/d4l3k/messagediff v1.2.1 h1:ZcAIMYsUg0EAp9X+tt8/enBE/Q8Yd5kzPynLyKptt
- github.com/d4l3k/messagediff v1.2.1/go.mod h1:Oozbb1TVXFac9FtSIxHBMnBCq2qeH/2KkEQxENCrlLo=
- github.com/database64128/netx-go v0.1.1 h1:dT5LG7Gs7zFZBthFBbzWE6K8wAHjSNAaK7wCYZT7NzM=
+@@ -90,6 +96,8 @@ github.com/database64128/netx-go v0.1.1 h1:dT5LG7Gs7zFZBthFBbzWE6K8wAHjSNAaK7wCY
  github.com/database64128/netx-go v0.1.1/go.mod h1:LNlYVipaYkQArRFDNNJ02VkNV+My9A5XR/IGS7sIBQc=
--github.com/database64128/tfo-go/v2 v2.3.2 h1:UhZMKiMq3swZGUiETkLBDzQnZBPSAeBMClpJGlnJ5Fw=
--github.com/database64128/tfo-go/v2 v2.3.2/go.mod h1:GC3uB5oa4beGpCUbRb2ZOWP73bJJFmMyAVgQSO7r724=
+ github.com/database64128/tfo-go/v2 v2.3.2 h1:UhZMKiMq3swZGUiETkLBDzQnZBPSAeBMClpJGlnJ5Fw=
+ github.com/database64128/tfo-go/v2 v2.3.2/go.mod h1:GC3uB5oa4beGpCUbRb2ZOWP73bJJFmMyAVgQSO7r724=
 +github.com/database64128/tfo-go/v2 v2.3.3 h1:M0X1SgOirhSvMKI8VQfgUtNVM53L6Rzg9Z+DN6fLA50=
 +github.com/database64128/tfo-go/v2 v2.3.3/go.mod h1:floVt2REc8xeOxFIyttPCvnd6XPIyHPTQ4fDA3EXdUs=
  github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
  github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
  github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
-@@ -288,8 +294,8 @@ github.com/pierrec/lz4/v4 v4.1.27 h1:+PhzhWDrjRj89TH2sw43nE3+4+W8lSxIuQadEHZyjUk
- github.com/pierrec/lz4/v4 v4.1.27/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
- github.com/pion/datachannel v1.6.0 h1:XecBlj+cvsxhAMZWFfFcPyUaDZtd7IJvrXqlXD/53i0=
- github.com/pion/datachannel v1.6.0/go.mod h1:ur+wzYF8mWdC+Mkis5Thosk+u/VOL287apDNEbFpsIk=
--github.com/pion/dtls/v3 v3.1.2 h1:gqEdOUXLtCGW+afsBLO0LtDD8GnuBBjEy6HRtyofZTc=
--github.com/pion/dtls/v3 v3.1.2/go.mod h1:Hw/igcX4pdY69z1Hgv5x7wJFrUkdgHwAn/Q/uo7YHRo=
-+github.com/pion/dtls/v3 v3.1.4 h1:QhvtMflMfu9Kf0RcDC5BJBle4caPskByrKQR6uuYqpY=
-+github.com/pion/dtls/v3 v3.1.4/go.mod h1:cr/qotLISUw/9C1m83ZPNZtj9WnXkYLpfCptPqbkInc=
- github.com/pion/ice/v4 v4.2.1 h1:XPRYXaLiFq3LFDG7a7bMrmr3mFr27G/gtXN3v/TVfxY=
- github.com/pion/ice/v4 v4.2.1/go.mod h1:2quLV1S5v1tAx3VvAJaH//KGitRXvo4RKlX6D3tnN+c=
- github.com/pion/interceptor v0.1.44 h1:sNlZwM8dWXU9JQAkJh8xrarC0Etn8Oolcniukmuy0/I=
-@@ -310,12 +316,12 @@ github.com/pion/sdp/v3 v3.0.18 h1:l0bAXazKHpepazVdp+tPYnrsy9dfh7ZbT8DxesH5ZnI=
- github.com/pion/sdp/v3 v3.0.18/go.mod h1:ZREGo6A9ZygQ9XkqAj5xYCQtQpif0i6Pa81HOiAdqQ8=
- github.com/pion/srtp/v3 v3.0.10 h1:tFirkpBb3XccP5VEXLi50GqXhv5SKPxqrdlhDCJlZrQ=
+@@ -360,6 +368,8 @@ github.com/pion/srtp/v3 v3.0.10 h1:tFirkpBb3XccP5VEXLi50GqXhv5SKPxqrdlhDCJlZrQ=
  github.com/pion/srtp/v3 v3.0.10/go.mod h1:3mOTIB0cq9qlbn59V4ozvv9ClW/BSEbRp4cY0VtaR7M=
--github.com/pion/stun/v3 v3.1.1 h1:CkQxveJ4xGQjulGSROXbXq94TAWu8gIX2dT+ePhUkqw=
--github.com/pion/stun/v3 v3.1.1/go.mod h1:qC1DfmcCTQjl9PBaMa5wSn3x9IPmKxSdcCsxBcDBndM=
+ github.com/pion/stun/v3 v3.1.1 h1:CkQxveJ4xGQjulGSROXbXq94TAWu8gIX2dT+ePhUkqw=
+ github.com/pion/stun/v3 v3.1.1/go.mod h1:qC1DfmcCTQjl9PBaMa5wSn3x9IPmKxSdcCsxBcDBndM=
 +github.com/pion/stun/v3 v3.1.6 h1:WnhsD0eHCiwCfKNkVx0VJJwr2Y3eV4Ueih3KJ+dfZy8=
 +github.com/pion/stun/v3 v3.1.6/go.mod h1:zRUghXSQU32Lx5orJsz3uYMkIihweXb3mu5gIns02fs=
  github.com/pion/transport/v3 v3.1.1 h1:Tr684+fnnKlhPceU+ICdrw6KKkTms+5qHMgw6bIkYOM=
  github.com/pion/transport/v3 v3.1.1/go.mod h1:+c2eewC5WJQHiAA46fkMMzoYZSuGzA/7E2FPrOYHctQ=
--github.com/pion/transport/v4 v4.0.1 h1:sdROELU6BZ63Ab7FrOLn13M6YdJLY20wldXW2Cu2k8o=
--github.com/pion/transport/v4 v4.0.1/go.mod h1:nEuEA4AD5lPdcIegQDpVLgNoDGreqM/YqmEx3ovP4jM=
-+github.com/pion/transport/v4 v4.0.2 h1:ifYlPqNwsy6aKQ9y8yzxXlHae5431ZrH2avkD/Rn6Tk=
-+github.com/pion/transport/v4 v4.0.2/go.mod h1:06hFI+jCFcok2X2MekVufNZ/uzNZXivGBPfviSVcjgM=
- github.com/pion/turn/v4 v4.1.4 h1:EU11yMXKIsK43FhcUnjLlrhE4nboHZq+TXBIi3QpcxQ=
- github.com/pion/turn/v4 v4.1.4/go.mod h1:ES1DXVFKnOhuDkqn9hn5VJlSWmZPaRJLyBXoOeO/BmQ=
- github.com/pion/webrtc/v4 v4.2.9 h1:DZIh1HAhPIL3RvwEDFsmL5hfPSLEpxsQk9/Jir2vkJE=
-@@ -340,6 +346,8 @@ github.com/rasky/go-lzo v0.0.0-20200203143853-96a758eda86e h1:dCWirM5F3wMY+cmRda
- github.com/rasky/go-lzo v0.0.0-20200203143853-96a758eda86e/go.mod h1:9leZcVcItj6m9/CfHY5Em/iBrCz7js8LcRQGTKEEv2M=
- github.com/redis/go-redis/v9 v9.8.0 h1:q3nRvjrlge/6UD7eTu/DSg2uYiU2mCL0G/uzBWqhicI=
- github.com/redis/go-redis/v9 v9.8.0/go.mod h1:huWgSWd8mW6+m0VPhJjSSQ+d6Nh1VICQ6Q5lHuCH/Iw=
-+github.com/refraction-networking/utls v1.8.2 h1:j4Q1gJj0xngdeH+Ox/qND11aEfhpgoEvV+S9iJ2IdQo=
-+github.com/refraction-networking/utls v1.8.2/go.mod h1:jkSOEkLqn+S/jtpEHPOsVv/4V4EVnelwbMQl4vCWXAM=
- github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
- github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
- github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
-@@ -573,8 +581,8 @@ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACk
- golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
- golang.org/x/crypto v0.0.0-20201012173705-84dcc777aaee/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
- golang.org/x/crypto v0.0.0-20210513164829-c07d793c2f9a/go.mod h1:P+XmwS30IXTQdn5tA2iutPOUgjI07+tq3H3K9MVA1s8=
--golang.org/x/crypto v0.53.0 h1:QZ4Muo8THX6CizN2vPPd5fBGHyogrdK9fG4wLPFUsto=
--golang.org/x/crypto v0.53.0/go.mod h1:DNLU434OwVakk9PzuwV8w62mAJpRJL3vsgcfp4Qnsio=
-+golang.org/x/crypto v0.54.0 h1:YLIA59K4fiNzHzjnZt2tUJQjQtUWfWbeHBqKtk3eScw=
-+golang.org/x/crypto v0.54.0/go.mod h1:KWL8ny2AZdGR2cWmzeHrp2azQPGogOv+HeQaVEXC2dk=
- golang.org/x/exp v0.0.0-20190121172915-509febef88a4/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
- golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 h1:jiDhWWeC7jfWqR9c/uplMOqJ0sbNlNWv0UkzE0vX1MA=
- golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90/go.mod h1:xE1HEv6b+1SCZ5/uscMRjUBKtIxworgEcEi+/n9NQDQ=
-@@ -583,8 +591,8 @@ golang.org/x/image v0.27.0/go.mod h1:xbdrClrAUway1MUTEZDq9mz/UpRwYAkFFNUslZtcB+g
- golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=
- golang.org/x/lint v0.0.0-20190227174305-5b3e6a55c961/go.mod h1:wehouNa3lNwaWXcvxsM5YxQ5yQlVC4a0KAMCusXpPoU=
- golang.org/x/lint v0.0.0-20190313153728-d0100b6bd8b3/go.mod h1:6SW0HCj/g11FgYtHlgUYUwCkIfeOF89ocIRzGO/8vkc=
--golang.org/x/mod v0.36.0 h1:JJjpVx6myfUsUdAzZuOSTTmRE0PfZeNWzzvKrP7amb4=
--golang.org/x/mod v0.36.0/go.mod h1:moc6ELqsWcOw5Ef3xVprK5ul/MvtVvkIXLziUOICjUQ=
-+golang.org/x/mod v0.37.0 h1:vF1DjpVEshcIqoEaauuHebaLk1O1forxjxBaVn884JQ=
-+golang.org/x/mod v0.37.0/go.mod h1:m8S8VeM9r4dzDwjrKO0a1sZP3YjeMamRRlD+fmR2Q/0=
- golang.org/x/net v0.0.0-20180724234803-3673e40ba225/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
- golang.org/x/net v0.0.0-20180826012351-8a410e7b638d/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
- golang.org/x/net v0.0.0-20190213061140-3a22650c66bd/go.mod h1:mL1N/T3taQHkDXs73rZJwtUhF3w3ftmwwsq0BUmARs4=
-@@ -593,8 +601,8 @@ golang.org/x/net v0.0.0-20190404232315-eb5bcb51f2a3/go.mod h1:t9HGtf8HONx5eT2rtn
- golang.org/x/net v0.0.0-20201010224723-4f7140c49acb/go.mod h1:sp8m0HH+o8qH0wwXwYZr8TS3Oi6o0r6Gce1SSxlDquU=
- golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v0D8zg8gWTRqZa9RBIspLL5mdg=
- golang.org/x/net v0.0.0-20210525063256-abc453219eb5/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
--golang.org/x/net v0.56.0 h1:Rw8j/hFzGvJUZwNBXnAtf5sVDVt+65SK2C7IxCxZt5o=
--golang.org/x/net v0.56.0/go.mod h1:D3Ku6r+V6JROoZK144D2XfMHFcMq/0zSfLelVTCFKec=
-+golang.org/x/net v0.57.0 h1:K5+3DljvIuDG9/Jv9rvyMywYNFCQ9RSUY6OOTTkT+tE=
-+golang.org/x/net v0.57.0/go.mod h1:KpXc8iv+r3XplLAG/f7Jsf9RPszJzdR0f58q9vGOuEU=
- golang.org/x/oauth2 v0.0.0-20180821212333-d2e6202438be/go.mod h1:N/0e6XlmueqKjAGxoOufVs8QHGRruUQn6yWY3a++T0U=
- golang.org/x/oauth2 v0.34.0 h1:hqK/t4AKgbqWkdkcAeI8XLmbK+4m4G5YeQRrmiotGlw=
- golang.org/x/oauth2 v0.34.0/go.mod h1:lzm5WQJQwKZ3nwavOZ3IS5Aulzxi68dUSgRHujetwEA=
-@@ -602,8 +610,8 @@ golang.org/x/sync v0.0.0-20180314180146-1d60e4601c6f/go.mod h1:RxMgew5VJxzue5/jJ
- golang.org/x/sync v0.0.0-20181108010431-42b317875d0f/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
- golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
- golang.org/x/sync v0.0.0-20210220032951-036812b2e83c/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
--golang.org/x/sync v0.21.0 h1:HLII4xRRTtCRkxYp4HNFF0Js/Og6q2i++KXbg0gHCwM=
--golang.org/x/sync v0.21.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
-+golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
-+golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
- golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
- golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
- golang.org/x/sys v0.0.0-20190412213103-97732733099d/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
-@@ -614,25 +622,25 @@ golang.org/x/sys v0.0.0-20201119102817-f84b799fce68/go.mod h1:h1NjWce9XRLGQEsW7w
- golang.org/x/sys v0.0.0-20210423082822-04245dca01da/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
- golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
- golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
--golang.org/x/sys v0.46.0 h1:noSf2Fq6F8DBgS+LysIkx7rIExoNHJsxOAtPp4rthXw=
--golang.org/x/sys v0.46.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
-+golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
-+golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
- golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
--golang.org/x/term v0.44.0 h1:0rLvDRCtNj0gZkyIXhCyOb2OAzEhLVqc4B+hrsBhrmc=
--golang.org/x/term v0.44.0/go.mod h1:7ze4MdzUzLXpSAoFP1H0bOI9aXDqveSvatT5vKcFh2Y=
-+golang.org/x/term v0.45.0 h1:NwWyBmoJCbfTHpxrWoZ9C6/VxOf7ic219I8xZZFdrf0=
-+golang.org/x/term v0.45.0/go.mod h1:9aqxs0blBcrm/n0L9QW0aRVD+ktan8ssZromtqJC43w=
- golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
- golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
- golang.org/x/text v0.3.6/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
--golang.org/x/text v0.38.0 h1:sXmwo9DwP3OK9EZ7PqAdaooSGozfl/3a6/xJcbzPRhE=
--golang.org/x/text v0.38.0/go.mod h1:YXZt3QhHUKYT53r2lLKFIVi6Ao1jdzrTR/KQ09qyxF4=
--golang.org/x/time v0.14.0 h1:MRx4UaLrDotUKUdCIqzPC48t1Y9hANFKIRpNx+Te8PI=
--golang.org/x/time v0.14.0/go.mod h1:eL/Oa2bBBK0TkX57Fyni+NgnyQQN4LitPmob2Hjnqw4=
-+golang.org/x/text v0.40.0 h1:Ub2Z6/xjgF1WrYQz2nuITOEegKFtiIy+rieRJ5lHZKs=
-+golang.org/x/text v0.40.0/go.mod h1:hpnzDAfGV753zIKo+wk3u1bVKCGPbrnF7+7LBF/UHVY=
-+golang.org/x/time v0.15.0 h1:bbrp8t3bGUeFOx08pvsMYRTCVSMk89u4tKbNOZbp88U=
-+golang.org/x/time v0.15.0/go.mod h1:Y4YMaQmXwGQZoFaVFk4YpCt4FLQMYKZe9oeV/f4MSno=
- golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
- golang.org/x/tools v0.0.0-20190114222345-bf090417da8b/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
- golang.org/x/tools v0.0.0-20190226205152-f727befe758c/go.mod h1:9Yl7xja0Znq3iFh3HoIrodX9oNMXvdceNzlUR8zjMvY=
- golang.org/x/tools v0.0.0-20190311212946-11955173bddd/go.mod h1:LCzVGOaR6xXOjkQ3onu1FJEFr0SW1gC7cKk1uF8kGRs=
- golang.org/x/tools v0.0.0-20190524140312-2c0ae7006135/go.mod h1:RgjU9mgBXZiqYHBnxXauZ1Gv1EHHAz9KjViQ78xBX0Q=
--golang.org/x/tools v0.45.0 h1:18qN3FAooORvApf5XjCXgsuayZOEtXf6JK18I3+ONa8=
--golang.org/x/tools v0.45.0/go.mod h1:LuUGqqaXcXMEFEruIVJVm5mgDD8vww/z/SR1gQ4uE/0=
-+golang.org/x/tools v0.47.0 h1:7Kn5x/d1svx/PzryTsqeoZN4TZwqeH5pGWjefhLi/1Q=
-+golang.org/x/tools v0.47.0/go.mod h1:dFHnyTvFWY212G+h7ZY4Vsp/K3U4/7W9TyVaAul8uCA=
- golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
- golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da h1:noIWHXmPHxILtqtCOPIhSt0ABwskkZKjD3bXGnZGpNY=
- golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da/go.mod h1:NDW/Ps6MPRej6fsCIbMTohpP40sJ/P/vI1MoTEGwX90=
+ github.com/pion/transport/v4 v4.1.0 h1:8S+nF2reM2cJuqC6g78OVy2BBgmbdns+acx3jA97BvQ=
 diff --git a/option/hysteria2.go b/option/hysteria2.go
-index a44daac8..fbdb9c96 100644
+index 68832de9..edc3ee35 100644
 --- a/option/hysteria2.go
 +++ b/option/hysteria2.go
-@@ -23,8 +23,10 @@ type Hysteria2InboundOptions struct {
- }
- 
- type Hysteria2Obfs struct {
--	Type     string `json:"type,omitempty"`
--	Password string `json:"password,omitempty"`
-+	Type          string `json:"type,omitempty"`
-+	Password      string `json:"password,omitempty"`
-+	MinPacketSize int    `json:"min_packet_size,omitempty"`
-+	MaxPacketSize int    `json:"max_packet_size,omitempty"`
- }
- 
- type Hysteria2User struct {
-@@ -112,13 +114,15 @@ type Hysteria2MasqueradeString struct {
+@@ -202,14 +202,16 @@ type Hysteria2MasqueradeString struct {
  type Hysteria2OutboundOptions struct {
  	DialerOptions
  	ServerOptions
--	ServerPorts badoption.Listable[string] `json:"server_ports,omitempty"`
--	HopInterval badoption.Duration         `json:"hop_interval,omitempty"`
--	UpMbps      int                        `json:"up_mbps,omitempty"`
--	DownMbps    int                        `json:"down_mbps,omitempty"`
--	Obfs        *Hysteria2Obfs             `json:"obfs,omitempty"`
--	Password    string                     `json:"password,omitempty"`
--	Network     NetworkList                `json:"network,omitempty"`
+-	ServerPorts    badoption.Listable[string] `json:"server_ports,omitempty"`
+-	HopInterval    badoption.Duration         `json:"hop_interval,omitempty"`
+-	HopIntervalMax badoption.Duration         `json:"hop_interval_max,omitempty"`
+-	UpMbps         int                        `json:"up_mbps,omitempty"`
+-	DownMbps       int                        `json:"down_mbps,omitempty"`
+-	Obfs           *Hysteria2Obfs             `json:"obfs,omitempty"`
+-	Password       string                     `json:"password,omitempty"`
+-	Network        NetworkList                `json:"network,omitempty"`
 +	ServerPorts       badoption.Listable[string] `json:"server_ports,omitempty"`
 +	HopInterval       badoption.Duration         `json:"hop_interval,omitempty"`
++	HopIntervalMax    badoption.Duration         `json:"hop_interval_max,omitempty"`
 +	UpMbps            int                        `json:"up_mbps,omitempty"`
 +	DownMbps          int                        `json:"down_mbps,omitempty"`
 +	Obfs              *Hysteria2Obfs             `json:"obfs,omitempty"`
@@ -328,10 +167,10 @@ index a44daac8..fbdb9c96 100644
 +	URI               string                     `json:"uri,omitempty"`
 +	Network           NetworkList                `json:"network,omitempty"`
  	OutboundTLSOptionsContainer
- 	BrutalDebug bool `json:"brutal_debug,omitempty"`
- }
+ 	QUICOptions
+ 	BBRProfile          string          `json:"bbr_profile,omitempty" enum:"standard,conservative,aggressive"`
 diff --git a/parser/link/hysteria2.go b/parser/link/hysteria2.go
-index d9486064..5ed0f8f8 100644
+index a825118d..e0014878 100644
 --- a/parser/link/hysteria2.go
 +++ b/parser/link/hysteria2.go
 @@ -1,61 +1,472 @@
@@ -384,8 +223,8 @@ index d9486064..5ed0f8f8 100644
 -		case "down":
 -			options.DownMbps, _ = strconv.Atoi(value)
 -		case "obfs":
--			if value == "salamander" {
--				Obfs.Type = "salamander"
+-			if value == "salamander" || value == "gecko" {
+-				Obfs.Type = value
 -				options.Obfs = Obfs
 -			}
 -		case "obfs-password":
@@ -577,8 +416,8 @@ index d9486064..5ed0f8f8 100644
 +		if result.obfs == nil || result.obfs.Type != "gecko" {
 +			return hysteria2URI{}, fmt.Errorf("Hysteria2 packet sizes require Gecko obfs")
 +		}
-+		result.obfs.MinPacketSize = minPacket
-+		result.obfs.MaxPacketSize = maxPacket
++		result.obfs.GeckoOptions.MinPacketSize = minPacket
++		result.obfs.GeckoOptions.MaxPacketSize = maxPacket
 +	}
 +	if value := query["ech"]; value != "" {
 +		result.echPEM, err = decodeHysteria2ECH(value)
@@ -848,7 +687,7 @@ index d9486064..5ed0f8f8 100644
 +}
 diff --git a/parser/link/hysteria2_test.go b/parser/link/hysteria2_test.go
 new file mode 100644
-index 00000000..2414fcf4
+index 00000000..98923720
 --- /dev/null
 +++ b/parser/link/hysteria2_test.go
 @@ -0,0 +1,99 @@
@@ -891,7 +730,7 @@ index 00000000..2414fcf4
 +		t.Fatalf("authentication/TLS fields were not parsed: %+v", parsed)
 +	}
 +	if parsed.obfs == nil || parsed.obfs.Type != "gecko" || parsed.obfs.Password != "cover" ||
-+		parsed.obfs.MinPacketSize != 900 || parsed.obfs.MaxPacketSize != 1200 {
++		parsed.obfs.GeckoOptions.MinPacketSize != 900 || parsed.obfs.GeckoOptions.MaxPacketSize != 1200 {
 +		t.Fatalf("Gecko fields were not parsed: %+v", parsed.obfs)
 +	}
 +	if parsed.upMbps != 20 || parsed.downMbps != 80 || parsed.hopInterval != 15*time.Second || parsed.echPEM == "" {
@@ -913,7 +752,7 @@ index 00000000..2414fcf4
 +		t.Fatalf("query dialect fields were not normalized: %+v", parsed)
 +	}
 +	if parsed.obfs == nil || parsed.obfs.Password != "cover key" ||
-+		parsed.obfs.MinPacketSize != 64 || parsed.obfs.MaxPacketSize != 128 {
++		parsed.obfs.GeckoOptions.MinPacketSize != 64 || parsed.obfs.GeckoOptions.MaxPacketSize != 128 {
 +		t.Fatalf("query Gecko fields were not normalized: %+v", parsed.obfs)
 +	}
 +}
@@ -965,10 +804,10 @@ index 092df20c..f34c2ccc 100644
  	case "tuic":
  		return parseTuicLink(link)
 diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
-index d4382fdc..cb90c95a 100644
+index 6576bf9f..3ea82556 100644
 --- a/protocol/hysteria2/outbound.go
 +++ b/protocol/hysteria2/outbound.go
-@@ -1,100 +1,182 @@
+@@ -1,192 +1,186 @@
  package hysteria2
  
  import (
@@ -981,7 +820,9 @@ index d4382fdc..cb90c95a 100644
 +	"encoding/hex"
 +	"encoding/pem"
  	"net"
-+	"net/netip"
+-	"net/http"
+ 	"net/netip"
+-	"net/url"
  	"os"
 +	"strings"
 +	"sync"
@@ -998,8 +839,10 @@ index d4382fdc..cb90c95a 100644
  	"github.com/sagernet/sing-box/log"
  	"github.com/sagernet/sing-box/option"
 -	"github.com/sagernet/sing-box/protocol/tuic"
+-	qtls "github.com/sagernet/sing-quic"
 -	"github.com/sagernet/sing-quic/hysteria"
 -	"github.com/sagernet/sing-quic/hysteria2"
+-	"github.com/sagernet/sing-quic/hysteria2/realm"
 -	"github.com/sagernet/sing/common"
 +	linkparser "github.com/sagernet/sing-box/parser/link"
  	"github.com/sagernet/sing/common/bufio"
@@ -1008,6 +851,7 @@ index d4382fdc..cb90c95a 100644
  	"github.com/sagernet/sing/common/logger"
  	M "github.com/sagernet/sing/common/metadata"
  	N "github.com/sagernet/sing/common/network"
+-	"github.com/sagernet/sing/service"
  )
  
 +const megabitBytesPerSecond = 1_000_000 / 8
@@ -1050,24 +894,25 @@ index d4382fdc..cb90c95a 100644
  	if options.TLS == nil || !options.TLS.Enabled {
  		return nil, C.ErrTLSRequired
  	}
--	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
+-	tlsServerAddress, tlsOptions, err := outboundTLSOptions(options)
+-	if err != nil {
 +	if options.Password == "" {
 +		return nil, E.New("missing password")
 +	}
++	if options.Realm != nil {
++		return nil, E.New("Hysteria2 realm is not supported by the official client")
++	}
 +	if err := validateObfs(options.Obfs); err != nil {
-+		return nil, err
-+	}
+ 		return nil, err
+ 	}
+-	tlsConfig, err := tls.NewClient(ctx, logger, tlsServerAddress, tlsOptions)
+-	if err != nil {
 +	if _, err := certificatePin(options.CertificateSHA256); err != nil {
-+		return nil, err
-+	}
-+	if _, err := upstreamTLSConfig(ctx, options); err != nil {
-+		return nil, err
-+	}
-+	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
- 	if err != nil {
  		return nil, err
  	}
 -	var salamanderPassword string
+-	var geckoPassword string
+-	var geckoMinPacketSize, geckoMaxPacketSize int
 -	if options.Obfs != nil {
 -		if options.Obfs.Password == "" {
 -			return nil, E.New("missing obfs password")
@@ -1075,23 +920,117 @@ index d4382fdc..cb90c95a 100644
 -		switch options.Obfs.Type {
 -		case hysteria2.ObfsTypeSalamander:
 -			salamanderPassword = options.Obfs.Password
+-		case hysteria2.ObfsTypeGecko:
+-			geckoPassword = options.Obfs.Password
+-			geckoMinPacketSize = options.Obfs.GeckoOptions.MinPacketSize
+-			geckoMaxPacketSize = options.Obfs.GeckoOptions.MaxPacketSize
 -		default:
 -			return nil, E.New("unknown obfs type: ", options.Obfs.Type)
+-		}
++	if _, err := upstreamTLSConfig(ctx, options); err != nil {
++		return nil, err
+ 	}
+-	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
+-		Context:        ctx,
+-		Options:        options.DialerOptions,
+-		RemoteIsDomain: options.ServerIsDomain(),
+-	})
++	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	var realmOptions *realm.Options
+-	if options.Realm != nil {
+-		queryOptions, err := adapter.DNSQueryOptionsFrom(ctx, options.DialerOptions.DomainResolver)
+-		if err != nil {
+-			return nil, err
+-		}
+-		httpClientTransport, err := service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))
+-		if err != nil {
+-			return nil, E.Cause(err, "create realm http client")
+-		}
+-		dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
+-		realmOptions = &realm.Options{
+-			ServerURL:   options.Realm.ServerURL,
+-			Token:       options.Realm.Token,
+-			RealmID:     options.Realm.RealmID,
+-			STUNServers: options.Realm.STUNServers,
+-			HTTPClient:  &http.Client{Transport: httpClientTransport},
+-			Resolver: func(ctx context.Context, host string, ipv4, ipv6 bool) ([]netip.Addr, error) {
+-				dnsOptions := queryOptions
+-				switch {
+-				case ipv4 && !ipv6:
+-					dnsOptions.Strategy = C.DomainStrategyIPv4Only
+-				case !ipv4 && ipv6:
+-					dnsOptions.Strategy = C.DomainStrategyIPv6Only
+-				}
+-				return dnsRouter.Lookup(ctx, host, dnsOptions)
+-			},
+-			Logger:    logger,
+-			IPVersion: options.Realm.IPVersion,
+-		}
+-		if options.Realm.PortMapping != nil && options.Realm.PortMapping.Enabled {
+-			realmOptions.PortMapping = &realm.PortMappingOptions{
+-				Timeout:  time.Duration(options.Realm.PortMapping.Timeout),
+-				Lifetime: time.Duration(options.Realm.PortMapping.Lifetime),
+-			}
+-		}
 +	h := &Outbound{
 +		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, options.Network.Build(), options.DialerOptions),
 +		ctx:     ctx,
 +		logger:  logger,
 +		dialer:  outboundDialer,
 +		options: options,
-+	}
+ 	}
+-	networkList := options.Network.Build()
+-	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
+-		Context:            ctx,
+-		Dialer:             outboundDialer,
+-		Logger:             logger,
+-		BrutalDebug:        options.BrutalDebug,
+-		ServerAddress:      options.ServerOptions.Build(),
+-		ServerPorts:        options.ServerPorts,
+-		HopInterval:        time.Duration(options.HopInterval),
+-		HopIntervalMax:     time.Duration(options.HopIntervalMax),
+-		SendBPS:            uint64(options.UpMbps * hysteria.MbpsToBps),
+-		ReceiveBPS:         uint64(options.DownMbps * hysteria.MbpsToBps),
+-		SalamanderPassword: salamanderPassword,
+-		GeckoPassword:      geckoPassword,
+-		GeckoMinPacketSize: geckoMinPacketSize,
+-		GeckoMaxPacketSize: geckoMaxPacketSize,
+-		Password:           options.Password,
+-		TLSConfig:          tlsConfig,
+-		QUICOptions: qtls.QUICOptions{
+-			IdleTimeout:             options.IdleTimeout.Build(),
+-			KeepAlivePeriod:         options.KeepAlivePeriod.Build(),
+-			StreamReceiveWindow:     options.StreamReceiveWindow.Value(),
+-			ConnectionReceiveWindow: options.ConnectionReceiveWindow.Value(),
+-			MaxConcurrentStreams:    options.MaxConcurrentStreams,
+-			InitialPacketSize:       options.InitialPacketSize,
+-			DisablePathMTUDiscovery: options.DisablePathMTUDiscovery,
+-		},
+-		UDPDisabled:  !common.Contains(networkList, N.NetworkUDP),
+-		BBRProfile:   options.BBRProfile,
+-		ChromeParrot: !options.DisableChromeParrot,
+-		RealmOptions: realmOptions,
+-	})
 +	client, err := h.newClient()
-+	if err != nil {
-+		return nil, err
-+	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return &Outbound{
+-		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions),
+-		logger:  logger,
+-		client:  client,
+-	}, nil
 +	h.client = client
 +	return h, nil
-+}
-+
+ }
+ 
+-func outboundTLSOptions(options option.Hysteria2OutboundOptions) (string, option.OutboundTLSOptions, error) {
+-	tlsOptions := common.PtrValueOrDefault(options.TLS)
+-	if options.Realm == nil {
+-		return options.Server, tlsOptions, nil
 +func applyHysteria2URI(options option.Hysteria2OutboundOptions) (option.Hysteria2OutboundOptions, error) {
 +	if strings.TrimSpace(options.URI) == "" {
 +		return options, nil
@@ -1103,7 +1042,9 @@ index d4382fdc..cb90c95a 100644
 +	parsedOptions, ok := parsed.Options.(*option.Hysteria2OutboundOptions)
 +	if !ok {
 +		return options, E.New("invalid Hysteria2 URI options")
-+	}
+ 	}
+-	if options.Server != "" || options.ServerPort != 0 || len(options.ServerPorts) > 0 {
+-		return "", tlsOptions, E.New("realm conflicts with server, server_port, and server_ports")
 +	// URI transport fields are authoritative; retain native dialer/TUN and
 +	// TLS material fields from JSON so Android protection remains in charge.
 +	options.Server = parsedOptions.Server
@@ -1113,6 +1054,7 @@ index d4382fdc..cb90c95a 100644
 +	options.UpMbps = parsedOptions.UpMbps
 +	options.DownMbps = parsedOptions.DownMbps
 +	options.HopInterval = parsedOptions.HopInterval
++	options.HopIntervalMax = parsedOptions.HopIntervalMax
 +	options.Obfs = parsedOptions.Obfs
 +	options.CertificateSHA256 = parsedOptions.CertificateSHA256
 +	if options.TLS == nil {
@@ -1124,10 +1066,10 @@ index d4382fdc..cb90c95a 100644
 +		tlsOptions.Insecure = parsedOptions.TLS.Insecure
 +		if parsedOptions.TLS.ECH != nil {
 +			tlsOptions.ECH = parsedOptions.TLS.ECH
- 		}
++		}
 +		options.TLS = &tlsOptions
  	}
--	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
+-	serverURL, err := url.Parse(options.Realm.ServerURL)
 +	options.URI = ""
 +	return options, nil
 +}
@@ -1141,33 +1083,18 @@ index d4382fdc..cb90c95a 100644
 +func (h *Outbound) clientConfig() (*hyclient.Config, error) {
 +	factory, serverAddr, err := newProtectedConnFactory(h.ctx, h.dialer, h.options)
  	if err != nil {
- 		return nil, err
+-		return "", tlsOptions, E.Cause(err, "parse realm server_url")
++		return nil, err
  	}
--	networkList := options.Network.Build()
--	client, err := hysteria2.NewClient(hysteria2.ClientOptions{
--		Context:            ctx,
--		Dialer:             outboundDialer,
--		Logger:             logger,
--		BrutalDebug:        options.BrutalDebug,
--		ServerAddress:      options.ServerOptions.Build(),
--		ServerPorts:        options.ServerPorts,
--		HopInterval:        time.Duration(options.HopInterval),
--		SendBPS:            uint64(options.UpMbps * hysteria.MbpsToBps),
--		ReceiveBPS:         uint64(options.DownMbps * hysteria.MbpsToBps),
--		SalamanderPassword: salamanderPassword,
--		Password:           options.Password,
--		TLSConfig:          tlsConfig,
--		UDPDisabled:        !common.Contains(networkList, N.NetworkUDP),
--	})
+-	serverName := serverURL.Hostname()
+-	if serverName == "" {
+-		return "", tlsOptions, E.New("missing host in realm server_url")
 +	tlsConfig, err := upstreamTLSConfig(h.ctx, h.options)
- 	if err != nil {
++	if err != nil {
 +		_ = factory.Close()
- 		return nil, err
++		return nil, err
  	}
--	return &Outbound{
--		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeHysteria2, tag, networkList, options.DialerOptions),
--		logger:  logger,
--		client:  client,
+-	return serverName, tlsOptions, nil
 +	return &hyclient.Config{
 +		ConnFactory: factory,
 +		ServerAddr:  serverAddr,
@@ -1177,15 +1104,15 @@ index d4382fdc..cb90c95a 100644
 +			MaxTx: uint64(max(h.options.UpMbps, 0)) * megabitBytesPerSecond,
 +			MaxRx: uint64(max(h.options.DownMbps, 0)) * megabitBytesPerSecond,
 +		},
- 	}, nil
- }
- 
++	}, nil
++}
++
 +func (h *Outbound) currentClient() hyclient.Client {
 +	h.access.RLock()
 +	defer h.access.RUnlock()
 +	return h.client
-+}
-+
+ }
+ 
  func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
  	switch N.NetworkName(network) {
  	case N.NetworkTCP:
@@ -1195,7 +1122,7 @@ index d4382fdc..cb90c95a 100644
  	case N.NetworkUDP:
  		conn, err := h.ListenPacket(ctx, destination)
  		if err != nil {
-@@ -108,13 +190,326 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+@@ -200,13 +194,335 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
  
  func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
  	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
@@ -1207,8 +1134,11 @@ index d4382fdc..cb90c95a 100644
 +	return &hyPacketConn{conn: conn}, nil
  }
  
- func (h *Outbound) InterfaceUpdated() {
+ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 -	h.client.CloseWithError(E.New("network changed"))
++	if ctx.Err() != nil {
++		return
++	}
 +	client, err := h.newClient()
 +	if err != nil {
 +		h.logger.Error("recreate official Hysteria2 client after network change: ", err)
@@ -1237,14 +1167,15 @@ index d4382fdc..cb90c95a 100644
 +func (closedClient) Close() error                     { return nil }
 +
 +type protectedConnFactory struct {
-+	ctx         context.Context
-+	dialer      N.Dialer
-+	destination M.Socksaddr
-+	firstConn   net.PacketConn
-+	hopAddr     *udphop.UDPHopAddr
-+	hopInterval time.Duration
-+	obfs        *option.Hysteria2Obfs
-+	access      sync.Mutex
++	ctx            context.Context
++	dialer         N.Dialer
++	destination    M.Socksaddr
++	firstConn      net.PacketConn
++	hopAddr        *udphop.UDPHopAddr
++	hopInterval    time.Duration
++	hopIntervalMax time.Duration
++	obfs           *option.Hysteria2Obfs
++	access         sync.Mutex
 +}
 +
 +func newProtectedConnFactory(ctx context.Context, outboundDialer N.Dialer, options option.Hysteria2OutboundOptions) (*protectedConnFactory, net.Addr, error) {
@@ -1268,12 +1199,13 @@ index d4382fdc..cb90c95a 100644
 +		return nil, nil, E.Cause(err, "open protected Hysteria2 packet socket")
 +	}
 +	factory := &protectedConnFactory{
-+		ctx:         ctx,
-+		dialer:      outboundDialer,
-+		destination: M.SocksaddrFrom(ip, destination.Port),
-+		firstConn:   conn,
-+		hopInterval: time.Duration(options.HopInterval),
-+		obfs:        options.Obfs,
++		ctx:            ctx,
++		dialer:         outboundDialer,
++		destination:    M.SocksaddrFrom(ip, destination.Port),
++		firstConn:      conn,
++		hopInterval:    time.Duration(options.HopInterval),
++		hopIntervalMax: time.Duration(options.HopIntervalMax),
++		obfs:           options.Obfs,
 +	}
 +	if len(options.ServerPorts) == 0 {
 +		return factory, factory.destination.UDPAddr(), nil
@@ -1314,6 +1246,9 @@ index d4382fdc..cb90c95a 100644
 +	)
 +	if f.hopAddr != nil {
 +		interval := udphop.HopIntervalConfig{Min: f.hopInterval, Max: f.hopInterval}
++		if f.hopIntervalMax > 0 {
++			interval.Max = f.hopIntervalMax
++		}
 +		conn, err = udphop.NewUDPHopPacketConn(f.hopAddr, interval, listen)
 +	} else {
 +		conn, err = listen()
@@ -1334,8 +1269,8 @@ index d4382fdc..cb90c95a 100644
 +	case "gecko":
 +		wrapped, err := hyobfs.WrapPacketConnGecko(conn, hyobfs.GeckoOptions{
 +			Password:      []byte(f.obfs.Password),
-+			MinPacketSize: f.obfs.MinPacketSize,
-+			MaxPacketSize: f.obfs.MaxPacketSize,
++			MinPacketSize: f.obfs.GeckoOptions.MinPacketSize,
++			MaxPacketSize: f.obfs.GeckoOptions.MaxPacketSize,
 +		})
 +		if err != nil {
 +			return nil, err
@@ -1368,8 +1303,9 @@ index d4382fdc..cb90c95a 100644
 +		return nil
 +	}
 +	typeName := strings.ToLower(strings.TrimSpace(obfsOptions.Type))
++	gecko := obfsOptions.GeckoOptions
 +	if typeName == "" || typeName == "none" || typeName == "plain" {
-+		if obfsOptions.MinPacketSize != 0 || obfsOptions.MaxPacketSize != 0 {
++		if gecko.MinPacketSize != 0 || gecko.MaxPacketSize != 0 {
 +			return E.New("min_packet_size/max_packet_size are only valid for gecko")
 +		}
 +		return nil
@@ -1380,13 +1316,13 @@ index d4382fdc..cb90c95a 100644
 +	if obfsOptions.Password == "" {
 +		return E.New("missing obfs password")
 +	}
-+	if obfsOptions.MinPacketSize < 0 || obfsOptions.MaxPacketSize < 0 || obfsOptions.MinPacketSize > obfsOptions.MaxPacketSize {
++	if gecko.MinPacketSize < 0 || gecko.MaxPacketSize < 0 || gecko.MinPacketSize > gecko.MaxPacketSize {
 +		return E.New("invalid Hysteria2 packet size range")
 +	}
-+	if obfsOptions.MaxPacketSize > 2048 {
++	if gecko.MaxPacketSize > 2048 {
 +		return E.New("invalid Hysteria2 packet size")
 +	}
-+	if typeName != "gecko" && (obfsOptions.MinPacketSize != 0 || obfsOptions.MaxPacketSize != 0) {
++	if typeName != "gecko" && (gecko.MinPacketSize != 0 || gecko.MaxPacketSize != 0) {
 +		return E.New("min_packet_size/max_packet_size are only valid for gecko")
 +	}
 +	return nil
@@ -1501,7 +1437,7 @@ index d4382fdc..cb90c95a 100644
 +
 +type hyPacketConn struct {
 +	conn hyclient.HyUDPConn
-+}
+ }
 +
 +func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 +	payload, address, err := c.conn.Receive()
@@ -1518,7 +1454,7 @@ index d4382fdc..cb90c95a 100644
 +		return 0, err
 +	}
 +	return len(buffer), nil
- }
++}
 +
 +func (c *hyPacketConn) Close() error                     { return c.conn.Close() }
 +func (c *hyPacketConn) LocalAddr() net.Addr              { return M.Socksaddr{} }
@@ -1527,7 +1463,7 @@ index d4382fdc..cb90c95a 100644
 +func (c *hyPacketConn) SetWriteDeadline(time.Time) error { return nil }
 diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
 new file mode 100644
-index 00000000..864ad5d7
+index 00000000..6b964ba0
 --- /dev/null
 +++ b/protocol/hysteria2/outbound_test.go
 @@ -0,0 +1,444 @@
@@ -1874,7 +1810,7 @@ index 00000000..864ad5d7
 +func TestInterfaceUpdateReplacesAndClosesHysteria2Client(t *testing.T) {
 +	oldClient := &stubClient{}
 +	outbound := &Outbound{client: oldClient}
-+	outbound.InterfaceUpdated()
++	outbound.InterfaceUpdated(context.Background())
 +	if !oldClient.closed.Load() {
 +		t.Fatal("network recreation did not close the previous client")
 +	}
