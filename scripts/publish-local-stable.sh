@@ -119,6 +119,16 @@ if [[ "$(git rev-list -n 1 "$TAG")" != "$(git rev-parse HEAD)" ]]; then
     exit 1
 fi
 
+# The packaged RU IP rule-set must be the latest upstream snapshot: a stale one
+# routes new Russian ranges through the VPN in «Россия напрямую».
+if [[ "${ZAPRET_ALLOW_STALE_RULE_SETS:-0}" != 1 ]]; then
+    python3 "$PROJECT_ROOT/scripts/refresh_rule_sets.py" --check || {
+        echo "Refresh rule-sets (scripts/refresh_rule_sets.py --write) and commit before a stable release," >&2
+        echo "or set ZAPRET_ALLOW_STALE_RULE_SETS=1 for an explicitly approved emergency release." >&2
+        exit 1
+    }
+fi
+
 remote_tag_commit="$(
     {
         git ls-remote origin "refs/tags/$TAG^{}"

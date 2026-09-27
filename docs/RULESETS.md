@@ -4,6 +4,6 @@
 сайтов, которые должны идти через `direct`. Binary `.srs` собирается точным audit CLI
 из `core.properties`.
 
-`zapret-ru-ip.srs` берётся из закреплённого snapshot `SagerNet/sing-geoip@5605651c12ed5b2fcf3b5de580c041eb9d8d938e`; ожидаемый SHA-256 — `1f4cccc9bb9510bb29d8a4b7d326b869bff94e9911d555acc0570545dabfaa7b`.
+`zapret-ru-ip.srs` берётся из закреплённого snapshot `SagerNet/sing-geoip@7fe82a879ad2666526730c195b55a6d8d9147908`; ожидаемый SHA-256 — `6e23f5580dd443e2f9c4895adafee8d199c1a3487182ad5f0a2256cf59c7e53a`.
 
 Оба файла доставляются только вместе с APK. Runtime-загрузки или фонового updater нет.

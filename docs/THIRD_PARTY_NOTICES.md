@@ -96,7 +96,7 @@ SOFTWARE.
 ## SagerNet sing-geoip rule-set
 
 - Source: <https://github.com/SagerNet/sing-geoip>
-- Binary snapshot: `5605651c12ed5b2fcf3b5de580c041eb9d8d938e`
+- Binary snapshot: `7fe82a879ad2666526730c195b55a6d8d9147908`
 - License of the generator: GNU General Public License version 3 or later.
 
 The APK contains only the pinned RU IP binary rule-set. Its SHA-256 and source
