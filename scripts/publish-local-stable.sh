@@ -271,6 +271,22 @@ fi
 if [[ -z "$remote_tag_commit" ]]; then
     git push origin "refs/tags/$TAG"
 fi
+# Forgejo registers a pushed tag asynchronously; if the draft is created first,
+# that tag sync publishes the draft mid-upload (v0.4.4 went public with 3 of 8
+# assets). Create the draft only after the tag page exists (a DB-backed row).
+for ((tag_wait = 0; ; tag_wait += 5)); do
+    tag_page="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+        --connect-timeout 20 --max-time 60 \
+        "$FORGEJO_URL/$RELEASE_REPOSITORY/releases/tag/$TAG" || true)"
+    [[ "$tag_page" == 200 ]] && break
+    if (( tag_wait >= 300 )); then
+        echo "Forgejo did not register tag $TAG within 300 s (HTTP $tag_page)" >&2
+        exit 1
+    fi
+    sleep 5
+done
+# Let the tag sync finish its release-row update before the draft exists.
+sleep 15
 
 "$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" \
     "$TAG" \
