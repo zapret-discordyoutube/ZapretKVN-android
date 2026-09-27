@@ -58,12 +58,12 @@ LIBBOX_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_
     "$GOPATH/bin/gomobile" bind \
         -o "$TEMP_DIR/libbox-native-symbols.aar" \
         -target android/arm64 \
-        -androidapi 23 \
+        -androidapi 24 \
         -javapkg=io.nekohasekai \
         -libname=box \
         -trimpath \
         -buildvcs=false \
-        -ldflags "-X github.com/sagernet/sing-box/constant.Version=${CORE_TAG#v} -X internal/godebug.defaultGODEBUG=multipathtcp=0 -buildid= -checklinkname=0" \
+        -ldflags "-X github.com/sagernet/sing-box/constant.Version=${CORE_TAG#v} -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0 -buildid=" \
         -tags "$LIBBOX_TAGS" \
         ./experimental/libbox
 )

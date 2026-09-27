@@ -169,7 +169,7 @@ CORE_TAGS="with_gvisor,with_quic,with_wireguard,with_masque,with_mtproxy,with_tr
 go build \
     -trimpath \
     -tags "$CORE_TAGS" \
-    -ldflags "-X github.com/sagernet/sing-box/constant.Version=${CORE_TAG#v} -X internal/godebug.defaultGODEBUG=multipathtcp=0 -buildid= -checklinkname=0" \
+    -ldflags "-X github.com/sagernet/sing-box/constant.Version=${CORE_TAG#v} -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0 -buildid=" \
     -o "$OUTPUT_DIR/sing-box" \
     ./cmd/sing-box
 chmod 0755 "$OUTPUT_DIR/sing-box"

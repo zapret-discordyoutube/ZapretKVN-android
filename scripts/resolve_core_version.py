@@ -174,6 +174,25 @@ def validate_candidate(
                 "build-native-symbols.sh LIBBOX_TAGS differ from upstream build_libbox: "
                 f"missing {sorted(libbox_tags - symbol_tags)}, stale {sorted(symbol_tags - libbox_tags)}"
             )
+        symbols_script = (root / "scripts/build-native-symbols.sh").read_text(encoding="utf-8")
+        builder = (checkout / "cmd/internal/build_libbox/main.go").read_text(encoding="utf-8")
+        api = re.search(r'AndroidAPI:\s*(\d+),\s*OutputName:\s*"libbox\.aar"', builder)
+        script_api = re.search(r"-androidapi (\d+)", symbols_script)
+        if api is None or script_api is None or api.group(1) != script_api.group(1):
+            problems.append(
+                f"upstream libbox.aar uses androidapi {api and api.group(1)}, "
+                f"build-native-symbols.sh uses {script_api and script_api.group(1)}"
+            )
+        # The symbol build must link exactly like the upstream release build,
+        # minus -s/-w (it keeps symbols; loadable sections are compared).
+        upstream_flags = _upstream_linker_flags(checkout / "cmd/internal/build_shared/flags.go")
+        script_flags = re.search(r'-ldflags "([^"]+)"', symbols_script)
+        script_set = _flag_set(script_flags.group(1).replace("${CORE_TAG#v}", "<version>")) if script_flags else set()
+        if upstream_flags is None or script_set != upstream_flags | {"-buildid="}:
+            problems.append(
+                "build-native-symbols.sh -ldflags differ from upstream build_shared.LinkerFlags: "
+                f"upstream {sorted(upstream_flags or [])} + -buildid=, script {sorted(script_set)}"
+            )
         host_tags = _script_tags(root / "scripts/build-core.sh", "CORE_TAGS")
         if stale := sorted(host_tags - libbox_tags - HOST_ONLY_TAGS):
             problems.append(f"build-core.sh CORE_TAGS use tags upstream no longer builds: {stale}")
@@ -193,6 +212,35 @@ def validate_candidate(
                 f"sing-box-extended {tag} cannot be pinned for Android; port required:\n- "
                 + "\n- ".join(problems)
             )
+
+
+def _flag_set(ldflags: str) -> set[str]:
+    tokens = ldflags.split()
+    flags: set[str] = set()
+    index = 0
+    while index < len(tokens):
+        if tokens[index] == "-X" and index + 1 < len(tokens):
+            flags.add("-X " + tokens[index + 1])
+            index += 2
+        else:
+            flags.add(tokens[index])
+            index += 1
+    return flags
+
+
+def _upstream_linker_flags(path: Path) -> set[str] | None:
+    """Release-mode base flags of build_shared.LinkerFlags without -s/-w/-buildid=."""
+
+    if not path.exists():
+        return None
+    body = path.read_text(encoding="utf-8")
+    block = re.search(r"flags := \[\]string\{(.*?)\n\t\}", body, re.S)
+    if block is None:
+        return None
+    flags = set()
+    for literal, has_version in re.findall(r'"([^"]+)"( \+ version)?', block.group(1)):
+        flags.add(literal + ("<version>" if has_version else ""))
+    return flags
 
 
 def _go_version(value: str) -> tuple[int, ...]:
