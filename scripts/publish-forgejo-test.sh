@@ -47,9 +47,7 @@ remote_tag="$({
     git ls-remote origin "refs/tags/$TAG^{}"
     git ls-remote origin "refs/tags/$TAG"
 } | awk 'NR == 1 {print $1}')"
-if [[ -z "$remote_tag" ]]; then
-    git push origin "refs/tags/$TAG"
-elif [[ "$remote_tag" != "$(git rev-parse HEAD)" ]]; then
+if [[ -n "$remote_tag" && "$remote_tag" != "$(git rev-parse HEAD)" ]]; then
     echo "Remote tag points to another commit: $TAG" >&2
     exit 1
 fi
@@ -82,6 +80,12 @@ if [[ "$lookup_status" -eq 0 ]]; then
         exit 1
     }
 elif [[ "$lookup_status" -eq 1 ]]; then
+    if [[ -n "$remote_tag" ]]; then
+        # Forgejo publishes a draft when it syncs the tag: a draft created for an
+        # already pushed tag can go public mid-upload.
+        echo "Tag $TAG is already on Forgejo without a draft; publish under a new tag" >&2
+        exit 1
+    fi
     payload="$(jq -n --arg tag "$TAG" --arg target "$(git rev-parse HEAD)" \
         --arg name "Zapret KVN ${TAG#v} (emulator-only)" \
         --rawfile body "$BUNDLE_DIR/RELEASE_NOTES.md" \
@@ -127,6 +131,11 @@ mapfile -t local_names < <(printf '%s\n' "${assets[@]##*/}" | sort)
     echo "Remote test asset set is not exact" >&2
     exit 1
 }
+# The tag reaches Forgejo only with the complete verified draft: its tag sync
+# publishes the draft, which is then harmless (see publish-forgejo-stable.sh).
+if [[ -z "$remote_tag" ]]; then
+    git push origin "refs/tags/$TAG"
+fi
 payload="$(jq -n --arg name "Zapret KVN ${TAG#v} (emulator-only)" \
     --rawfile body "$BUNDLE_DIR/RELEASE_NOTES.md" '{name:$name,body:$body,draft:false,prerelease:true}')"
 code="$(api_curl --request PATCH -H 'Content-Type: application/json' --data "$payload" \

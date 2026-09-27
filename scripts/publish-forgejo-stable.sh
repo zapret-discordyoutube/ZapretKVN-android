@@ -169,6 +169,35 @@ assert_remote_asset_safe() {
     fi
 }
 
+remote_tag_commit() {
+    {
+        git ls-remote origin "refs/tags/$TAG^{}"
+        git ls-remote origin "refs/tags/$TAG"
+    } | awk 'NR == 1 {print $1}'
+}
+
+release_is_complete() {
+    local json="$1" names
+    names="$(jq -r '.assets[].name' <<<"$json" | sort | tr '\n' ' ')"
+    [[ "$names" == "$(printf '%s ' "${EXPECTED_NAMES[@]}")" ]]
+}
+
+# The tag reaches Forgejo only after the draft holds the complete verified set.
+# Forgejo processes a pushed tag asynchronously and publishes a draft that
+# carries it (v0.4.4 went public with 3 of 8 assets when the tag was pushed
+# right before the draft was created). With this order that sync can only ever
+# publish a complete release, so no timing assumption is needed.
+publish_tag() {
+    local remote
+    remote="$(remote_tag_commit)"
+    if [[ -z "$remote" ]]; then
+        git push origin "refs/tags/$TAG"
+    elif [[ "$remote" != "$(git rev-parse HEAD)" ]]; then
+        echo "Remote tag points to a different commit: $TAG" >&2
+        exit 1
+    fi
+}
+
 create_draft() {
     local payload output code target
     target="$(git rev-parse HEAD)"
@@ -226,12 +255,31 @@ upload_one_asset() {
     done
 }
 
+ALREADY_PUBLISHED=0
 release_status=0
 json="$(release_json)" || release_status=$?
-if [[ "$release_status" -eq 0 ]]; then
+if [[ "$release_status" -eq 0 ]] && jq -e '.draft == false' <<<"$json" >/dev/null; then
+    # A resumed run after the tag push: Forgejo's tag sync (or our PATCH) already
+    # published the draft. That is only acceptable when every asset is present
+    # and byte-identical; anything else needs a correction under a new tag.
+    verify_release_identity "$json" false
+    if ! release_is_complete "$json"; then
+        echo "Forgejo Release $TAG is published with an incomplete asset set" >&2
+        echo "Refusing to delete or replace it; publish a correction under a new tag." >&2
+        exit 1
+    fi
+    ALREADY_PUBLISHED=1
+    echo "Stable release is already published; verifying it: $TAG"
+elif [[ "$release_status" -eq 0 ]]; then
     verify_release_identity "$json" true
     echo "Resuming existing stable draft: $TAG"
 elif [[ "$release_status" -eq 1 ]]; then
+    if [[ -n "$(remote_tag_commit)" ]]; then
+        # Forgejo would publish a new draft as soon as it syncs this tag.
+        echo "Tag $TAG is already on Forgejo without a draft; a new draft could be" >&2
+        echo "published mid-upload by the tag sync. Publish under a new tag." >&2
+        exit 1
+    fi
     json="$(create_draft)"
     verify_release_identity "$json" true
     echo "Created stable draft: $TAG"
@@ -242,6 +290,7 @@ fi
 release_id="$(jq -er '.id' <<<"$json")"
 
 for name in "${EXPECTED_NAMES[@]}"; do
+    (( ALREADY_PUBLISHED )) && break
     file="$BUNDLE_DIR/$name"
     json="$(release_json)"
     verify_release_identity "$json" true
@@ -253,33 +302,41 @@ for name in "${EXPECTED_NAMES[@]}"; do
 done
 
 json="$(release_json)"
-verify_release_identity "$json" true
-mapfile -t REMOTE_NAMES < <(jq -r '.assets[].name' <<<"$json" | sort)
-if [[ "${REMOTE_NAMES[*]}" != "${EXPECTED_NAMES[*]}" ]]; then
-    echo "Draft asset set differs from the required eight stable files" >&2
-    printf 'Expected: %s\nActual: %s\n' "${EXPECTED_NAMES[*]}" "${REMOTE_NAMES[*]}" >&2
-    exit 1
+if (( ! ALREADY_PUBLISHED )); then
+    verify_release_identity "$json" true
+    mapfile -t REMOTE_NAMES < <(jq -r '.assets[].name' <<<"$json" | sort)
+    if [[ "${REMOTE_NAMES[*]}" != "${EXPECTED_NAMES[*]}" ]]; then
+        echo "Draft asset set differs from the required eight stable files" >&2
+        printf 'Expected: %s\nActual: %s\n' "${EXPECTED_NAMES[*]}" "${REMOTE_NAMES[*]}" >&2
+        exit 1
+    fi
+    for name in "${EXPECTED_NAMES[@]}"; do
+        assert_remote_asset_safe "$json" "$BUNDLE_DIR/$name"
+    done
 fi
-for name in "${EXPECTED_NAMES[@]}"; do
-    assert_remote_asset_safe "$json" "$BUNDLE_DIR/$name"
-done
 
-payload="$(jq -n \
-    --arg name "Zapret KVN $VERSION_NAME" \
-    --rawfile body "$NOTES_FILE" \
-    '{name:$name,body:$body,draft:false,prerelease:false}')"
-code="$(
-    api_curl \
-        --request PATCH \
-        -H 'Content-Type: application/json' \
-        --data "$payload" \
-        --output "$TMP_ROOT/publish.json" \
-        --write-out '%{http_code}' \
-        "$FORGEJO_API_URL/repos/$RELEASE_REPOSITORY/releases/$release_id"
-)"
-if [[ "$code" != 200 ]]; then
-    echo "Forgejo publication failed with HTTP $code" >&2
-    exit 1
+# Only now, with the complete verified set in the draft, may the tag exist on
+# Forgejo; its sync may publish the draft before our PATCH, which is harmless.
+publish_tag
+
+if (( ! ALREADY_PUBLISHED )); then
+    payload="$(jq -n \
+        --arg name "Zapret KVN $VERSION_NAME" \
+        --rawfile body "$NOTES_FILE" \
+        '{name:$name,body:$body,draft:false,prerelease:false}')"
+    code="$(
+        api_curl \
+            --request PATCH \
+            -H 'Content-Type: application/json' \
+            --data "$payload" \
+            --output "$TMP_ROOT/publish.json" \
+            --write-out '%{http_code}' \
+            "$FORGEJO_API_URL/repos/$RELEASE_REPOSITORY/releases/$release_id"
+    )"
+    if [[ "$code" != 200 ]]; then
+        echo "Forgejo publication failed with HTTP $code" >&2
+        exit 1
+    fi
 fi
 
 json="$(release_json)"

@@ -125,8 +125,9 @@ remote_tag_commit="$(
         git ls-remote origin "refs/tags/$TAG"
     } | awk 'NR == 1 {print $1}'
 )"
-# The tag is pushed only after the bundle is built and verified (below): a
-# pushed tag is immutable, so a build or gate failure must not burn it.
+# The tag is pushed only after the bundle is built, verified and uploaded to a
+# complete draft (publish-forgejo-stable.sh): a pushed tag is immutable, and a
+# build, gate or upload failure must not burn it or expose a partial release.
 if [[ -n "$remote_tag_commit" && "$remote_tag_commit" != "$(git rev-parse HEAD)" ]]; then
     echo "Remote tag points to a different commit: $TAG" >&2
     exit 1
@@ -141,19 +142,22 @@ release_http="$(curl --silent --show-error \
     "$FORGEJO_URL/api/v1/repos/$RELEASE_REPOSITORY/releases/tags/$TAG")"
 if [[ "$release_http" == 200 ]]; then
     release_json="$(jq -ce . "$RELEASE_PROBE")"
+    # A draft, or a release Forgejo's tag sync already published after the
+    # complete upload; publish-forgejo-stable.sh verifies every asset byte and
+    # refuses an incomplete published release.
     if ! jq -e \
         --arg tag "$TAG" \
-        '.tag_name == $tag and .draft == true and .prerelease == false' \
+        '.tag_name == $tag and .prerelease == false' \
         <<<"$release_json" >/dev/null; then
-        echo "Forgejo Release already exists and is not a resumable draft: $TAG" >&2
+        echo "Forgejo Release already exists with another tag or as a prerelease: $TAG" >&2
         exit 1
     fi
     if [[ ! -d "$OUTPUT_DIR" ]]; then
-        echo "Stable draft exists, but its original local bundle is unavailable: $OUTPUT_DIR" >&2
-        echo "Refusing to rebuild potentially different assets or alter the draft." >&2
+        echo "Stable release exists, but its original local bundle is unavailable: $OUTPUT_DIR" >&2
+        echo "Refusing to rebuild potentially different assets or alter the release." >&2
         exit 1
     fi
-    echo "Found resumable stable draft: $TAG"
+    echo "Found resumable stable release: $TAG"
 elif [[ "$release_http" != 404 ]]; then
     echo "Forgejo release probe failed with HTTP $release_http" >&2
     exit 1
@@ -268,26 +272,9 @@ else
     echo "Promoted verified release bundle atomically: $OUTPUT_DIR"
 fi
 
-if [[ -z "$remote_tag_commit" ]]; then
-    git push origin "refs/tags/$TAG"
-fi
-# Forgejo registers a pushed tag asynchronously; if the draft is created first,
-# that tag sync publishes the draft mid-upload (v0.4.4 went public with 3 of 8
-# assets). Create the draft only after the tag page exists (a DB-backed row).
-for ((tag_wait = 0; ; tag_wait += 5)); do
-    tag_page="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-        --connect-timeout 20 --max-time 60 \
-        "$FORGEJO_URL/$RELEASE_REPOSITORY/releases/tag/$TAG" || true)"
-    [[ "$tag_page" == 200 ]] && break
-    if (( tag_wait >= 300 )); then
-        echo "Forgejo did not register tag $TAG within 300 s (HTTP $tag_page)" >&2
-        exit 1
-    fi
-    sleep 5
-done
-# Let the tag sync finish its release-row update before the draft exists.
-sleep 15
-
+# publish-forgejo-stable.sh pushes the tag itself, only after the draft holds
+# the complete verified asset set (Forgejo publishes a draft when it syncs its
+# tag, so an earlier push can expose a partial release).
 "$PROJECT_ROOT/scripts/publish-forgejo-stable.sh" \
     "$TAG" \
     "$OUTPUT_DIR" \
