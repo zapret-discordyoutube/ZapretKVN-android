@@ -9,6 +9,7 @@ import (
 	"time"
 
 	box "github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
@@ -33,12 +34,16 @@ func startBox(t *testing.T, text string) *box.Box {
 	return instance
 }
 
-func TestZapretXrayModuleCarriesTCPAndUDPAndIsolatesOwners(t *testing.T) {
+// startEchoFixture starts TCP/UDP echo servers and a VLESS server in front of
+// them; it returns both echo endpoints and a client config whose "proxy"
+// outbound is owned by the Xray module.
+func startEchoFixture(t *testing.T) (net.Listener, net.PacketConn, string) {
+	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
 		for {
 			conn, err := listener.Accept()
@@ -52,7 +57,7 @@ func TestZapretXrayModuleCarriesTCPAndUDPAndIsolatesOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer udp.Close()
+	t.Cleanup(func() { _ = udp.Close() })
 	go func() {
 		buffer := make([]byte, 2048)
 		for {
@@ -82,15 +87,87 @@ func TestZapretXrayModuleCarriesTCPAndUDPAndIsolatesOwners(t *testing.T) {
         "outbounds":[{"type":"vless","tag":"proxy","server":"127.0.0.1","server_port":%d,
             "uri":"vless://%s@127.0.0.1:%d?security=none&encryption=none&type=tcp"}]
     }`, port, uuid, port)
+	return listener, udp, config
+}
+
+func proxyOutbound(t *testing.T, client *box.Box) adapter.Outbound {
+	t.Helper()
+	outbound, loaded := client.Outbound().Outbound("proxy")
+	if !loaded {
+		t.Fatal("outbound missing")
+	}
+	if fmt.Sprintf("%T", outbound) != "*xraycore.Outbound" {
+		t.Fatalf("wrong protocol owner: %T", outbound)
+	}
+	return outbound
+}
+
+// sing-box 1.14 DNS connection pools cancel the dial context as soon as dial()
+// returns and keep the connection. Xray dispatches the upstream dial
+// asynchronously, so the connection must not inherit the dial context's
+// cancellation, or every pooled DNS exchange through the proxy fails.
+func TestZapretXrayConnectionsOutliveDialContext(t *testing.T) {
+	listener, udp, config := startEchoFixture(t)
+	outbound := proxyOutbound(t, startBox(t, config))
+
+	echo := func(t *testing.T, conn net.Conn, payload string) {
+		t.Helper()
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+		if _, err := conn.Write([]byte(payload)); err != nil {
+			t.Fatal(err)
+		}
+		reply := make([]byte, len(payload))
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			t.Fatal(err)
+		}
+		if string(reply) != payload {
+			t.Fatal("payload changed")
+		}
+	}
+	for _, network := range []string{"tcp", "udp"} {
+		t.Run(network, func(t *testing.T) {
+			target := listener.Addr().String()
+			if network == "udp" {
+				target = udp.LocalAddr().String()
+			}
+			dialCtx, cancel := context.WithCancel(context.Background())
+			conn, err := outbound.DialContext(dialCtx, network, M.ParseSocksaddr(target))
+			cancel()
+			if err != nil {
+				t.Fatal(err)
+			}
+			echo(t, conn, network+"-after-cancel")
+		})
+	}
+	t.Run("packet", func(t *testing.T) {
+		dialCtx, cancel := context.WithCancel(context.Background())
+		packet, err := outbound.ListenPacket(dialCtx, M.ParseSocksaddr(udp.LocalAddr().String()))
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer packet.Close()
+		_ = packet.SetDeadline(time.Now().Add(3 * time.Second))
+		if _, err = packet.WriteTo([]byte("packet-after-cancel"), udp.LocalAddr()); err != nil {
+			t.Fatal(err)
+		}
+		data := make([]byte, 64)
+		n, _, err := packet.ReadFrom(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data[:n]) != "packet-after-cancel" {
+			t.Fatal("payload changed")
+		}
+	})
+}
+
+func TestZapretXrayModuleCarriesTCPAndUDPAndIsolatesOwners(t *testing.T) {
+	listener, udp, config := startEchoFixture(t)
 	clients := []*box.Box{startBox(t, config), startBox(t, config)}
 	for index, client := range clients {
-		outbound, loaded := client.Outbound().Outbound("proxy")
-		if !loaded {
-			t.Fatal("outbound missing")
-		}
-		if fmt.Sprintf("%T", outbound) != "*xraycore.Outbound" {
-			t.Fatalf("wrong protocol owner: %T", outbound)
-		}
+		outbound := proxyOutbound(t, client)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		conn, err := outbound.DialContext(ctx, "tcp", M.ParseSocksaddr(listener.Addr().String()))

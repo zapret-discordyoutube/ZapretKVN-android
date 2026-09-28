@@ -1271,10 +1271,10 @@ index 00000000..b8c14daf
 + }
 diff --git a/protocol/xraycore/outbound.go b/protocol/xraycore/outbound.go
 new file mode 100644
-index 00000000..b94d63be
+index 00000000..bdd6f36f
 --- /dev/null
 +++ b/protocol/xraycore/outbound.go
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,327 @@
 +// Package xraycore delegates VLESS and its transports to the official Xray core.
 +// sing-box owns routing and all underlying socket creation. No second TUN or
 +// localhost proxy is needed inside Android.
@@ -1417,23 +1417,45 @@ index 00000000..b94d63be
 +	if err != nil {
 +		return nil, err
 +	}
-+	conn, err := core.Dial(ctx, h.instance, dest)
++	linkCtx, release := h.linkContext(ctx)
++	conn, err := core.Dial(linkCtx, h.instance, dest)
 +	if err != nil {
++		release()
 +		h.logger.ErrorContext(ctx, err)
++		return nil, err
 +	}
-+	return conn, err
++	context.AfterFunc(linkCtx, func() { _ = conn.Close() })
++	return &linkConn{Conn: conn, release: release}, nil
 +}
 +
 +func (h *Outbound) ListenPacket(ctx context.Context, _ M.Socksaddr) (net.PacketConn, error) {
 +	if h.closed.Load() {
 +		return nil, os.ErrClosed
 +	}
-+	conn, err := core.DialUDP(ctx, h.instance)
++	linkCtx, release := h.linkContext(ctx)
++	conn, err := core.DialUDP(linkCtx, h.instance)
 +	if err != nil {
++		release()
 +		h.logger.ErrorContext(ctx, err)
 +		return nil, err
 +	}
-+	return &ownedPacketConn{PacketConn: conn, stop: context.AfterFunc(h.ctx, func() { _ = conn.Close() })}, nil
++	context.AfterFunc(linkCtx, func() { _ = conn.Close() })
++	return &linkPacketConn{PacketConn: conn, release: release}, nil
++}
++
++// linkContext detaches an Xray link from the caller's dial context. sing-box
++// callers (the 1.14 DNS connection pools) cancel that context as soon as dial
++// returns and keep the connection, while Xray dispatches the upstream dial
++// asynchronously and binds the whole link to the context it was given.
++// Values (log IDs, inbound metadata) are kept; the link ends when the
++// connection is closed or the owning outbound shuts down.
++func (h *Outbound) linkContext(ctx context.Context) (context.Context, context.CancelFunc) {
++	linkCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
++	stop := context.AfterFunc(h.ctx, cancel)
++	return linkCtx, func() {
++		stop()
++		cancel()
++	}
 +}
 +
 +func (h *Outbound) Close() error {
@@ -1463,6 +1485,28 @@ index 00000000..b94d63be
 +type ownedPacketConn struct {
 +	net.PacketConn
 +	stop func() bool
++}
++
++type linkConn struct {
++	net.Conn
++	release context.CancelFunc
++}
++
++type linkPacketConn struct {
++	net.PacketConn
++	release context.CancelFunc
++}
++
++func (c *linkConn) Close() error {
++	err := c.Conn.Close()
++	c.release()
++	return err
++}
++
++func (c *linkPacketConn) Close() error {
++	err := c.PacketConn.Close()
++	c.release()
++	return err
 +}
 +
 +func (c *ownedPacketConn) Close() error {
