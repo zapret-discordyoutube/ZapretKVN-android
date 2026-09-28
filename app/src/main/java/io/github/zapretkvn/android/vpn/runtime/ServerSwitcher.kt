@@ -83,6 +83,7 @@ internal class ServerSwitcher(
             )
         try {
             withContext(Dispatchers.IO) { client.selectOutbound(groupTag, outboundTag) }
+            session.recordCommandedSelection(groupTag, outboundTag)
         } catch (cancelled: CancellationException) {
             rollback(session, groupTag, previous)
             throw cancelled
@@ -112,7 +113,9 @@ internal class ServerSwitcher(
         val client = session.selectorClient()
             ?: return IllegalStateException("Клиент управления selector уже закрыт; откат невозможен.")
         return withContext(NonCancellable + Dispatchers.IO) {
-            runCatching { client.selectOutbound(groupTag, previousTag) }.exceptionOrNull()
+            runCatching { client.selectOutbound(groupTag, previousTag) }
+                .onSuccess { session.recordCommandedSelection(groupTag, previousTag) }
+                .exceptionOrNull()
         }
     }
 }

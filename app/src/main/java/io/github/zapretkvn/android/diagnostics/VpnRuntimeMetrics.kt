@@ -125,6 +125,36 @@ internal object VpnTestHooks {
     private val nextHysteriaFailureObserverConnectFailure = AtomicBoolean(false)
     private val nextHysteriaFailureObserverDisconnect = AtomicBoolean(false)
     private val effectiveRoutingTransform = AtomicReference<((String) -> String)?>(null)
+    private val nextCoreHint = AtomicReference<HysteriaFailureCode?>(null)
+    private val nextLivenessAlive = AtomicReference<Boolean?>(null)
+    private val nextSwitchVerificationSuccess = AtomicBoolean(false)
+
+    /** Следующая проверка кандидата после переключения селектора считается успешной. */
+    fun succeedNextSwitchVerification() {
+        check(BuildConfig.DEBUG)
+        nextSwitchVerificationSuccess.set(true)
+    }
+
+    fun consumeSwitchVerificationSuccess(): Boolean =
+        BuildConfig.DEBUG && nextSwitchVerificationSuccess.compareAndSet(true, false)
+
+    /** После Connected: подсказка ядра об отказе текущего сервера (путь через пробу). */
+    fun reportNextCoreHint(code: HysteriaFailureCode) {
+        check(BuildConfig.DEBUG)
+        nextCoreHint.set(code)
+    }
+
+    /** Результат следующей пробы живости сервера вместо реального запроса. */
+    fun forceNextLivenessProbe(alive: Boolean) {
+        check(BuildConfig.DEBUG)
+        nextLivenessAlive.set(alive)
+    }
+
+    fun consumeCoreHint(): HysteriaFailureCode? =
+        if (BuildConfig.DEBUG) nextCoreHint.getAndSet(null) else null
+
+    fun consumeLivenessOverride(): Boolean? =
+        if (BuildConfig.DEBUG) nextLivenessAlive.getAndSet(null) else null
 
     fun failNextProtect() {
         check(BuildConfig.DEBUG)
@@ -211,6 +241,9 @@ internal object VpnTestHooks {
         nextHysteriaFailureObserverConnectFailure.set(false)
         nextHysteriaFailureObserverDisconnect.set(false)
         effectiveRoutingTransform.set(null)
+        nextCoreHint.set(null)
+        nextLivenessAlive.set(null)
+        nextSwitchVerificationSuccess.set(false)
     }
 
     fun transformEffectiveRouting(raw: String): String =

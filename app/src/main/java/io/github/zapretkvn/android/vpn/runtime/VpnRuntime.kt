@@ -343,6 +343,7 @@ internal class VpnRuntime(
         data class CoreHints(val generation: Long, val hints: List<PathHint>) : Message
         data class ObserverUnavailable(val generation: Long, val message: String) : Message
         data class InjectedFailure(val session: CoreSession, val code: HysteriaFailureCode) : Message
+        data class InjectedHint(val session: CoreSession, val code: HysteriaFailureCode) : Message
         data class ProbeDone(val session: CoreSession, val episode: Long, val result: LivenessResult) : Message
         data class SwitchDone(
             val session: CoreSession,
@@ -390,6 +391,14 @@ internal class VpnRuntime(
             is Message.CoreHints -> onCoreHints(message)
             is Message.ObserverUnavailable -> onObserverUnavailable(message)
             is Message.InjectedFailure -> onInjectedFailure(message)
+            is Message.InjectedHint -> currentPlan(message.session)?.let { plan ->
+                onCoreHints(
+                    Message.CoreHints(
+                        message.session.generation,
+                        listOf(PathHint(plan.currentId, plan.currentType, message.code)),
+                    ),
+                )
+            }
             is Message.ProbeDone -> onProbeDone(message)
             is Message.SwitchDone -> onSwitchDone(message)
             is Message.SpeedSample -> onSpeedSample(message)
@@ -599,7 +608,8 @@ internal class VpnRuntime(
             networkChangeSince = 0L
             startupReplacement = null
             startupReplacementUsed = false
-            supervisor.reset()
+            // Супервизор сброшен при старте попытки: подсказка, пришедшая между
+            // Connected и этим сообщением, уже могла открыть эпизод.
             return
         }
         handleStartFailure(message.token, message.profileId, message.updaterRouting, message.startId, error)
@@ -1380,6 +1390,7 @@ internal class VpnRuntime(
         if (VpnTestHooks.consumeHysteriaReplacementFailure()) {
             throw IllegalStateException("Injected Hysteria replacement readiness failure.")
         }
+        if (VpnTestHooks.consumeSwitchVerificationSuccess()) return
         val dnsServer = session.platform().internalDnsServer
             ?: throw IllegalStateException("libbox не передал внутренний DNS TUN.")
         container.vpnHealthPipeline.verify(
@@ -1551,6 +1562,9 @@ internal class VpnRuntime(
 
         override fun onInjectedFailure(session: CoreSession, code: HysteriaFailureCode) =
             post(Message.InjectedFailure(session, code))
+
+        override fun onInjectedHint(session: CoreSession, code: HysteriaFailureCode) =
+            post(Message.InjectedHint(session, code))
     }
 
     // ================= Вспомогательное =================

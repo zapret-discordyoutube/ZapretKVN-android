@@ -79,6 +79,9 @@ internal interface SessionEvents {
 
     /** Отказ, подменённый инструментальным тестом, уже после Connected. */
     fun onInjectedFailure(session: CoreSession, code: HysteriaFailureCode)
+
+    /** Подсказка ядра, подменённая инструментальным тестом: идёт через пробу. */
+    fun onInjectedHint(session: CoreSession, code: HysteriaFailureCode)
 }
 
 /**
@@ -457,7 +460,7 @@ internal class SessionStarter(
             session.attachSelectorClient(selectorClient)
             selectorClient.connect()
             checkCurrent(token)
-            reconcileSelectorSelection(groupClient, runtimeJson)
+            reconcileSelectorSelection(session, groupClient, runtimeJson)
             checkCurrent(token)
             controller.publish(token, VpnConnectionState.Starting(profileId, "Проверка DNS и HTTPS", updaterRouting))
             foreground(ForegroundState.CheckingHealth)
@@ -532,6 +535,7 @@ internal class SessionStarter(
                 }
             }
             VpnTestHooks.consumeHysteriaFailure()?.let { code -> events.onInjectedFailure(session, code) }
+            VpnTestHooks.consumeCoreHint()?.let { code -> events.onInjectedHint(session, code) }
         }
     }
 
@@ -553,13 +557,14 @@ internal class SessionStarter(
      * трафик уходили через застрявший в кэше outbound. Отказ команды не
      * прерывает подключение: фактический сервер виден в диагностике.
      */
-    private suspend fun reconcileSelectorSelection(client: CommandClient, runtimeJson: String) {
+    private suspend fun reconcileSelectorSelection(session: CoreSession, client: CommandClient, runtimeJson: String) {
         val selections = withContext(Dispatchers.Default) {
             SelectorCacheReconciliation.selections(ConfigAnalyzer.selectorGroups(runtimeJson))
         }
         selections.forEach { selection ->
             try {
                 withContext(Dispatchers.IO) { client.selectOutbound(selection.groupTag, selection.outboundTag) }
+                session.recordCommandedSelection(selection.groupTag, selection.outboundTag)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {

@@ -98,6 +98,12 @@ internal class CoreSession(
     /** Фактический участник каждой selector-группы по сообщениям ядра. */
     private val runtimeSelection = ConcurrentHashMap<String, String>()
 
+    /**
+     * Выбор, скомандованный приложением, и когда. Сообщение групп приходит с
+     * задержкой: снимок, сделанный до команды, не должен вернуть старый сервер.
+     */
+    private val commandedSelection = ConcurrentHashMap<String, Pair<String, Long>>()
+
     /** Переключения селектора этой сессии идут строго по одному. */
     val switchLock = Mutex()
 
@@ -135,8 +141,16 @@ internal class CoreSession(
      * подставляется сразу, до новой проверки.
      */
     fun onRuntimeGroups(groups: List<RuntimeSelectorGroup>): List<RuntimeSelectorGroup> {
+        val now = android.os.SystemClock.elapsedRealtime()
         groups.forEach { group ->
-            if (group.selected.isNotBlank()) runtimeSelection[group.tag] = group.selected
+            if (group.selected.isBlank()) return@forEach
+            val commanded = commandedSelection[group.tag]
+            if (commanded != null && commanded.first != group.selected &&
+                now - commanded.second < COMMAND_SETTLE_MILLIS
+            ) {
+                return@forEach
+            }
+            runtimeSelection[group.tag] = group.selected
         }
         return ServerLatencyReducer.hydrate(groups, latencyStore.forProfile(profileId), serverFingerprints)
     }
@@ -158,9 +172,15 @@ internal class CoreSession(
 
     fun outboundType(tag: String): String? = outboundDescriptions[tag]?.type
 
-    /** Селектор уже переключён командой: зафиксировать выбор в сессии. */
-    fun commitSelection(groupTag: String, outboundTag: String) {
+    /** Селектор переключён командой приложения: учесть сразу, не дожидаясь сообщения групп. */
+    fun recordCommandedSelection(groupTag: String, outboundTag: String) {
+        commandedSelection[groupTag] = outboundTag to android.os.SystemClock.elapsedRealtime()
         runtimeSelection[groupTag] = outboundTag
+    }
+
+    /** Селектор уже переключён командой и выбор сохранён: зафиксировать в сессии. */
+    fun commitSelection(groupTag: String, outboundTag: String) {
+        recordCommandedSelection(groupTag, outboundTag)
         if (groupTag == primaryGroupTag) selectedOutboundTag = outboundTag
     }
 
@@ -531,6 +551,9 @@ internal class CoreSession(
         /** Отсчёт «умной проверки»: окно 20 с — это 4 отсчёта. */
         const val SPEED_MONITOR_INTERVAL_NANOS = 5_000_000_000L
         const val MAX_FAILURE_LOG_BATCH_LINES = 32
+
+        /** Столько снимок групп, противоречащий команде, считается устаревшим. */
+        const val COMMAND_SETTLE_MILLIS = 3_000L
     }
 }
 

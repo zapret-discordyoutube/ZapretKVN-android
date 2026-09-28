@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.network.probes
 
 import io.github.zapretkvn.android.config.ManagedHealthProbe
+import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.network.VpnNetworkProvider
 import java.io.IOException
 import java.net.URL
@@ -35,6 +36,9 @@ class VpnLivenessProbe(
     private val vpnNetworks: VpnNetworkProvider,
 ) {
     internal suspend fun check(): LivenessResult {
+        VpnTestHooks.consumeLivenessOverride()?.let { alive ->
+            return if (alive) LivenessResult.Alive("test_override", 0) else LivenessResult.Dead("test_override")
+        }
         val network = withTimeoutOrNull(NETWORK_WAIT_MILLIS) { vpnNetworks.awaitActive() }
             ?: return LivenessResult.Unknown
         if (runCatching { vpnNetworks.requireActive(network) }.isFailure) return LivenessResult.Unknown
