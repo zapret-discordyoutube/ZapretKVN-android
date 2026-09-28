@@ -15,16 +15,16 @@ import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
-import io.github.zapretkvn.android.engines.failover.FailoverOutcome
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
-import io.github.zapretkvn.android.engines.failover.OutboundFailoverCoordinator
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
-import io.github.zapretkvn.android.engines.hysteria.HysteriaRuntimeState
-import io.github.zapretkvn.android.engines.hysteria.HysteriaStateReducer
 import io.github.zapretkvn.android.importer.ImportCandidate
 import io.github.zapretkvn.android.importer.ImportParser
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ProfileSource
+import io.github.zapretkvn.android.vpn.runtime.FailoverPlan
+import io.github.zapretkvn.android.vpn.runtime.PathDecision
+import io.github.zapretkvn.android.vpn.runtime.PathHint
+import io.github.zapretkvn.android.vpn.runtime.PathSupervisor
 import java.io.File
 import java.io.FileInputStream
 import kotlinx.coroutines.delay
@@ -41,40 +41,29 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class HysteriaTransitionInstrumentedTest {
     @Test
-    fun reducerAndCoordinatorFenceOneReplacementOnDevice() {
+    fun supervisorSwitchesOnceAndHoldsAfterFailedReplacementOnDevice() {
         var now = 1_000L
-        val reducer = HysteriaStateReducer { ++now }
-        val coordinator = OutboundFailoverCoordinator({ now }, cooldownMillis = 60_000)
-        val targets = listOf(
-            FailoverTarget("old", valid = true),
-            FailoverTarget("maintenance", valid = true, maintenance = true),
-            FailoverTarget("replacement", valid = true),
-            FailoverTarget("second", valid = true),
-        )
-
-        reducer.begin(8, "old", targets.map { it.id }.toSet())
-        reducer.advance(8, HysteriaRuntimeState.READY)
-        val selected = coordinator.chooseReplacement(
-                "old",
-                recoverable = true,
-                orderedTargets = targets,
-            ) as FailoverOutcome.Candidate
-        assertEquals("replacement", selected.target.id)
-        reducer.fail(8, HysteriaFailureCode.TARGET_NETWORK_TIMEOUT, automaticSwitch = true)
-        reducer.advance(8, HysteriaRuntimeState.PREPARING_REPLACEMENT)
-        reducer.advance(8, HysteriaRuntimeState.REPLACEMENT_READY)
-        coordinator.failReplacement()
-
-        assertEquals(
-            FailoverOutcome.FailureAlreadyHandled,
-            coordinator.chooseReplacement(
-                "old",
-                recoverable = true,
-                orderedTargets = targets,
+        val supervisor = PathSupervisor { now }
+        val plan = FailoverPlan(
+            groupTag = "proxy",
+            currentId = "old",
+            currentType = "hysteria2",
+            targets = listOf(
+                FailoverTarget("old", valid = true),
+                FailoverTarget("maintenance", valid = true, maintenance = true),
+                FailoverTarget("replacement", valid = true),
+                FailoverTarget("second", valid = true),
             ),
         )
-        assertFalse(reducer.advance(7, HysteriaRuntimeState.FAILED))
-        assertEquals(HysteriaRuntimeState.REPLACEMENT_READY, reducer.session.state)
+        val switch = supervisor.onConfirmedFailure(plan, emptyMap()) as PathDecision.Switch
+        assertEquals("replacement", switch.toId)
+        supervisor.onSwitchResult(switch.episode, committed = false)
+
+        // Кандидат тоже не прошёл: автоматика ждёт сеть, а не прыгает дальше.
+        now += 1_000
+        val hint = PathHint("old", "hysteria2", HysteriaFailureCode.TARGET_NETWORK_TIMEOUT)
+        assertTrue(supervisor.onHint(hint) { plan } is PathDecision.Ignore)
+        assertFalse(supervisor.busy)
     }
 
     @Test
@@ -107,7 +96,7 @@ class HysteriaTransitionInstrumentedTest {
     }
 
     @Test
-    fun failedProductionReplacementIsTerminalAndDoesNotPersistCandidate() = runBlocking {
+    fun failedProductionReplacementKeepsOriginalServerAndDoesNotPersistCandidate() = runBlocking {
         val fixture = productionPair()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -126,12 +115,13 @@ class HysteriaTransitionInstrumentedTest {
             VpnTestHooks.reportNextHysteriaFailure(HysteriaFailureCode.TARGET_NETWORK_TIMEOUT)
             VpnTestHooks.failNextHysteriaReplacement()
             assertTrue(startAndAwaitTerminal(container.vpnController, profile.id) is VpnConnectionState.Connected)
-            val failure = withTimeout(35_000) {
-                container.vpnController.state.first { it is VpnConnectionState.Error }
-            } as VpnConnectionState.Error
-            assertEquals(HysteriaFailureCode.TRANSITION_DEADLINE_EXCEEDED.name, failure.code)
+            // Резервный сервер не прошёл проверку: селектор возвращён, туннель жив.
+            withTimeout(35_000) {
+                while (VpnTestHooks.pendingHysteriaReplacementFailure()) delay(50)
+            }
+            delay(1_000)
+            assertTrue(container.vpnController.state.value is VpnConnectionState.Connected)
             assertEquals(originalTag, selectedTag(container, profile.id))
-            awaitIdle(context)
         } finally {
             cleanupVpn(context, container, profile.id)
         }

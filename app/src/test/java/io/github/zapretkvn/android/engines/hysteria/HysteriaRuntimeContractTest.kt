@@ -1,8 +1,8 @@
 package io.github.zapretkvn.android.engines.hysteria
 
-import io.github.zapretkvn.android.engines.failover.OutboundFailureLogParser
 import io.github.zapretkvn.android.engines.singbox.consume
 import io.github.zapretkvn.android.vpn.VpnFailureCodeSanitizer
+import io.github.zapretkvn.android.vpn.runtime.PathSupervisor
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -58,60 +58,7 @@ class HysteriaRuntimeContractTest {
         cases.forEach { (message, expected) ->
             assertEquals(message, expected, HysteriaFailureClassifier.classify(message))
         }
-        assertTrue(HYSTERIA_SECURITY_FAILURES.intersect(AUTOMATIC_HYSTERIA_SWITCH_FAILURES).isEmpty())
-    }
-
-    @Test
-    fun `state reducer fences stale generation after replacement commit`() {
-        var now = 10L
-        val reducer = HysteriaStateReducer { ++now }
-        reducer.begin(12, "old", setOf("old", "replacement"))
-        listOf(
-            HysteriaRuntimeState.STARTING_FRONT,
-            HysteriaRuntimeState.WAITING_RELAY,
-            HysteriaRuntimeState.READY,
-            HysteriaRuntimeState.SWITCH_REQUESTED,
-            HysteriaRuntimeState.PREPARING_REPLACEMENT,
-            HysteriaRuntimeState.REPLACEMENT_READY,
-            HysteriaRuntimeState.COMMITTING_SWITCH,
-            HysteriaRuntimeState.STOPPING_OLD,
-            HysteriaRuntimeState.READY,
-        ).forEach { state -> assertTrue(reducer.advance(12, state)) }
-
-        assertFalse(reducer.advance(11, HysteriaRuntimeState.FAILED))
-        assertEquals(HysteriaRuntimeState.READY, reducer.session.state)
-    }
-
-    @Test
-    fun `late old-target operational and security logs are fenced after commit`() {
-        val fence = HysteriaTargetGenerationFence(42, "old")
-        val oldOperational = checkNotNull(
-            OutboundFailureLogParser.first(
-                listOf("outbound/hysteria2[old]: no recent network activity"),
-            ),
-        ).let { line ->
-            fence.event(line.outboundTag, checkNotNull(HysteriaFailureClassifier.classifyRuntime(line.message)), 1_000)
-        }
-        val oldSecurity = checkNotNull(
-            OutboundFailureLogParser.first(
-                listOf("outbound/hysteria2[old]: x509: certificate signed by unknown authority"),
-            ),
-        ).let { line ->
-            fence.event(line.outboundTag, checkNotNull(HysteriaFailureClassifier.classifyRuntime(line.message)), 1_001)
-        }
-
-        fence.commit("replacement")
-
-        assertFalse(fence.accepts(checkNotNull(oldOperational)))
-        assertFalse(fence.accepts(checkNotNull(oldSecurity)))
-        val current = checkNotNull(
-            fence.event(
-                "replacement",
-                HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
-                1_002,
-            ),
-        )
-        assertTrue(fence.accepts(current))
+        assertTrue(PathSupervisor.SECURITY_FAILURES.intersect(PathSupervisor.SWITCHABLE_FAILURES).isEmpty())
     }
 
     @Test
@@ -120,7 +67,7 @@ class HysteriaRuntimeContractTest {
         val before = HysteriaCapabilityClassifier.classify(uri)
         assertEquals(HysteriaFailureCode.TARGET_PIN_MISMATCH, HysteriaFailureClassifier.classify("pin mismatch"))
         assertEquals("pinned", before.tlsKind)
-        assertFalse("pin failure is terminal for this profile", HysteriaFailureCode.TARGET_PIN_MISMATCH in AUTOMATIC_HYSTERIA_SWITCH_FAILURES)
+        assertFalse("pin failure is terminal for this profile", HysteriaFailureCode.TARGET_PIN_MISMATCH in PathSupervisor.SWITCHABLE_FAILURES)
         assertEquals(before, HysteriaCapabilityClassifier.classify(uri))
     }
 

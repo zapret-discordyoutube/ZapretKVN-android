@@ -1,6 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
-import io.github.zapretkvn.android.vpn.ZapretVpnService
+import io.github.zapretkvn.android.vpn.runtime.RuntimeErrorLogClientHandler
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureClassifier
 import org.junit.Assert.*
 import org.junit.Test
@@ -133,7 +133,7 @@ class RuntimeErrorsTest {
     fun realCommandLogCallbackDoesNotInsertCancellationIntoCoreErrorStream() {
         val errors = mutableListOf<String>()
         val disconnects = mutableListOf<String>()
-        val handler = ZapretVpnService.RuntimeErrorLogClientHandler(
+        val handler = RuntimeErrorLogClientHandler(
             generation = 8,
             onLogs = { _, _ -> },
             onEntry = { _, message -> errors += message },

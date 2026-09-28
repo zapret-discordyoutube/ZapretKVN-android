@@ -170,10 +170,10 @@ delays.sort()
 expected = [
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
-    # Дебаунс перезапуска и двух направлений автоматизации по смене сети плюс
-    # ограниченный backoff восстановления. Одновременно активен только один
-    # debounce Job; ожидание сети событийное и таймера не добавляет.
-    ("app/src/main/java/io/github/zapretkvn/android/vpn/ZapretVpnService.kt", 4),
+    # Единый дебаунс смены сети (перезапуск, пауза и возобновление по правилам
+    # сети) плюс ограниченный backoff восстановления. Одновременно активен
+    # только один debounce Job; ожидание сети событийное и таймера не добавляет.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/VpnRuntime.kt", 2),
     ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/UnderlyingNetworkMonitor.kt", 1),
 ]
 if delays != expected:

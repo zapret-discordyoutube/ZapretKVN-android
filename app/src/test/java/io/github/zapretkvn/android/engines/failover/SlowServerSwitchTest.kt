@@ -8,6 +8,9 @@ import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.SLO
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchDefaults.THRESHOLD_BYTES_PER_SECOND
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import io.github.zapretkvn.android.vpn.runtime.FailoverPlan
+import io.github.zapretkvn.android.vpn.runtime.PathDecision
+import io.github.zapretkvn.android.vpn.runtime.PathSupervisor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -326,23 +329,20 @@ class SlowServerSwitchTest {
         // Only the 10-minute post-switch hold applies, never the 30-minute manual one.
         now += POST_SWITCH_HOLD_MILLIS
         assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
-        // A failover commit goes through its own coordinator and leaves the gate alone.
-        val failover = OutboundFailoverCoordinator({ now })
-        failover.chooseReplacement("b", recoverable = true, orderedTargets = listOf(FailoverTarget("b", true), FailoverTarget("c", true)))
-        failover.commitReplacement()
+        // A failover commit goes through the path supervisor and leaves the gate alone.
+        val failover = PathSupervisor { now }
+        val plan = FailoverPlan("proxy", "b", "vless", listOf(FailoverTarget("b", true), FailoverTarget("c", true)))
+        val switch = failover.onConfirmedFailure(plan, emptyMap()) as PathDecision.Switch
+        failover.onSwitchResult(switch.episode, committed = true)
         assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
     }
 
     @Test
     fun `failover still works during the manual hold`() {
         policy.onManualSelection()
-        val failover = OutboundFailoverCoordinator({ now })
-        val outcome = failover.chooseReplacement(
-            "a",
-            recoverable = true,
-            orderedTargets = listOf(FailoverTarget("a", true), FailoverTarget("b", true)),
-        )
-        assertEquals(FailoverOutcome.Candidate(FailoverTarget("b", true)), outcome)
+        val failover = PathSupervisor { now }
+        val plan = FailoverPlan("proxy", "a", "vless", listOf(FailoverTarget("a", true), FailoverTarget("b", true)))
+        assertEquals(PathDecision.Switch(1, "proxy", "a", "b"), failover.onConfirmedFailure(plan, emptyMap()))
         assertEquals(SlowSwitchGate.ManualHold, policy.gate(enabled = true, busy = false))
     }
 

@@ -1,6 +1,7 @@
-package io.github.zapretkvn.android.vpn
+package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.diagnostics.RuntimeStartupFailure
 import io.github.zapretkvn.android.network.probes.VpnDnsHealthException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -76,6 +77,39 @@ class AutomaticDnsFallbackPolicyTest {
             listOf(DnsMode.FromJson to DnsMode.Secure, DnsMode.Secure to DnsMode.Android),
             transitions,
         )
+    }
+
+    @Test
+    fun `DNS failure wrapped in startup evidence still advances to next candidate`() = runBlocking {
+        val attempts = mutableListOf<DnsMode>()
+        val result = AutomaticDnsFallbackPolicy.run(
+            candidates = listOf(DnsMode.Secure, DnsMode.Android),
+            onFallback = { _, _, _ -> },
+            attempt = { mode ->
+                attempts += mode
+                if (mode == DnsMode.Secure) {
+                    throw RuntimeStartupFailure(VpnDnsHealthException("dns failed"), null)
+                }
+                "connected"
+            },
+        )
+        assertEquals("connected", result)
+        assertEquals(listOf(DnsMode.Secure, DnsMode.Android), attempts)
+    }
+
+    @Test
+    fun `last candidate rethrows the original wrapped failure`() {
+        val wrapped = RuntimeStartupFailure(VpnDnsHealthException("dns failed"), null)
+        val thrown = assertThrows(RuntimeStartupFailure::class.java) {
+            runBlocking {
+                AutomaticDnsFallbackPolicy.run(
+                    candidates = listOf(DnsMode.Android),
+                    onFallback = { _, _, _ -> error("unexpected fallback") },
+                    attempt = { throw wrapped },
+                )
+            }
+        }
+        assertEquals(wrapped, thrown)
     }
 
     @Test

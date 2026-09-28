@@ -255,6 +255,10 @@ internal object VpnTestHooks {
     fun consumeHysteriaReplacementFailure(): Boolean =
         BuildConfig.DEBUG && nextHysteriaReplacementFailure.compareAndSet(true, false)
 
+    /** Инъекция отказа резервного сервера ещё не израсходована. */
+    fun pendingHysteriaReplacementFailure(): Boolean =
+        BuildConfig.DEBUG && nextHysteriaReplacementFailure.get()
+
     fun consumeHysteriaFailureObserverConnectFailure(): Boolean =
         BuildConfig.DEBUG && nextHysteriaFailureObserverConnectFailure.compareAndSet(true, false)
 
