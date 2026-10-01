@@ -147,6 +147,7 @@ internal class VpnRuntime(
         networkMonitor = ::monitor,
         foreground = { state -> host.showForeground(state) },
         events = Events(),
+        switcher = switcher,
         scope = scope,
     )
 
@@ -344,6 +345,12 @@ internal class VpnRuntime(
         data class ObserverUnavailable(val generation: Long, val message: String) : Message
         data class InjectedFailure(val session: CoreSession, val code: HysteriaFailureCode) : Message
         data class InjectedHint(val session: CoreSession, val code: HysteriaFailureCode) : Message
+        data class StartupFallback(
+            val session: CoreSession,
+            val deadIds: List<String>,
+            val toId: String,
+            val code: HysteriaFailureCode,
+        ) : Message
         data class ProbeDone(val session: CoreSession, val episode: Long, val result: LivenessResult) : Message
         data class SwitchDone(
             val session: CoreSession,
@@ -399,6 +406,7 @@ internal class VpnRuntime(
                     ),
                 )
             }
+            is Message.StartupFallback -> onStartupFallback(message)
             is Message.ProbeDone -> onProbeDone(message)
             is Message.SwitchDone -> onSwitchDone(message)
             is Message.SpeedSample -> onSpeedSample(message)
@@ -723,7 +731,7 @@ internal class VpnRuntime(
             return false
         }
         if (token != controller.currentGeneration() || stopInProgress) return false
-        startupReplacement = PendingReplacement(profileId, candidateJson, candidate.id)
+        startupReplacement = PendingReplacement(profileId, candidateJson, candidate.id, plan.currentId)
         timeline("Запуск: отказ ${code.name} на ${server(plan.currentId)}; перезапуск на резервном ${server(candidate.id)}.")
         controller.publishRecoverableFailure(token, failure)
         controller.publish(
@@ -1239,9 +1247,7 @@ internal class VpnRuntime(
     }
 
     private fun latencyHints(profileId: String): Map<String, LatencyHint> =
-        container.serverLatencyStore.forProfile(profileId)
-            .mapNotNull { (tag, entry) -> entry.hint()?.let { tag to it } }
-            .toMap()
+        container.serverLatencyStore.failoverHints(profileId)
 
     private fun isCurrent(session: CoreSession): Boolean =
         sessions.active() === session && session.generation == controller.currentGeneration() && !stopInProgress
@@ -1294,6 +1300,20 @@ internal class VpnRuntime(
             }
         }
         apply(session, decision, probeCode, (result as? LivenessResult.Dead)?.detail)
+    }
+
+    /**
+     * Запуск закончился на резервном сервере. Сообщение приходит раньше итога
+     * попытки, поэтому сверяется поколение, а не активная сессия.
+     */
+    private fun onStartupFallback(message: Message.StartupFallback) {
+        val session = message.session
+        if (session.generation != controller.currentGeneration() || stopInProgress) return
+        supervisor.markDead(message.deadIds)
+        timeline(
+            "Запуск: ${message.deadIds.joinToString { server(it) }} не прошли проверку (${message.code.name}); " +
+                "подключение через ${server(message.toId)}, ядро не перезапускалось.",
+        )
     }
 
     private fun onInjectedFailure(message: Message.InjectedFailure) {
@@ -1565,6 +1585,13 @@ internal class VpnRuntime(
 
         override fun onInjectedHint(session: CoreSession, code: HysteriaFailureCode) =
             post(Message.InjectedHint(session, code))
+
+        override fun onStartupFallback(
+            session: CoreSession,
+            deadIds: List<String>,
+            toId: String,
+            code: HysteriaFailureCode,
+        ) = post(Message.StartupFallback(session, deadIds.toList(), toId, code))
     }
 
     // ================= Вспомогательное =================

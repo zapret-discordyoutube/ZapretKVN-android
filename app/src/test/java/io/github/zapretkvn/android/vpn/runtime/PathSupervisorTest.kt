@@ -149,4 +149,23 @@ class PathSupervisorTest {
         val closed = PathHint("a", "vless", HysteriaFailureCode.TARGET_CONNECTION_CLOSED)
         assertTrue(supervisor.onHint(closed) { plan("a") } is PathDecision.Ignore)
     }
+
+    @Test
+    fun `servers that failed the startup check are not offered until cooldown ends`() {
+        supervisor.markDead(listOf("a", "b"))
+        assertEquals(listOf("d"), supervisor.candidates(plan("c", ids = arrayOf("a", "b", "c", "d")), emptyMap()).map { it.id })
+        now += PathSupervisor.DEAD_SERVER_COOLDOWN_MILLIS
+        assertEquals(
+            listOf("a", "b", "d"),
+            supervisor.candidates(plan("c", ids = arrayOf("a", "b", "c", "d")), emptyMap()).map { it.id },
+        )
+    }
+
+    @Test
+    fun `startup ranks candidates exactly like the supervisor`() {
+        val plan = plan("a")
+        val hints = mapOf("c" to LatencyHint(millis = 40, failed = false), "b" to LatencyHint(millis = null, failed = true))
+        assertEquals(listOf("c"), PathSupervisor.rank(plan, hints).map { it.id })
+        assertEquals(supervisor.candidates(plan, hints), PathSupervisor.rank(plan, hints))
+    }
 }

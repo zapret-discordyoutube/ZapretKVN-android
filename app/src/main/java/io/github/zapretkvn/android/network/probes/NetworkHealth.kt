@@ -861,7 +861,8 @@ class VpnHealthPipeline(
         return output
     }
 
-    private companion object {
+    internal companion object {
+        /** Потолок одной проверки; им же запуск меряет бюджет на резервный сервер. */
         const val HEALTH_TIMEOUT_MILLIS = 20_000L
         const val HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS = 3_000L
         const val DNS_TIMEOUT_MILLIS = 2_500

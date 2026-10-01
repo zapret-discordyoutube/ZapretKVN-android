@@ -3,8 +3,10 @@ package io.github.zapretkvn.android.vpn.runtime
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
+import io.github.zapretkvn.android.engines.failover.LatencyHint
 import io.github.zapretkvn.android.engines.hysteria.HysteriaCapabilityClassifier
 import io.github.zapretkvn.android.engines.hysteria.isFailoverEligible
+import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import java.util.Locale
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -71,3 +73,9 @@ internal object FailoverPlanner {
 
     private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 }
+
+/** Сохранённые пинги серверов профиля — для ранжирования кандидатов замены. */
+internal fun ServerLatencyStore.failoverHints(profileId: String): Map<String, LatencyHint> =
+    forProfile(profileId)
+        .mapNotNull { (tag, entry) -> entry.hint()?.let { tag to it } }
+        .toMap()

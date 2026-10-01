@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn.runtime
 
+import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.apps.AllowedApplicationSink
 import io.github.zapretkvn.android.apps.AppScopeMode
@@ -19,6 +20,7 @@ import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.RuntimeStartupFailure
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
+import io.github.zapretkvn.android.engines.failover.FailoverTarget
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.engines.singbox.ListStringIterator
 import io.github.zapretkvn.android.engines.singbox.SelectorCacheReconciliation
@@ -30,6 +32,7 @@ import io.github.zapretkvn.android.network.isSettledForConnect
 import io.github.zapretkvn.android.network.isUsableForConnect
 import io.github.zapretkvn.android.network.policyKey
 import io.github.zapretkvn.android.network.probes.HealthCheckResult
+import io.github.zapretkvn.android.network.probes.VpnHealthPipeline
 import io.github.zapretkvn.android.network.probes.VpnHealthStageOutcome
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
 import io.github.zapretkvn.android.platform.VpnSystemPolicyDetector
@@ -50,13 +53,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** Кандидат замены сервера, выбранный после отказа запуска; сохраняется после готовности. */
 internal data class PendingReplacement(
     val profileId: String,
     val candidateJson: String,
     val targetTag: String,
+    /** Сервер, отказ которого вызвал замену: запуск к нему не возвращается. */
+    val failedTag: String,
 )
 
 internal data class StartRequest(
@@ -82,6 +86,12 @@ internal interface SessionEvents {
 
     /** Подсказка ядра, подменённая инструментальным тестом: идёт через пробу. */
     fun onInjectedHint(session: CoreSession, code: HysteriaFailureCode)
+
+    /**
+     * Стартовая проверка перевела сессию на резервный сервер [toId];
+     * [deadIds] проверку не прошли — надзор не должен к ним возвращаться.
+     */
+    fun onStartupFallback(session: CoreSession, deadIds: List<String>, toId: String, code: HysteriaFailureCode)
 }
 
 /**
@@ -91,6 +101,10 @@ internal interface SessionEvents {
  * при любом отказе закрывает свою сессию и бросает исключение, а решение
  * принимает [VpnRuntime]. Каждый шаг сверяет поколение: команда пользователя
  * заменяет попытку сразу, как только поколение сменилось.
+ *
+ * Единственное, что запуск решает сам, — на каком сервере группы закончить
+ * проверку: ядро уже работает, и замена мёртвого сервера — команда селектора
+ * ([verifyWithFallback]), а не новая попытка.
  */
 internal class SessionStarter(
     private val service: ZapretVpnService,
@@ -99,6 +113,7 @@ internal class SessionStarter(
     private val networkMonitor: () -> DefaultNetworkMonitor,
     private val foreground: (ForegroundState) -> Unit,
     private val events: SessionEvents,
+    private val switcher: ServerSwitcher,
     private val scope: kotlinx.coroutines.CoroutineScope,
 ) {
     private val controller get() = container.vpnController
@@ -131,7 +146,8 @@ internal class SessionStarter(
 
     /** Запуск с перебором DNS-кандидатов в общем бюджете [CONNECTION_START_TIMEOUT_MILLIS]. */
     suspend fun startWithDeadline(request: StartRequest) {
-        val completed = withTimeoutOrNull(CONNECTION_START_TIMEOUT_MILLIS) {
+        val budget = StartupBudget(SystemClock::elapsedRealtime, CONNECTION_START_TIMEOUT_MILLIS)
+        val completed = budget.run {
             val configuredMode = container.uiSettingsStore.settings.first().dnsMode
             container.profileStore.initialize()
             val hasProfileDns = configuredMode == DnsMode.Automatic &&
@@ -173,7 +189,7 @@ internal class SessionStarter(
                 attempt = { candidate ->
                     candidateAttemptId += 1
                     controller.beginConnectionCandidate(request.token, candidateAttemptId)
-                    start(request, candidate)
+                    start(request, candidate, budget)
                     true
                 },
             )
@@ -202,7 +218,7 @@ internal class SessionStarter(
         check(token == controller.currentGeneration()) { "Запуск отменён." }
     }
 
-    private suspend fun start(request: StartRequest, dnsMode: DnsMode) {
+    private suspend fun start(request: StartRequest, dnsMode: DnsMode, budget: StartupBudget) {
         val token = request.token
         val profileId = request.profileId
         val updaterRouting = request.updaterRouting
@@ -395,7 +411,7 @@ internal class SessionStarter(
             session.close()
             throw CancellationException("Запуск отменён.")
         }
-        val health: HealthCheckResult
+        val verified: VerifiedServer
         try {
             session.attachPlatform(
                 AndroidPlatformAdapter(
@@ -465,31 +481,13 @@ internal class SessionStarter(
             controller.publish(token, VpnConnectionState.Starting(profileId, "Проверка DNS и HTTPS", updaterRouting))
             foreground(ForegroundState.CheckingHealth)
             val dnsServer = session.platform().internalDnsServer ?: error("libbox не передал внутренний DNS TUN.")
-            health = container.vpnHealthPipeline.verify(
-                mode = dnsMode,
-                internalDnsServer = dnsServer,
-                proxyIpFamily = BootstrapConfig.selectedProxyIpFamily(profile.json),
-                onNetworkLease = { identity -> controller.recordConnectionVpnNetwork(token, identity.toString()) },
-                onNetworkLost = { controller.recordConnectionVpnNetwork(token, lost = true) },
-                onStageStarted = { stage ->
-                    controller.startConnectionDiagnosticStage(token, stage.diagnosticKey, stage.diagnosticLabel)
-                },
-                onStageFinished = { stage, outcome, detail ->
-                    controller.finishConnectionDiagnosticStage(
-                        generation = token,
-                        key = stage.diagnosticKey,
-                        status = when (outcome) {
-                            VpnHealthStageOutcome.Success -> DiagnosticStageStatus.Success
-                            VpnHealthStageOutcome.Recovered -> DiagnosticStageStatus.Recovered
-                            VpnHealthStageOutcome.Failed -> DiagnosticStageStatus.Failed
-                        },
-                        detail = detail,
-                    )
-                },
-            )
+            val failedBefore = request.replacement?.takeIf { it.profileId == profileId }?.failedTag
+            verified = verifyWithFallback(session, profile.json, dnsServer, budget, failedBefore)
             checkCurrent(token)
             controller.startConnectionDiagnosticStage(token, "finalize", "Финализация сессии")
-            container.proxyBootstrapper.recordSuccess(profileId, preparedBootstrap)
+            // Bootstrap готовился для исходного сервера: после перехода на резервный
+            // он описывает не тот сервер, через который идёт подключение.
+            if (!verified.switched) container.proxyBootstrapper.recordSuccess(profileId, preparedBootstrap)
             session.requireRuntimeErrorClient()
             check(sessions.activate(session, token)) { "Запуск отменён." }
             // Закрыть гонку pending→active: отключение наблюдателя между первой
@@ -497,17 +495,20 @@ internal class SessionStarter(
             session.requireRuntimeErrorClient()
             session.attachNetworkObserver(monitor.observe { state -> events.onUnderlyingNetwork(session, state) })
             events.onSessionActivated(session)
-            if (health.externalIpProbeAllowed) startIdentityProbe(session)
+            if (verified.health.externalIpProbeAllowed) startIdentityProbe(session)
             // Кандидат замены сохраняется только после готовности конфигурации,
-            // ядра, TUN, DNS/HTTPS и всех наблюдателей сессии.
+            // ядра, TUN, DNS/HTTPS и всех наблюдателей сессии. Если проверку
+            // прошёл не он, а резервный, профиль уже сохранён переключением.
             request.replacement
-                ?.takeIf { it.profileId == profileId }
+                ?.takeIf { it.profileId == profileId && !verified.switched }
                 ?.let { pending -> container.profileStore.update(profileId, pending.candidateJson) }
         } catch (error: Throwable) {
-            val startupFailure = if (error is CancellationException) {
-                error
-            } else {
-                RuntimeStartupFailure(error, RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token)))
+            val startupFailure = when (error) {
+                is CancellationException, is RuntimeStartupFailure -> error
+                else -> RuntimeStartupFailure(
+                    error,
+                    RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token)),
+                )
             }
             sessions.discard(session)
             session.close()
@@ -537,6 +538,130 @@ internal class SessionStarter(
             VpnTestHooks.consumeHysteriaFailure()?.let { code -> events.onInjectedFailure(session, code) }
             VpnTestHooks.consumeCoreHint()?.let { code -> events.onInjectedHint(session, code) }
         }
+    }
+
+    private class VerifiedServer(val health: HealthCheckResult, val switched: Boolean)
+
+    /** Та же проверка DNS/HTTPS для выбранного сервера и для каждого кандидата. */
+    private suspend fun verifyServer(session: CoreSession, json: String, dnsServer: String): HealthCheckResult {
+        val token = session.generation
+        return container.vpnHealthPipeline.verify(
+            mode = session.runtimeDnsMode,
+            internalDnsServer = dnsServer,
+            proxyIpFamily = BootstrapConfig.selectedProxyIpFamily(json),
+            onNetworkLease = { identity -> controller.recordConnectionVpnNetwork(token, identity.toString()) },
+            onNetworkLost = { controller.recordConnectionVpnNetwork(token, lost = true) },
+            onStageStarted = { stage ->
+                controller.startConnectionDiagnosticStage(token, stage.diagnosticKey, stage.diagnosticLabel)
+            },
+            onStageFinished = { stage, outcome, detail ->
+                controller.finishConnectionDiagnosticStage(
+                    generation = token,
+                    key = stage.diagnosticKey,
+                    status = when (outcome) {
+                        VpnHealthStageOutcome.Success -> DiagnosticStageStatus.Success
+                        VpnHealthStageOutcome.Recovered -> DiagnosticStageStatus.Recovered
+                        VpnHealthStageOutcome.Failed -> DiagnosticStageStatus.Failed
+                    },
+                    detail = detail,
+                )
+            },
+        )
+    }
+
+    /**
+     * Проверяет выбранный сервер; если мёртв именно он
+     * ([StartupFallbackPolicy]), перебирает кандидатов его группы командой
+     * селектора в том же ядре — тем же [ServerSwitcher] и в том же порядке, что
+     * надзор работающей сессии. Перебор идёт под собственным бюджетом
+     * ([StartupBudget.apart]); кандидат берётся, только пока его хватает на
+     * полную проверку. [failedBefore] — сервер, отказ которого уже вызвал
+     * перезапуск с заменой: к нему перебор не возвращается.
+     *
+     * Никто не прошёл — селектор возвращён, а наружу уходит отказ исходного
+     * сервера с его свидетельством ядра, замороженным до переключений.
+     */
+    private suspend fun verifyWithFallback(
+        session: CoreSession,
+        selectedJson: String,
+        dnsServer: String,
+        budget: StartupBudget,
+        failedBefore: String?,
+    ): VerifiedServer {
+        val failure = try {
+            return VerifiedServer(verifyServer(session, selectedJson, dnsServer), switched = false)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            error
+        }
+        val token = session.generation
+        val evidence = RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token))
+        val original = RuntimeStartupFailure(failure, evidence)
+        val plan = FailoverPlanner.plan(session.profileJson, session.runtimeSelections(), session.primaryGroupTag)
+        val code = StartupFallbackPolicy.deadServerCode(failure, evidence, plan) ?: throw original
+        checkNotNull(plan)
+        val dead = listOfNotNull(plan.currentId, failedBefore).toMutableList()
+        val candidates = PathSupervisor.rank(
+            plan,
+            container.serverLatencyStore.failoverHints(session.profileId),
+            excluded = setOfNotNull(failedBefore),
+        )
+        val verifyMillis = VpnHealthPipeline.HEALTH_TIMEOUT_MILLIS
+        val switched = budget.apart(StartupFallbackPolicy.budgetMillis(verifyMillis)) {
+            fallbackTo(candidates, session, plan, dnsServer, budget, verifyMillis, dead)
+        }
+        if (switched != null) {
+            events.onStartupFallback(session, dead, switched.first, code)
+            return VerifiedServer(switched.second, switched = true)
+        }
+        throw original
+    }
+
+    /** @return тег и результат проверки первого прошедшего кандидата; null — никто не прошёл. */
+    private suspend fun fallbackTo(
+        candidates: List<FailoverTarget>,
+        session: CoreSession,
+        plan: FailoverPlan,
+        dnsServer: String,
+        budget: StartupBudget,
+        verifyMillis: Long,
+        dead: MutableList<String>,
+    ): Pair<String, HealthCheckResult>? {
+        val token = session.generation
+        for (candidate in candidates) {
+            if (!StartupFallbackPolicy.fitsBudget(budget.remainingMillis(), verifyMillis)) break
+            checkCurrent(token)
+            controller.startConnectionDiagnosticStage(token, "server_fallback", "Переключение на резервный сервер")
+            controller.publish(
+                token,
+                VpnConnectionState.Starting(
+                    session.profileId,
+                    "Сервер не отвечает, проверка резервного",
+                    session.updaterRouting,
+                ),
+            )
+            var health: HealthCheckResult? = null
+            val outcome = try {
+                switcher.switch(
+                    session,
+                    plan.groupTag,
+                    candidate.id,
+                    SwitchVerifier { candidateSession, json -> health = verifyServer(candidateSession, json, dnsServer) },
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                SwitchOutcome.RolledBack(error)
+            }
+            when (outcome) {
+                SwitchOutcome.Committed -> return candidate.id to checkNotNull(health)
+                is SwitchOutcome.RolledBack -> dead += candidate.id
+                // Состояние селектора неизвестно: продолжать перебор нельзя.
+                is SwitchOutcome.CoreUnreachable -> break
+            }
+        }
+        return null
     }
 
     /** Внешний IP через туннель — для главного экрана; не влияет на подключение. */

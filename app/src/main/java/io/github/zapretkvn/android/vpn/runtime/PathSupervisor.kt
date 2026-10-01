@@ -208,22 +208,20 @@ internal class PathSupervisor(
         }
     }
 
-    /** Кандидаты для замены: сначала лучший сохранённый пинг, затем порядок профиля. */
+    /**
+     * Серверы, не прошедшие проверку при запуске: сессия начинается на
+     * резервном, и надзор не должен вернуть её на заведомо мёртвый.
+     */
+    fun markDead(serverIds: Collection<String>) {
+        val until = monotonicMillis() + DEAD_SERVER_COOLDOWN_MILLIS
+        serverIds.forEach { deadUntil[it] = until }
+    }
+
+    /** Кандидаты для замены без подтверждённо мёртвых серверов. */
     fun candidates(plan: FailoverPlan, hints: Map<String, LatencyHint>): List<FailoverTarget> {
         val now = monotonicMillis()
         deadUntil.entries.removeAll { it.value <= now }
-        return plan.targets
-            .asSequence()
-            .filter { it.id != plan.currentId && it.valid && !it.maintenance }
-            .filter { it.id !in deadUntil }
-            .filter { hints[it.id]?.failed != true }
-            .withIndex()
-            .sortedWith(
-                compareBy<IndexedValue<FailoverTarget>> { hints[it.value.id]?.millis ?: Int.MAX_VALUE }
-                    .thenBy { it.index },
-            )
-            .map { it.value }
-            .toList()
+        return rank(plan, hints, deadUntil.keys)
     }
 
     private fun pruneSwitches(now: Long) {
@@ -234,6 +232,27 @@ internal class PathSupervisor(
 
     companion object {
         const val HYSTERIA_TYPE = "hysteria2"
+
+        /**
+         * Порядок замены: сначала лучший сохранённый пинг, затем порядок профиля.
+         * Чистая функция — ею же пользуется запуск, у которого своего надзора нет.
+         */
+        fun rank(
+            plan: FailoverPlan,
+            hints: Map<String, LatencyHint>,
+            excluded: Set<String> = emptySet(),
+        ): List<FailoverTarget> = plan.targets
+            .asSequence()
+            .filter { it.id != plan.currentId && it.valid && !it.maintenance }
+            .filter { it.id !in excluded }
+            .filter { hints[it.id]?.failed != true }
+            .withIndex()
+            .sortedWith(
+                compareBy<IndexedValue<FailoverTarget>> { hints[it.value.id]?.millis ?: Int.MAX_VALUE }
+                    .thenBy { it.index },
+            )
+            .map { it.value }
+            .toList()
 
         /** Сервер ответил на пробу: подсказки о нём не проверяются снова столько времени. */
         const val FALSE_ALARM_MUTE_MILLIS = 60_000L
