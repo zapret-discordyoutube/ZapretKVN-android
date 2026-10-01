@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
@@ -68,6 +69,7 @@ import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
 import io.github.zapretkvn.android.vpn.LATENCY_FRESHNESS_MILLIS
+import io.github.zapretkvn.android.vpn.sortedByLatency
 import io.github.zapretkvn.android.vpn.withFreshness
 import kotlin.math.max
 import kotlinx.coroutines.delay
@@ -585,6 +587,7 @@ private fun ServerSelectorSheet(
     onSelect: (RuntimeSelectorGroup, RuntimeOutboundItem) -> Unit,
     onMeasureGroup: (String) -> Unit,
 ) {
+    var fastestFirst by rememberSaveable { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
@@ -598,9 +601,15 @@ private fun ServerSelectorSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(8.dp))
+            FilterChip(
+                selected = fastestFirst,
+                onClick = { fastestFirst = !fastestFirst },
+                label = { Text("Быстрые сверху") },
+                modifier = Modifier.testTag("servers-sort-fastest"),
+            )
         }
         groups.filter { it.items.isNotEmpty() }.forEach { group ->
+            val shownItems = if (fastestFirst) group.items.sortedByLatency() else group.items
             item(key = "header-${group.tag}") {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -632,7 +641,7 @@ private fun ServerSelectorSheet(
                     }
                 }
             }
-            items(group.items, key = { "${group.tag}-${it.tag}" }) { item ->
+            items(shownItems, key = { "${group.tag}-${it.tag}" }) { item ->
                 val selected = group.selected == item.tag
                 Row(
                     modifier = Modifier

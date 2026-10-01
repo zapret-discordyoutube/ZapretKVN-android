@@ -13,10 +13,12 @@ import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.RelayDelayProbeHandler
 import io.nekohasekai.libbox.RelayDelayProbeResult
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -24,9 +26,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -149,112 +154,131 @@ internal class LatencyProbeCoordinator(
         val testable = probe.group.items.filterNot(RuntimeOutboundItem::isNestedGroup)
         val testableTags = testable.mapTo(mutableSetOf(), RuntimeOutboundItem::tag)
         val previousByTag = testable.associate { it.tag to it.relay.lastSample() }
-        val seen = mutableSetOf<String>()
-        val pendingBatch = linkedMapOf<String, LatencyProbeState>()
+        // Ядро зовёт обработчик из своих потоков.
+        val seen = ConcurrentHashMap.newKeySet<String>()
         var success = 0
         var failed = 0
         var unsupported = probe.group.items.size - testable.size
         val client = Libbox.newStandaloneCommandClient()
         probe.relayClient = client
+        val results = Channel<Map<String, LatencyProbeState>>(Channel.UNLIMITED)
 
-        fun flush() {
-            if (pendingBatch.isEmpty()) return
-            val batch = pendingBatch.toMap()
-            controller.publishLatencyBatch(
-                generation = generation,
-                requestId = probe.requestId,
-                groupTag = probe.group.tag,
-                networkIdentity = probe.networkIdentity,
-                relay = batch,
-            )
-            onResults(batch, emptyMap())
-            pendingBatch.clear()
-        }
-
-        try {
-            callRelay(client, probe.group.tag) { result ->
-                if (result.outboundTag !in testableTags || !seen.add(result.outboundTag)) {
-                    return@callRelay
+        coroutineScope {
+            val publisher = launch {
+                results.collectBatched(PUBLISH_WINDOW_MILLIS) { batch ->
+                    for (state in batch.values) {
+                        when (state) {
+                            is LatencyProbeState.Success -> success++
+                            is LatencyProbeState.Unsupported -> unsupported++
+                            else -> failed++
+                        }
+                    }
+                    controller.publishLatencyBatch(
+                        generation = generation,
+                        requestId = probe.requestId,
+                        groupTag = probe.group.tag,
+                        networkIdentity = probe.networkIdentity,
+                        relay = batch,
+                    )
+                    onResults(batch, emptyMap())
                 }
-                val state = result.toState(
-                    probe.networkIdentity,
-                    previousByTag[result.outboundTag],
-                )
-                when (state) {
-                    is LatencyProbeState.Success -> success++
-                    is LatencyProbeState.Unsupported -> unsupported++
-                    else -> failed++
+            }
+            try {
+                callRelay(client, probe.group.tag) { result ->
+                    if (result.outboundTag !in testableTags || !seen.add(result.outboundTag)) {
+                        return@callRelay
+                    }
+                    val state = result.toState(
+                        probe.networkIdentity,
+                        previousByTag[result.outboundTag],
+                    )
+                    results.trySend(mapOf(result.outboundTag to state))
                 }
-                pendingBatch[result.outboundTag] = state
-                if (pendingBatch.size >= RELAY_PUBLISH_BATCH) flush()
+                currentCoroutineContext().ensureActive()
+            } catch (error: Throwable) {
+                currentCoroutineContext().ensureActive()
+            } finally {
+                runCatching { client.disconnect() }
+                probe.relayClient = null
             }
-            currentCoroutineContext().ensureActive()
-        } catch (error: Throwable) {
-            currentCoroutineContext().ensureActive()
-        } finally {
-            runCatching { client.disconnect() }
-            probe.relayClient = null
-        }
-        for (item in testable) {
-            if (seen.add(item.tag)) {
-                failed++
-                pendingBatch[item.tag] = LatencyProbeState.Failed(
-                    LatencyFailure.Failed,
-                    item.relay.lastSample(),
-                )
+            val missing = testable.filter { seen.add(it.tag) }.associate { item ->
+                item.tag to LatencyProbeState.Failed(LatencyFailure.Failed, item.relay.lastSample())
             }
+            if (missing.isNotEmpty()) results.trySend(missing)
+            results.close()
+            publisher.join()
         }
-        flush()
         return ProbeSummary("Relay", success, failed, unsupported)
     }
 
+    /**
+     * ICMP идёт открытым текстом мимо туннеля, поэтому проба бережная: один
+     * Echo на адрес (а не на каждый сервер с этим адресом), случайный порядок и
+     * случайная задержка перед каждым. Скользящее окно из [ICMP_CONCURRENCY]
+     * проб не ждёт самого медленного сервера, как ждали бы пачки.
+     */
     private suspend fun runIcmp(probe: ActiveProbe): ProbeSummary {
         var success = 0
         var failed = 0
         val unsupported = probe.group.items.size - probe.targets.size
         val previousByTag = probe.group.items.associate { it.tag to it.icmp.lastSample() }
-        for (chunk in probe.targets.chunked(ICMP_CONCURRENCY)) {
-            ensureSameNetwork(probe)
-            val states = coroutineScope {
-                chunk.map { target ->
-                    async {
-                        target.outboundTag to try {
-                            val millis = icmpProbe.measure(probe.network, target)
-                                .coerceIn(0L, Int.MAX_VALUE.toLong())
-                                .toInt()
-                            LatencyProbeState.Success(
-                                LatencySample(
-                                    millis = millis,
-                                    measuredAtEpochMillis = System.currentTimeMillis(),
-                                    networkIdentity = probe.networkIdentity,
-                                ),
-                            )
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: IcmpProbeException) {
-                            LatencyProbeState.Failed(error.failure, previousByTag[target.outboundTag])
-                        } catch (_: Throwable) {
-                            LatencyProbeState.Failed(
-                                LatencyFailure.Failed,
-                                previousByTag[target.outboundTag],
-                            )
-                        }
+        val hosts = probe.targets.groupedByHost()
+        val queue = Channel<List<ServerPingTarget>>(Channel.UNLIMITED)
+        hosts.forEach { queue.trySend(it) }
+        queue.close()
+        val results = Channel<Map<String, LatencyProbeState>>(Channel.UNLIMITED)
+
+        coroutineScope {
+            val workers = List(minOf(ICMP_CONCURRENCY, hosts.size)) {
+                launch {
+                    for (sameHost in queue) {
+                        ensureSameNetwork(probe)
+                        delay(Random.nextLong(ICMP_START_JITTER_MILLIS + 1))
+                        val outcome = measureIcmp(probe, sameHost.first())
+                        results.send(
+                            sameHost.associate { target ->
+                                target.outboundTag to outcome.toState(
+                                    probe.networkIdentity,
+                                    previousByTag[target.outboundTag],
+                                )
+                            },
+                        )
                     }
-                }.awaitAll().toMap()
+                }
             }
-            ensureSameNetwork(probe)
-            success += states.values.count { it is LatencyProbeState.Success }
-            failed += states.size - states.values.count { it is LatencyProbeState.Success }
-            controller.publishLatencyBatch(
-                generation = generation,
-                requestId = probe.requestId,
-                groupTag = probe.group.tag,
-                networkIdentity = probe.networkIdentity,
-                icmp = states,
-            )
-            onResults(emptyMap(), states)
+            launch {
+                workers.joinAll()
+                results.close()
+            }
+            results.collectBatched(PUBLISH_WINDOW_MILLIS) { batch ->
+                ensureSameNetwork(probe)
+                val succeeded = batch.values.count { it is LatencyProbeState.Success }
+                success += succeeded
+                failed += batch.size - succeeded
+                controller.publishLatencyBatch(
+                    generation = generation,
+                    requestId = probe.requestId,
+                    groupTag = probe.group.tag,
+                    networkIdentity = probe.networkIdentity,
+                    icmp = batch,
+                )
+                onResults(emptyMap(), batch)
+            }
         }
         return ProbeSummary("ICMP", success, failed, unsupported)
+    }
+
+    private suspend fun measureIcmp(probe: ActiveProbe, target: ServerPingTarget): IcmpOutcome = try {
+        val millis = icmpProbe.measure(probe.network, target)
+            .coerceIn(0L, Int.MAX_VALUE.toLong())
+            .toInt()
+        IcmpOutcome(millis, System.currentTimeMillis(), null)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: IcmpProbeException) {
+        IcmpOutcome(null, 0L, error.failure)
+    } catch (_: Throwable) {
+        IcmpOutcome(null, 0L, LatencyFailure.Failed)
     }
 
     private suspend fun callRelay(
@@ -321,11 +345,26 @@ internal class LatencyProbeCoordinator(
         val unsupported: Int,
     )
 
+    /** Итог одной ICMP-пробы адреса; в состояние превращается для каждого сервера с этим адресом. */
+    private class IcmpOutcome(
+        val millis: Int?,
+        val measuredAtEpochMillis: Long,
+        val failure: LatencyFailure?,
+    ) {
+        fun toState(networkIdentity: String, previous: LatencySample?): LatencyProbeState =
+            if (millis != null) {
+                LatencyProbeState.Success(LatencySample(millis, measuredAtEpochMillis, networkIdentity))
+            } else {
+                LatencyProbeState.Failed(failure ?: LatencyFailure.Failed, previous)
+            }
+    }
+
     private class ProbeNetworkChangedException : Exception()
 
     private companion object {
         const val ICMP_CONCURRENCY = 4
-        const val RELAY_PUBLISH_BATCH = 10
+        const val ICMP_START_JITTER_MILLIS = 150L
+        const val PUBLISH_WINDOW_MILLIS = 200L
     }
 }
 

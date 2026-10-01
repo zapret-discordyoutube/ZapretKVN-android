@@ -114,7 +114,31 @@ internal fun LatencyProbeState.lastSample(): LatencySample? = when (this) {
 }
 
 internal fun LatencyProbeState.markStale(): LatencyProbeState =
-    lastSample()?.let(LatencyProbeState::Stale) ?: this
+    lastSample()?.let(LatencyProbeState::Stale) ?: when (this) {
+        // Проба оборвана сменой сети, прежнего замера нет: без этого строка
+        // навсегда оставалась «Проверяется», хотя раунда уже не существует.
+        is LatencyProbeState.Running -> LatencyProbeState.NotTested
+        else -> this
+    }
+
+/**
+ * Порядок «быстрые сверху»: сначала серверы с известной задержкой (Relay HTTPS,
+ * иначе ICMP) по возрастанию, затем остальные в исходном порядке.
+ */
+internal fun List<RuntimeOutboundItem>.sortedByLatency(): List<RuntimeOutboundItem> =
+    sortedWith(
+        compareBy<RuntimeOutboundItem> { it.latencyRank() == null }
+            .thenBy { it.latencyRank() ?: 0 },
+    )
+
+private fun RuntimeOutboundItem.latencyRank(): Int? = relay.knownMillis() ?: icmp.knownMillis()
+
+private fun LatencyProbeState.knownMillis(): Int? = when (this) {
+    is LatencyProbeState.Success -> sample.millis
+    is LatencyProbeState.Stale -> sample.millis
+    is LatencyProbeState.Running -> previous?.millis
+    else -> null
+}
 
 internal fun LatencyProbeState.restoreAfterCancellation(): LatencyProbeState = when (this) {
     is LatencyProbeState.Running -> previous

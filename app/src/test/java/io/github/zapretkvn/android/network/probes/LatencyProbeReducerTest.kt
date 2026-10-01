@@ -6,12 +6,49 @@ import io.github.zapretkvn.android.vpn.LatencySample
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.markStale
+import io.github.zapretkvn.android.vpn.sortedByLatency
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LatencyProbeReducerTest {
+    @Test
+    fun networkChangeDuringFirstProbeDoesNotLeaveServerProbingForever() {
+        // Раунд оборван сменой сети, прежнего замера у сервера не было:
+        // «Проверяется» без идущего раунда — зависшая строка.
+        val running = LatencyProbeReducer.begin(groups(), 11, "root", "wifi-1", setOf("leaf")).groups
+        assertTrue(running.single().items.first().relay is LatencyProbeState.Running)
+
+        val stale = LatencyProbeReducer.markStale(running)
+
+        assertEquals(null, stale.single().probeProgress)
+        assertEquals(LatencyProbeState.NotTested, stale.single().items.first().relay)
+        assertEquals(LatencyProbeState.NotTested, stale.single().items.first().icmp)
+    }
+
+    @Test
+    fun fastestFirstPutsKnownLatencyOnTopAndKeepsTheRestInOrder() {
+        fun item(tag: String, relay: LatencyProbeState, icmp: LatencyProbeState = LatencyProbeState.NotTested) =
+            RuntimeOutboundItem(tag = tag, type = "vless", endpoint = null, relay = relay, icmp = icmp)
+        fun ok(millis: Int) = LatencyProbeState.Success(LatencySample(millis, 1L, "wifi-1"))
+
+        val sorted = listOf(
+            item("untested-1", LatencyProbeState.NotTested),
+            item("slow", ok(300)),
+            item("failed", LatencyProbeState.Failed(LatencyFailure.NoResponse)),
+            item("icmp-only", LatencyProbeState.NotTested, icmp = ok(40)),
+            item("fast", ok(25)),
+            item("stale", LatencyProbeState.Stale(LatencySample(120, 1L, "wifi-1"))),
+            item("untested-2", LatencyProbeState.NotTested),
+        ).sortedByLatency()
+
+        assertEquals(
+            listOf("fast", "icmp-only", "stale", "slow", "untested-1", "failed", "untested-2"),
+            sorted.map(RuntimeOutboundItem::tag),
+        )
+    }
+
     @Test
     fun beginIsSingleFlightAndMarksNestedGroupsUnsupported() {
         val first = LatencyProbeReducer.begin(groups(), 11, "root", "wifi-1", setOf("leaf"))

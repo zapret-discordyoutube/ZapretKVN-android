@@ -118,7 +118,7 @@ class IcmpPingProbe(
             val response = ByteArray(MAX_PACKET_SIZE)
             val length = Os.read(descriptor, response, 0, response.size)
             val elapsedNanos = SystemClock.elapsedRealtimeNanos() - startedAt
-            if (!IcmpEchoPacket.isMatchingReply(response, length, ipv6, ECHO_SEQUENCE)) {
+            if (!IcmpEchoPacket.isMatchingReply(response, length, ipv6, request)) {
                 throw IcmpInvalidReplyException("VPN-сервер вернул несвязанный ICMP-пакет.")
             }
             return ((elapsedNanos + NANOS_PER_MILLI / 2) / NANOS_PER_MILLI).coerceAtLeast(0)
@@ -140,27 +140,46 @@ class IcmpPingProbe(
     }
 }
 
+/**
+ * Echo-запрос, неотличимый на линии от штатной утилиты `ping` (iputils): 56 байт
+ * данных — 16 байт времени отправки и дальше байты 0x10…0x37.
+ *
+ * Пакет идёт открытым текстом мимо туннеля, поэтому в нём не должно быть ничего
+ * своего: постоянная подпись в данных помечала бы каждый проверяемый сервер.
+ */
 internal object IcmpEchoPacket {
     private const val HEADER_SIZE = 8
     private const val PAYLOAD_SIZE = 56
-    private val payload = ByteArray(PAYLOAD_SIZE).also { bytes ->
-        "ZapretKVN".encodeToByteArray().copyInto(bytes)
-    }
+    private const val TIMESTAMP_SIZE = 16
 
-    fun request(ipv6: Boolean, sequence: Int): ByteArray = ByteArray(HEADER_SIZE + payload.size).apply {
+    fun request(
+        ipv6: Boolean,
+        sequence: Int,
+        nowEpochMicros: Long = System.currentTimeMillis() * 1_000L,
+    ): ByteArray = ByteArray(HEADER_SIZE + PAYLOAD_SIZE).apply {
         this[0] = if (ipv6) 128.toByte() else 8
         this[1] = 0
         this[6] = (sequence ushr 8).toByte()
         this[7] = sequence.toByte()
-        payload.copyInto(this, HEADER_SIZE)
+        // struct timeval, little-endian: секунды и микросекунды по 8 байт.
+        putLongLe(HEADER_SIZE, nowEpochMicros / 1_000_000L)
+        putLongLe(HEADER_SIZE + 8, nowEpochMicros % 1_000_000L)
+        for (index in TIMESTAMP_SIZE until PAYLOAD_SIZE) {
+            this[HEADER_SIZE + index] = index.toByte()
+        }
     }
 
-    fun isMatchingReply(packet: ByteArray, length: Int, ipv6: Boolean, sequence: Int): Boolean {
-        if (length != HEADER_SIZE + payload.size) return false
+    /** Ответ на [request]: тот же номер и те же данные, что ушли. */
+    fun isMatchingReply(packet: ByteArray, length: Int, ipv6: Boolean, request: ByteArray): Boolean {
+        if (length != request.size) return false
         val expectedType = if (ipv6) 129.toByte() else 0.toByte()
         if (packet[0] != expectedType || packet[1] != 0.toByte()) return false
-        val replySequence = ((packet[6].toInt() and 0xff) shl 8) or (packet[7].toInt() and 0xff)
-        if (replySequence != sequence and 0xffff) return false
-        return payload.indices.all { packet[HEADER_SIZE + it] == payload[it] }
+        return (6 until request.size).all { packet[it] == request[it] }
+    }
+
+    private fun ByteArray.putLongLe(offset: Int, value: Long) {
+        for (index in 0 until 8) {
+            this[offset + index] = (value ushr (8 * index)).toByte()
+        }
     }
 }
