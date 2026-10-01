@@ -131,6 +131,12 @@ internal fun List<RuntimeOutboundItem>.sortedByLatency(): List<RuntimeOutboundIt
             .thenBy { it.latencyRank() ?: 0 },
     )
 
+/** Те же серверы в порядке [tags]; не упомянутые — в конце, в исходном порядке. */
+internal fun List<RuntimeOutboundItem>.inOrderOf(tags: List<String>): List<RuntimeOutboundItem> {
+    val position = tags.withIndex().associate { (index, tag) -> tag to index }
+    return sortedBy { position[it.tag] ?: Int.MAX_VALUE }
+}
+
 private fun RuntimeOutboundItem.latencyRank(): Int? = relay.knownMillis() ?: icmp.knownMillis()
 
 private fun LatencyProbeState.knownMillis(): Int? = when (this) {

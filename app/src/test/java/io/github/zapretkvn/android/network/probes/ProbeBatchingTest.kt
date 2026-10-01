@@ -51,6 +51,27 @@ class ProbeBatchingTest {
     }
 
     @Test
+    fun `no result is lost when it arrives right as the window closes`() = runBlocking {
+        // withTimeout вокруг receive терял элемент, вынутый из канала в момент
+        // таймаута: такой сервер оставался «Проверяется» навсегда.
+        val total = 3_000
+        val results = Channel<Map<Int, Int>>(Channel.UNLIMITED)
+        val seen = HashSet<Int>()
+        val producer = launch(kotlinx.coroutines.Dispatchers.Default) {
+            repeat(total) {
+                results.send(mapOf(it to it))
+                if (it % 7 == 0) delay(1)
+            }
+            results.close()
+        }
+
+        withTimeout(60_000) { results.collectBatched(windowMillis = 1) { seen += it.keys } }
+        producer.join()
+
+        assertEquals(total, seen.size)
+    }
+
+    @Test
     fun `closing the channel publishes what is left and stops`() = runBlocking {
         val results = Channel<Map<String, Int>>(Channel.UNLIMITED)
         results.close()

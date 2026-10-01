@@ -39,6 +39,18 @@ class IcmpPingProbeTest {
     }
 
     @Test
+    fun `32-bit process uses the narrow timestamp of its own ping`() {
+        val micros = 1_700_000_123L * 1_000_000L + 456_789L
+        val packet = IcmpEchoPacket.request(false, 1, wideTimestamp = false, nowEpochMicros = micros)
+
+        assertEquals(64, packet.size)
+        val data = packet.copyOfRange(8, packet.size)
+        assertEquals(1_700_000_123L, data.longLe(0) and 0xffffffffL)
+        assertEquals(456_789L, data.longLe(0) ushr 32)
+        assertArrayEquals(ByteArray(48) { (it + 8).toByte() }, data.copyOfRange(8, 56))
+    }
+
+    @Test
     fun `reply to an earlier request is rejected`() {
         val earlier = IcmpEchoPacket.request(ipv6 = false, sequence = 1, nowEpochMicros = 1_000_000L)
         val current = IcmpEchoPacket.request(ipv6 = false, sequence = 1, nowEpochMicros = 9_000_000L)

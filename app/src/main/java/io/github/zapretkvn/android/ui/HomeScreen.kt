@@ -69,6 +69,7 @@ import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
 import io.github.zapretkvn.android.vpn.LATENCY_FRESHNESS_MILLIS
+import io.github.zapretkvn.android.vpn.inOrderOf
 import io.github.zapretkvn.android.vpn.sortedByLatency
 import io.github.zapretkvn.android.vpn.withFreshness
 import kotlin.math.max
@@ -588,6 +589,18 @@ private fun ServerSelectorSheet(
     onMeasureGroup: (String) -> Unit,
 ) {
     var fastestFirst by rememberSaveable { mutableStateOf(false) }
+    // Порядок «быстрые сверху» замирает на время раунда: иначе строки
+    // переезжали бы под пальцем с каждой пачкой результатов.
+    val fastestOrder = remember { mutableMapOf<String, List<String>>() }
+    if (fastestFirst) {
+        groups.forEach { group ->
+            if (group.probeProgress?.running != true || group.tag !in fastestOrder) {
+                fastestOrder[group.tag] = group.items.sortedByLatency().map(RuntimeOutboundItem::tag)
+            }
+        }
+    } else {
+        fastestOrder.clear()
+    }
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
@@ -609,7 +622,7 @@ private fun ServerSelectorSheet(
             )
         }
         groups.filter { it.items.isNotEmpty() }.forEach { group ->
-            val shownItems = if (fastestFirst) group.items.sortedByLatency() else group.items
+            val shownItems = fastestOrder[group.tag]?.let(group.items::inOrderOf) ?: group.items
             item(key = "header-${group.tag}") {
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {

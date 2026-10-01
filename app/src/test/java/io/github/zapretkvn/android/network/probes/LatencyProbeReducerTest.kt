@@ -5,6 +5,7 @@ import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencySample
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
+import io.github.zapretkvn.android.vpn.inOrderOf
 import io.github.zapretkvn.android.vpn.markStale
 import io.github.zapretkvn.android.vpn.sortedByLatency
 import org.junit.Assert.assertEquals
@@ -25,6 +26,17 @@ class LatencyProbeReducerTest {
         assertEquals(null, stale.single().probeProgress)
         assertEquals(LatencyProbeState.NotTested, stale.single().items.first().relay)
         assertEquals(LatencyProbeState.NotTested, stale.single().items.first().icmp)
+    }
+
+    @Test
+    fun frozenOrderKeepsRowsInPlaceAndAppendsNewServers() {
+        val items = listOf("a", "b", "c", "new").map {
+            RuntimeOutboundItem(tag = it, type = "vless", endpoint = null)
+        }
+
+        val shown = items.inOrderOf(listOf("c", "a", "b", "gone"))
+
+        assertEquals(listOf("c", "a", "b", "new"), shown.map(RuntimeOutboundItem::tag))
     }
 
     @Test

@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.network.probes
 
 import android.net.Network
+import android.os.Process
 import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants.AF_INET
@@ -101,7 +102,7 @@ class IcmpPingProbe(
         try {
             network.bindSocket(descriptor)
             Os.connect(descriptor, address, 0)
-            val request = IcmpEchoPacket.request(ipv6, ECHO_SEQUENCE)
+            val request = IcmpEchoPacket.request(ipv6, ECHO_SEQUENCE, wideTimestamp = Process.is64Bit())
             val startedAt = SystemClock.elapsedRealtimeNanos()
             Os.write(descriptor, request, 0, request.size)
             val poll = StructPollfd().apply {
@@ -141,8 +142,9 @@ class IcmpPingProbe(
 }
 
 /**
- * Echo-запрос, неотличимый на линии от штатной утилиты `ping` (iputils): 56 байт
- * данных — 16 байт времени отправки и дальше байты 0x10…0x37.
+ * Echo-запрос в формате штатной утилиты `ping` (iputils): 56 байт данных —
+ * время отправки (`struct timeval`: 16 байт в 64-битном процессе, 8 в 32-битном)
+ * и дальше байты по возрастанию до 0x37.
  *
  * Пакет идёт открытым текстом мимо туннеля, поэтому в нём не должно быть ничего
  * своего: постоянная подпись в данных помечала бы каждый проверяемый сервер.
@@ -150,21 +152,22 @@ class IcmpPingProbe(
 internal object IcmpEchoPacket {
     private const val HEADER_SIZE = 8
     private const val PAYLOAD_SIZE = 56
-    private const val TIMESTAMP_SIZE = 16
 
     fun request(
         ipv6: Boolean,
         sequence: Int,
+        wideTimestamp: Boolean = true,
         nowEpochMicros: Long = System.currentTimeMillis() * 1_000L,
     ): ByteArray = ByteArray(HEADER_SIZE + PAYLOAD_SIZE).apply {
         this[0] = if (ipv6) 128.toByte() else 8
         this[1] = 0
         this[6] = (sequence ushr 8).toByte()
         this[7] = sequence.toByte()
-        // struct timeval, little-endian: секунды и микросекунды по 8 байт.
-        putLongLe(HEADER_SIZE, nowEpochMicros / 1_000_000L)
-        putLongLe(HEADER_SIZE + 8, nowEpochMicros % 1_000_000L)
-        for (index in TIMESTAMP_SIZE until PAYLOAD_SIZE) {
+        // struct timeval, little-endian: секунды и микросекунды.
+        val field = if (wideTimestamp) 8 else 4
+        putLe(HEADER_SIZE, nowEpochMicros / 1_000_000L, field)
+        putLe(HEADER_SIZE + field, nowEpochMicros % 1_000_000L, field)
+        for (index in 2 * field until PAYLOAD_SIZE) {
             this[HEADER_SIZE + index] = index.toByte()
         }
     }
@@ -177,8 +180,8 @@ internal object IcmpEchoPacket {
         return (6 until request.size).all { packet[it] == request[it] }
     }
 
-    private fun ByteArray.putLongLe(offset: Int, value: Long) {
-        for (index in 0 until 8) {
+    private fun ByteArray.putLe(offset: Int, value: Long, size: Int) {
+        for (index in 0 until size) {
             this[offset + index] = (value ushr (8 * index)).toByte()
         }
     }
