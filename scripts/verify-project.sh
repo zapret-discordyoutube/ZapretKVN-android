@@ -169,6 +169,9 @@ for source in (
 delays.sort()
 expected = [
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
+    # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
+    # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
+    ("app/src/main/java/io/github/zapretkvn/android/network/probes/LatencyProbeCoordinator.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
     # Единый дебаунс смены сети (перезапуск, пауза и возобновление по правилам
     # сети) плюс ограниченный backoff восстановления. Одновременно активен
