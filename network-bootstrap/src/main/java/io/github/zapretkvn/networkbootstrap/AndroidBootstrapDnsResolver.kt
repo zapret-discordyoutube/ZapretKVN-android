@@ -13,17 +13,57 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 class AndroidBootstrapDnsResolver(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
+    private val trusted: TrustedDohResolver? = TrustedDohResolver(),
 ) {
+    /**
+     * Адрес VPN-сервера: сначала доверенный DoH по IP, затем системный резолвер.
+     *
+     * Оба пути стартуют сразу. Ответ DoH предпочитается, потому что системный
+     * ответ провайдер может подменить; если DoH недоступен, используется
+     * системный ответ без дополнительного ожидания сверх окна DoH.
+     */
     suspend fun resolve(
         network: Network,
         hostname: String,
         noCacheLookup: Boolean = false,
+    ): List<InetAddress> = coroutineScope {
+        val system = async { runCatching { resolveSystem(network, hostname, noCacheLookup) } }
+        val verdict = if (trusted == null) {
+            TrustedDnsOutcome.Unavailable
+        } else {
+            withTimeoutOrNull(TRUSTED_WINDOW_MILLIS) { trusted.resolve(network, hostname) }
+                ?: TrustedDnsOutcome.Unavailable
+        }
+        when (verdict) {
+            is TrustedDnsOutcome.Addresses -> {
+                system.cancel()
+                verdict.value
+            }
+            // Все доверенные резолверы подтвердили, что имени нет: системному
+            // ответу здесь верить нечему.
+            TrustedDnsOutcome.NameMissing -> {
+                system.cancel()
+                throw BootstrapFailureException(
+                    BootstrapFailureCode.DnsNameNotFound,
+                    technicalDetail = "trusted_doh_nxdomain",
+                )
+            }
+            TrustedDnsOutcome.Unavailable -> system.await().getOrThrow()
+        }
+    }
+
+    private suspend fun resolveSystem(
+        network: Network,
+        hostname: String,
+        noCacheLookup: Boolean,
     ): List<InetAddress> {
         require(hostname.isNotBlank()) { "Hostname must not be blank." }
         return try {
@@ -115,6 +155,9 @@ class AndroidBootstrapDnsResolver(
 
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 8_000L
+        // Окно ожидания доверенного ответа. Там, где зарубежные адреса
+        // недоступны совсем, подключение задержится не больше чем на него.
+        const val TRUSTED_WINDOW_MILLIS = 3_000L
         private val DIRECT_EXECUTOR = Executor(Runnable::run)
     }
 }
