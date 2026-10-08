@@ -44,7 +44,7 @@ index 72842ab6..c091b6b9 100644
  	return &DefaultLogLevel{Level: LogLevel(boxService.logFactory.Level())}, nil
  }
 diff --git a/go.mod b/go.mod
-index 6da2a0dd..44142061 100644
+index 88b2c086..23fbe16d 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -85,6 +85,7 @@ require (
@@ -130,7 +130,7 @@ index 6da2a0dd..44142061 100644
 +
 +replace github.com/xtls/xray-core => ./third_party/xray-core
 diff --git a/go.sum b/go.sum
-index 76180bc4..854886e2 100644
+index 35421a3a..407e9b7f 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -74,6 +74,8 @@ github.com/cilium/ebpf v0.16.0/go.mod h1:L7u2Blt2jMM/vLAVgjxluxtBKlz3/GWjB0dMOEn
