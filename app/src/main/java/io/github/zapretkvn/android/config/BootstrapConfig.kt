@@ -59,6 +59,28 @@ object BootstrapConfig {
         }
     }
 
+    /**
+     * Доменные имена всех VPN-серверов конфигурации: outbound-ы и пиры
+     * WireGuard-endpoint-ов. Литеральные адреса и служебные outbound-ы без
+     * `server` не входят. По этому набору локальный DNS-транспорт отличает
+     * имена серверов группы от обычных прямых доменов.
+     */
+    fun serverHostnames(raw: String): Set<String> {
+        // Вызывается перед запуском ядра: некорректный JSON не должен срывать
+        // сессию — без набора имён транспорт просто работает по-прежнему.
+        val root = runCatching { JsonConfig.parse(raw) as? JsonObject }.getOrNull() ?: return emptySet()
+        val names = LinkedHashSet<String>()
+        fun add(value: String?) {
+            val host = value?.trim()?.trimEnd('.')?.lowercase()?.takeIf(String::isNotEmpty) ?: return
+            if (!looksNumeric(host)) names += host
+        }
+        (root["outbounds"] as? JsonArray)?.forEach { add((it as? JsonObject)?.string("server")) }
+        (root["endpoints"] as? JsonArray)?.forEach { endpoint ->
+            ((endpoint as? JsonObject)?.get("peers") as? JsonArray)?.forEach { add((it as? JsonObject)?.string("address")) }
+        }
+        return names
+    }
+
     fun target(raw: String): ProxyBootstrapTarget? {
         val root = JsonConfig.parse(raw) as? JsonObject ?: return null
         val outbounds = (root["outbounds"] as? JsonArray)

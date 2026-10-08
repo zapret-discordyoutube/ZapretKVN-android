@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 
 /**
@@ -62,6 +63,26 @@ object DnsWire {
         return Answer(rcode, addresses)
     }
 
+    /** Имя из первого вопроса DNS-сообщения в нижнем регистре, без точки в конце. */
+    fun questionName(message: ByteArray): String? {
+        if (message.size < 13 || u16(message, 4) < 1) return null
+        val labels = ArrayList<String>()
+        var offset = 12
+        while (offset < message.size) {
+            val length = message[offset].toInt() and 0xFF
+            if (length == 0) return labels.joinToString(".").lowercase().ifEmpty { null }
+            // В вопросе сжатия не бывает; длиннее 63 — не метка.
+            if (length > 63 || offset + 1 + length > message.size) return null
+            labels += String(message, offset + 1, length, Charsets.US_ASCII)
+            offset += 1 + length
+        }
+        return null
+    }
+
+    fun rcode(message: ByteArray): Int? = if (message.size >= 12) message[3].toInt() and 0x0F else null
+
+    fun answerCount(message: ByteArray): Int = if (message.size >= 12) u16(message, 6) else 0
+
     private fun u16(data: ByteArray, at: Int): Int =
         ((data[at].toInt() and 0xFF) shl 8) or (data[at + 1].toInt() and 0xFF)
 
@@ -77,11 +98,61 @@ object DnsWire {
     }
 }
 
+/**
+ * Имена VPN-серверов запущенного профиля.
+ *
+ * Ядро разрешает адреса серверов группы через локальный DNS-транспорт
+ * приложения, то есть системным резолвером. По этому реестру транспорт
+ * отличает имена серверов от обычных прямых доменов и спрашивает их сначала
+ * доверенным путём; остальные имена идут как раньше.
+ */
+object ServerNameRegistry {
+    @Volatile
+    private var names: Set<String> = emptySet()
+
+    fun replace(hostnames: Collection<String>) {
+        names = hostnames.mapNotNull { it.trim().trimEnd('.').lowercase().ifEmpty { null } }.toSet()
+    }
+
+    fun contains(hostname: String?): Boolean =
+        hostname != null && hostname.trim().trimEnd('.').lowercase() in names
+
+    fun snapshot(): Set<String> = names
+}
+
+/** Признак того, что системный DNS отрицает существующее имя сервера. */
+object DnsTamperingMonitor {
+    @Volatile
+    var lastDetectedAtMillis: Long = 0L
+        private set
+
+    fun mark(nowMillis: Long = System.currentTimeMillis()) {
+        lastDetectedAtMillis = nowMillis
+    }
+
+    fun reset() {
+        lastDetectedAtMillis = 0L
+    }
+}
+
 /** Итог опроса одного доверенного резолвера. */
 sealed interface TrustedDnsOutcome {
     class Addresses(val value: List<InetAddress>) : TrustedDnsOutcome
     object NameMissing : TrustedDnsOutcome
     object Unavailable : TrustedDnsOutcome
+}
+
+/** Правило сведения сырых ответов нескольких резолверов. */
+object RawAnswerPolicy {
+    fun isPositive(answer: ByteArray): Boolean =
+        DnsWire.rcode(answer) == DnsResponseClassifier.RCODE_SUCCESS && DnsWire.answerCount(answer) > 0
+
+    /** Первый ответ с адресами; «имени нет» — только при согласии всех; иначе `null`. */
+    fun merge(answers: List<ByteArray?>): ByteArray? {
+        answers.firstOrNull { it != null && isPositive(it) }?.let { return it }
+        val missing = answers.filterNotNull().filter { DnsWire.rcode(it) == DnsResponseClassifier.RCODE_NAME_ERROR }
+        return if (answers.isNotEmpty() && missing.size == answers.size) missing.first() else null
+    }
 }
 
 object TrustedDnsPolicy {
@@ -146,6 +217,39 @@ class TrustedDohResolver(
         }
     }
 
+    /**
+     * Передать готовое DNS-сообщение доверенным резолверам.
+     *
+     * Возвращает ответ с адресами либо ответ «имени нет», если так сказали все
+     * резолверы; `null` — доверенный путь недоступен, решает вызывающий.
+     * Блокирующий вызов для потоков ядра.
+     */
+    fun exchangeRaw(network: Network, message: ByteArray): ByteArray? = runBlocking {
+        val winner = CompletableDeferred<ByteArray?>()
+        val pending = servers.map { server ->
+            scope.async {
+                val answer = try {
+                    runInterruptible { post(network, server, message) }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+                if (answer != null && RawAnswerPolicy.isPositive(answer)) winner.complete(answer)
+                answer
+            }
+        }
+        val collector = scope.launch {
+            winner.complete(RawAnswerPolicy.merge(pending.map { it.await() }))
+        }
+        try {
+            winner.await()
+        } finally {
+            collector.cancel()
+            pending.forEach { it.cancel() }
+        }
+    }
+
     private fun query(network: Network, server: String, hostname: String): TrustedDnsOutcome {
         val found = LinkedHashMap<String, InetAddress>()
         for (type in intArrayOf(DnsWire.TYPE_A, DnsWire.TYPE_AAAA)) {
@@ -160,7 +264,10 @@ class TrustedDohResolver(
         return if (found.isEmpty()) TrustedDnsOutcome.Unavailable else TrustedDnsOutcome.Addresses(found.values.toList())
     }
 
-    private fun exchange(network: Network, server: String, query: ByteArray): DnsWire.Answer {
+    private fun exchange(network: Network, server: String, query: ByteArray): DnsWire.Answer =
+        DnsWire.parse(post(network, server, query))
+
+    private fun post(network: Network, server: String, query: ByteArray): ByteArray {
         val connection = network.openConnection(URL("https://$server/dns-query")) as HttpsURLConnection
         try {
             connection.connectTimeout = timeoutMillis
@@ -185,7 +292,7 @@ class TrustedDohResolver(
                 buffer.toByteArray()
             }
             check(body.size <= MAX_RESPONSE_BYTES) { "DoH response too large" }
-            return DnsWire.parse(body)
+            return body
         } finally {
             connection.disconnect()
         }

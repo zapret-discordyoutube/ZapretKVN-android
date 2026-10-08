@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn.runtime
 
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.apps.AllowedApplicationSink
@@ -436,6 +437,9 @@ internal class SessionStarter(
                 onUnavailable = events::onObserverUnavailable,
             )
             controller.startConnectionDiagnosticStage(token, "core_service", "Запуск sing-box и создание TUN")
+            // Имена серверов группы: локальный DNS-транспорт спрашивает их
+            // сначала доверенным путём, а не системным резолвером.
+            ServerNameRegistry.replace(BootstrapConfig.serverHostnames(runtimeJson))
             commandServer.startOrReloadService(
                 runtimeJson,
                 OverrideOptions().apply {

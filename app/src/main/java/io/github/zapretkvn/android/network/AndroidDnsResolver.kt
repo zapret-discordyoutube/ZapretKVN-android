@@ -9,6 +9,11 @@ import android.system.ErrnoException
 import android.system.OsConstants
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.networkbootstrap.AndroidBootstrapDnsResolver
+import io.github.zapretkvn.networkbootstrap.DnsResponseClassifier
+import io.github.zapretkvn.networkbootstrap.DnsWire
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
+import io.github.zapretkvn.networkbootstrap.TrustedDnsOutcome
+import io.github.zapretkvn.networkbootstrap.TrustedDohResolver
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureCode
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
 import io.nekohasekai.libbox.ExchangeContext
@@ -21,6 +26,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.asExecutor
 
 class BootstrapResolver(
@@ -46,12 +52,28 @@ class BootstrapResolver(
 
 /** Implements the exact LocalDNSTransport ABI of the pinned libbox AAR. */
 internal class AndroidLocalDnsTransport(
+    private val trusted: TrustedDohResolver = TrustedDohResolver(),
     private val networkProvider: () -> Network?,
 ) : LocalDNSTransport {
     override fun raw(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
     override fun lookup(context: ExchangeContext, network: String, domain: String) {
         val underlying = networkProvider() ?: error("Нет underlying network для Android DNS.")
+        if (ServerNameRegistry.contains(domain)) {
+            // Имя VPN-сервера: сначала доверенный путь, системный — запасной.
+            val outcome = runCatching { runBlocking { trusted.resolve(underlying, domain) } }.getOrNull()
+            if (outcome is TrustedDnsOutcome.Addresses) {
+                val family = outcome.value.filter { address ->
+                    (network == "ip4" && address is Inet4Address) || (network == "ip6" && address is Inet6Address)
+                }
+                context.success(family.joinToString("\n") { it.hostAddress.orEmpty() })
+                return
+            }
+            if (outcome is TrustedDnsOutcome.NameMissing) {
+                context.errorCode(DnsResponseClassifier.RCODE_NAME_ERROR)
+                return
+            }
+        }
         val completed = AtomicBoolean(false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val cancellation = CancellationSignal()
@@ -107,6 +129,17 @@ internal class AndroidLocalDnsTransport(
     override fun exchange(context: ExchangeContext, message: ByteArray) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
         val underlying = networkProvider() ?: error("Нет underlying network для Android DNS.")
+        if (ServerNameRegistry.contains(DnsWire.questionName(message))) {
+            // Серверы группы ядро разрешает этим транспортом. Их имена идут
+            // сначала доверенным путём: системный резолвер на заблокированное
+            // имя отвечает «домена нет». Обычные прямые домены сюда не попадают.
+            val answer = runCatching { trusted.exchangeRaw(underlying, message) }.getOrNull()
+            if (answer != null) {
+                val rcode = DnsWire.rcode(answer) ?: DnsResponseClassifier.RCODE_SERVER_FAILURE
+                if (rcode == DnsResponseClassifier.RCODE_SUCCESS) context.rawSuccess(answer) else context.errorCode(rcode)
+                return
+            }
+        }
         val cancellation = CancellationSignal()
         val completed = AtomicBoolean(false)
         val latch = CountDownLatch(1)

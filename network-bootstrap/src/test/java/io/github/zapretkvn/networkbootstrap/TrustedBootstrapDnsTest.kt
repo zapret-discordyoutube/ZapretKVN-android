@@ -87,4 +87,54 @@ class TrustedBootstrapDnsTest {
         assertTrue(!TrustedDnsPolicy.usable(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))))
         assertTrue(!TrustedDnsPolicy.usable(InetAddress.getByAddress(byteArrayOf(224.toByte(), 0, 0, 1))))
     }
+
+    @Test
+    fun questionNameIsReadFromARawQuery() {
+        val query = DnsWire.buildQuery("VPN.Example.com", DnsWire.TYPE_AAAA)
+        assertEquals("vpn.example.com", DnsWire.questionName(query))
+        assertEquals(null, DnsWire.questionName(byteArrayOf(0, 1, 2)))
+        // Оборванное сообщение не должно ронять транспорт ядра.
+        assertEquals(null, DnsWire.questionName(query.copyOf(15)))
+    }
+
+    @Test
+    fun rawAnswersPreferAddressesAndNeedConsensusForMissingName() {
+        val query = DnsWire.buildQuery("vpn.example.com", DnsWire.TYPE_A)
+        val positive = answer(query, 0, DnsWire.TYPE_A to byteArrayOf(203.toByte(), 0, 113, 7))
+        val empty = answer(query, 0)
+        val missing = answer(query, DnsResponseClassifier.RCODE_NAME_ERROR)
+
+        assertTrue(RawAnswerPolicy.isPositive(positive))
+        assertTrue(!RawAnswerPolicy.isPositive(empty))
+        assertSame(positive, RawAnswerPolicy.merge(listOf(null, missing, positive)))
+        assertSame(missing, RawAnswerPolicy.merge(listOf(missing, missing)))
+        // Часть резолверов недоступна: это не доказательство, что имени нет.
+        assertEquals(null, RawAnswerPolicy.merge(listOf(missing, null)))
+        assertEquals(null, RawAnswerPolicy.merge(listOf(empty, null)))
+        assertEquals(null, RawAnswerPolicy.merge(emptyList()))
+    }
+
+    @Test
+    fun serverNameRegistryMatchesNormalizedNamesOnly() {
+        ServerNameRegistry.replace(listOf("VPN.Example.com.", " node2.example.net ", ""))
+        try {
+            assertTrue(ServerNameRegistry.contains("vpn.example.com"))
+            assertTrue(ServerNameRegistry.contains("NODE2.example.net."))
+            assertTrue(!ServerNameRegistry.contains("example.com"))
+            assertTrue(!ServerNameRegistry.contains("sub.vpn.example.com"))
+            assertTrue(!ServerNameRegistry.contains(null))
+            assertEquals(2, ServerNameRegistry.snapshot().size)
+        } finally {
+            ServerNameRegistry.replace(emptyList())
+        }
+    }
+
+    @Test
+    fun tamperingMonitorRemembersDetection() {
+        DnsTamperingMonitor.reset()
+        assertEquals(0L, DnsTamperingMonitor.lastDetectedAtMillis)
+        DnsTamperingMonitor.mark(1234L)
+        assertEquals(1234L, DnsTamperingMonitor.lastDetectedAtMillis)
+        DnsTamperingMonitor.reset()
+    }
 }

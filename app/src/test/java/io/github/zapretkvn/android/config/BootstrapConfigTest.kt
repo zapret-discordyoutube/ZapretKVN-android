@@ -80,6 +80,28 @@ class BootstrapConfigTest {
         )
     }
 
+    @Test
+    fun `server hostnames cover every group member and skip literals`() {
+        val names = BootstrapConfig.serverHostnames(
+            """
+            {
+              "outbounds":[
+                {"type":"selector","tag":"proxy","outbounds":["a","b","c"],"default":"a"},
+                {"type":"trojan","tag":"a","server":"One.Example.com.","server_port":443},
+                {"type":"vless","tag":"b","server":"two.example.net","server_port":443},
+                {"type":"hysteria2","tag":"c","server":"203.0.113.7","server_port":443},
+                {"type":"direct","tag":"direct"}
+              ],
+              "endpoints":[
+                {"type":"wireguard","tag":"wg","peers":[{"address":"wg.example.org","port":51820},{"address":"2001:db8::1","port":51820}]}
+              ]
+            }
+            """.trimIndent(),
+        )
+        assertEquals(setOf("one.example.com", "two.example.net", "wg.example.org"), names)
+        assertEquals(emptySet<String>(), BootstrapConfig.serverHostnames("not json"))
+    }
+
     private fun wireGuardProfile(addresses: String): String = """
         {
           "endpoints":[{

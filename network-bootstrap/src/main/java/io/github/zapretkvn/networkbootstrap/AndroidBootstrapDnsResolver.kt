@@ -12,9 +12,11 @@ import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -23,6 +25,8 @@ class AndroidBootstrapDnsResolver(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
     private val trusted: TrustedDohResolver? = TrustedDohResolver(),
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     /**
      * Адрес VPN-сервера: сначала доверенный DoH по IP, затем системный резолвер.
      *
@@ -34,17 +38,23 @@ class AndroidBootstrapDnsResolver(
         network: Network,
         hostname: String,
         noCacheLookup: Boolean = false,
-    ): List<InetAddress> = coroutineScope {
-        val system = async { runCatching { resolveSystem(network, hostname, noCacheLookup) } }
+    ): List<InetAddress> {
+        // Системный запрос живёт в собственной области: после доверенного
+        // ответа он досчитывается в фоне и показывает, отрицает ли провайдер
+        // существующее имя сервера.
+        val system = scope.async { runCatching { resolveSystem(network, hostname, noCacheLookup) } }
         val verdict = if (trusted == null) {
             TrustedDnsOutcome.Unavailable
         } else {
             withTimeoutOrNull(TRUSTED_WINDOW_MILLIS) { trusted.resolve(network, hostname) }
                 ?: TrustedDnsOutcome.Unavailable
         }
-        when (verdict) {
+        return when (verdict) {
             is TrustedDnsOutcome.Addresses -> {
-                system.cancel()
+                scope.launch {
+                    val failure = system.await().exceptionOrNull() as? BootstrapFailureException
+                    if (failure?.reason == BootstrapFailureCode.DnsNameNotFound) DnsTamperingMonitor.mark()
+                }
                 verdict.value
             }
             // Все доверенные резолверы подтвердили, что имени нет: системному
@@ -56,7 +66,12 @@ class AndroidBootstrapDnsResolver(
                     technicalDetail = "trusted_doh_nxdomain",
                 )
             }
-            TrustedDnsOutcome.Unavailable -> system.await().getOrThrow()
+            TrustedDnsOutcome.Unavailable -> try {
+                system.await().getOrThrow()
+            } catch (cancelled: CancellationException) {
+                system.cancel()
+                throw cancelled
+            }
         }
     }
 

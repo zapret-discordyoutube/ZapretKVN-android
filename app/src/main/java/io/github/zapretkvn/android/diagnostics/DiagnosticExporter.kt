@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android.diagnostics
 
+import io.github.zapretkvn.networkbootstrap.DnsTamperingMonitor
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -177,6 +179,10 @@ class DiagnosticExporter(
                     )
                     put("private_dns_mode", network.privateDnsMode)
                     put("private_dns_active", network.privateDnsActive)
+                    // Имена серверов, которые идут доверенным DoH раньше системного DNS.
+                    put("protected_server_names", ServerNameRegistry.snapshot().size)
+                    // Системный DNS ответил «имени нет» на сервер, который доверенный DNS знает.
+                    put("provider_denied_server_name", DnsTamperingMonitor.lastDetectedAtMillis > 0L)
                 },
             )
             put("last_error", failureJson(diagnostics.lastFailure))

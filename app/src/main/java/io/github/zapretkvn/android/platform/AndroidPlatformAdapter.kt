@@ -269,9 +269,9 @@ internal class AndroidPlatformAdapter(
     override fun includeAllNetworks(): Boolean = false
     override fun clearDNSCache() = Unit
     override fun readWIFIState(): WIFIState? = null
-    override fun localDNSTransport(): LocalDNSTransport = AndroidLocalDnsTransport {
-        networkMonitor.current.network
-    }
+    override fun localDNSTransport(): LocalDNSTransport = AndroidLocalDnsTransport(
+        networkProvider = { networkMonitor.current.network },
+    )
     override fun sendNotification(notification: Notification) = Unit
     override fun cancelNotification(identifier: String, typeID: Int) = Unit
     override fun registerMyInterface(name: String) = Unit
