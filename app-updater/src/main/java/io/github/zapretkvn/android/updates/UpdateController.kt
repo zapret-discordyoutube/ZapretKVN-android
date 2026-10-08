@@ -26,14 +26,21 @@ class UpdateController(
     repository: String,
     private val currentVersionName: String,
     private val currentVersionCode: Long,
-    private val source: UpdateReleaseSource = ForgejoUpdateSource(repository, context.packageName),
-    private val http: UpdateHttpClient = ForgejoHttpsClient(),
+    source: UpdateReleaseSource? = null,
+    http: UpdateHttpClient? = null,
+    directConnections: UpdateDirectConnections? = null,
     private val verifier: ApkUpdateVerifier = AndroidApkUpdateVerifier(context),
     private val vpnFallback: UpdateVpnFallback? = null,
     private val installIntentFactory: UpdateInstallIntentFactory = UpdateInstallIntentFactory {
         throw UpdateException("Фабрика системной установки не настроена.")
     },
 ) {
+    // Прямая попытка идёт мимо VPN по физической сети; повтор через временный
+    // VPN-маршрут обязан идти в туннель, поэтому привязка на это время снимается.
+    private val viaVpn = AtomicBoolean(false)
+    private val http: UpdateHttpClient = http ?: ForgejoHttpsClient(directConnections) { !viaVpn.get() }
+    private val source: UpdateReleaseSource =
+        source ?: ForgejoUpdateSource(repository, context.packageName, this.http)
     private val appContext = context.applicationContext
     private val root = File(appContext.cacheDir, "updates")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -207,9 +214,11 @@ class UpdateController(
         } catch (_: Throwable) {
             throw vpnUnavailable(directFailure, null)
         }
+        viaVpn.set(true)
         return try {
             block()
         } finally {
+            viaVpn.set(false)
             withContext(NonCancellable) { vpnSession.close() }
         }
     }

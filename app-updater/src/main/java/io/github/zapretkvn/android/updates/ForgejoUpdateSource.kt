@@ -17,7 +17,15 @@ fun interface UpdateReleaseSource {
     fun latest(channel: UpdateChannel): UpdateCandidate
 }
 
-class ForgejoHttpsClient : UpdateHttpClient {
+/**
+ * @param direct connections bound to the physical network, bypassing an active VPN.
+ * @param useDirect false while the updater retries through its temporary VPN route:
+ *   those requests must follow the default route into the tunnel.
+ */
+class ForgejoHttpsClient(
+    private val direct: UpdateDirectConnections? = null,
+    private val useDirect: () -> Boolean = { true },
+) : UpdateHttpClient {
     override fun readText(url: String, maxBytes: Int): String = request(url) { connection ->
         val declared = connection.contentLengthLong
         if (declared > maxBytes) {
@@ -84,8 +92,7 @@ class ForgejoHttpsClient : UpdateHttpClient {
     private fun <T> request(rawUrl: String, block: (HttpsURLConnection) -> T): T {
         var current = validatedUrl(rawUrl)
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
-            val connection = URL(current).openConnection() as? HttpsURLConnection
-                ?: throw UpdateException("Для обновлений разрешён только HTTPS.")
+            val connection = open(URL(current))
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = TIMEOUT_MILLIS
@@ -126,6 +133,16 @@ class ForgejoHttpsClient : UpdateHttpClient {
             }
         }
         throw UpdateException("Не удалось получить файл Forgejo Release.")
+    }
+
+    private fun open(url: URL): HttpsURLConnection {
+        val bound = try {
+            direct?.takeIf { useDirect() }?.open(url)
+        } catch (error: IOException) {
+            throw UpdateException("Не удалось связаться с Forgejo.", cause = error, retryViaVpn = true)
+        }
+        return (bound ?: url.openConnection()) as? HttpsURLConnection
+            ?: throw UpdateException("Для обновлений разрешён только HTTPS.")
     }
 
     companion object {

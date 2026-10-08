@@ -38,6 +38,7 @@ import io.github.zapretkvn.android.ui.UiSettingsStore
 import io.github.zapretkvn.android.updates.AndroidUpdateInstallIntentFactory
 import io.github.zapretkvn.android.updates.AppUpdateVpnFallback
 import io.github.zapretkvn.android.updates.UpdateController
+import io.github.zapretkvn.android.updates.UpdateDirectConnections
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
 import java.net.HttpURLConnection
@@ -103,6 +104,8 @@ class AppContainer(
         repository = BuildConfig.UPDATE_REPOSITORY,
         currentVersionName = BuildConfig.VERSION_NAME,
         currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+        // Обновления проверяются и скачиваются напрямую даже при включённом VPN.
+        directConnections = UpdateDirectConnections { url -> nonVpnNetwork(appContext)?.openConnection(url) },
         vpnFallback = AppUpdateVpnFallback(appContext, uiSettingsStore, vpnController),
         installIntentFactory = AndroidUpdateInstallIntentFactory(appContext),
     )
@@ -155,15 +158,22 @@ class AppContainer(
  * The current non-VPN network with internet, or null when only a VPN (or no
  * usable network) is present. `allNetworks` keeps listing the underlying
  * physical transports while a VPN is active, so filtering out TRANSPORT_VPN
- * yields the path that bypasses the tunnel for one direct subscription fetch.
+ * yields the path that bypasses the tunnel for a direct subscription fetch or
+ * updater request. A validated network wins: with Wi-Fi and cellular both up,
+ * the first listed one may have no working internet.
  */
 @Suppress("DEPRECATION") // allNetworks is the only synchronous way to see the
 // underlying physical transports while a VPN holds the default network.
 private fun nonVpnNetwork(context: Context): Network? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
-    return connectivity.allNetworks.firstOrNull { network ->
-        val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    val physical = connectivity.allNetworks.mapNotNull { network ->
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return@mapNotNull null
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        ) {
+            return@mapNotNull null
+        }
+        network to capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
+    return (physical.firstOrNull { it.second } ?: physical.firstOrNull())?.first
 }
