@@ -26,6 +26,25 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -x "$PROJECT_ROOT/scripts/check-libbox-fingerprint.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/ensure-libbox.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-libbox-fingerprint.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/generate-baseline-profile.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/measure-startup-frames.sh" ]]
+BASELINE_PROFILE="$PROJECT_ROOT/app/src/main/baseline-prof.txt"
+[[ -s "$BASELINE_PROFILE" ]]
+# Файл детерминирован: отсортирован, без повторов, только правила HRF (флаги HSP + дескриптор).
+LC_ALL=C sort -c -u "$BASELINE_PROFILE"
+if grep -Evq '^[HSP]*L[A-Za-z0-9_$/-]+;(->.+)?$' "$BASELINE_PROFILE"; then
+    echo "app/src/main/baseline-prof.txt contains a line that is not an HRF rule" >&2
+    exit 1
+fi
+(( $(grep -c -E '^[HSP]*Lio/github/zapretkvn/' "$BASELINE_PROFILE") >= 500 ))
+# profileGen нужен только для записи профиля и не должен попадать в выпуск.
+grep -Fq 'create("profileGen")' "$PROJECT_ROOT/app/build.gradle.kts"
+if grep -Fq 'profileGen' "$PROJECT_ROOT/scripts/build-apk-matrix.sh" \
+    "$PROJECT_ROOT/scripts/create-release-bundle.sh" \
+    "$PROJECT_ROOT/scripts/publish-local-stable.sh"; then
+    echo "profileGen must not take part in release builds" >&2
+    exit 1
+fi
 grep -Fq 'scripts/ensure-libbox.sh' "$PROJECT_ROOT/app/build.gradle.kts"
 [[ -f "$PROJECT_ROOT/release.properties" ]]
 source "$PROJECT_ROOT/core.properties"

@@ -144,6 +144,16 @@ android {
                 "proguard-rules.pro",
             )
         }
+        // Только для scripts/generate-baseline-profile.sh: тот же release, но без R8, чтобы
+        // записанный профиль содержал исходные имена классов (AGP при сборке настоящего
+        // release сам перенесёт правила baseline-prof.txt через R8). В выпуск не попадает.
+        create("profileGen") {
+            initWith(getByName("release"))
+            matchingFallbacks += "release"
+            isMinifyEnabled = false
+            isShrinkResources = false
+            isDebuggable = false
+        }
     }
 
     compileOptions {

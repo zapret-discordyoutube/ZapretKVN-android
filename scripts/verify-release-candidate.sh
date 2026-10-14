@@ -129,6 +129,14 @@ if grep -Eiq '(^|/)(profiles|diagnostics|updates)(/|$)|\.(log|tmp|part)$' "$APK_
     echo "Release APK contains runtime credential/temp material" >&2
     exit 1
 fi
+# Baseline Profile (app/src/main/baseline-prof.txt + профили библиотек) должен попасть в APK:
+# без него ART не компилирует горячий путь при установке.
+for profile_entry in assets/dexopt/baseline.prof assets/dexopt/baseline.profm; do
+    if ! grep -Fxq "$profile_entry" "$APK_ENTRIES"; then
+        echo "Release APK is missing $profile_entry (Baseline Profile)" >&2
+        exit 1
+    fi
+done
 mapfile -t DEX_ENTRIES < <(grep -E '^classes([0-9]+)?\.dex$' "$APK_ENTRIES")
 (( ${#DEX_ENTRIES[@]} > 0 ))
 for dex_entry in "${DEX_ENTRIES[@]}"; do
