@@ -107,240 +107,8 @@ import io.github.zapretkvn.android.vpn.VpnSessionStats
 import java.text.DateFormat
 import java.util.Date
 
-private enum class AppTab(
-    val title: String,
-    val icon: ImageVector,
-) {
-    Home("Главная", Icons.Default.Home),
-    Profiles("Профили", Icons.AutoMirrored.Filled.List),
-    Routing("Маршруты", Icons.Default.Share),
-    Settings("Настройки", Icons.Default.Settings),
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ZapretApp(
-    profilesViewModel: ProfilesViewModel,
-    state: ProfilesUiState,
-    appsViewModel: AppsViewModel,
-    appsState: AppsUiState,
-    routingViewModel: RoutingViewModel,
-    routingState: RoutingUiState,
-    vpnState: VpnConnectionState,
-    selectorGroups: List<RuntimeSelectorGroup>,
-    sessionStats: VpnSessionStats,
-    diagnostics: DiagnosticState,
-    vpnMessage: String?,
-    onVpnMessageConsumed: () -> Unit,
-    onVpnStart: (String) -> Unit,
-    onVpnStop: () -> Unit,
-    onVpnRestart: () -> Unit,
-    onSelectOutbound: (String, String, String) -> Unit,
-    onMeasureGroup: (String) -> Unit,
-    onHomeSelected: (Boolean) -> Unit,
-    onDiagnosticsSelected: (Boolean) -> Unit,
-    onCreateDiagnosticShare: suspend () -> Intent,
-    onClearDnsCache: () -> Unit,
-    updateState: UpdateState,
-    onCheckUpdate: (UpdateChannel) -> Unit,
-    onDownloadUpdate: () -> Unit,
-    onInstallUpdate: () -> Unit,
-    onCancelUpdate: () -> Unit,
-) {
-    val serverLatency by profilesViewModel.serverLatency.collectAsState()
-    var appPickerMode by rememberSaveable { mutableStateOf<AppPickerMode?>(null) }
-    var selectedTab by rememberSaveable { mutableStateOf(AppTab.Home) }
-    var dismissedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
-    val homeSelected = state.editor == null && appPickerMode == null && selectedTab == AppTab.Home
-    DisposableEffect(homeSelected) {
-        onHomeSelected(homeSelected)
-        onDispose { if (homeSelected) onHomeSelected(false) }
-    }
-    state.editor?.let { editor ->
-        RawEditorScreen(
-            profilesViewModel,
-            editor,
-            state.settings.rawEditorLineWrap,
-            state.settings.hideServerAddresses,
-            state.busy,
-        )
-        return
-    }
-    appPickerMode?.let { pickerMode ->
-        AppPickerScreen(
-            state = appsState,
-            viewModel = appsViewModel,
-            mode = pickerMode,
-            onBack = { appPickerMode = null },
-        )
-        return
-    }
-
-    val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(state.message) {
-        state.message?.let {
-            snackbarHostState.showSnackbar(it)
-            profilesViewModel.consumeMessage()
-        }
-    }
-    LaunchedEffect(vpnMessage) {
-        vpnMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            onVpnMessageConsumed()
-        }
-    }
-    LaunchedEffect(routingState.message) {
-        routingState.message?.let {
-            snackbarHostState.showSnackbar(it)
-            routingViewModel.consumeMessage()
-        }
-    }
-    LaunchedEffect(updateState) {
-        if (updateState == UpdateState.Idle || updateState is UpdateState.Checking) {
-            dismissedUpdateTag = null
-        }
-    }
-    val availableUpdate = (updateState as? UpdateState.Available)?.candidate
-    if (availableUpdate != null && dismissedUpdateTag != availableUpdate.release.tag) {
-        UpdateAvailableDialog(
-            candidate = availableUpdate,
-            onDownload = {
-                dismissedUpdateTag = availableUpdate.release.tag
-                onDownloadUpdate()
-            },
-            onLater = {
-                dismissedUpdateTag = availableUpdate.release.tag
-                onCancelUpdate()
-            },
-        )
-    }
-    LaunchedEffect(
-        state.importCompletion,
-        appsState.initialized,
-        appsState.needsAppSelection,
-    ) {
-        if (
-            state.importCompletion != null &&
-            appsState.initialized &&
-            !appsState.needsAppSelection
-        ) {
-            profilesViewModel.consumeImportCompletion()
-        }
-    }
-
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(title = { Text(selectedTab.title) })
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            NavigationBar {
-                AppTab.entries.forEach { tab ->
-                    NavigationBarItem(
-                        selected = selectedTab == tab,
-                        onClick = { selectedTab = tab },
-                        icon = {
-                            Icon(
-                                imageVector = tab.icon,
-                                contentDescription = tab.title,
-                            )
-                        },
-                        label = { Text(tab.title) },
-                    )
-                }
-            }
-        },
-    ) { contentPadding ->
-        val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
-        when (selectedTab) {
-            AppTab.Home -> HomeScreen(
-                contentPadding = contentPadding,
-                activeProfile = activeProfile,
-                activeProfileServers = activeProfile?.let { state.serverSummaries[it.id] },
-                hideServerAddresses = state.settings.hideServerAddresses,
-                onOpenServers = {
-                    activeProfile?.id?.let(profilesViewModel::openServerPicker)
-                },
-                selectedAppCount = appsState.allowedPackages.size,
-                blockedAppCount = appsState.blockedPackages.size,
-                appScopeMode = appsState.scopeMode,
-                onAddProfile = { selectedTab = AppTab.Profiles },
-                onSelectApps = {
-                    appsViewModel.refresh()
-                    appPickerMode = AppPickerMode.VpnScope
-                },
-                vpnState = vpnState,
-                selectorGroups = selectorGroups,
-                sessionStats = sessionStats,
-                onStart = { activeProfileId -> onVpnStart(activeProfileId) },
-                onStop = onVpnStop,
-                onRestart = onVpnRestart,
-                onSelectOutbound = onSelectOutbound,
-                onMeasureGroup = onMeasureGroup,
-                onCreateDiagnosticShare = onCreateDiagnosticShare,
-                activeProfileLatency = activeProfile?.let { serverLatency[it.id] }.orEmpty(),
-            )
-            AppTab.Profiles -> ProfilesScreen(
-                contentPadding = contentPadding,
-                state = state,
-                viewModel = profilesViewModel,
-                showAppSelectionAfterImport = appsState.needsAppSelection,
-                onOpenAppPicker = {
-                    appsViewModel.refresh()
-                    appPickerMode = AppPickerMode.VpnScope
-                },
-            )
-            AppTab.Routing -> RoutingScreen(
-                contentPadding = contentPadding,
-                appsState = appsState,
-                appsViewModel = appsViewModel,
-                routingState = routingState,
-                routingViewModel = routingViewModel,
-                onOpenPicker = {
-                    appsViewModel.refresh()
-                    appPickerMode = AppPickerMode.VpnScope
-                },
-                onOpenBlockPicker = {
-                    appsViewModel.refresh()
-                    appPickerMode = AppPickerMode.Blocked
-                },
-                onOpenAdvancedJson = {
-                    routingState.activeProfileId?.let(profilesViewModel::openEditor)
-                },
-            )
-            AppTab.Settings -> SettingsScreen(
-                contentPadding = contentPadding,
-                state = state,
-                vpnState = vpnState,
-                diagnostics = diagnostics,
-                viewModel = profilesViewModel,
-                onDiagnosticsSelected = onDiagnosticsSelected,
-                onCreateDiagnosticShare = onCreateDiagnosticShare,
-                onClearDnsCache = onClearDnsCache,
-                updateState = updateState,
-                onCheckUpdate = onCheckUpdate,
-                onDownloadUpdate = onDownloadUpdate,
-                onInstallUpdate = onInstallUpdate,
-                onCancelUpdate = onCancelUpdate,
-            )
-        }
-    }
-
-    state.serverPicker?.let { picker ->
-        ModalBottomSheet(onDismissRequest = profilesViewModel::dismissServerPicker) {
-            ProfileServerPickerSheet(
-                picker = picker,
-                latency = serverLatency[picker.profileId].orEmpty(),
-                hideServerAddresses = state.settings.hideServerAddresses,
-                busy = state.busy,
-                onSelect = profilesViewModel::selectProfileServer,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileServerPickerSheet(
+internal fun ProfileServerPickerSheet(
     picker: ProfileServerPickerState,
     latency: Map<String, PersistedServerLatency>,
     hideServerAddresses: Boolean,
@@ -509,12 +277,10 @@ internal fun UpdateAvailableDialog(
 }
 
 @Composable
-private fun ProfilesScreen(
+internal fun ProfilesScreen(
     contentPadding: PaddingValues,
     state: ProfilesUiState,
     viewModel: ProfilesViewModel,
-    showAppSelectionAfterImport: Boolean,
-    onOpenAppPicker: () -> Unit,
 ) {
     var deleteTarget by remember { mutableStateOf<ProfileMetadata?>(null) }
     var renameTarget by remember { mutableStateOf<ProfileMetadata?>(null) }
@@ -778,43 +544,6 @@ private fun ProfilesScreen(
         )
     }
 
-    state.importPreview?.let { preview ->
-        ImportPreviewDialog(
-            preview = preview,
-            hideServerAddresses = state.settings.hideServerAddresses,
-            busy = state.busy,
-            onDismiss = viewModel::dismissImportPreview,
-            onCreate = viewModel::confirmImport,
-            onSplit = viewModel::confirmImportPerServer,
-            onAppend = viewModel::confirmAppend,
-            onRefresh = viewModel::confirmRefresh,
-        )
-    }
-
-    state.importCompletion?.takeIf { showAppSelectionAfterImport }?.let { completion ->
-        AlertDialog(
-            onDismissRequest = viewModel::consumeImportCompletion,
-            title = { Text("Профиль готов") },
-            text = {
-                Text(
-                    "${completion.profileName} сохранён. VPN не запускался. " +
-                        "Для VPN не выбрано ни одного приложения. Выберите хотя бы одно, " +
-                        "затем подключитесь вручную на главной.",
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.consumeImportCompletion()
-                        onOpenAppPicker()
-                    },
-                ) { Text("Выбрать приложения") }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::consumeImportCompletion) { Text("Позже") }
-            },
-        )
-    }
 }
 
 @Composable
@@ -1021,7 +750,7 @@ private fun SubscriptionClientProfile.displayName(): String = when (this) {
 }
 
 @Composable
-private fun ImportPreviewDialog(
+internal fun ImportPreviewDialog(
     preview: ImportPreviewState,
     hideServerAddresses: Boolean,
     busy: Boolean,
@@ -1345,7 +1074,7 @@ private fun RenameDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RawEditorScreen(
+internal fun RawEditorScreen(
     viewModel: ProfilesViewModel,
     editor: ProfileEditorState,
     lineWrap: Boolean,

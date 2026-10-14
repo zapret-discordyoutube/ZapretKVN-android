@@ -92,7 +92,7 @@ class ProfileUiInstrumentedTest {
             clipboard.setPrimaryClip(ClipData.newPlainText("profile", VALID_DIRECT))
         }
 
-        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Серверы") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Буфер").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {
@@ -125,7 +125,7 @@ class ProfileUiInstrumentedTest {
 
         composeRule.activityRule.scenario.recreate()
         composeRule.waitForIdle()
-        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Серверы") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
         composeRule.onNodeWithText("JSON").performScrollTo().performClick()
         composeRule.onNodeWithText("Показать адреса и разрешить редактирование").performClick()
@@ -139,7 +139,7 @@ class ProfileUiInstrumentedTest {
             clipboard.setPrimaryClip(ClipData.newPlainText("subscription", SUBSCRIPTION_LINKS))
         }
 
-        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Серверы") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Буфер").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {
@@ -183,7 +183,7 @@ class ProfileUiInstrumentedTest {
             clipboard.setPrimaryClip(ClipData.newPlainText("subscription", SUBSCRIPTION_LINKS))
         }
 
-        composeRule.onNode(hasText("Профили") and hasClickAction()).performClick()
+        composeRule.onNode(hasText("Серверы") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Буфер").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {

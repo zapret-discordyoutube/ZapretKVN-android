@@ -17,10 +17,19 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import io.github.zapretkvn.android.ui.AppDependencies
+import io.github.zapretkvn.android.ui.ZapretRoot
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
@@ -28,8 +37,7 @@ import io.github.zapretkvn.android.apps.AppsViewModel
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.ThemeMode
-import io.github.zapretkvn.android.ui.ZapretApp
-import io.github.zapretkvn.android.ui.theme.ZapretTheme
+import io.github.zapretkvn.core.designsystem.ZapretTheme
 import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
@@ -38,9 +46,6 @@ class MainActivity : ComponentActivity() {
     private val vpnController: VpnController
         get() = (application as ZapretApplication).container.vpnController
     private var pendingProfileId: String? = null
-    private var activityStarted = false
-    private var homeSelected = false
-    private var diagnosticsSelected = false
     private var pendingUpdateInstall = false
     private val updateController
         get() = (application as ZapretApplication).container.updateController
@@ -89,120 +94,76 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            val state by profilesViewModel.state.collectAsState()
-            val appsState by appsViewModel.state.collectAsState()
-            val vpnState by vpnController.state.collectAsState()
-            val selectorGroups by vpnController.selectorGroups.collectAsState()
-            val sessionStats by vpnController.sessionStats.collectAsState()
-            val diagnostics by vpnController.diagnostics.collectAsState()
-            val routingState by routingViewModel.state.collectAsState()
-            val vpnMessage by vpnController.message.collectAsState()
-            val updateState by updateController.state.collectAsState()
-            val systemDark = isSystemInDarkTheme()
-            LaunchedEffect(state.initialized) {
-                if (state.initialized) updateController.checkOnce(state.settings.updateChannel)
-            }
-            LaunchedEffect(updateState) {
-                if (updateState is UpdateState.Ready &&
-                    updateController.consumeAutomaticInstallRequest()
-                ) {
-                    requestUpdateInstall()
+        val container = (application as ZapretApplication).container
+        val dependencies = AppDependencies(
+            profiles = profilesViewModel,
+            apps = appsViewModel,
+            routing = routingViewModel,
+            vpn = vpnController,
+            updates = updateController,
+            startVpn = ::requestVpnStart,
+            restartVpn = {
+                if (vpnController.state.value is VpnConnectionState.Paused) {
+                    vpnController.resumePaused()
+                } else {
+                    vpnController.restartIfConnected("Перезапуск пользователем")
                 }
-            }
-            val darkTheme = when (state.settings.themeMode) {
+            },
+            installUpdate = ::requestUpdateInstall,
+            createDiagnosticShare = { container.diagnosticExporter.createShareIntent() },
+        )
+        observeUpdates()
+        setContent {
+            // Корень читает только тему: остальное собирают сами экраны.
+            val themeMode by remember {
+                profilesViewModel.state.map { it.settings.themeMode }.distinctUntilChanged()
+            }.collectAsStateWithLifecycle(initialValue = profilesViewModel.state.value.settings.themeMode)
+            val systemDark = isSystemInDarkTheme()
+            val darkTheme = when (themeMode) {
                 ThemeMode.System -> systemDark
                 ThemeMode.Light -> false
                 ThemeMode.Dark -> true
                 ThemeMode.Amoled -> true
             }
-            SideEffect {
+            DisposableEffect(darkTheme) {
                 val systemBarStyle = if (darkTheme) {
                     SystemBarStyle.dark(Color.TRANSPARENT)
                 } else {
                     SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
                 }
-                enableEdgeToEdge(
-                    statusBarStyle = systemBarStyle,
-                    navigationBarStyle = systemBarStyle,
-                )
+                enableEdgeToEdge(statusBarStyle = systemBarStyle, navigationBarStyle = systemBarStyle)
+                onDispose {}
             }
-            ZapretTheme(
-                darkTheme = darkTheme,
-                amoledTheme = state.settings.themeMode == ThemeMode.Amoled,
-            ) {
-                ZapretApp(
-                    profilesViewModel = profilesViewModel,
-                    state = state,
-                    appsViewModel = appsViewModel,
-                    appsState = appsState,
-                    routingViewModel = routingViewModel,
-                    routingState = routingState,
-                    vpnState = vpnState,
-                    selectorGroups = selectorGroups,
-                    sessionStats = sessionStats,
-                    diagnostics = diagnostics,
-                    vpnMessage = vpnMessage,
-                    onVpnMessageConsumed = vpnController::consumeMessage,
-                    onVpnStart = ::requestVpnStart,
-                    onVpnStop = vpnController::stop,
-                    onVpnRestart = {
-                        if (vpnState is VpnConnectionState.Paused) {
-                            vpnController.resumePaused()
-                        } else {
-                            vpnController.restartIfConnected("Перезапуск пользователем")
-                        }
-                    },
-                    onSelectOutbound = vpnController::selectOutbound,
-                    onMeasureGroup = vpnController::measureGroup,
-                    onHomeSelected = ::setHomeSelected,
-                    onDiagnosticsSelected = ::setDiagnosticsSelected,
-                    onCreateDiagnosticShare = {
-                        (application as ZapretApplication).container.diagnosticExporter.createShareIntent()
-                    },
-                    onClearDnsCache = vpnController::clearDnsCache,
-                    updateState = updateState,
-                    onCheckUpdate = updateController::check,
-                    onDownloadUpdate = updateController::download,
-                    onInstallUpdate = ::requestUpdateInstall,
-                    onCancelUpdate = updateController::cancelAndDelete,
-                )
+            ZapretTheme(darkTheme = darkTheme, amoledTheme = themeMode == ThemeMode.Amoled) {
+                ZapretRoot(dependencies)
             }
         }
         if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    /** Разовая проверка обновлений после загрузки настроек и автоустановка готового APK. */
+    private fun observeUpdates() {
+        lifecycleScope.launch {
+            val settings = profilesViewModel.state.first { it.initialized }.settings
+            updateController.checkOnce(settings.updateChannel)
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                updateController.state.collect { updateState ->
+                    if (updateState is UpdateState.Ready &&
+                        updateController.consumeAutomaticInstallRequest()
+                    ) {
+                        requestUpdateInstall()
+                    }
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
-    }
-
-    override fun onStart() {
-        super.onStart()
-        activityStarted = true
-        updateVisibleStreams()
-    }
-
-    override fun onStop() {
-        activityStarted = false
-        updateVisibleStreams()
-        super.onStop()
-    }
-
-    private fun setHomeSelected(selected: Boolean) {
-        homeSelected = selected
-        updateVisibleStreams()
-    }
-
-    private fun setDiagnosticsSelected(selected: Boolean) {
-        diagnosticsSelected = selected
-        updateVisibleStreams()
-    }
-
-    private fun updateVisibleStreams() {
-        vpnController.setHomeVisible(activityStarted && homeSelected)
-        vpnController.setDiagnosticsVisible(activityStarted && diagnosticsSelected)
     }
 
     private fun handleIntent(intent: Intent) {

@@ -11,7 +11,7 @@ import androidx.compose.ui.test.performScrollToNode
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.ui.UpdateAvailableDialog
-import io.github.zapretkvn.android.ui.theme.ZapretTheme
+import io.github.zapretkvn.core.designsystem.ZapretTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After

@@ -174,6 +174,9 @@ dependencies {
     implementation(project(":app-updater"))
     implementation(project(":network-bootstrap"))
     implementation(project(":wireguard-import"))
+    implementation(project(":core:designsystem"))
+    implementation(project(":core:ui-model"))
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 

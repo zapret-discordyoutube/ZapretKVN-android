@@ -107,7 +107,7 @@ class Gate6EndToEndInstrumentedTest {
             clipboard.setPrimaryClip(ClipData.newPlainText("share link", shareLink))
         }
 
-        openTab("Профили")
+        openTab("Серверы")
         composeRule.onNodeWithText("Буфер").performClick()
         composeRule.waitUntil(20_000) {
             runCatching { composeRule.onNodeWithText("Предпросмотр импорта").fetchSemanticsNode() }.isSuccess

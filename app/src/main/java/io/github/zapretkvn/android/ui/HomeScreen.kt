@@ -1,5 +1,11 @@
 package io.github.zapretkvn.android.ui
 
+import io.github.zapretkvn.core.uimodel.LATENCY_OLD_MILLIS
+import io.github.zapretkvn.core.uimodel.formatAge
+import io.github.zapretkvn.core.uimodel.formatBytes
+import io.github.zapretkvn.core.uimodel.formatDuration
+import io.github.zapretkvn.core.uimodel.formatPing
+
 import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
@@ -716,36 +722,6 @@ private fun VpnConnectionState.title(): String = when (this) {
     is VpnConnectionState.Error -> "Ошибка VPN"
 }
 
-internal fun formatBytes(bytes: Long): String {
-    val safe = bytes.coerceAtLeast(0)
-    val units = arrayOf("Б", "КБ", "МБ", "ГБ", "ТБ")
-    var value = safe.toDouble()
-    var unit = 0
-    while (value >= 1024 && unit < units.lastIndex) {
-        value /= 1024
-        unit++
-    }
-    return if (unit == 0) "$safe ${units[unit]}" else "%.1f %s".format(java.util.Locale.US, value, units[unit])
-}
-
-internal fun formatDuration(millis: Long): String {
-    val seconds = millis.coerceAtLeast(0) / 1_000
-    val hours = seconds / 3_600
-    val minutes = seconds / 60 % 60
-    val rest = seconds % 60
-    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, rest) else "%02d:%02d".format(minutes, rest)
-}
-
-internal fun formatPing(value: Long?): String {
-    val millis = value?.coerceAtLeast(0) ?: return "—"
-    if (millis < 1_000) return "$millis мс"
-
-    val hundredths = millis / 10 + if (millis % 10 >= 5) 1 else 0
-    val seconds = hundredths / 100
-    val fraction = (hundredths % 100).toString().padStart(2, '0').trimEnd('0')
-    return if (fraction.isEmpty()) "$seconds с" else "$seconds,$fraction с"
-}
-
 internal fun formatLatency(
     rawState: LatencyProbeState?,
     nowEpochMillis: Long = System.currentTimeMillis(),
@@ -788,17 +764,6 @@ internal fun formatLatency(
     }
 }
 
-/** Возраст сохранённого пинга: «только что», «12 мин назад», «3 ч назад», «2 д назад». */
-internal fun formatAge(ageMillis: Long): String {
-    val age = ageMillis.coerceAtLeast(0)
-    return when {
-        age < 60_000L -> "только что"
-        age < 3_600_000L -> "${age / 60_000L} мин назад"
-        age < LATENCY_OLD_MILLIS -> "${age / 3_600_000L} ч назад"
-        else -> "${age / LATENCY_OLD_MILLIS} д назад"
-    }
-}
-
 @Composable
 internal fun latencyColor(state: LatencyProbeState?, nowEpochMillis: Long, default: Color): Color =
     if (isLatencyOld(state, nowEpochMillis)) {
@@ -806,9 +771,6 @@ internal fun latencyColor(state: LatencyProbeState?, nowEpochMillis: Long, defau
     } else {
         default
     }
-
-/** Пинг старше суток показывается приглушённо: сервер мог сильно измениться. */
-internal const val LATENCY_OLD_MILLIS = 24 * 60 * 60 * 1_000L
 
 internal fun isLatencyOld(state: LatencyProbeState?, nowEpochMillis: Long): Boolean {
     val measuredAt = when (state) {

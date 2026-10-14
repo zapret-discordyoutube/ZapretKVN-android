@@ -55,7 +55,7 @@ class Gate6UiSmokeInstrumentedTest {
         openTab("Главная")
         composeRule.onNodeWithText("VPN выключен").assertIsDisplayed()
 
-        openTab("Профили")
+        openTab("Серверы")
         composeRule.onNodeWithText("Профилей пока нет").assertIsDisplayed()
 
         openTab("Маршруты")
@@ -78,7 +78,7 @@ class Gate6UiSmokeInstrumentedTest {
             composeRule.activityRule.scenario.recreate()
             composeRule.waitForIdle()
 
-            listOf("Главная", "Профили", "Маршруты", "Настройки").forEach { label ->
+            listOf("Главная", "Серверы", "Маршруты", "Настройки").forEach { label ->
                 composeRule.onNodeWithContentDescription(label, useUnmergedTree = true).assertExists()
                 composeRule.onNode(hasText(label) and hasClickAction())
                     .assertHeightIsAtLeast(48.dp)

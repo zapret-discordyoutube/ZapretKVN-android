@@ -14,7 +14,7 @@ import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.apps.InstalledApp
 import io.github.zapretkvn.android.ui.AppRow
-import io.github.zapretkvn.android.ui.theme.ZapretTheme
+import io.github.zapretkvn.core.designsystem.ZapretTheme
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking

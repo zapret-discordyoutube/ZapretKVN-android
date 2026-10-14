@@ -1,5 +1,10 @@
 package io.github.zapretkvn.android.ui
 
+import io.github.zapretkvn.core.uimodel.formatAge
+import io.github.zapretkvn.core.uimodel.formatBytes
+import io.github.zapretkvn.core.uimodel.formatDuration
+import io.github.zapretkvn.core.uimodel.formatPing
+
 import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencySample
