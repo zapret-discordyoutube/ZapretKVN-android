@@ -119,6 +119,10 @@ if [[ "$(git rev-list -n 1 "$TAG")" != "$(git rev-parse HEAD)" ]]; then
     exit 1
 fi
 
+# The same changelog feeds the Forgejo notes and the Telegram announcement;
+# reject what the bot would split or refuse before anything is published.
+python3 "$PROJECT_ROOT/scripts/check-release-changes.py" "$RELEASE_CHANGES_FILE" || exit 1
+
 # The packaged RU IP rule-set must be the latest upstream snapshot: a stale one
 # routes new Russian ranges through the VPN in «Россия напрямую».
 if [[ "${ZAPRET_ALLOW_STALE_RULE_SETS:-0}" != 1 ]]; then

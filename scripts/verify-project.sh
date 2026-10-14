@@ -366,6 +366,8 @@ for doc in docs:
 print("Markdown, local links and fixture hashes are valid.")
 PY
 
+python3 "$PROJECT_ROOT/scripts/check-release-changes.py" "$PROJECT_ROOT/scripts/release-changes.txt"
+
 python3 - "$PROJECT_ROOT" <<'PY'
 from pathlib import Path
 import sys
