@@ -26,14 +26,30 @@ import kotlinx.coroutines.withTimeout
  * после пробного переключения мог бы пойти по keep-alive соединению старого
  * сервера.
  */
-class VpnThroughputProbe(
+class VpnThroughputProbe internal constructor(
     private val vpnNetworks: VpnNetworkProvider,
+    /** Общая полоса проб: замер не накладывается на проверку серверов и сервисов. */
+    private val lane: ProbeLane?,
 ) {
+    constructor(vpnNetworks: VpnNetworkProvider) : this(vpnNetworks, null)
+
     /**
      * Байт в секунду; null — замер не удался (сеть, TLS, HTTP или не получено
      * ни байта). Это «неясно», а не «медленно»: переключения по нему нет.
+     *
+     * Замер держит [lane]. Он вытесняет проверку сервисов, но уступает
+     * подключению: тогда, как и если полоса не освободилась за [LANE_WAIT_MILLIS]
+     * (идёт массовая проверка серверов), результат «неясно» и переключения нет.
      */
     suspend fun measure(): Long? {
+        val lane = lane ?: return transfer()
+        return when (val run = lane.runPreemptible(ProbeLane.Owner.Throughput, LANE_WAIT_MILLIS, ::transfer)) {
+            is LaneRun.Done -> run.value
+            LaneRun.Preempted, LaneRun.Timeout -> null
+        }
+    }
+
+    private suspend fun transfer(): Long? {
         val network = try {
             withTimeout(NETWORK_WAIT_MILLIS) { vpnNetworks.awaitActive() }
         } catch (_: TimeoutCancellationException) {
@@ -97,6 +113,9 @@ class VpnThroughputProbe(
         const val MAX_BYTES = 3L * 1024 * 1024
         const val MAX_TRANSFER_MILLIS = 6_000L
         const val NETWORK_WAIT_MILLIS = 5_000L
+
+        /** Сколько замер ждёт полосу, занятую проверкой серверов. */
+        const val LANE_WAIT_MILLIS = 15_000L
         const val CONNECT_TIMEOUT_MILLIS = 5_000
         const val READ_TIMEOUT_MILLIS = 3_000
         const val BUFFER_BYTES = 32 * 1024

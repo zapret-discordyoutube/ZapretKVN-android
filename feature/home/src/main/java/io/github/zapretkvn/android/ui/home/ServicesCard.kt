@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -23,6 +25,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.core.designsystem.CardTitle
 import io.github.zapretkvn.core.designsystem.Motion
 import io.github.zapretkvn.core.designsystem.Spacing
@@ -43,6 +47,10 @@ fun ServicesCard(
     state: () -> ServiceAvailabilityState,
     onCheck: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Какие сервисы показывать: выбор из настроек. */
+    services: List<ServiceId> = ServiceCatalog.defaults.map { it.id },
+    /** VPN остановлен: показывается проверка напрямую (без VPN), а не результат через сессию. */
+    offline: Boolean = false,
 ) {
     val current = state()
     val hasResult = current.items.isNotEmpty()
@@ -52,7 +60,7 @@ fun ServicesCard(
             delay(AGE_REFRESH_MILLIS)
         }
     }
-    val ui = servicesCardUi(current, now)
+    val ui = if (offline) directServicesCardUi(current, now, services) else servicesCardUi(current, now, services)
     ZapretCard(
         modifier = modifier
             .animateContentSize(tween(Motion.STANDARD))
@@ -66,7 +74,7 @@ fun ServicesCard(
             action = {
                 if (ui.checking) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
+                } else if (ui.actionLabel == null) {
                     Icon(
                         ZapretIcons.Refresh,
                         contentDescription = "Проверить сервисы",
@@ -76,9 +84,23 @@ fun ServicesCard(
                 }
             },
         )
-        Text(ui.summary, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
-            ui.rows.forEach { row -> ServiceRow(row) }
+        Text(
+            ui.summary,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.testTag("services-summary"),
+        )
+        ui.advice?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("services-advice"),
+            )
+        }
+        if (ui.rows.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                ui.rows.forEach { row -> ServiceRow(row) }
+            }
         }
         Text(
             ui.footnote,
@@ -87,6 +109,15 @@ fun ServicesCard(
             modifier = Modifier.fillMaxWidth(),
             textAlign = TextAlign.Start,
         )
+        ui.actionLabel?.let { label ->
+            FilledTonalButton(
+                onClick = onCheck,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("services-check-direct"),
+            ) { Text(label) }
+        }
     }
 }
 

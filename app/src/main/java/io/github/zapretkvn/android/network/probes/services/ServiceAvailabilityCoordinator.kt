@@ -3,13 +3,17 @@ package io.github.zapretkvn.android.network.probes.services
 import android.os.SystemClock
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.network.probes.ProbeLane
+import io.github.zapretkvn.android.network.probes.acquireSettled
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -27,7 +31,8 @@ internal class ServiceAvailabilityCoordinator(
     private val profileJson: String,
     private val lane: ProbeLane = controller.probeLane,
     private val runner: ServiceProbeRunner = ServiceProbeRunner(),
-    private val definitions: () -> List<ServiceDefinition> = { ServiceCatalog.defaults },
+    /** Только выбранные в настройках сервисы: чем их меньше, тем меньше запросов. */
+    private val definitions: () -> List<ServiceDefinition> = { ServiceCatalog.resolve(controller.enabledServices.value) },
     private val elapsed: () -> Long = SystemClock::elapsedRealtime,
     private val random: Random = Random.Default,
     private val sleep: suspend (Long) -> Unit = ::probeSleep,
@@ -45,6 +50,9 @@ internal class ServiceAvailabilityCoordinator(
     private var closed = false
     private var autoJob: Job? = null
 
+    /** Полосу потребовали раньше, чем запуск успел зарегистрироваться: он отменяется сразу после старта. */
+    private val preemptPending = AtomicBoolean(false)
+
     /** Нажатие на карточку. */
     fun requestCheck() {
         synchronized(lock) {
@@ -55,10 +63,11 @@ internal class ServiceAvailabilityCoordinator(
             }
             reserved = true
         }
+        preemptPending.set(false)
         val lease = lane.tryAcquire(ProbeLane.Owner.Services, onPreempt = ::preempt)
         if (lease == null) {
             synchronized(lock) { reserved = false }
-            controller.publishMessage(generation, "Идёт проверка серверов.")
+            controller.publishMessage(generation, "Идёт другая проверка, повторите чуть позже.")
             return
         }
         if (!startRun(ServiceCheckTrigger.Tap, lease)) lease.release()
@@ -74,10 +83,14 @@ internal class ServiceAvailabilityCoordinator(
                 if (!controller.homeVisible.value) continue
                 // Пользователь уже нажал сам, или проверка идёт: автозапуск не нужен.
                 if (hasResultsOrRunning()) return@launch
-                val lease = lane.acquire(ProbeLane.Owner.Services, onPreempt = ::preempt)
+                preemptPending.set(false)
+                // Пауза держит полосу: подключение или замер скорости может потребовать её раньше.
+                // Уступили: автозапуск пробует снова после следующей паузы.
+                val lease = lane.acquireSettled(ProbeLane.Owner.Services, ::preempt) {
+                    sleep(random.nextLong(ServiceCheckPolicy.LANE_JITTER_MIN_MILLIS, ServiceCheckPolicy.LANE_JITTER_MAX_MILLIS + 1))
+                } ?: continue
                 var handedOver = false
                 try {
-                    sleep(random.nextLong(ServiceCheckPolicy.LANE_JITTER_MIN_MILLIS, ServiceCheckPolicy.LANE_JITTER_MAX_MILLIS + 1))
                     if (!controller.homeVisible.value || closedNow()) continue
                     if (hasResultsOrRunning()) return@launch
                     handedOver = startRun(ServiceCheckTrigger.Auto, lease)
@@ -124,10 +137,12 @@ internal class ServiceAvailabilityCoordinator(
 
     /** Вытеснение массовой проверкой серверов: запуск отменяется, прежние результаты возвращаются. */
     private fun preempt() {
+        preemptPending.set(true)
         synchronized(lock) { active }?.job?.cancel(CancellationException("Service check preempted"))
     }
 
     /** Берёт [lease] на себя при true; при false вызывающий освобождает его сам. */
+    @OptIn(DelicateCoroutinesApi::class)
     private fun startRun(trigger: ServiceCheckTrigger, lease: ProbeLane.Lease): Boolean {
         val underlying = networkMonitor.current
         val identity = underlying.identity
@@ -164,7 +179,10 @@ internal class ServiceAvailabilityCoordinator(
             }
             return false
         }
-        run.job = scope.launch { execute(run, trigger, services, underlying.network, lease) }
+        // ATOMIC: отмена до первого шага не должна пропустить finally, который отдаёт полосу.
+        val job = scope.launch(start = CoroutineStart.ATOMIC) { execute(run, trigger, services, underlying.network, lease) }
+        run.job = job
+        if (preemptPending.compareAndSet(true, false)) job.cancel(CancellationException("Service check preempted"))
         return true
     }
 

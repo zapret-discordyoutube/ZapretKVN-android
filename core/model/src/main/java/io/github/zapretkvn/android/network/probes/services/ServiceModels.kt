@@ -109,6 +109,8 @@ data class ServiceAvailabilityState(
     val items: Map<ServiceId, ServiceAvailability> = emptyMap(),
     val trigger: ServiceCheckTrigger? = null,
     val lastRun: ServiceRunSummary? = null,
+    /** Проверка без VPN не нашла физической сети: показывается «Нет интернета». */
+    val noNetwork: Boolean = false,
 ) {
     companion object {
         val Initial = ServiceAvailabilityState()

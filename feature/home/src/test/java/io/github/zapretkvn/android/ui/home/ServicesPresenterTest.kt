@@ -161,4 +161,21 @@ class ServicesPresenterTest {
         assertTrue("Discord: Через VPN" in description)
         assertTrue("Отклик 84 мс" in description)
     }
+
+    @Test
+    fun onlySelectedServicesGetRowsAndCountInTheSummary() {
+        val chosen = listOf(ServiceId.YouTube, ServiceId.Claude)
+        val state = ServiceAvailabilityState(
+            items = mapOf(
+                ServiceId.YouTube to ServiceAvailability.Result(snap(ServiceId.YouTube, Headline.ViaVpn)),
+                ServiceId.Claude to ServiceAvailability.Result(snap(ServiceId.Claude, Headline.ViaVpn)),
+                ServiceId.Telegram to ServiceAvailability.Result(snap(ServiceId.Telegram, Headline.Unavailable)),
+            ),
+        )
+
+        val ui = servicesCardUi(state, now, chosen)
+
+        assertEquals(chosen, ui.rows.map { it.id })
+        assertEquals("Все 2 открываются", ui.summary)
+    }
 }

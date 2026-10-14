@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.BuildConfig
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
 import io.github.zapretkvn.android.ui.AppPickerMode
@@ -23,7 +24,8 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val selectorGroups by deps.vpn.selectorGroups.collectAsStateWithLifecycle()
     // Трафик тикает раз в секунду: читается только в листовых карточках через лямбду.
     val sessionStats = deps.vpn.sessionStats.collectAsStateWithLifecycle()
-    val services = deps.vpn.serviceAvailability.collectAsStateWithLifecycle()
+    val sessionServices = deps.vpn.serviceAvailability.collectAsStateWithLifecycle()
+    val directServices = deps.directServices.collectAsStateWithLifecycle()
 
     val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
     val summary = activeProfile?.let { state.serverSummaries[it.id] }
@@ -62,6 +64,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         ),
         errorContext = summary.errorContext(),
         appVersion = BuildConfig.VERSION_NAME,
+        services = ServiceCatalog.resolve(state.settings.serviceChecks).map { it.id },
     )
     val callbacks = remember(deps, nav) {
         HomeCallbacks(
@@ -81,13 +84,17 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
             onOpenRouting = { nav.switchTab(AppTab.Routing) },
             onSelectPreset = { preset -> deps.routing.applyPreset(preset) },
             createDiagnosticShare = deps.createDiagnosticShare,
-            onCheckServices = deps.vpn::checkServices,
+            // Остановленный VPN: проверка напрямую; подключённый: проверка сессии (через VPN и напрямую).
+            onCheckServices = {
+                if (deps.vpn.state.value is VpnConnectionState.Stopped) deps.checkServicesDirect()
+                else deps.vpn.checkServices()
+            },
         )
     }
     HomeScreen(
         ui = ui,
         stats = { sessionStats.value },
-        services = { services.value },
+        services = { if (vpnState is VpnConnectionState.Stopped) directServices.value else sessionServices.value },
         callbacks = callbacks,
         contentPadding = padding,
     )

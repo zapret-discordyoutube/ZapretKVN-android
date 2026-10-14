@@ -111,6 +111,16 @@ internal fun DnsRoute(deps: AppDependencies, padding: PaddingValues) {
 }
 
 @Composable
+internal fun ServiceChecksRoute(deps: AppDependencies, padding: PaddingValues) {
+    val settings by rememberUiSettings(deps)
+    ServiceChecksScreen(
+        contentPadding = padding,
+        selected = settings.serviceChecks,
+        onToggle = deps.profiles.settings::setServiceCheck,
+    )
+}
+
+@Composable
 internal fun HidingRoute(deps: AppDependencies, padding: PaddingValues) {
     val settings by rememberUiSettings(deps)
     HidingScreen(

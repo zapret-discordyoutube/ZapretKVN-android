@@ -120,8 +120,12 @@ internal class LatencyProbeCoordinator(
     private suspend fun run(probe: ActiveProbe) {
         var laneLease: ProbeLane.Lease? = null
         try {
-            // Общая полоса проб: проверка сервисов уступает, пока идёт массовая проверка серверов.
-            laneLease = probeLane.acquire(ProbeLane.Owner.Latency)
+            // Общая полоса проб: проверка сервисов уступает, пока идёт массовая проверка серверов,
+            // а сама проверка серверов уступает подключению (health-check), у которого приоритет.
+            laneLease = probeLane.acquire(ProbeLane.Owner.Latency) {
+                cancel(probe, stale = false)
+                controller.publishMessage(generation, "Проверка задержек прервана: идёт подключение.")
+            }
             val summaries = coroutineScope {
                 listOf(
                     async { runRelay(probe) },

@@ -1,6 +1,8 @@
 package io.github.zapretkvn.android.network.probes.services
 
+import android.content.Context
 import android.net.Network
+import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.network.VpnNetworkLease
 import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.network.VpnNetworkProvider
@@ -169,5 +171,48 @@ internal class AndroidServiceProbePaths(private val vpnNetworks: VpnNetworkProvi
 
     private companion object {
         const val LEASE_WAIT_MILLIS = 3_000L
+    }
+}
+
+/**
+ * Физическая сеть для проверки без VPN. Монитор сети открывается по первому нажатию и
+ * живёт, пока на карточке есть результаты (сменилась сеть, и они устарели); пока ничего
+ * не проверялось, обратных вызовов сети приложение не держит.
+ */
+internal class AndroidDirectNetworkSource(private val context: Context) : DirectNetworkSource {
+    override fun open(onChange: () -> Unit): DirectNetworkSession {
+        val monitor = DefaultNetworkMonitor(context)
+        try {
+            monitor.start()
+        } catch (error: Throwable) {
+            monitor.close()
+            throw error
+        }
+        return MonitorDirectSession(monitor, onChange)
+    }
+
+    private class MonitorDirectSession(
+        private val monitor: DefaultNetworkMonitor,
+        onChange: () -> Unit,
+    ) : DirectNetworkSession {
+        @Volatile private var lastIdentity: String? = monitor.current.identity
+        private val observer: AutoCloseable = monitor.observe { state ->
+            val now = state.identity
+            if (now != lastIdentity) {
+                lastIdentity = now
+                onChange()
+            }
+        }
+
+        override val identity: String? get() = monitor.current.identity
+
+        override fun transport(): ServiceProbeTransport? = monitor.current.network?.let {
+            NetworkServiceProbeTransport(it, NetworkServiceProbeTransport.DIRECT_CONNECT_TIMEOUT_MILLIS)
+        }
+
+        override fun close() {
+            runCatching { observer.close() }
+            monitor.close()
+        }
     }
 }

@@ -58,6 +58,8 @@ import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.core.designsystem.Motion
 import io.github.zapretkvn.core.designsystem.ZapretTopBar
+import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
@@ -76,6 +78,9 @@ class AppDependencies(
     val restartVpn: () -> Unit,
     val installUpdate: () -> Unit,
     val createDiagnosticShare: suspend () -> Intent,
+    /** Проверка сервисов без VPN: результаты (только в памяти) и нажатие на карточку. */
+    val directServices: StateFlow<ServiceAvailabilityState>,
+    val checkServicesDirect: () -> Unit,
 )
 
 /** Действия навигации, общие для экранов. */

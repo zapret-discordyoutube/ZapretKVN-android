@@ -79,6 +79,8 @@ import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.diagnostics.VpnErrorContext
 import io.github.zapretkvn.android.diagnostics.VpnErrorExplainer
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.TrafficSample
@@ -127,6 +129,8 @@ data class HomeUi(
     val appsSummary: String,
     val errorContext: VpnErrorContext,
     val appVersion: String,
+    /** Сервисы, выбранные в настройках: карточка показывает и проверяет только их. */
+    val services: List<ServiceId> = ServiceCatalog.defaults.map { it.id },
 )
 
 class HomeCallbacks(
@@ -153,6 +157,8 @@ fun HomeScreen(
     contentPadding: PaddingValues,
 ) {
     val connected = ui.vpnState is VpnConnectionState.Connected
+    // Остановленный VPN: карточка предлагает проверку напрямую, без VPN.
+    val stopped = ui.vpnState is VpnConnectionState.Stopped
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -175,9 +181,19 @@ fun HomeScreen(
             item(key = "tiles", contentType = "tiles") {
                 SpeedTiles(stats = stats, server = ui.server, modifier = Modifier.animateItem())
             }
+        }
+        if (connected || stopped) {
             item(key = "services", contentType = "card") {
-                ServicesCard(state = services, onCheck = callbacks.onCheckServices, modifier = Modifier.animateItem())
+                ServicesCard(
+                    state = services,
+                    onCheck = callbacks.onCheckServices,
+                    modifier = Modifier.animateItem(),
+                    services = ui.services,
+                    offline = stopped,
+                )
             }
+        }
+        if (connected) {
             item(key = "traffic", contentType = "card") {
                 TrafficCard(stats, modifier = Modifier.animateItem())
             }

@@ -111,6 +111,8 @@ class MainActivity : ComponentActivity() {
             },
             installUpdate = ::requestUpdateInstall,
             createDiagnosticShare = { container.diagnosticExporter.createShareIntent() },
+            directServices = container.directServiceChecker.state,
+            checkServicesDirect = container.directServiceChecker::check,
         )
         observeUpdates()
         val initialSettings = profilesViewModel.state.value.settings

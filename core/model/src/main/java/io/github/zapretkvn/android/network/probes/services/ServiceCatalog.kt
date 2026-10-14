@@ -149,6 +149,17 @@ object ServiceCatalog {
 
     val defaults: List<ServiceDefinition> get() = all.filter { it.enabledByDefault }
 
+    /** Сервисы, которые проверяются, пока пользователь не выбрал свой набор. */
+    val defaultIds: Set<ServiceId> get() = defaults.mapTo(linkedSetOf()) { it.id }
+
+    /**
+     * Определения выбранных сервисов в порядке каталога. Пустой выбор (или набор
+     * неизвестных сервисов) не оставляет проверку без целей: берутся [defaults].
+     * Чем меньше сервисов выбрано, тем меньше запросов в одном запуске.
+     */
+    fun resolve(ids: Set<ServiceId>): List<ServiceDefinition> =
+        all.filter { it.id in ids }.ifEmpty { defaults }
+
     fun definition(id: ServiceId): ServiceDefinition? = all.firstOrNull { it.id == id }
 
     /** Все имена и адреса, к которым проверка вообще может обратиться. */
@@ -159,5 +170,27 @@ object ServiceCatalog {
                 service.tcp.forEach { add(it.ip) }
             }
         }
+    }
+}
+
+/**
+ * Выбор сервисов для проверки в виде, пригодном для хранения. В настройках лежат
+ * токены [ServiceId.token]; отсутствие записи означает набор по умолчанию, поэтому
+ * чтение не требует миграции.
+ */
+object ServiceSelection {
+    /** `null` (записи нет) и мусорный набор дают [ServiceCatalog.defaultIds]. */
+    fun parse(tokens: Set<String>?): Set<ServiceId> {
+        if (tokens == null) return ServiceCatalog.defaultIds
+        val known = ServiceId.entries.filter { it.token in tokens }
+        return if (known.isEmpty()) ServiceCatalog.defaultIds else known.toCollection(linkedSetOf())
+    }
+
+    fun tokens(ids: Set<ServiceId>): Set<String> = ids.mapTo(linkedSetOf(), ServiceId::token)
+
+    /** Включить или выключить один сервис; последний включённый выключить нельзя. */
+    fun toggle(current: Set<ServiceId>, id: ServiceId, enabled: Boolean): Set<ServiceId> {
+        val next = if (enabled) current + id else current - id
+        return if (next.isEmpty()) current else next
     }
 }

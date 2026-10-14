@@ -31,7 +31,10 @@ import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
+import io.github.zapretkvn.android.network.probes.services.AndroidDirectNetworkSource
 import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
+import io.github.zapretkvn.android.network.probes.services.DirectServiceChecker
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.network.probes.VpnHealthPipeline
 import io.github.zapretkvn.android.network.probes.VpnLivenessProbe
 import io.github.zapretkvn.android.network.probes.VpnThroughputProbe
@@ -60,6 +63,8 @@ import java.net.HttpURLConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class AppContainer(
@@ -146,9 +151,9 @@ class AppContainer(
     val routingPolicyStore = RoutingPolicyStore(appContext)
     val proxyBootstrapper = ProxyBootstrapper(BootstrapResolver(), bootstrapCache)
     private val vpnNetworkProvider = VpnNetworkProvider(appContext)
-    val vpnHealthPipeline = VpnHealthPipeline(vpnNetworkProvider)
+    val vpnHealthPipeline = VpnHealthPipeline(vpnNetworkProvider, vpnController.probeLane)
     val vpnExternalIpProbe = VpnExternalIpProbe(vpnNetworkProvider)
-    val vpnThroughputProbe = VpnThroughputProbe(vpnNetworkProvider)
+    val vpnThroughputProbe = VpnThroughputProbe(vpnNetworkProvider, vpnController.probeLane)
     val vpnLivenessProbe = VpnLivenessProbe(vpnNetworkProvider)
     val icmpPingProbe = IcmpPingProbe()
     internal val serviceProbePaths = AndroidServiceProbePaths(vpnNetworkProvider)
@@ -171,7 +176,27 @@ class AppContainer(
         scope = backgroundScope,
     )
 
+    /**
+     * Проверка сервисов без VPN: пока VPN остановлен, карточка на Главной проверяет сервисы
+     * прямым путём по нажатию. Результаты только в памяти и стираются, когда VPN подключается.
+     */
+    internal val directServiceChecker = DirectServiceChecker(
+        scope = backgroundScope,
+        lane = vpnController.probeLane,
+        source = AndroidDirectNetworkSource(appContext),
+        definitions = { ServiceCatalog.resolve(vpnController.enabledServices.value) },
+    )
+
     init {
+        // Выбор сервисов для проверки и состояние VPN доходят до проб без обращения к хранилищу.
+        backgroundScope.launch {
+            uiSettingsStore.settings.map { it.serviceChecks }.distinctUntilChanged()
+                .collect(vpnController::setEnabledServices)
+        }
+        backgroundScope.launch {
+            vpnController.state.map { it is VpnConnectionState.Stopped }.distinctUntilChanged()
+                .collect(directServiceChecker::onVpnIdle)
+        }
         // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
         // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
         backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }

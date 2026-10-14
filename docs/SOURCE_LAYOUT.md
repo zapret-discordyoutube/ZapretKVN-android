@@ -13,7 +13,9 @@ app/src/main/java/io/github/zapretkvn/android/
 │   ├── singbox/         libbox setup, iterators, selector reconciliation
 │   └── hysteria/        runtime/recovery contract
 ├── network/             Android DNS, underlying network, bootstrap
-│   └── probes/          health, latency, ping, external IP
+│   └── probes/          health, latency, ping, external IP; services/ — доступность
+│                        сервисов (сессия VPN и проверка без VPN); ProbeLane — общая
+│                        полоса проб: подключение > задержки/скорость > сервисы
 ├── platform/            Android TUN/socket adapter и системная VPN policy
 ├── apps/                обнаружение/выбор приложений, per-app scope, ViewModel
 ├── diagnostics/         исходные ошибки, журнал, метрики и экспорт

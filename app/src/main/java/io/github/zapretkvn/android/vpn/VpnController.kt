@@ -43,6 +43,8 @@ import io.github.zapretkvn.android.platform.VpnSystemPolicy
 import java.util.concurrent.atomic.AtomicLong
 import io.github.zapretkvn.android.network.probes.ProbeLane
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,6 +67,7 @@ class VpnController(
         ),
     )
     private val mutableServiceAvailability = MutableStateFlow(ServiceAvailabilityState.Initial)
+    private val mutableEnabledServices = MutableStateFlow(ServiceCatalog.defaultIds)
     @Volatile
     private var serviceCheckHandler: Pair<Long, () -> Unit>? = null
     private val trafficAccumulator = SessionTrafficAccumulator()
@@ -82,6 +85,8 @@ class VpnController(
     internal val homeVisible: StateFlow<Boolean> = mutableHomeVisible.asStateFlow()
     internal val serviceAvailability: StateFlow<ServiceAvailabilityState> =
         mutableServiceAvailability.asStateFlow()
+    /** Сервисы, выбранные в настройках: планировщик проверок строит запросы только для них. */
+    internal val enabledServices: StateFlow<Set<ServiceId>> = mutableEnabledServices.asStateFlow()
     internal val diagnosticsVisible: StateFlow<Boolean> = mutableDiagnosticsVisible.asStateFlow()
 
     /** Общая полоса тяжёлых проб: проверка серверов и проверка сервисов не идут вместе. */
@@ -182,6 +187,10 @@ class VpnController(
         if (mutableState.value !is VpnConnectionState.Connected) return
         val handler = serviceCheckHandler ?: return
         if (handler.first == currentGeneration()) handler.second()
+    }
+
+    internal fun setEnabledServices(ids: Set<ServiceId>) {
+        mutableEnabledServices.value = ids
     }
 
     internal fun registerServiceCheckHandler(generation: Long, handler: (() -> Unit)?) {

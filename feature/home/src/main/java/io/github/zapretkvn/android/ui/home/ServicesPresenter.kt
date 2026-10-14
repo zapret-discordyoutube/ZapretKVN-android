@@ -37,6 +37,10 @@ data class ServicesCardUi(
     /** Подсказка под списком: когда проверено или что нажать. */
     val footnote: String,
     val hasResults: Boolean,
+    /** Совет под списком (проверка без VPN): что делать с результатом; null — нечего советовать. */
+    val advice: String? = null,
+    /** Подпись кнопки на карточке, пока проверять нечего показывать («Проверить без VPN»); иначе null. */
+    val actionLabel: String? = null,
 )
 
 fun headlineLabel(headline: Headline): String = when (headline) {

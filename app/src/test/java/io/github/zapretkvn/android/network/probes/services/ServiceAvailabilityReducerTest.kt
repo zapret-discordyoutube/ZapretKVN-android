@@ -134,4 +134,25 @@ class ServiceAvailabilityReducerTest {
         )
         assertEquals(stale, late)
     }
+
+    @Test
+    fun noNetworkIsFlaggedOnlyWhenIdleAndClearedByTheNextRunOrStale() {
+        val idle = ServiceAvailabilityReducer.noNetwork(ServiceAvailabilityState.Initial)
+        assertTrue(idle.noNetwork)
+
+        val running = begun()
+        assertEquals(running, ServiceAvailabilityReducer.noNetwork(running))
+
+        assertFalse(begun(idle).noNetwork)
+        assertFalse(ServiceAvailabilityReducer.markStale(idle).noNetwork)
+    }
+
+    @Test
+    fun noNetworkKeepsThePreviousResults() {
+        val before = ServiceAvailabilityState(
+            items = mapOf(ServiceId.YouTube to ServiceAvailability.Result(snapshot(ServiceId.YouTube))),
+        )
+        val state = ServiceAvailabilityReducer.noNetwork(before)
+        assertEquals(before.items, state.items)
+    }
 }

@@ -102,4 +102,40 @@ class ServiceProbePlannerTest {
         assertNotEquals(0, hosts.size)
         assertEquals(hosts.size, hosts.toSet().size)
     }
+
+    @Test
+    fun directOnlyPlanHasNoTunnelRequestsAndNoTcp() {
+        val plan = ServiceProbePlanner.plan(defaults, tunnel = false, direct = true, random = Random(4))
+
+        assertEquals(defaults.size, plan.requests.size)
+        assertTrue(plan.requests.all { it.path == PathKind.Direct && it.isPrimary && it.target is ProbeTarget.Https })
+        assertEquals(0, plan.dropped)
+    }
+
+    @Test
+    fun onlySelectedServicesArePlannedAndFewerServicesMeanFewerRequests() {
+        val all = ServiceProbePlanner.plan(ServiceCatalog.resolve(ServiceCatalog.defaultIds), true, true, Random(1))
+        val two = ServiceProbePlanner.plan(
+            ServiceCatalog.resolve(setOf(ServiceId.YouTube, ServiceId.Telegram)), true, true, Random(1),
+        )
+        val everything = ServiceProbePlanner.plan(ServiceCatalog.resolve(ServiceId.entries.toSet()), true, true, Random(1))
+
+        assertTrue(two.requests.size < all.requests.size)
+        assertTrue(all.requests.size < everything.requests.size)
+        val consumers = two.requests.flatMap { it.consumers }.map { it.service }.toSet()
+        assertEquals(setOf(ServiceId.YouTube, ServiceId.Telegram), consumers)
+        assertTrue(everything.requests.size <= ServiceProbeBudget.MAX_REQUESTS)
+    }
+
+    @Test
+    fun claudeAndXAreProbedOnlyWhenSelected() {
+        val defaultHosts = ServiceProbePlanner.plan(ServiceCatalog.resolve(ServiceCatalog.defaultIds), true, true).hosts
+        assertTrue("claude.ai" !in defaultHosts && "x.com" !in defaultHosts)
+
+        val withBoth = ServiceProbePlanner.plan(
+            ServiceCatalog.resolve(ServiceCatalog.defaultIds + ServiceId.Claude + ServiceId.X), true, true,
+        ).hosts
+        assertTrue("claude.ai" in withBoth && "x.com" in withBoth)
+        assertTrue(ServiceCatalog.allTargets.containsAll(withBoth))
+    }
 }

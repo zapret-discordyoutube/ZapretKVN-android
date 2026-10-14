@@ -4,6 +4,8 @@ import androidx.compose.runtime.Immutable
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.UiSettings
@@ -16,6 +18,7 @@ data class SettingsMainUi(
     val dnsSummary: String,
     val automationSummary: String,
     val slowServerSwitch: Boolean,
+    val servicesSummary: String,
     val themeMode: ThemeMode,
     val themeSummary: String,
     val hideServerAddresses: Boolean,
@@ -33,6 +36,7 @@ fun buildSettingsMain(
     dnsSummary = dnsSummary(settings.dnsMode, settings.proxyIpv4Only),
     automationSummary = automationSummary(settings.networkAutomation),
     slowServerSwitch = settings.slowServerSwitch,
+    servicesSummary = serviceChecksSummary(settings.serviceChecks),
     themeMode = settings.themeMode,
     themeSummary = "Тема: ${settings.themeMode.title()}",
     hideServerAddresses = settings.hideServerAddresses,
@@ -41,6 +45,21 @@ fun buildSettingsMain(
     aboutSummary = "Zapret KVN $appVersion",
     advancedSummary = ADVANCED_SUMMARY,
 )
+
+/** Подпись строки «Проверка сервисов»: короткий выбор — названиями, длинный — числом. */
+fun serviceChecksSummary(selected: Set<ServiceId>): String {
+    val chosen = ServiceCatalog.all.filter { it.id in selected }
+    val total = ServiceCatalog.all.size
+    return when {
+        chosen.isEmpty() -> "Не выбрано"
+        chosen.size <= 3 -> chosen.joinToString(", ") { it.id.title }
+        else -> "${chosen.size} из $total"
+    }
+}
+
+/** Адреса, которые проверка открывает для сервиса: показываются на странице выбора. */
+fun serviceCheckHosts(id: ServiceId): String =
+    ServiceCatalog.definition(id)?.endpoints?.map { it.host }?.distinct()?.joinToString(", ").orEmpty()
 
 const val ADVANCED_SUMMARY = "Скрытие VPN, диагностика"
 

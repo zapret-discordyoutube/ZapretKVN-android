@@ -16,6 +16,8 @@ import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
 import io.github.zapretkvn.android.network.TrustedWifiName
+import io.github.zapretkvn.android.network.probes.services.ServiceId
+import io.github.zapretkvn.android.network.probes.services.ServiceSelection
 import io.github.zapretkvn.android.updates.UpdateChannel
 import java.io.IOException
 import java.util.UUID
@@ -86,6 +88,8 @@ class UiSettingsStore(
                         .toSet(),
                 ),
                 slowServerSwitch = preferences[SLOW_SERVER_SWITCH] ?: true,
+                // Нет записи — набор по умолчанию, миграция не нужна.
+                serviceChecks = ServiceSelection.parse(preferences[SERVICE_CHECKS]),
             )
         }
 
@@ -172,6 +176,14 @@ class UiSettingsStore(
         dataStore.edit { it[SLOW_SERVER_SWITCH] = enabled }
     }
 
+    /** Включить или выключить сервис в карточке «Доступность сервисов»; последний выключить нельзя. */
+    suspend fun setServiceCheck(id: ServiceId, enabled: Boolean) {
+        dataStore.edit { preferences ->
+            val current = ServiceSelection.parse(preferences[SERVICE_CHECKS])
+            preferences[SERVICE_CHECKS] = ServiceSelection.tokens(ServiceSelection.toggle(current, id, enabled))
+        }
+    }
+
     suspend fun setPauseOnTrustedWifi(enabled: Boolean) {
         dataStore.edit { it[NETWORK_AUTOMATION_TRUSTED_WIFI] = enabled }
     }
@@ -245,6 +257,7 @@ class UiSettingsStore(
             stringSetPreferencesKey("network_automation_trusted_ssids")
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
         val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
+        val SERVICE_CHECKS = stringSetPreferencesKey("service_check_ids")
     }
 }
 

@@ -201,9 +201,13 @@ class ProxyBootstrapper(
     }
 }
 
-class VpnHealthPipeline(
+class VpnHealthPipeline internal constructor(
     private val vpnNetworks: VpnNetworkProvider,
+    /** Общая полоса проб: проверка подключения занимает её первой, вытесняя остальные пробы. */
+    private val lane: ProbeLane?,
 ) {
+    constructor(vpnNetworks: VpnNetworkProvider) : this(vpnNetworks, null)
+
     // Резолв внутри туннеля должен падать быстрее bootstrap (8 с): при мёртвом
     // DNS каждый лишний тайм-аут задерживает fallback на следующий DNS-режим.
     private val resolver = BootstrapResolver(HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS)
@@ -213,6 +217,12 @@ class VpnHealthPipeline(
     // сокет 8 с, чтобы худший провал уложился в общий 20-секундный deadline.
     private val rescueResolver = BootstrapResolver(HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS)
 
+    /**
+     * Проверка подключения занимает общую полосу проб: идущая проверка сервисов или серверов
+     * получает сигнал уступить. Полоса ждётся не дольше [ProbeLane.CONNECT_WAIT_MILLIS], затем
+     * проверка идёт без неё: подключение никогда не зависит от чужой пробы. Время ожидания
+     * не входит в [HEALTH_TIMEOUT_MILLIS].
+     */
     suspend fun verify(
         mode: DnsMode,
         internalDnsServer: String,
@@ -221,6 +231,25 @@ class VpnHealthPipeline(
         onNetworkLost: () -> Unit = {},
         onStageStarted: (VpnHealthStage) -> Unit = {},
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit = { _, _, _ -> },
+    ): HealthCheckResult {
+        val lease = lane?.acquireOrNull(ProbeLane.Owner.Connect, ProbeLane.CONNECT_WAIT_MILLIS)
+        try {
+            return verifyOnLane(
+                mode, internalDnsServer, proxyIpFamily, onNetworkLease, onNetworkLost, onStageStarted, onStageFinished,
+            )
+        } finally {
+            lease?.release()
+        }
+    }
+
+    private suspend fun verifyOnLane(
+        mode: DnsMode,
+        internalDnsServer: String,
+        proxyIpFamily: ProxyIpFamily,
+        onNetworkLease: (Long) -> Unit,
+        onNetworkLost: () -> Unit,
+        onStageStarted: (VpnHealthStage) -> Unit,
+        onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
     ): HealthCheckResult {
         onStageStarted(VpnHealthStage.AwaitVpnNetwork)
         if (VpnTestHooks.consumeHealthFailureOverride()) {

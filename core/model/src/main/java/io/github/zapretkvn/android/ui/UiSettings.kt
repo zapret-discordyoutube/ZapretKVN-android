@@ -4,6 +4,8 @@ import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.DnsOverride
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.updates.UpdateChannel
 
 enum class ThemeMode {
@@ -28,6 +30,8 @@ data class UiSettings(
     val slowServerSwitch: Boolean = true,
     /** Цвета обоев (Material You). По умолчанию — фирменная яркая палитра. */
     val dynamicColor: Boolean = false,
+    /** Какие сервисы проверяет карточка «Доступность сервисов»; по умолчанию — набор каталога. */
+    val serviceChecks: Set<ServiceId> = ServiceCatalog.defaultIds,
 )
 
 enum class NetworkTransportSetting {

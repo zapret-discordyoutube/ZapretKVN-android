@@ -7,6 +7,7 @@ package io.github.zapretkvn.android.ui.settings
 enum class SettingsPage(val id: String, val title: String) {
     Dns("dns", "Сеть и DNS"),
     Automation("automation", "Автоматизация VPN"),
+    Services("services", "Проверка сервисов"),
     Hiding("hiding", "Скрытие VPN"),
     Diagnostics("diagnostics", "Диагностика"),
     Updates("updates", "Обновления"),

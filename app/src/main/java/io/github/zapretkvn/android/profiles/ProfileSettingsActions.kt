@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.profiles
 
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.hardening.TunMtuMode
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.ui.NetworkTransportSetting
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.UiSettingsStore
@@ -31,6 +32,8 @@ class ProfileSettingsActions internal constructor(
     fun setHideServerAddresses(enabled: Boolean) = apply { settingsStore.setHideServerAddresses(enabled) }
 
     fun setSlowServerSwitch(enabled: Boolean) = apply { settingsStore.setSlowServerSwitch(enabled) }
+
+    fun setServiceCheck(id: ServiceId, enabled: Boolean) = apply { settingsStore.setServiceCheck(id, enabled) }
 
     fun setDnsMode(mode: DnsMode) = apply("Смена режима DNS") { settingsStore.setDnsMode(mode) }
 

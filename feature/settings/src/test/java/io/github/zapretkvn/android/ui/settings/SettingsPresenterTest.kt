@@ -4,6 +4,8 @@ import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
+import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
+import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.UiSettings
 import io.github.zapretkvn.android.updates.ForgejoAsset
@@ -12,6 +14,7 @@ import io.github.zapretkvn.android.updates.ReleaseMetadata
 import io.github.zapretkvn.android.updates.UpdateCandidate
 import io.github.zapretkvn.android.updates.UpdateState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -193,5 +196,34 @@ class SettingsPresenterTest {
             true,
             dnsOverrideHint(DnsMode.Automatic).startsWith("Применяется только после автоматического"),
         )
+    }
+
+    @Test
+    fun `service checks summary names a short selection and counts a long one`() {
+        assertEquals("6 из 8", serviceChecksSummary(ServiceCatalog.defaultIds))
+        assertEquals("YouTube, Telegram", serviceChecksSummary(setOf(ServiceId.Telegram, ServiceId.YouTube)))
+        assertEquals("8 из 8", serviceChecksSummary(ServiceId.entries.toSet()))
+        assertEquals("Не выбрано", serviceChecksSummary(emptySet()))
+    }
+
+    @Test
+    fun `main list shows the service selection and the page is registered`() {
+        val ui = buildSettingsMain(
+            UiSettings(serviceChecks = setOf(ServiceId.Claude)),
+            updateSummary = "",
+            appVersion = "1",
+        )
+        assertEquals("Claude", ui.servicesSummary)
+        assertEquals(SettingsPage.Services, SettingsPage.fromId("services"))
+        assertEquals("6 из 8", buildSettingsMain(UiSettings(), "", "1").servicesSummary)
+    }
+
+    @Test
+    fun `service hosts come from the catalog only`() {
+        ServiceId.entries.forEach { id ->
+            val hosts = serviceCheckHosts(id).split(", ")
+            assertTrue(id.token, hosts.isNotEmpty() && hosts.all { it in ServiceCatalog.allTargets })
+        }
+        assertEquals("www.youtube.com, redirector.googlevideo.com", serviceCheckHosts(ServiceId.YouTube))
     }
 }

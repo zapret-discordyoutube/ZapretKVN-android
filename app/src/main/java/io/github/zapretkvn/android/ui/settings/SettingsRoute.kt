@@ -58,6 +58,7 @@ fun SettingsPageRoute(deps: AppDependencies, nav: AppNavigation, page: String) {
         when (resolved) {
             SettingsPage.Dns -> DnsRoute(deps, padding)
             SettingsPage.Automation -> AutomationRoute(deps, padding)
+            SettingsPage.Services -> ServiceChecksRoute(deps, padding)
             SettingsPage.Hiding -> HidingRoute(deps, padding)
             SettingsPage.Diagnostics -> DiagnosticsRoute(deps, nav, padding)
             SettingsPage.Updates -> UpdatesRoute(deps, padding)

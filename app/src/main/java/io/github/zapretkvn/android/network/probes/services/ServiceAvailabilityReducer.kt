@@ -29,6 +29,7 @@ internal object ServiceAvailabilityReducer {
                 networkIdentity = networkIdentity,
                 items = items,
                 trigger = trigger,
+                noNetwork = false,
             ),
             started = true,
         )
@@ -77,9 +78,14 @@ internal object ServiceAvailabilityReducer {
         )
     }
 
+    /** Проверке без VPN нечем проверять: физической сети нет. Прежние результаты остаются как были. */
+    fun noNetwork(state: ServiceAvailabilityState): ServiceAvailabilityState =
+        if (state.running) state else state.copy(noNetwork = true)
+
     /** Сеть, сервер или профиль сменились: прежние выводы устарели, запуск не идёт. */
     fun markStale(state: ServiceAvailabilityState): ServiceAvailabilityState = state.copy(
         running = false,
+        noNetwork = false,
         items = state.items.mapValues { (_, current) ->
             when (current) {
                 ServiceAvailability.NotChecked -> current
