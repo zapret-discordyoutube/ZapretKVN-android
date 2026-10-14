@@ -38,7 +38,7 @@ core/
 transport. Встроенные Go-адаптеры изменяются через `core-patches`. Пустые
 Kotlin-пакеты Xray/Amnezia не создаются. Для движков и рантайма отдельные
 Gradle-модули тоже не создаются; исключение — UI-модули `core/ui-model` и
-`core/designsystem` (0.9.0): они не знают про VPN, профили и сторы.
+`core/designsystem` (0.5.0): они не знают про VPN, профили и сторы.
 
 Существующие `app-updater`, `network-bootstrap`, `wireguard-import`
 остаются независимыми библиотеками. Тесты перенесённых компонентов также
