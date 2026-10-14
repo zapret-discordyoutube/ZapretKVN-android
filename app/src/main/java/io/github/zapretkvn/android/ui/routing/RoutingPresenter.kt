@@ -106,7 +106,7 @@ internal fun scopeSummary(state: AppsUiState): ScopeSummary {
 internal data class BlockSummary(val text: String, val tone: Tone)
 
 internal fun blockSummary(blockedCount: Int): BlockSummary = if (blockedCount == 0) {
-    BlockSummary("Блокировка приложений: список пуст", Tone.Neutral)
+    BlockSummary("Список пуст", Tone.Neutral)
 } else {
     BlockSummary("Заблокировано приложений: $blockedCount", Tone.Bad)
 }

@@ -124,7 +124,7 @@ internal fun RoutingScreen(
                     modifier = Modifier.semantics {
                         contentDescription = "Открыть выбор заблокированных приложений"
                     },
-                ) { Text("Выбрать приложения") }
+                ) { Text("Изменить список") }
             }
         }
 

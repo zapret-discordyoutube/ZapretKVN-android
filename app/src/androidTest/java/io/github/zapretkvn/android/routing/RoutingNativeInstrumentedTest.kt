@@ -9,6 +9,7 @@ import io.nekohasekai.libbox.Libbox
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -79,7 +80,8 @@ class RoutingNativeInstrumentedTest {
                 "cold_install_ms=$installMillis average_check_ms=$averageLoadMillis",
         )
 
-        assertTrue("Unexpected rule-set size: $totalBytes", totalBytes == 50_114L)
+        assertEquals(packagedRuleSetBytes(container.appContext), totalBytes)
+        assertTrue("Rule-sets grew to $totalBytes bytes", totalBytes < PACKAGED_RULE_SET_BUDGET_BYTES)
         assertTrue("Cold extraction took ${installMillis}ms", installMillis < 5_000)
         assertTrue("Average pinned-core load took ${averageLoadMillis}ms", averageLoadMillis < 1_000.0)
     }
@@ -92,3 +94,19 @@ class RoutingNativeInstrumentedTest {
         ),
     )
 }
+
+/** Размер наборов правил из APK: сверка с извлечённым, без числа, зашитого в тест. */
+internal fun packagedRuleSetBytes(context: android.content.Context): Long {
+    val manifest = org.json.JSONObject(
+        context.assets.open("rule-sets/manifest.json").bufferedReader().use { it.readText() },
+    )
+    val sets = manifest.getJSONArray("sets")
+    return (0 until sets.length()).sumOf { index ->
+        context.assets.open("rule-sets/" + sets.getJSONObject(index).getString("file")).use {
+            it.readBytes().size.toLong()
+        }
+    }
+}
+
+/** Бюджет размера встроенных наборов правил: рост сверх него — повод пересмотреть набор. */
+internal const val PACKAGED_RULE_SET_BUDGET_BYTES = 64L * 1024

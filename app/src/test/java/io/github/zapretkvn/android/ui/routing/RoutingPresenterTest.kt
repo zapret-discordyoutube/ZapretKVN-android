@@ -137,7 +137,7 @@ class RoutingPresenterTest {
 
     @Test
     fun blockSummaryTextsMatchTests() {
-        assertEquals(BlockSummary("Блокировка приложений: список пуст", Tone.Neutral), blockSummary(0))
+        assertEquals(BlockSummary("Список пуст", Tone.Neutral), blockSummary(0))
         assertEquals(BlockSummary("Заблокировано приложений: 1", Tone.Bad), blockSummary(1))
     }
 

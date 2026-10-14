@@ -110,8 +110,8 @@ class AppPickerUiInstrumentedTest {
             runBlocking { container.appSelectionStore.selection.first().initialized }
         }
         composeRule.onNode(hasText("Маршруты") and hasClickAction()).performClick()
-        composeRule.onNodeWithText("Блокировка приложений: список пуст").assertExists()
-        composeRule.onNodeWithText("Выбрать приложения").performClick()
+        composeRule.onNodeWithText("Список пуст").assertExists()
+        composeRule.onNodeWithText("Изменить список").performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag("app-search").fetchSemanticsNodes().isNotEmpty()
         }

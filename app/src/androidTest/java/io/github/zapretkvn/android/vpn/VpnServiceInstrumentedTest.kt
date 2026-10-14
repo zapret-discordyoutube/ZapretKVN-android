@@ -677,7 +677,10 @@ class VpnServiceInstrumentedTest {
                             "cpu_ms_per_flow=$cpuPerFlowMillis pss_before_kb=$pssBeforeKb " +
                             "pss_after_kb=$pssAfterKb pss_growth_kb=$pssGrowthKb",
                     )
-                    assertEquals(50_114L, totalBytes)
+                    assertEquals(
+                        io.github.zapretkvn.android.routing.packagedRuleSetBytes(container.appContext),
+                        totalBytes,
+                    )
                     assertTrue("Rule-set extraction took ${extractionMillis}ms", extractionMillis < 5_000)
                     assertTrue("Cold VPN start took ${coldConnectMillis}ms", coldConnectMillis < 20_000)
                     assertTrue("Lookup CPU is ${cpuPerFlowMillis}ms/flow", cpuPerFlowMillis < 250.0)
