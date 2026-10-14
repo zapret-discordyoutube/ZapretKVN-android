@@ -14,7 +14,9 @@ import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.core.designsystem.Tone
 import io.github.zapretkvn.core.uimodel.LATENCY_OLD_MILLIS
 import io.github.zapretkvn.core.uimodel.LatencyBand
+import io.github.zapretkvn.core.uimodel.CountryGuess
 import io.github.zapretkvn.core.uimodel.ServerName
+import io.github.zapretkvn.core.uimodel.inferCountries
 import io.github.zapretkvn.core.uimodel.clearlyFastest
 import io.github.zapretkvn.core.uimodel.countLabel
 import io.github.zapretkvn.core.uimodel.formatAge
@@ -171,6 +173,7 @@ internal fun serverRowUi(
     hideAddresses: Boolean,
     latency: LatencyDisplay,
     selected: Boolean,
+    countryHint: String? = null,
 ): ServerRowUi {
     // Тег, похожий на адрес, при скрытии показываем маской целиком и не разбираем.
     val masked = ScreenshotPrivacy.serverLabel(tag, hideAddresses)
@@ -180,13 +183,18 @@ internal fun serverRowUi(
     val protocol = protocolLabel(protocolType).ifBlank { "Сервер" }
     // Адрес скрыт — строки с ним нет совсем (ни «********», ни в озвучке); показываем только по настройке.
     val shownEndpoint = if (hideAddresses) null else endpoint
-    val countryName = parsed?.countryName
+    // Нет флага в имени (часто у Hysteria) — страна по соседнему серверу на том же
+    // адресе или по словам имени/хоста, см. inferCountries.
+    val hintCode = countryHint?.takeIf { parsed?.countryCode == null && masked == tag }
+    val countryCode = parsed?.countryCode ?: hintCode
+    val flag = parsed?.flag ?: hintCode?.let(CountryGuess::flagOf)
+    val countryName = parsed?.countryName ?: hintCode?.let(::russianCountryName)
     val search = buildString {
         append(title)
         parsed?.let { append(' ').append(it.original) }
         append(' ').append(protocol)
         countryName?.let { append(' ').append(it) }
-        parsed?.countryCode?.let { append(' ').append(it) }
+        countryCode?.let { append(' ').append(it) }
         if (!hideAddresses && !endpoint.isNullOrBlank()) append(' ').append(endpoint)
     }.lowercase()
     val a11y = buildString {
@@ -205,8 +213,8 @@ internal fun serverRowUi(
         groupTag = groupTag,
         tag = tag,
         title = title,
-        flag = parsed?.flag,
-        countryCode = parsed?.countryCode,
+        flag = flag,
+        countryCode = countryCode,
         countryName = countryName,
         protocol = protocol,
         monogram = protocolMonogram(protocolType),
@@ -294,6 +302,7 @@ internal fun buildGroup(
     live: Boolean,
     hideAddresses: Boolean,
     nowEpochMillis: Long,
+    countryHints: Map<String, String> = emptyMap(),
 ): ServerGroupUi {
     val kind = GroupKind.of(type)
     val rows = members.distinctBy { it.tag }.map { member ->
@@ -305,6 +314,7 @@ internal fun buildGroup(
             hideAddresses = hideAddresses,
             latency = latencyDisplay(member.latency, nowEpochMillis),
             selected = member.tag == selected,
+            countryHint = countryHints[member.tag],
         )
     }
     return decorateGroup(
@@ -406,6 +416,7 @@ internal fun liveServerGroups(
     nowEpochMillis: Long,
 ): List<ServerGroupUi> {
     val primaryTag = (groups.firstOrNull { it.primary } ?: groups.firstOrNull())?.tag
+    val hints = inferCountries(groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first })
     return groups.filter { it.items.isNotEmpty() }.map { group ->
         buildGroup(
             tag = group.tag,
@@ -418,6 +429,7 @@ internal fun liveServerGroups(
             live = true,
             hideAddresses = hideAddresses,
             nowEpochMillis = nowEpochMillis,
+            countryHints = hints,
         )
     }
 }
@@ -430,6 +442,7 @@ internal fun offlineServerGroups(
     nowEpochMillis: Long,
 ): List<ServerGroupUi> {
     val primaryTag = summary.primaryGroup?.tag
+    val hints = summaryCountryHints(summary)
     return summary.groups.filter { it.options.isNotEmpty() }.map { group ->
         buildGroup(
             tag = group.tag,
@@ -444,6 +457,7 @@ internal fun offlineServerGroups(
             live = false,
             hideAddresses = hideAddresses,
             nowEpochMillis = nowEpochMillis,
+            countryHints = hints,
         )
     }
 }
@@ -468,14 +482,21 @@ internal data class ServerStats(val servers: Int, val countries: Int, val flags:
 
 internal const val FLAG_LIMIT = 5
 
-internal fun serverStats(tags: Collection<String>): ServerStats {
-    val names = tags.distinct().map(ServerName::parse)
+internal fun serverStats(tags: Collection<String>, countryHints: Map<String, String> = emptyMap()): ServerStats {
+    val codes = tags.distinct().map { tag -> ServerName.parse(tag).countryCode ?: countryHints[tag] }
     return ServerStats(
-        servers = names.size,
-        countries = names.mapNotNull { it.countryCode }.distinct().size,
-        flags = names.mapNotNull { it.flag }.distinct(),
+        servers = codes.size,
+        countries = codes.filterNotNull().distinct().size,
+        flags = codes.filterNotNull().distinct().map(CountryGuess::flagOf),
     )
 }
+
+/** Подсказки стран для серверов профиля без флага в имени. */
+internal fun summaryCountryHints(summary: ProfileServerSummary): Map<String, String> =
+    inferCountries(summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first })
+
+internal fun russianCountryName(code: String): String? =
+    java.util.Locale("", code).getDisplayCountry(java.util.Locale("ru")).takeIf(String::isNotBlank)
 
 /** Серверы профиля без самих групп: вложенный selector не считается сервером. */
 internal fun memberTags(summary: ProfileServerSummary): List<String> {
@@ -895,6 +916,11 @@ internal fun buildServersUi(
         return ServersUi.NoServers(profile.id, profileHeader(profile, ServerStats(0, 0, emptyList()), nowEpochMillis))
     }
     val groupTags = groups.map { it.tag }.toSet()
-    val stats = serverStats(groups.flatMap { g -> g.rows.map { it.tag } }.filter { it !in groupTags })
+    val rows = groups.flatMap { it.rows }.filter { it.tag !in groupTags }.distinctBy { it.tag }
+    val stats = ServerStats(
+        servers = rows.size,
+        countries = rows.mapNotNull { it.countryCode }.distinct().size,
+        flags = rows.mapNotNull { it.countryCode }.distinct().map(CountryGuess::flagOf),
+    )
     return ServersUi.Content(profile.id, profileHeader(profile, stats, nowEpochMillis), groups)
 }

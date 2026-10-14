@@ -71,7 +71,7 @@ internal fun profileSections(
 ): List<ProfileSectionUi> {
     fun card(profile: ProfileMetadata): ProfileCardUi {
         val summary = summaries[profile.id]
-        val stats = summary?.let { serverStats(memberTags(it)) }
+        val stats = summary?.let { serverStats(memberTags(it), summaryCountryHints(it)) }
         val active = profile.id == activeProfileId
         val meta = profileMeta(profile, nowEpochMillis)
         val counts = stats?.countsLabel()

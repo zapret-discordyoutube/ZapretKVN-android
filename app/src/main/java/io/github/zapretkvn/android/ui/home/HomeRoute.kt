@@ -16,7 +16,9 @@ import io.github.zapretkvn.android.ui.ScreenshotPrivacy
 import io.github.zapretkvn.android.ui.nav.AppTab
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.VpnConnectionState
+import io.github.zapretkvn.core.uimodel.CountryGuess
 import io.github.zapretkvn.core.uimodel.ServerName
+import io.github.zapretkvn.core.uimodel.inferCountries
 import io.github.zapretkvn.core.uimodel.protocolLabel
 import io.github.zapretkvn.core.uimodel.protocolMonogram
 
@@ -95,9 +97,10 @@ private fun onlineServer(groups: List<RuntimeSelectorGroup>, hide: Boolean): Hom
     val group = groups.primaryGroup() ?: return null
     val item = group.items.firstOrNull { it.tag == group.selected } ?: return null
     val name = ServerName.parse(ScreenshotPrivacy.serverLabel(item.tag, hide))
+    val hint = inferCountries(groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first })[item.tag]
     return HomeServerUi(
         title = name.title,
-        flag = name.flag,
+        flag = name.flag ?: hint?.let(CountryGuess::flagOf),
         protocol = protocolLabel(item.type),
         monogram = protocolMonogram(item.type),
         modeLabel = groupModeLabel(group.type),
@@ -118,9 +121,10 @@ private fun offlineServer(
     val option = summary.primaryGroup?.options?.firstOrNull { it.tag == label }
     val name = ServerName.parse(ScreenshotPrivacy.serverLabel(label, hide))
     val saved = latency[label]?.displayState()
+    val hint = inferCountries(summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first })[label]
     return HomeServerUi(
         title = name.title,
-        flag = name.flag,
+        flag = name.flag ?: hint?.let(CountryGuess::flagOf),
         protocol = option?.type?.let(::protocolLabel) ?: "",
         monogram = protocolMonogram(option?.type.orEmpty()),
         modeLabel = if (summary.switchable) "Серверов в профиле: ${summary.serverCount}" else "Единственный сервер",

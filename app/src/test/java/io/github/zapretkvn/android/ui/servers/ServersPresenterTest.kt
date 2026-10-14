@@ -405,4 +405,32 @@ class ServersPresenterTest {
         ) as ServersUi.Content
         assertFalse(content.groups.single().live)
     }
+
+    @Test
+    fun `hysteria without a flag takes the country of its vless sibling on the same node`() {
+        val groups = liveServerGroups(
+            listOf(
+                RuntimeSelectorGroup(
+                    tag = "proxy",
+                    type = "selector",
+                    selected = "Hysteria 2",
+                    selectable = true,
+                    items = listOf(
+                        RuntimeOutboundItem("VLESS 🇳🇱 Amsterdam-2", "vless", "185.12.34.56:443"),
+                        RuntimeOutboundItem("Hysteria 2", "hysteria2", "185.12.34.56:8443"),
+                        RuntimeOutboundItem("Hysteria 2 de-fra", "hysteria2", "10.1.1.1:443"),
+                    ),
+                ),
+            ),
+            hideAddresses = true,
+            nowEpochMillis = 0L,
+        )
+        val rows = groups.single().rows.associateBy { it.tag }
+        assertEquals("🇳🇱", rows.getValue("Hysteria 2").flag)
+        assertEquals("NL", rows.getValue("Hysteria 2").countryCode)
+        assertEquals("Нидерланды", rows.getValue("Hysteria 2").countryName)
+        assertEquals("DE", rows.getValue("Hysteria 2 de-fra").countryCode)
+        // Адрес использовался только для сопоставления и на экран не попал.
+        assertNull(rows.getValue("Hysteria 2").endpoint)
+    }
 }
