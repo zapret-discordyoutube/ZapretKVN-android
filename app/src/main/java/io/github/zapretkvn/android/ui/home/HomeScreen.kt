@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.diagnostics.VpnErrorContext
 import io.github.zapretkvn.android.diagnostics.VpnErrorExplainer
+import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
 import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.ui.DiagnosticShareButton
 import io.github.zapretkvn.android.ui.formatLatency
@@ -134,6 +135,7 @@ internal class HomeCallbacks(
     val onOpenRouting: () -> Unit,
     val onSelectPreset: (RoutingPreset) -> Unit,
     val createDiagnosticShare: suspend () -> Intent,
+    val onCheckServices: () -> Unit,
 )
 
 /**
@@ -146,6 +148,7 @@ internal class HomeCallbacks(
 internal fun HomeScreen(
     ui: HomeUi,
     stats: () -> VpnSessionStats,
+    services: () -> ServiceAvailabilityState,
     callbacks: HomeCallbacks,
     contentPadding: PaddingValues,
 ) {
@@ -171,6 +174,9 @@ internal fun HomeScreen(
         if (connected) {
             item(key = "tiles", contentType = "tiles") {
                 SpeedTiles(stats = stats, server = ui.server, modifier = Modifier.animateItem())
+            }
+            item(key = "services", contentType = "card") {
+                ServicesCard(state = services, onCheck = callbacks.onCheckServices, modifier = Modifier.animateItem())
             }
             item(key = "traffic", contentType = "card") {
                 TrafficCard(stats, modifier = Modifier.animateItem())

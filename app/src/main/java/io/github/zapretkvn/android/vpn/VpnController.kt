@@ -41,6 +41,8 @@ import io.github.zapretkvn.android.network.UnderlyingNetworkState
 import io.github.zapretkvn.android.network.probes.LatencyProbeReducer
 import io.github.zapretkvn.android.platform.VpnSystemPolicy
 import java.util.concurrent.atomic.AtomicLong
+import io.github.zapretkvn.android.network.probes.ProbeLane
+import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,6 +64,9 @@ class VpnController(
             previousProcessExit = AppProcessExitReader.read(context),
         ),
     )
+    private val mutableServiceAvailability = MutableStateFlow(ServiceAvailabilityState.Initial)
+    @Volatile
+    private var serviceCheckHandler: Pair<Long, () -> Unit>? = null
     private val trafficAccumulator = SessionTrafficAccumulator()
     private val mutableSessionStats = MutableStateFlow(trafficAccumulator.value)
     private val trafficLock = Any()
@@ -75,7 +80,12 @@ class VpnController(
     val sessionStats: StateFlow<VpnSessionStats> = mutableSessionStats.asStateFlow()
     val diagnostics: StateFlow<DiagnosticState> = mutableDiagnostics.asStateFlow()
     internal val homeVisible: StateFlow<Boolean> = mutableHomeVisible.asStateFlow()
+    internal val serviceAvailability: StateFlow<ServiceAvailabilityState> =
+        mutableServiceAvailability.asStateFlow()
     internal val diagnosticsVisible: StateFlow<Boolean> = mutableDiagnosticsVisible.asStateFlow()
+
+    /** Общая полоса тяжёлых проб: проверка серверов и проверка сервисов не идут вместе. */
+    internal val probeLane = ProbeLane()
 
     fun permissionIntent(): Intent? = VpnService.prepare(context)
 
@@ -167,6 +177,26 @@ class VpnController(
         )
     }
 
+    /** Нажатие на карточку «Доступность сервисов»; без подключённого VPN ничего не делает. */
+    fun checkServices() {
+        if (mutableState.value !is VpnConnectionState.Connected) return
+        val handler = serviceCheckHandler ?: return
+        if (handler.first == currentGeneration()) handler.second()
+    }
+
+    internal fun registerServiceCheckHandler(generation: Long, handler: (() -> Unit)?) {
+        serviceCheckHandler = handler?.let { generation to it }
+    }
+
+    internal fun updateServiceAvailability(
+        generation: Long,
+        transform: (ServiceAvailabilityState) -> ServiceAvailabilityState,
+    ) {
+        mutableServiceAvailability.update { current ->
+            if (generation != currentGeneration()) current else transform(current)
+        }
+    }
+
     fun setHomeVisible(visible: Boolean) {
         mutableHomeVisible.value = visible
         if (!visible) {
@@ -232,6 +262,7 @@ class VpnController(
             safeState is VpnConnectionState.Paused
         ) {
             mutableGroups.value = emptyList()
+            mutableServiceAvailability.value = ServiceAvailabilityState.Initial
         }
     }
 

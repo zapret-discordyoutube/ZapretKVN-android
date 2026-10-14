@@ -31,6 +31,7 @@ import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
+import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
 import io.github.zapretkvn.android.network.probes.VpnHealthPipeline
 import io.github.zapretkvn.android.network.probes.VpnLivenessProbe
 import io.github.zapretkvn.android.network.probes.VpnThroughputProbe
@@ -150,6 +151,7 @@ class AppContainer(
     val vpnThroughputProbe = VpnThroughputProbe(vpnNetworkProvider)
     val vpnLivenessProbe = VpnLivenessProbe(vpnNetworkProvider)
     val icmpPingProbe = IcmpPingProbe()
+    internal val serviceProbePaths = AndroidServiceProbePaths(vpnNetworkProvider)
 
     /** Фоновые записи хранилищ, живущие вместе с процессом. */
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

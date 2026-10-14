@@ -16,6 +16,8 @@ import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyReducer
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.ServerPingTargetResolver
+import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
+import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCoordinator
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
@@ -68,6 +70,7 @@ internal class CoreSession(
     scope: CoroutineScope,
     icmpPingProbe: IcmpPingProbe,
     private val latencyStore: ServerLatencyStore,
+    serviceProbePaths: AndroidServiceProbePaths,
 ) : AutoCloseable {
     private val closing = AtomicBoolean(false)
     private val tunCloseStarted = AtomicBoolean(false)
@@ -125,9 +128,18 @@ internal class CoreSession(
             latencyStore.record(profileId, serverFingerprints, relay, icmp)
         },
     )
+    private val serviceAvailabilityCoordinator = ServiceAvailabilityCoordinator(
+        generation = generation,
+        scope = scope,
+        networkMonitor = networkMonitor,
+        controller = controller,
+        paths = serviceProbePaths,
+        profileJson = profileJson,
+    )
     private val throughputDetector = SlowThroughputDetector()
 
     init {
+        controller.registerServiceCheckHandler(generation, serviceAvailabilityCoordinator::requestCheck)
         VpnRuntimeMetrics.sessionOpened()
         selectorGroups.forEach { group -> group.default?.let { runtimeSelection[group.tag] = it } }
     }
@@ -160,8 +172,15 @@ internal class CoreSession(
     /** Выбранный в ядре участник каждой группы (по последнему сообщению групп). */
     fun runtimeSelections(): Map<String, String> = HashMap(runtimeSelection)
 
+    /** Сервер или идентичность выхода сменились: результаты проверки сервисов устарели. */
+    fun markServicesStale() = serviceAvailabilityCoordinator.markStale()
+
+    /** Выход определён: после подключения один раз сама запустится проверка сервисов. */
+    fun scheduleServiceCheck() = serviceAvailabilityCoordinator.scheduleAutoCheck()
+
     fun onNetworkChanged() {
         latencyProbeCoordinator.onNetworkChanged()
+        serviceAvailabilityCoordinator.markStale()
         throughputDetector.reset()
     }
 
@@ -489,6 +508,7 @@ internal class CoreSession(
         try {
             timedStopStage("close_latency_probe", "Остановка проверки задержек") {
                 latencyProbeCoordinator.close()
+                serviceAvailabilityCoordinator.close()
             }
             closeTun()
             timedStopStage("close_observers", "Остановка callback и фоновых задач") {

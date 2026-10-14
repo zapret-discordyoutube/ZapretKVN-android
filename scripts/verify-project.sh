@@ -185,11 +185,19 @@ expected = [
     # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
     # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/LatencyProbeCoordinator.kt", 1),
+    # Проверка доступности сервисов: единственная пауза probeSleep(). Ею делаются случайный сдвиг
+    # старта запросов (0-400 мс), единственный повтор основного запроса через туннель (1,5-3 с)
+    # и разовая пауза автозапуска после подключения (4-12 с). Внутри одного запуска, без цикла и
+    # без периодического таймера; повторных запусков по времени нет.
+    ("app/src/main/java/io/github/zapretkvn/android/network/probes/services/ServiceProbeRunner.kt", 1),
     # Пауза после ввода в редакторе JSON перед разбором текста (selectors, серверы,
     # совпадения поиска): один Job на редактор, предыдущий отменяется. Только UI.
     ("app/src/main/java/io/github/zapretkvn/android/profiles/ProfileEditorController.kt", 1),
     # Видимое время сессии на Главной: тикает, только пока таймер на экране.
     ("app/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
+    # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка
+    # на экране. Только текст: сетевых запросов и запуска проверок не создаёт.
+    ("app/src/main/java/io/github/zapretkvn/android/ui/home/ServicesCard.kt", 1),
     # Прореживание перерисовки списка серверов (не чаще 4 раз в секунду) во
     # время пачек замеров. Только UI: сетевых запросов и повторов не создаёт.
     ("app/src/main/java/io/github/zapretkvn/android/ui/servers/ServersRoute.kt", 1),
@@ -203,6 +211,7 @@ if delays != expected:
     raise SystemExit(f"Unexpected production timer/retry surface: {delays!r}")
 print(
     "Production delay calls are limited to visible session time, server-list redraw throttle, probe stagger, "
+    "service-check pauses, card age label, "
     "network debounce, bounded recovery backoff and bootstrap settle."
 )
 PY

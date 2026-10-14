@@ -17,6 +17,7 @@ import io.github.zapretkvn.android.network.UnderlyingNetworkState
 import io.github.zapretkvn.android.ui.UiSettingsStore
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
+import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityDiagnostics
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -90,7 +91,7 @@ class DiagnosticExporter(
         val network = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 7)
+            put("report_version", 8)
             put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
                 buildJsonObject {
                     val failure = record.failure
@@ -155,6 +156,10 @@ class DiagnosticExporter(
                 },
             )
             put("network", networkJson(network))
+            put(
+                "service_availability",
+                ServiceAvailabilityDiagnostics.toJson(vpnController.serviceAvailability.value, now),
+            )
             put(
                 "network_automation",
                 buildJsonObject {

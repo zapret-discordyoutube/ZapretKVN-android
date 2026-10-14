@@ -407,6 +407,7 @@ internal class SessionStarter(
             controller = controller,
             scope = scope,
             icmpPingProbe = container.icmpPingProbe,
+            serviceProbePaths = container.serviceProbePaths,
             latencyStore = container.serverLatencyStore,
         )
         if (!sessions.registerPending(session, token)) {
@@ -671,11 +672,14 @@ internal class SessionStarter(
 
     /** Внешний IP через туннель — для главного экрана; не влияет на подключение. */
     fun startIdentityProbe(session: CoreSession) {
+        // Сменился сервер или выход: прежние выводы о сервисах относились к другому узлу.
+        session.markServicesStale()
         session.replaceIdentityJob(scope.launch {
             val externalIp = runCatching { container.vpnExternalIpProbe.fetch() }.getOrNull()
             if (externalIp != null && sessions.active() === session) {
                 controller.publishExternalIp(session.generation, externalIp)
             }
+            if (sessions.active() === session) session.scheduleServiceCheck()
         })
     }
 

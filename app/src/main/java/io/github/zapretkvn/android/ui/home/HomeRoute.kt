@@ -33,6 +33,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val selectorGroups by deps.vpn.selectorGroups.collectAsStateWithLifecycle()
     // Трафик тикает раз в секунду: читается только в листовых карточках через лямбду.
     val sessionStats = deps.vpn.sessionStats.collectAsStateWithLifecycle()
+    val services = deps.vpn.serviceAvailability.collectAsStateWithLifecycle()
 
     val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
     val summary = activeProfile?.let { state.serverSummaries[it.id] }
@@ -89,9 +90,16 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
             onOpenRouting = { nav.switchTab(AppTab.Routing) },
             onSelectPreset = { preset -> deps.routing.applyPreset(preset) },
             createDiagnosticShare = deps.createDiagnosticShare,
+            onCheckServices = deps.vpn::checkServices,
         )
     }
-    HomeScreen(ui = ui, stats = { sessionStats.value }, callbacks = callbacks, contentPadding = padding)
+    HomeScreen(
+        ui = ui,
+        stats = { sessionStats.value },
+        services = { services.value },
+        callbacks = callbacks,
+        contentPadding = padding,
+    )
 }
 
 private fun onlineServer(

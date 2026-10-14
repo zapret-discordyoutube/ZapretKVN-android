@@ -42,6 +42,7 @@ internal class LatencyProbeCoordinator(
     private val targetResolver: ServerPingTargetResolver,
     private val icmpProbe: IcmpPingProbe,
     private val controller: VpnController,
+    private val probeLane: ProbeLane = controller.probeLane,
     /** Готовые результаты (успех или отказ) для сохранения между запусками. */
     private val onResults: (
         relay: Map<String, LatencyProbeState>,
@@ -117,7 +118,10 @@ internal class LatencyProbeCoordinator(
     }
 
     private suspend fun run(probe: ActiveProbe) {
+        var laneLease: ProbeLane.Lease? = null
         try {
+            // Общая полоса проб: проверка сервисов уступает, пока идёт массовая проверка серверов.
+            laneLease = probeLane.acquire(ProbeLane.Owner.Latency)
             val summaries = coroutineScope {
                 listOf(
                     async { runRelay(probe) },
@@ -147,6 +151,7 @@ internal class LatencyProbeCoordinator(
             throw cancelled
         } finally {
             runCatching { probe.relayClient?.disconnect() }
+            laneLease?.release()
             synchronized(lock) {
                 if (active === probe) active = null
             }
