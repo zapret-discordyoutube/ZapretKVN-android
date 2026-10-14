@@ -129,9 +129,18 @@ if grep -R -E 'addPrimaryClipChangedListener|setPrimaryClip\(' \
     echo "Application clipboard history/listeners are forbidden; clipboard import is read-on-action only" >&2
     exit 1
 fi
-if grep -R -E 'android\.os\.PowerManager|android\.app\.AlarmManager|android\.app\.job\.JobScheduler|androidx\.work|ScheduledExecutorService|scheduleAtFixedRate|scheduleWithFixedDelay' \
+if grep -R -E 'android\.os\.PowerManager|android\.app\.AlarmManager|androidx\.work|ScheduledExecutorService|scheduleAtFixedRate|scheduleWithFixedDelay' \
     "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java"; then
-    echo "Production source contains an app-owned wake/alarm/job/periodic scheduler" >&2
+    echo "Production source contains an app-owned wake/alarm/work/periodic scheduler" >&2
+    exit 1
+fi
+# The only app-owned scheduler is the platform JobScheduler daily update check (no wakelock, no alarm,
+# no WorkManager, not persisted across reboot because RECEIVE_BOOT_COMPLETED is not requested).
+JOB_SCHEDULER_USERS="$(
+    grep -R -l 'android\.app\.job\.JobScheduler' "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" || true
+)"
+if [[ "$JOB_SCHEDULER_USERS" != "$PROJECT_ROOT/app/src/main/java/io/github/zapretkvn/android/updates/UpdateCheckJob.kt" ]]; then
+    echo "JobScheduler may only be used by the daily update check (updates/UpdateCheckJob.kt): $JOB_SCHEDULER_USERS" >&2
     exit 1
 fi
 if grep -R -F 'CommandConnections' "$PROJECT_ROOT/app/src/main/java"; then
@@ -215,6 +224,7 @@ expected_source_permissions = {
     "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
     "android.permission.CAMERA",
     "android.permission.QUERY_ALL_PACKAGES",
 }
@@ -264,6 +274,26 @@ always_on_metadata = [
 if len(always_on_metadata) != 1 or always_on_metadata[0].get(android + "value") != "false":
     raise SystemExit("VPN service must explicitly opt out of Always-on")
 
+job_services = [
+    node for node in application.findall("service")
+    if node.get(android + "permission") == "android.permission.BIND_JOB_SERVICE"
+]
+if (
+    len(job_services) != 1
+    or job_services[0].get(android + "name") != ".updates.UpdateCheckJobService"
+    or job_services[0].get(android + "exported") != "false"
+    or job_services[0].findall("intent-filter")
+):
+    raise SystemExit("Expected exactly one non-exported update-check JobService without intent filters")
+receivers = application.findall("receiver")
+if (
+    len(receivers) != 1
+    or receivers[0].get(android + "name") != ".updates.UpdateInstallReceiver"
+    or receivers[0].get(android + "exported") != "false"
+    or receivers[0].findall("intent-filter")
+):
+    raise SystemExit("Expected exactly one non-exported install-result receiver without intent filters")
+
 quick_settings_tiles = [
     node for node in application.findall("service")
     if node.get(android + "permission") == "android.permission.BIND_QUICK_SETTINGS_TILE"
@@ -310,7 +340,6 @@ children = list(paths)
 entries = {(child.tag, child.get("name"), child.get("path")) for child in children}
 expected_paths = {
     ("cache-path", "diagnostics", "diagnostics/"),
-    ("cache-path", "updates", "updates/"),
 }
 if entries != expected_paths:
     raise SystemExit(f"FileProvider paths differ from bounded cache paths: {entries!r}")

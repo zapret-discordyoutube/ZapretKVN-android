@@ -2,7 +2,6 @@ package io.github.zapretkvn.android.ui.settings
 
 import androidx.compose.runtime.Immutable
 import io.github.zapretkvn.android.updates.UpdateCandidate
-import io.github.zapretkvn.android.updates.UpdateOperation
 import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.core.uimodel.formatBytes
 
@@ -16,8 +15,8 @@ internal data class ReleaseUi(
 )
 
 /**
- * Состояния блока обновлений. Восемь состояний `UpdateState` сводятся к
- * семи видам: «проверяем» и «проверяем через VPN» отличаются только текстом.
+ * Состояния блока обновлений. Промежуточных «пробуем через VPN» здесь нет: маршрут выбирается молча,
+ * пользователь видит только проверку, загрузку и итог.
  */
 @Immutable
 internal sealed interface UpdateSectionUi {
@@ -30,22 +29,17 @@ internal sealed interface UpdateSectionUi {
         /** null — размер неизвестен, показываем неопределённый индикатор. */
         val progress: Float?,
         val progressLabel: String,
+        /** «Экономия 114 МБ» при загрузке только изменившихся частей; пусто, если качаем целиком. */
+        val savingLabel: String,
     ) : UpdateSectionUi
-    data class Ready(val release: ReleaseUi) : UpdateSectionUi
+    data class Ready(val release: ReleaseUi, val needsConfirmation: Boolean) : UpdateSectionUi
+    data class Installing(val release: ReleaseUi) : UpdateSectionUi
     data class Failure(val message: String, val canRetryDownload: Boolean) : UpdateSectionUi
 }
 
 internal fun presentUpdate(state: UpdateState): UpdateSectionUi = when (state) {
     UpdateState.Idle -> UpdateSectionUi.Idle
     is UpdateState.Checking -> UpdateSectionUi.Busy("Проверяем обновления…")
-    is UpdateState.RetryingViaVpn -> UpdateSectionUi.Busy(
-        when (state.operation) {
-            UpdateOperation.Check ->
-                "Сервер обновлений не отвечает напрямую. Временно включаем VPN и проверяем снова…"
-            UpdateOperation.Download ->
-                "Загрузка не прошла напрямую. Временно включаем VPN и пробуем снова…"
-        },
-    )
     is UpdateState.UpToDate ->
         UpdateSectionUi.UpToDate("У вас последняя версия: ${state.currentVersion}.")
     is UpdateState.Available -> UpdateSectionUi.Available(releaseUi(state.candidate))
@@ -58,22 +52,30 @@ internal fun presentUpdate(state: UpdateState): UpdateSectionUi = when (state) {
         UpdateSectionUi.Downloading(
             release = releaseUi(state.candidate),
             progress = progress,
-            progressLabel = downloadLabel(state.downloadedBytes, state.totalBytes, progress),
+            progressLabel = downloadLabel(state.downloadedBytes, state.totalBytes),
+            savingLabel = savingLabel(state.savedBytes),
         )
     }
-    is UpdateState.Ready -> UpdateSectionUi.Ready(releaseUi(state.candidate))
+    is UpdateState.Ready -> UpdateSectionUi.Ready(releaseUi(state.candidate), state.needsConfirmation)
+    is UpdateState.Installing -> UpdateSectionUi.Installing(releaseUi(state.candidate))
     is UpdateState.Failure -> UpdateSectionUi.Failure(
         message = state.message,
         canRetryDownload = state.candidate != null,
     )
 }
 
-internal fun downloadLabel(downloaded: Long, total: Long, progress: Float?): String =
-    if (progress == null) {
+/** «Загружается 1.2 МБ из 3.1 МБ»; при неизвестном размере — только объём. */
+internal fun downloadLabel(downloaded: Long, total: Long): String =
+    if (total <= 0) {
         formatBytes(downloaded)
     } else {
-        "${formatBytes(downloaded)} из ${formatBytes(total)} · ${(progress * 100).toInt()} %"
+        "Загружается ${formatBytes(downloaded)} из ${formatBytes(total)}"
     }
+
+internal fun savingLabel(saved: Long): String =
+    if (saved < MIN_SHOWN_SAVING) "" else "экономия ${formatBytes(saved)}"
+
+private const val MIN_SHOWN_SAVING = 1024L * 1024
 
 private fun releaseUi(candidate: UpdateCandidate): ReleaseUi {
     val metadata = candidate.metadata

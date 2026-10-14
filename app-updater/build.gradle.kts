@@ -14,6 +14,11 @@ extensions.configure<LibraryExtension> {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        // JVM-тесты строят пустые Intent для результата установки; сами платформенные методы не вызываются.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

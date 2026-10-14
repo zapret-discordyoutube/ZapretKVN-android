@@ -11,8 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- A verified user-requested download opens Android's installer; Android still requires final confirmation. -->
+    <!-- Verified updates are installed through a PackageInstaller session; Android decides whether a confirmation is needed. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Lets the background update session ask Android 12+ to skip the confirmation when its own rules allow it. -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
     <!-- Requested only after the user opens the QR scanner. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature
@@ -133,6 +135,17 @@
                 android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
                 android:value="false" />
         </service>
+
+        <!-- Daily update check (platform JobScheduler); the system binds it, nothing else may. -->
+        <service
+            android:name=".updates.UpdateCheckJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- Result of the update install session; the system delivers it through our own PendingIntent. -->
+        <receiver
+            android:name=".updates.UpdateInstallReceiver"
+            android:exported="false" />
 
         <service
             android:name=".vpn.ZapretQuickSettingsTileService"

@@ -129,7 +129,8 @@ internal fun updateSummary(state: UpdateState, currentVersion: String): String =
     is UpdateState.Available -> "Доступна версия ${state.candidate.metadata.versionName}"
     is UpdateState.Downloading -> "Загружается версия ${state.candidate.metadata.versionName}"
     is UpdateState.Ready -> "Версия ${state.candidate.metadata.versionName} готова к установке"
-    is UpdateState.Checking, is UpdateState.RetryingViaVpn -> "Версия $currentVersion · проверяем…"
+    is UpdateState.Installing -> "Устанавливается версия ${state.candidate.metadata.versionName}"
+    is UpdateState.Checking -> "Версия $currentVersion · проверяем…"
     is UpdateState.Failure -> "Версия $currentVersion · не удалось проверить"
     UpdateState.Idle -> "Версия $currentVersion"
 }

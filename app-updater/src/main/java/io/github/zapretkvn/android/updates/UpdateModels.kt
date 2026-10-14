@@ -52,34 +52,63 @@ enum class UpdateChannel {
     Beta,
 }
 
-enum class UpdateOperation {
-    Check,
-    Download,
+/** Как запрос доходит до Forgejo. */
+enum class UpdateRoute {
+    /** Физическая сеть в обход VPN. */
+    Direct,
+
+    /** Маршрут процесса по умолчанию, когда включено временное правило updater (то есть через туннель). */
+    Vpn,
 }
 
 sealed interface UpdateState {
     data object Idle : UpdateState
     data class Checking(val channel: String) : UpdateState
-    data class RetryingViaVpn(
-        val operation: UpdateOperation,
-        val candidate: UpdateCandidate? = null,
-    ) : UpdateState
     data class UpToDate(val checkedTag: String, val currentVersion: String) : UpdateState
     data class Available(val candidate: UpdateCandidate) : UpdateState
+
+    /**
+     * @param totalBytes сколько байт нужно получить по сети (при дельта-загрузке намного меньше размера APK)
+     * @param savedBytes сколько байт не придётся скачивать благодаря установленному APK
+     */
     data class Downloading(
         val candidate: UpdateCandidate,
         val downloadedBytes: Long,
         val totalBytes: Long,
+        val savedBytes: Long = 0,
     ) : UpdateState
-    data class Ready(val candidate: UpdateCandidate) : UpdateState
-    data class Failure(val message: String, val candidate: UpdateCandidate? = null) : UpdateState
+
+    /**
+     * APK скачан и проверен. [needsConfirmation] — установщик Android запросил подтверждение:
+     * нужно одно нажатие пользователя.
+     */
+    data class Ready(val candidate: UpdateCandidate, val needsConfirmation: Boolean = false) : UpdateState
+    data class Installing(val candidate: UpdateCandidate) : UpdateState
+
+    /** [message] — короткий текст для пользователя; [detail] — техническая причина для журнала и диагностики. */
+    data class Failure(
+        val message: String,
+        val candidate: UpdateCandidate? = null,
+        val detail: String? = null,
+    ) : UpdateState
 }
 
-class UpdateException(
+/**
+ * @param retryViaVpn ошибка маршрутная (сеть, блокировка, 5xx): имеет смысл попробовать другой маршрут.
+ *   Остальные ошибки (чужая подпись, повреждённый файл) от маршрута не зависят.
+ */
+open class UpdateException(
     message: String,
     cause: Throwable? = null,
     val retryViaVpn: Boolean = false,
 ) : Exception(message, cause)
+
+/** Все маршруты не сработали. Подробности по маршрутам — только для журнала и диагностики. */
+class UpdateRoutesFailedException(val failures: List<Pair<UpdateRoute, String>>) :
+    UpdateException("Не удалось связаться с Forgejo.", retryViaVpn = true) {
+    val detail: String
+        get() = failures.joinToString("; ") { (route, message) -> "${route.name}: $message" }
+}
 
 object UpdateJson {
     private val json = Json {

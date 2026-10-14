@@ -1,8 +1,8 @@
 package io.github.zapretkvn.android.updates
 
-import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.first
@@ -10,7 +10,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -19,26 +18,52 @@ import org.junit.runner.RunWith
 class UpdateControllerInstrumentedTest {
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
+    private class BytesHttp(private val bytes: ByteArray, private val broken: Boolean = false) : UpdateHttpClient {
+        override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse {
+            if (broken) throw UpdateException("Не удалось связаться с Forgejo.", retryViaVpn = true)
+            val end = minOf(endInclusive ?: (bytes.size - 1L), bytes.size - 1L).toInt()
+            val slice = bytes.copyOfRange(start.toInt(), end + 1)
+            return if (start > 0 || endInclusive != null) {
+                UpdateResponse(206, start, bytes.size.toLong(), slice.size.toLong(), ByteArrayInputStream(slice))
+            } else {
+                UpdateResponse(200, 0, bytes.size.toLong(), slice.size.toLong(), ByteArrayInputStream(slice))
+            }
+        }
+    }
+
+    private fun controller(
+        candidate: UpdateCandidate,
+        bytes: ByteArray,
+        verifier: ApkUpdateVerifier,
+        broken: Boolean = false,
+        vpn: UpdateVpnFallback? = null,
+    ) = UpdateController(
+        updatesRoot = updateRoot(),
+        currentVersionName = "1.0.0",
+        currentVersionCode = 1,
+        clientFactory = { route -> BytesHttp(bytes, broken && route == UpdateRoute.Direct) },
+        // Источник ходит через выданный маршрутом клиент, как настоящий ForgejoUpdateSource:
+        // иначе «сломанный» прямой маршрут никогда бы не проверялся.
+        sourceFactory = { client ->
+            UpdateReleaseSource {
+                client.open("https://forgejo.invalid/release.json", 0, null).close()
+                candidate
+            }
+        },
+        verifier = verifier,
+        vpnFallback = vpn,
+        prefs = InMemoryUpdatePrefs(),
+        environment = UpdateEnvironment(),
+    )
+
     @Test
-    fun retryableCheckUsesOneTemporaryVpnSessionAndRestoresIt() = runBlocking {
+    fun directFailureUsesOneTemporaryVpnSessionAndRestoresIt() = runBlocking {
         val bytes = "verified apk fixture".toByteArray()
-        val candidate = candidate(bytes)
-        var attempts = 0
         var connected = 0
         var restored = 0
-        val controller = UpdateController(
-            context = context,
-            repository = "zapretkvn/ZapretKVN-android",
-            currentVersionName = "1.0.0",
-            currentVersionCode = 1,
-            source = UpdateReleaseSource {
-                attempts++
-                if (attempts == 1) {
-                    throw UpdateException("Forgejo недоступен.", retryViaVpn = true)
-                }
-                candidate
-            },
-            vpnFallback = UpdateVpnFallback {
+        val controller = controller(
+            candidate(bytes), bytes, ApkUpdateVerifier { _, _ -> }, broken = true,
+            vpn = UpdateVpnFallback {
                 connected++
                 UpdateVpnSession { restored++ }
             },
@@ -47,44 +72,13 @@ class UpdateControllerInstrumentedTest {
         controller.check(UpdateChannel.Beta)
         withTimeout(5_000) { controller.state.first { it is UpdateState.Available } }
 
-        assertEquals(2, attempts)
         assertEquals(1, connected)
         assertEquals(1, restored)
         controller.cancelAndDelete()
     }
 
     @Test
-    fun automaticCheckRunsOnlyOncePerProcessController() = runBlocking {
-        val bytes = "verified apk fixture".toByteArray()
-        val candidate = candidate(bytes)
-        var checks = 0
-        val controller = UpdateController(
-            context = context,
-            repository = "zapretkvn/ZapretKVN-android",
-            currentVersionName = "1.0.0",
-            currentVersionCode = 1,
-            source = UpdateReleaseSource {
-                checks++
-                candidate
-            },
-            http = object : UpdateHttpClient {
-                override fun readText(url: String, maxBytes: Int): String = error("not used")
-                override fun download(url: String, target: File, expectedBytes: Long, onProgress: (Long) -> Unit) =
-                    error("not used")
-            },
-            verifier = ApkUpdateVerifier { _, _ -> },
-        )
-
-        controller.checkOnce(UpdateChannel.Beta)
-        controller.checkOnce(UpdateChannel.Beta)
-        withTimeout(5_000) { controller.state.first { it is UpdateState.Available } }
-
-        assertEquals(1, checks)
-        controller.cancelAndDelete()
-    }
-
-    @Test
-    fun manualCheckDownloadIntentAndCancelUseOnlyUpdateCache() = runBlocking {
+    fun manualCheckDownloadAndCancelUseOnlyUpdateCache() = runBlocking {
         val bytes = "verified apk fixture".toByteArray()
         val candidate = candidate(bytes)
         var verified = false
@@ -104,25 +98,15 @@ class UpdateControllerInstrumentedTest {
         withTimeout(5_000) { controller.state.first { it is UpdateState.Ready } }
 
         assertTrue(verified)
-        assertTrue(controller.consumeAutomaticInstallRequest())
-        assertFalse(controller.consumeAutomaticInstallRequest())
-        val intent = controller.createInstallIntent()
-        assertEquals(Intent.ACTION_INSTALL_PACKAGE, intent.action)
-        assertEquals("content", intent.data?.scheme)
-        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
-        assertNotNull(context.packageManager.resolveActivity(intent, 0))
         assertEquals(1, updateRoot().listFiles().orEmpty().size)
 
-        controller.onInstallerFinished(installed = false)
-        withTimeout(5_000) { controller.state.first { it is UpdateState.Failure } }
-        assertFalse(updateRoot().exists())
         controller.cancelAndDelete()
         withTimeout(5_000) { controller.state.first { it == UpdateState.Idle } }
-        Unit
+        assertFalse(updateRoot().exists())
     }
 
     @Test
-    fun checksumFailureAndNewControllerRemoveCompleteAndPartialApks() = runBlocking {
+    fun checksumFailureLeavesNoFilesAndNewControllerCleansStaleOnes() = runBlocking {
         val bytes = "tampered".toByteArray()
         val bad = candidate(bytes).copy(
             metadata = candidate(bytes).metadata.copy(apkSha256 = "f".repeat(64)),
@@ -153,98 +137,11 @@ class UpdateControllerInstrumentedTest {
     }
 
     @Test
-    fun interruptedDownloadDeletesPartialFile() = runBlocking {
-        val bytes = "interrupted download".toByteArray()
-        val candidate = candidate(bytes)
-        val controller = UpdateController(
-            context = context,
-            repository = "zapretkvn/ZapretKVN-android",
-            currentVersionName = "1.0.0",
-            currentVersionCode = 1,
-            source = UpdateReleaseSource { candidate },
-            http = object : UpdateHttpClient {
-                override fun readText(url: String, maxBytes: Int): String = error("not used")
-                override fun download(
-                    url: String,
-                    target: File,
-                    expectedBytes: Long,
-                    onProgress: (Long) -> Unit,
-                ) {
-                    target.writeBytes(bytes.copyOf(bytes.size / 2))
-                    throw UpdateException("Загрузка APK прервана.")
-                }
-            },
-            verifier = ApkUpdateVerifier { _, _ -> error("must not verify") },
-        )
-        controller.check(UpdateChannel.Stable)
-        withTimeout(5_000) { controller.state.first { it is UpdateState.Available } }
-        controller.download()
-        val failure = withTimeout(5_000) { controller.state.first { it is UpdateState.Failure } }
-
-        assertTrue((failure as UpdateState.Failure).message.contains("прервана"))
-        assertFalse(updateRoot().exists())
-
-        val cancelling = UpdateController(
-            context = context,
-            repository = "zapretkvn/ZapretKVN-android",
-            currentVersionName = "1.0.0",
-            currentVersionCode = 1,
-            source = UpdateReleaseSource { candidate },
-            http = object : UpdateHttpClient {
-                override fun readText(url: String, maxBytes: Int): String = error("not used")
-                override fun download(
-                    url: String,
-                    target: File,
-                    expectedBytes: Long,
-                    onProgress: (Long) -> Unit,
-                ) {
-                    target.writeBytes(bytes.copyOf(bytes.size / 2))
-                    while (true) {
-                        onProgress(bytes.size.toLong() / 2)
-                        Thread.sleep(10)
-                    }
-                }
-            },
-            verifier = ApkUpdateVerifier { _, _ -> error("must not verify") },
-        )
-        cancelling.check(UpdateChannel.Stable)
-        withTimeout(5_000) { cancelling.state.first { it is UpdateState.Available } }
-        cancelling.download()
-        withTimeout(5_000) {
-            cancelling.state.first {
-                it is UpdateState.Downloading && it.downloadedBytes > 0
-            }
-        }
-        cancelling.cancelAndDelete()
-        withTimeout(5_000) { cancelling.state.first { it == UpdateState.Idle } }
-        assertFalse(updateRoot().exists())
+    fun installedApkCentralDirectoryIsReadableForDeltaDownloads() {
+        val apk = LocalApk.open(File(context.applicationInfo.sourceDir))
+        assertTrue(apk.directory.entries.any { it.name == "AndroidManifest.xml" })
+        assertTrue(apk.directory.entries.all { apk.entry(it.name) != null })
     }
-
-    private fun controller(
-        candidate: UpdateCandidate,
-        bytes: ByteArray,
-        verifier: ApkUpdateVerifier,
-    ) = UpdateController(
-        context = context,
-        repository = "zapretkvn/ZapretKVN-android",
-        currentVersionName = "1.0.0",
-        currentVersionCode = 1,
-        installIntentFactory = AndroidUpdateInstallIntentFactory(context),
-        source = UpdateReleaseSource { candidate },
-        http = object : UpdateHttpClient {
-            override fun readText(url: String, maxBytes: Int): String = error("not used")
-            override fun download(
-                url: String,
-                target: File,
-                expectedBytes: Long,
-                onProgress: (Long) -> Unit,
-            ) {
-                target.writeBytes(bytes)
-                onProgress(bytes.size.toLong())
-            }
-        },
-        verifier = verifier,
-    )
 
     private fun candidate(bytes: ByteArray): UpdateCandidate {
         val name = "Zapret-KVN-v1.1.0-arm64-v8a.apk"
@@ -278,5 +175,5 @@ class UpdateControllerInstrumentedTest {
         )
     }
 
-    private fun updateRoot() = File(context.cacheDir, "updates")
+    private fun updateRoot() = File(context.cacheDir, "updates-test")
 }

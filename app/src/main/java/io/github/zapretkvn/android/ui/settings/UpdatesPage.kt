@@ -116,6 +116,12 @@ internal fun UpdatesScreen(
                     onInstall = onInstall,
                     onCancel = onCancel,
                 )
+                HintText(
+                    "Приложение проверяет обновления само, примерно раз в сутки и при запуске. В канале Stable " +
+                        "обновление скачивается в фоне, по возможности только изменившиеся части; на мобильной сети " +
+                        "автоматически качается лишь небольшое. В фоне обновление может встать без окон, а по " +
+                        "нажатию «Установить» Android спросит одно подтверждение.",
+                )
             }
         }
     }
@@ -131,7 +137,7 @@ internal fun UpdateControls(
     onCancel: () -> Unit,
 ) {
     when (ui) {
-        UpdateSectionUi.Idle -> PrimaryButton("Проверить обновления", onCheck)
+        UpdateSectionUi.Idle -> PrimaryButton("Проверить сейчас", onCheck)
 
         is UpdateSectionUi.Busy -> {
             Row(
@@ -147,7 +153,7 @@ internal fun UpdateControls(
 
         is UpdateSectionUi.UpToDate -> {
             Text(ui.message, style = MaterialTheme.typography.bodyMedium, color = toneColor(Tone.Good))
-            PrimaryButton("Проверить обновления", onCheck)
+            PrimaryButton("Проверить сейчас", onCheck)
         }
 
         is UpdateSectionUi.Available -> {
@@ -164,7 +170,11 @@ internal fun UpdateControls(
                 val animated by animateFloatAsState(ui.progress, tween(Motion.EMPHASIS), label = "update-progress")
                 LinearProgressIndicator(progress = { animated }, modifier = Modifier.fillMaxWidth())
             }
-            Text(ui.progressLabel, style = MaterialTheme.typography.bodySmall)
+            Text(
+                listOf(ui.progressLabel, ui.savingLabel).filter(String::isNotEmpty).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
             ReleaseNotes(ui.release.notes, initiallyExpanded = false)
             OutlinedButton(
                 onClick = onCancel,
@@ -175,8 +185,14 @@ internal fun UpdateControls(
         is UpdateSectionUi.Ready -> {
             ReleaseHeader(ui.release)
             Text(
-                "Файл скачан и проверен: контрольная сумма, пакет и подпись совпадают. " +
-                    "Android попросит подтвердить установку.",
+                if (ui.needsConfirmation) {
+                    "Файл проверен: контрольная сумма, пакет и подпись совпадают. " +
+                        "Android просит одно подтверждение — нажмите «Установить»."
+                } else {
+                    "Файл скачан и проверен: контрольная сумма, пакет и подпись совпадают. " +
+                        "Фоновая установка без вопросов возможна, пока приложение не на экране; " +
+                        "по вашему нажатию Android попросит одно подтверждение."
+                },
                 style = MaterialTheme.typography.bodyMedium,
             )
             ReleaseNotes(ui.release.notes, initiallyExpanded = false)
@@ -185,6 +201,22 @@ internal fun UpdateControls(
                 onClick = onCancel,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text("Удалить загруженный файл") }
+        }
+
+        is UpdateSectionUi.Installing -> {
+            ReleaseHeader(ui.release)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                Text(
+                    "Устанавливаем обновление. Приложение перезапустится.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
 
         is UpdateSectionUi.Failure -> {

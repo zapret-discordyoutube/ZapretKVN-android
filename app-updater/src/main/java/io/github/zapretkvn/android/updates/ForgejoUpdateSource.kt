@@ -1,42 +1,56 @@
 package io.github.zapretkvn.android.updates
 
 import android.os.Build
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.File
+import java.io.Closeable
 import java.io.IOException
+import java.io.InputStream
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.HttpsURLConnection
 
+/** Ответ на GET; тело читает вызывающий и обязан закрыть ответ. */
+class UpdateResponse(
+    /** 200 (диапазон проигнорирован), 206 (частичный ответ) или 416 (диапазон за пределами файла). */
+    val status: Int,
+    /** Первый байт тела в файле: 0 для 200, начало диапазона для 206. */
+    val rangeStart: Long,
+    /** Полный размер файла, если сервер его сообщил; иначе -1. */
+    val totalLength: Long,
+    /** Длина тела, если известна; иначе -1. */
+    val contentLength: Long,
+    val body: InputStream,
+    private val onClose: () -> Unit = {},
+) : Closeable {
+    override fun close() {
+        try {
+            body.close()
+        } catch (_: IOException) {
+        } finally {
+            onClose()
+        }
+    }
+}
+
 interface UpdateHttpClient {
-    fun readText(url: String, maxBytes: Int): String
-    fun download(url: String, target: File, expectedBytes: Long, onProgress: (Long) -> Unit)
-}
+    /**
+     * GET [url]. Если [start] > 0 или задан [endInclusive], отправляется заголовок Range.
+     * Редиректы внутри Forgejo обрабатывает реализация.
+     */
+    fun open(url: String, start: Long = 0, endInclusive: Long? = null): UpdateResponse
 
-fun interface UpdateReleaseSource {
-    fun latest(channel: UpdateChannel): UpdateCandidate
-}
-
-/**
- * @param direct connections bound to the physical network, bypassing an active VPN.
- * @param useDirect false while the updater retries through its temporary VPN route:
- *   those requests must follow the default route into the tunnel.
- */
-class ForgejoHttpsClient(
-    private val direct: UpdateDirectConnections? = null,
-    private val useDirect: () -> Boolean = { true },
-) : UpdateHttpClient {
-    override fun readText(url: String, maxBytes: Int): String = request(url) { connection ->
-        val declared = connection.contentLengthLong
-        if (declared > maxBytes) {
+    fun readText(url: String, maxBytes: Int): String = open(url).use { response ->
+        if (response.contentLength > maxBytes) {
             throw UpdateException("Ответ Forgejo слишком большой.", retryViaVpn = true)
         }
-        connection.inputStream.use { input ->
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            var total = 0
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        try {
             while (true) {
-                val count = input.read(buffer)
+                val count = response.body.read(buffer)
                 if (count < 0) break
                 total += count
                 if (total > maxBytes) {
@@ -44,71 +58,89 @@ class ForgejoHttpsClient(
                 }
                 output.write(buffer, 0, count)
             }
-            output.toString(Charsets.UTF_8.name())
+        } catch (error: IOException) {
+            throw UpdateException("Не удалось связаться с Forgejo.", cause = error, retryViaVpn = true)
         }
+        output.toString(Charsets.UTF_8.name())
     }
+}
 
-    override fun download(
-        url: String,
-        target: File,
-        expectedBytes: Long,
-        onProgress: (Long) -> Unit,
-    ) = request(url) { connection ->
-        if (expectedBytes <= 0 || expectedBytes > UpdateJson.MAX_APK_BYTES) {
-            throw UpdateException("Некорректный размер APK.")
-        }
-        val declared = connection.contentLengthLong
-        if (declared > 0 && declared != expectedBytes) {
-            throw UpdateException(
-                "Размер ответа не совпадает с Forgejo Release.",
-                retryViaVpn = true,
-            )
-        }
-        target.outputStream().buffered().use { output ->
-            connection.inputStream.use { input ->
-                val buffer = ByteArray(64 * 1024)
-                var total = 0L
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    total += count
-                    if (total > expectedBytes || total > UpdateJson.MAX_APK_BYTES) {
-                        throw UpdateException(
-                            "Ответ больше опубликованного размера APK.",
-                            retryViaVpn = true,
-                        )
-                    }
-                    output.write(buffer, 0, count)
-                    onProgress(total)
-                }
-                output.flush()
-                if (total != expectedBytes) {
-                    throw UpdateException("Загрузка APK прервана.", retryViaVpn = true)
-                }
+fun interface UpdateReleaseSource {
+    fun latest(channel: UpdateChannel): UpdateCandidate
+}
+
+/**
+ * Один маршрут к Forgejo.
+ *
+ * @param direct соединения, привязанные к физической сети в обход активного VPN. Используются
+ *   только для [UpdateRoute.Direct]; [UpdateRoute.Vpn] идёт по маршруту процесса по умолчанию,
+ *   то есть в туннель, когда временное правило updater включено.
+ */
+class ForgejoHttpsClient(
+    private val direct: UpdateDirectConnections? = null,
+    private val route: UpdateRoute = UpdateRoute.Direct,
+) : UpdateHttpClient {
+    // Адрес, на который в прошлый раз привели редиректы: следующим диапазонным запросам не нужно
+    // заново проходить всю цепочку. Хост всё равно проверяется validatedUrl.
+    private val resolved = ConcurrentHashMap<String, String>()
+
+    override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse {
+        val original = validatedUrl(url)
+        val cached = resolved[original]
+        if (cached != null) {
+            try {
+                return openFrom(cached, original, start, endInclusive, remember = false)
+            } catch (_: UpdateException) {
+                resolved.remove(original)
             }
         }
+        return openFrom(original, original, start, endInclusive, remember = true)
     }
 
-    private fun <T> request(rawUrl: String, block: (HttpsURLConnection) -> T): T {
-        var current = validatedUrl(rawUrl)
+    private fun openFrom(
+        first: String,
+        original: String,
+        start: Long,
+        endInclusive: Long?,
+        remember: Boolean,
+    ): UpdateResponse {
+        var current = first
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
             val connection = open(URL(current))
             try {
                 connection.instanceFollowRedirects = false
-                connection.connectTimeout = TIMEOUT_MILLIS
-                connection.readTimeout = TIMEOUT_MILLIS
+                connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
+                connection.readTimeout = READ_TIMEOUT_MILLIS
                 connection.useCaches = false
-                connection.setRequestProperty("Accept", "application/json, application/octet-stream")
-                connection.setRequestProperty("User-Agent", "Zapret-KVN-Android-Updater")
+                connection.setRequestProperty("Accept", "application/json, application/octet-stream, */*")
+                // Без сжатия: иначе HttpURLConnection сам добавит gzip и длины диапазонов перестанут сходиться.
+                connection.setRequestProperty("Accept-Encoding", "identity")
+                connection.setRequestProperty("User-Agent", USER_AGENT)
+                if (start > 0 || endInclusive != null) {
+                    connection.setRequestProperty("Range", "bytes=$start-${endInclusive ?: ""}")
+                }
                 when (val status = connection.responseCode) {
                     in REDIRECTS -> {
                         if (redirectIndex == MAX_REDIRECTS) throw UpdateException("Слишком много перенаправлений Forgejo.")
                         val location = connection.getHeaderField("Location")
                             ?: throw UpdateException("Forgejo вернул перенаправление без адреса.")
                         current = validatedUrl(URI(current).resolve(location).toString())
+                        connection.disconnect()
                         return@repeat
                     }
-                    in 200..299 -> return block(connection)
+                    200, 206 -> {
+                        if (remember && current != original) resolved[original] = current
+                        return response(connection, status, start)
+                    }
+                    416 -> return UpdateResponse(
+                        status = 416,
+                        rangeStart = 0,
+                        totalLength = contentRangeTotal(connection.getHeaderField("Content-Range")),
+                        contentLength = 0,
+                        body = ByteArrayInputStream(ByteArray(0)),
+                        onClose = connection::disconnect,
+                    )
+                    in 201..299 -> throw UpdateException("Forgejo вернул неожиданный HTTP $status.")
                     403, 429, 451 -> throw UpdateException(
                         "Прямой доступ к Forgejo отклонён (HTTP $status).",
                         retryViaVpn = true,
@@ -121,23 +153,38 @@ class ForgejoHttpsClient(
                     else -> throw UpdateException("Forgejo вернул HTTP $status.")
                 }
             } catch (error: UpdateException) {
+                connection.disconnect()
                 throw error
             } catch (error: IOException) {
+                connection.disconnect()
                 throw UpdateException(
                     "Не удалось связаться с Forgejo.",
                     cause = error,
                     retryViaVpn = true,
                 )
-            } finally {
-                connection.disconnect()
             }
         }
         throw UpdateException("Не удалось получить файл Forgejo Release.")
     }
 
+    private fun response(connection: HttpsURLConnection, status: Int, requestedStart: Long): UpdateResponse {
+        val contentRange = connection.getHeaderField("Content-Range")
+        val declared = connection.contentLengthLong
+        return if (status == 206) {
+            val range = parseContentRange(contentRange)
+                ?: throw UpdateException("Forgejo вернул некорректный Content-Range.", retryViaVpn = true)
+            if (range.first != requestedStart) {
+                throw UpdateException("Forgejo вернул другой диапазон.", retryViaVpn = true)
+            }
+            UpdateResponse(206, range.first, range.third, declared, connection.inputStream, connection::disconnect)
+        } else {
+            UpdateResponse(200, 0, declared, declared, connection.inputStream, connection::disconnect)
+        }
+    }
+
     private fun open(url: URL): HttpsURLConnection {
         val bound = try {
-            direct?.takeIf { useDirect() }?.open(url)
+            if (route == UpdateRoute.Direct) direct?.open(url) else null
         } catch (error: IOException) {
             throw UpdateException("Не удалось связаться с Forgejo.", cause = error, retryViaVpn = true)
         }
@@ -146,6 +193,10 @@ class ForgejoHttpsClient(
     }
 
     companion object {
+        /** Нейтральный User-Agent обычного мобильного браузера: приложение не объявляет себя в запросе. */
+        const val USER_AGENT =
+            "Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Mobile Safari/537.36"
+
         fun validatedUrl(raw: String): String {
             val uri = try {
                 URI(raw)
@@ -162,10 +213,25 @@ class ForgejoHttpsClient(
             return uri.toASCIIString()
         }
 
+        /** "bytes 100-199/1000" -> (100, 199, 1000); "*" вместо размера даёт -1. */
+        internal fun parseContentRange(value: String?): Triple<Long, Long, Long>? {
+            val match = CONTENT_RANGE.matchEntire(value?.trim().orEmpty()) ?: return null
+            val first = match.groupValues[1].toLongOrNull() ?: return null
+            val last = match.groupValues[2].toLongOrNull() ?: return null
+            val total = if (match.groupValues[3] == "*") -1L else match.groupValues[3].toLongOrNull() ?: return null
+            if (last < first) return null
+            return Triple(first, last, total)
+        }
+
+        private fun contentRangeTotal(value: String?): Long =
+            Regex("""bytes\s+\*/(\d+)""").matchEntire(value?.trim().orEmpty())?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+
         private const val MAX_REDIRECTS = 5
-        private const val TIMEOUT_MILLIS = 30_000
+        private const val CONNECT_TIMEOUT_MILLIS = 10_000
+        private const val READ_TIMEOUT_MILLIS = 20_000
         private const val FORGEJO_HOST = "git.zapret.moe"
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
+        private val CONTENT_RANGE = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
     }
 }
 

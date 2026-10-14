@@ -47,6 +47,7 @@ class MainActivity : ComponentActivity() {
         get() = (application as ZapretApplication).container.vpnController
     private var pendingProfileId: String? = null
     private var pendingUpdateInstall = false
+    private var installWhenReady = false
     private val updateController
         get() = (application as ZapretApplication).container.updateController
     private val vpnPermissionLauncher = registerForActivityResult(
@@ -65,20 +66,19 @@ class MainActivity : ComponentActivity() {
     ) {
         continueVpnPermissionRequest()
     }
-    private val updateInstallerLauncher = registerForActivityResult(
+    // Итог подтверждения приходит ещё и широковещательным сообщением сессии установки: здесь он не нужен.
+    private val updateConfirmationLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
-    ) { result ->
-        updateController.onInstallerFinished(result.resultCode == Activity.RESULT_OK)
-    }
+    ) {}
     private val unknownSourceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
         val shouldContinue = pendingUpdateInstall
         pendingUpdateInstall = false
         if (shouldContinue && canRequestPackageInstalls()) {
-            launchUpdateInstaller()
+            performUpdateInstall()
         } else if (shouldContinue) {
-            updateController.failInstallation("Android не разрешил установку из этого источника.")
+            vpnController.publishMessage("Android не разрешил установку из этого источника.")
         }
     }
     private val profilesViewModel: ProfilesViewModel by viewModels {
@@ -150,7 +150,10 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
     }
 
-    /** Разовая проверка обновлений после загрузки настроек и автоустановка готового APK. */
+    /**
+     * Разовая проверка обновлений при запуске (в Stable обновление скачивается само) и открытие
+     * подтверждения установки, когда пользователь уже нажал «Установить».
+     */
     private fun observeUpdates() {
         lifecycleScope.launch {
             val settings = profilesViewModel.state.first { it.initialized }.settings
@@ -159,10 +162,14 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 updateController.state.collect { updateState ->
-                    if (updateState is UpdateState.Ready &&
-                        updateController.consumeAutomaticInstallRequest()
-                    ) {
+                    if (updateState is UpdateState.Ready && installWhenReady) {
+                        installWhenReady = false
                         requestUpdateInstall()
+                    }
+                    if (updateState is UpdateState.Ready && updateState.needsConfirmation &&
+                        updateController.consumeConfirmationLaunchRequest()
+                    ) {
+                        launchUpdateConfirmation()
                     }
                 }
             }
@@ -176,6 +183,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent) {
+        if (intent.action == ACTION_INSTALL_UPDATE) {
+            intent.action = null
+            // Процесс мог быть запущен самим уведомлением: проверка ещё не закончилась, установим, когда APK будет готов.
+            if (updateController.state.value is UpdateState.Ready) requestUpdateInstall() else installWhenReady = true
+            return
+        }
         if (intent.action == ACTION_REQUEST_VPN_START) {
             val profileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
             intent.action = null
@@ -210,7 +223,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Установка по нажатию пользователя: плашка на Главной, страница настроек или уведомление. */
     private fun requestUpdateInstall() {
+        val state = updateController.state.value as? UpdateState.Ready ?: return
+        // Подтверждение уже запрошено системой: разрешение на неизвестные источники проверяет сама Android.
+        if (state.needsConfirmation) {
+            performUpdateInstall()
+            return
+        }
         if (!canRequestPackageInstalls()) {
             pendingUpdateInstall = true
             try {
@@ -222,28 +242,32 @@ class MainActivity : ComponentActivity() {
                 )
             } catch (_: ActivityNotFoundException) {
                 pendingUpdateInstall = false
-                updateController.failInstallation("Android не открыл настройку установки из источника.")
+                vpnController.publishMessage("Android не открыл настройку установки из источника.")
             } catch (_: SecurityException) {
                 pendingUpdateInstall = false
-                updateController.failInstallation("Android запретил открыть настройку установки.")
+                vpnController.publishMessage("Android запретил открыть настройку установки.")
             }
             return
         }
-        launchUpdateInstaller()
+        performUpdateInstall()
     }
 
     private fun canRequestPackageInstalls(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
 
-    private fun launchUpdateInstaller() {
+    private fun performUpdateInstall() {
+        val state = updateController.state.value as? UpdateState.Ready ?: return
+        if (state.needsConfirmation) launchUpdateConfirmation() else updateController.install(userInitiated = true)
+    }
+
+    private fun launchUpdateConfirmation() {
+        val confirmation = updateController.confirmationIntent() ?: return
         try {
-            updateInstallerLauncher.launch(updateController.createInstallIntent())
+            updateConfirmationLauncher.launch(confirmation)
         } catch (_: ActivityNotFoundException) {
-            updateController.failInstallation("Системный установщик APK не найден.")
+            vpnController.publishMessage("Системный установщик APK не найден.")
         } catch (_: SecurityException) {
-            updateController.failInstallation("Android запретил запуск системной установки.")
-        } catch (error: Exception) {
-            updateController.failInstallation(error.message ?: "Не удалось открыть системную установку.")
+            vpnController.publishMessage("Android запретил запуск системной установки.")
         }
     }
 
@@ -251,6 +275,9 @@ class MainActivity : ComponentActivity() {
         const val ACTION_REQUEST_VPN_START =
             "io.github.zapretkvn.android.action.REQUEST_VPN_START"
         const val EXTRA_PROFILE_ID = "profile_id"
+
+        /** Нажатие на уведомление «Обновление готово — нажмите, чтобы установить». */
+        const val ACTION_INSTALL_UPDATE = "io.github.zapretkvn.android.action.INSTALL_UPDATE"
     }
 }
 

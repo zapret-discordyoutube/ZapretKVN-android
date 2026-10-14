@@ -123,6 +123,10 @@ class SettingsPresenterTest {
             updateSummary(UpdateState.Downloading(candidate, 10, 100), "1.4.2"),
         )
         assertEquals("Версия 1.5.0 готова к установке", updateSummary(UpdateState.Ready(candidate), "1.4.2"))
+        assertEquals(
+            "Устанавливается версия 1.5.0",
+            updateSummary(UpdateState.Installing(candidate), "1.4.2"),
+        )
         assertEquals("Версия 1.4.2 · проверяем…", updateSummary(UpdateState.Checking("Stable"), "1.4.2"))
         assertEquals("Версия 1.4.2 · не удалось проверить", updateSummary(UpdateState.Failure("x"), "1.4.2"))
     }

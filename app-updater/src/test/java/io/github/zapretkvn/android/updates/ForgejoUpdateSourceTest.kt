@@ -1,6 +1,5 @@
 package io.github.zapretkvn.android.updates
 
-import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -119,8 +118,7 @@ class ForgejoUpdateSourceTest {
     private class FakeHttp : UpdateHttpClient {
         val text = mutableMapOf<String, String>()
         override fun readText(url: String, maxBytes: Int): String = text[url] ?: error("missing $url")
-        override fun download(url: String, target: File, expectedBytes: Long, onProgress: (Long) -> Unit) =
-            error("not used")
+        override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse = error("not used")
     }
 
     private companion object {

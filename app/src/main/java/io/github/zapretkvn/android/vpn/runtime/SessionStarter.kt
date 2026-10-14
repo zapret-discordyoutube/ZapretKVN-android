@@ -357,6 +357,7 @@ internal class SessionStarter(
                     vpnHiding = vpnHiding,
                     healthCheckPackageName = service.packageName,
                     updaterPackageName = service.packageName.takeIf { updaterRouting },
+                    standingUpdaterPackageName = service.packageName,
                     blockedPackages = appSelection.blockedPackages,
                 ),
             )

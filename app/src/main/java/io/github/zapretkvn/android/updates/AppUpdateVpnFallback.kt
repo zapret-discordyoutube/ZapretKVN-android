@@ -1,10 +1,7 @@
 package io.github.zapretkvn.android.updates
 
-import android.content.ClipData
 import android.content.Context
-import android.content.Intent
 import android.net.VpnService
-import androidx.core.content.FileProvider
 import io.github.zapretkvn.android.ui.UiSettingsStore
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
@@ -12,29 +9,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-
-class AndroidUpdateInstallIntentFactory(context: Context) : UpdateInstallIntentFactory {
-    private val appContext = context.applicationContext
-
-    @Suppress("DEPRECATION")
-    override fun create(file: java.io.File): Intent {
-        val uri = FileProvider.getUriForFile(
-            appContext,
-            "${appContext.packageName}.fileprovider",
-            file,
-        )
-        return Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-            setDataAndType(uri, APK_MIME)
-            clipData = ClipData.newRawUri("Zapret KVN update", uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            putExtra(Intent.EXTRA_RETURN_RESULT, true)
-        }
-    }
-
-    private companion object {
-        const val APK_MIME = "application/vnd.android.package-archive"
-    }
-}
 
 /** Integrates the isolated updater module with a short-lived, package-scoped VPN route. */
 class AppUpdateVpnFallback(
@@ -56,7 +30,10 @@ class AppUpdateVpnFallback(
         }
             ?: settingsStore.settings.first().activeProfileId
             ?: throw UpdateException("не выбран VPN-профиль")
-        if (before is VpnConnectionState.Connected && before.updaterRouting) {
+        // Подключённая сессия уже ведёт запросы приложения к Forgejo через proxy
+        // (постоянное правило RuntimeConfigOptions.standingUpdaterPackageName) —
+        // перезапуск VPN ради обновления оборвал бы соединения пользователя.
+        if (before is VpnConnectionState.Connected) {
             return UpdateVpnSession { }
         }
 

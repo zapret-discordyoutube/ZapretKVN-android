@@ -67,6 +67,13 @@ data class RuntimeConfigOptions(
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
     val healthCheckPackageName: String? = null,
     val updaterPackageName: String? = null,
+    /**
+     * Постоянный маршрут обновлений: запросы самого приложения к Forgejo идут
+     * через выбранный proxy в каждой сессии, поэтому обновлятору не нужно
+     * перезапускать подключённый VPN. Без выбранного proxy правило молча
+     * пропускается (в отличие от [updaterPackageName], который требует proxy).
+     */
+    val standingUpdaterPackageName: String? = null,
     val blockedPackages: Set<String> = emptySet(),
 )
 
@@ -210,7 +217,9 @@ object RuntimeConfigBuilder {
                     this["experimental"] = runtimeExperimental(this["experimental"])
                 }
             }
-        val updaterRoot = options.updaterPackageName?.let { packageName ->
+        val standingUpdater = options.standingUpdaterPackageName
+            ?.takeIf { selectedProxyTag != null && ANDROID_PACKAGE.matches(it) }
+        val updaterRoot = (options.updaterPackageName ?: standingUpdater)?.let { packageName ->
             applyUpdaterRoute(
                 root = JsonObject(runtimeRoot),
                 packageName = packageName,
@@ -263,7 +272,7 @@ object RuntimeConfigBuilder {
         })
     }
 
-    /** Adds a process-scoped rule only to the temporary in-memory updater session. */
+    /** Adds a process-scoped rule for the app's own Forgejo requests to the in-memory runtime copy. */
     private fun applyUpdaterRoute(
         root: JsonObject,
         packageName: String,

@@ -1,10 +1,12 @@
 package io.github.zapretkvn.android
 
+import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
+import androidx.core.content.pm.PackageInfoCompat
 import io.github.zapretkvn.android.apps.AndroidPackageAvailability
 import io.github.zapretkvn.android.apps.AppCatalog
 import io.github.zapretkvn.android.apps.AppSelectionStore
@@ -35,16 +37,26 @@ import io.github.zapretkvn.android.routing.RoutingPolicyStore
 import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.routing.RuleSetAssetManager
 import io.github.zapretkvn.android.ui.UiSettingsStore
-import io.github.zapretkvn.android.updates.AndroidUpdateInstallIntentFactory
+import io.github.zapretkvn.android.updates.AndroidApkUpdateVerifier
+import io.github.zapretkvn.android.updates.AndroidUpdateNotifier
+import io.github.zapretkvn.android.updates.AppForeground
 import io.github.zapretkvn.android.updates.AppUpdateVpnFallback
+import io.github.zapretkvn.android.updates.ForgejoHttpsClient
+import io.github.zapretkvn.android.updates.ForgejoUpdateSource
+import io.github.zapretkvn.android.updates.PackageInstallerUpdateInstaller
+import io.github.zapretkvn.android.updates.SharedUpdatePrefs
+import io.github.zapretkvn.android.updates.UpdateCheckJobService
 import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.updates.UpdateDirectConnections
+import io.github.zapretkvn.android.updates.UpdateEnvironment
+import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
 import java.net.HttpURLConnection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class AppContainer(
     context: Context,
@@ -99,15 +111,31 @@ class AppContainer(
         vpnController = vpnController,
         crashStore = appCrashStore,
     ).also(DiagnosticExporter::cleanupStaleFiles)
+    val appForeground = AppForeground(appContext as Application)
+    // Обновления идут напрямую даже при включённом VPN; через VPN — только если прямой путь не сработал.
+    private val updateDirectConnections =
+        UpdateDirectConnections { url -> nonVpnNetwork(appContext)?.openConnection(url) }
     val updateController = UpdateController(
-        context = appContext,
-        repository = BuildConfig.UPDATE_REPOSITORY,
+        updatesRoot = File(appContext.cacheDir, "updates"),
         currentVersionName = BuildConfig.VERSION_NAME,
         currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
-        // Обновления проверяются и скачиваются напрямую даже при включённом VPN.
-        directConnections = UpdateDirectConnections { url -> nonVpnNetwork(appContext)?.openConnection(url) },
+        clientFactory = { route -> ForgejoHttpsClient(updateDirectConnections, route) },
+        sourceFactory = { client ->
+            ForgejoUpdateSource(BuildConfig.UPDATE_REPOSITORY, appContext.packageName, client)
+        },
+        verifier = AndroidApkUpdateVerifier(appContext),
         vpnFallback = AppUpdateVpnFallback(appContext, uiSettingsStore, vpnController),
-        installIntentFactory = AndroidUpdateInstallIntentFactory(appContext),
+        installer = PackageInstallerUpdateInstaller(appContext),
+        environment = UpdateEnvironment(
+            vpnActive = { vpnController.state.value is VpnConnectionState.Connected },
+            isMetered = { isMeteredNetwork(appContext) },
+            canInstallUnattended = { canInstallUpdateUnattended(appContext, appForeground, vpnController) },
+            appInForeground = { appForeground.isForeground },
+            installedApk = File(appContext.applicationInfo.sourceDir),
+            archiveVersionCode = { file -> archiveVersionCode(appContext, file) },
+        ),
+        notifier = AndroidUpdateNotifier(appContext),
+        prefs = SharedUpdatePrefs(appContext),
     )
     val bootstrapCache = BootstrapCache(File(appContext.noBackupFilesDir, "network"))
     val ruleSetAssetManager = RuleSetAssetManager(appContext)
@@ -126,6 +154,12 @@ class AppContainer(
         File(appContext.noBackupFilesDir, "server-latency.json"),
         backgroundScope,
     )
+
+    init {
+        // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
+        // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
+        backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }
+    }
 
     val profilesViewModelFactory: ProfilesViewModel.Factory
         get() = ProfilesViewModel.Factory(
@@ -177,3 +211,31 @@ private fun nonVpnNetwork(context: Context): Network? {
     }
     return (physical.firstOrNull { it.second } ?: physical.firstOrNull())?.first
 }
+
+/** Сеть с лимитом трафика. Физическая сеть важнее VPN: именно по ней пойдёт загрузка. */
+private fun isMeteredNetwork(context: Context): Boolean {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return true
+    val network = nonVpnNetwork(context) ?: connectivity.activeNetwork ?: return true
+    val capabilities = connectivity.getNetworkCapabilities(network) ?: return true
+    return !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+}
+
+/**
+ * Обновление можно ставить без участия пользователя, только если это не оборвёт его: приложение не на экране,
+ * VPN выключен, Android 12+ (USER_ACTION_NOT_REQUIRED), есть разрешение на установку и установщик по записи — мы.
+ */
+private fun canInstallUpdateUnattended(
+    context: Context,
+    foreground: AppForeground,
+    vpn: VpnController,
+): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || foreground.isForeground) return false
+    val vpnIdle = vpn.state.value.let { it is VpnConnectionState.Stopped || it is VpnConnectionState.Error }
+    if (!vpnIdle || !context.packageManager.canRequestPackageInstalls()) return false
+    return runCatching {
+        context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName == context.packageName
+    }.getOrDefault(false)
+}
+
+private fun archiveVersionCode(context: Context, file: File): Long? =
+    context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)?.let(PackageInfoCompat::getLongVersionCode)

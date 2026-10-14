@@ -1,8 +1,8 @@
 package io.github.zapretkvn.android.ui.settings
 
-import io.github.zapretkvn.android.updates.UpdateOperation
 import io.github.zapretkvn.android.updates.UpdateState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,13 +20,11 @@ class UpdatePresenterTest {
     }
 
     @Test
-    fun `checking and retrying via vpn are both busy with different words`() {
+    fun `checking is a single quiet busy state`() {
         val checking = presentUpdate(UpdateState.Checking("Stable")) as UpdateSectionUi.Busy
-        val retryCheck = presentUpdate(UpdateState.RetryingViaVpn(UpdateOperation.Check)) as UpdateSectionUi.Busy
-        val retryDownload =
-            presentUpdate(UpdateState.RetryingViaVpn(UpdateOperation.Download, candidate)) as UpdateSectionUi.Busy
-        assertEquals(3, setOf(checking.message, retryCheck.message, retryDownload.message).size)
-        assertTrue("VPN" in retryCheck.message)
+        assertEquals("Проверяем обновления…", checking.message)
+        // Ни одного состояния, где говорится про VPN или «не отвечает напрямую».
+        assertFalse("VPN" in checking.message)
     }
 
     @Test
@@ -38,11 +36,18 @@ class UpdatePresenterTest {
     }
 
     @Test
-    fun `downloading reports determinate progress`() {
-        val ui = presentUpdate(UpdateState.Downloading(candidate, downloadedBytes = 512, totalBytes = 2048))
-            as UpdateSectionUi.Downloading
+    fun `downloading reports determinate progress and the saving`() {
+        val ui = presentUpdate(
+            UpdateState.Downloading(candidate, downloadedBytes = 512, totalBytes = 2048),
+        ) as UpdateSectionUi.Downloading
         assertEquals(0.25f, ui.progress!!, 0.0001f)
-        assertEquals("512 Б из 2.0 КБ · 25 %", ui.progressLabel)
+        assertEquals("Загружается 512 Б из 2.0 КБ", ui.progressLabel)
+        assertEquals("", ui.savingLabel)
+
+        val delta = presentUpdate(
+            UpdateState.Downloading(candidate, 1_200_000, 3_100_000, savedBytes = 114L * 1024 * 1024),
+        ) as UpdateSectionUi.Downloading
+        assertTrue(delta.savingLabel.startsWith("экономия 114"))
     }
 
     @Test
@@ -55,8 +60,17 @@ class UpdatePresenterTest {
     }
 
     @Test
-    fun `ready and failure keep what the buttons need`() {
-        assertTrue(presentUpdate(UpdateState.Ready(candidate)) is UpdateSectionUi.Ready)
+    fun `ready keeps the confirmation flag and installing is its own state`() {
+        assertEquals(UpdateSectionUi.Ready(releaseOf(), false), presentUpdate(UpdateState.Ready(candidate)))
+        assertEquals(
+            UpdateSectionUi.Ready(releaseOf(), true),
+            presentUpdate(UpdateState.Ready(candidate, needsConfirmation = true)),
+        )
+        assertTrue(presentUpdate(UpdateState.Installing(candidate)) is UpdateSectionUi.Installing)
+    }
+
+    @Test
+    fun `failure keeps what the buttons need`() {
         assertEquals(
             UpdateSectionUi.Failure("Нет сети", canRetryDownload = false),
             presentUpdate(UpdateState.Failure("Нет сети")),
@@ -66,4 +80,6 @@ class UpdatePresenterTest {
             presentUpdate(UpdateState.Failure("Обрыв", candidate)),
         )
     }
+
+    private fun releaseOf() = (presentUpdate(UpdateState.Available(candidate)) as UpdateSectionUi.Available).release
 }

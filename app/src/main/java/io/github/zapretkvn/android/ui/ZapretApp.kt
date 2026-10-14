@@ -43,42 +43,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.profiles.ProfileEditorState
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
-import io.github.zapretkvn.android.updates.UpdateCandidate
-
-@Composable
-internal fun UpdateAvailableDialog(
-    candidate: UpdateCandidate,
-    onDownload: () -> Unit,
-    onLater: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onLater,
-        title = { Text("Доступно обновление ${candidate.metadata.versionName}") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .heightIn(max = 360.dp)
-                    .verticalScroll(rememberScrollState())
-                    .testTag("update-release-notes"),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Изменения", style = MaterialTheme.typography.titleMedium)
-                ReleaseNotesMarkdown(
-                    candidate.release.body.ifBlank {
-                        "Автор релиза не добавил список изменений."
-                    },
-                )
-            }
-        },
-        confirmButton = {
-            Button(onClick = onDownload) { Text("Скачать") }
-        },
-        dismissButton = {
-            TextButton(onClick = onLater) { Text("Позже") }
-        },
-        modifier = Modifier.testTag("update-available-dialog"),
-    )
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

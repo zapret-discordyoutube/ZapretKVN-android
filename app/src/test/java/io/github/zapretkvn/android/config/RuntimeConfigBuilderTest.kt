@@ -310,6 +310,39 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
+    fun `standing updater route needs no restart and never invalidates a profile`() {
+        val standing = RuntimeConfigBuilder.build(
+            validConfig(),
+            options = RuntimeConfigOptions(standingUpdaterPackageName = "io.github.zapretkvn.android"),
+        ) as RuntimeConfigResult.Ready
+        val rules = (((JsonConfig.parse(standing.json) as JsonObject)["route"] as JsonObject)["rules"] as JsonArray)
+            .map { it as JsonObject }
+        val updaterRule = rules.first { "package_name" in it }
+        assertEquals("zapret-proxy", updaterRule.string("outbound"))
+        assertEquals("[\".zapret.moe\"]", updaterRule["domain_suffix"].toString())
+
+        // Профиль без выбранного proxy: правило молча пропускается — результат тот же,
+        // что и без него (ни лишнего правила, ни ошибки «нужен proxy»).
+        val noProxy = """
+            {
+              "inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true}],
+              "outbounds":[{"type":"direct","tag":"direct"}],
+              "route":{"auto_detect_interface":true,"final":"direct"}
+            }
+        """.trimIndent()
+        assertNull(BootstrapConfig.selectedProxyTag(noProxy))
+        run {
+            assertEquals(
+                RuntimeConfigBuilder.build(noProxy),
+                RuntimeConfigBuilder.build(
+                    noProxy,
+                    options = RuntimeConfigOptions(standingUpdaterPackageName = "io.github.zapretkvn.android"),
+                ),
+            )
+        }
+    }
+
+    @Test
     fun `zero and two tun inbounds are rejected`() {
         val zero = validConfig().replace(
             """"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true}]""",

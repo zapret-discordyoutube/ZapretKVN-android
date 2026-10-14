@@ -36,7 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.apps.AppsViewModel
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.routing.RoutingViewModel
-import io.github.zapretkvn.android.ui.home.HomeRoute
+import io.github.zapretkvn.android.ui.update.HomeWithUpdateBanner
 import io.github.zapretkvn.android.ui.nav.AppTab
 import io.github.zapretkvn.android.ui.nav.Navigator
 import io.github.zapretkvn.android.ui.nav.Route
@@ -48,7 +48,6 @@ import io.github.zapretkvn.android.ui.servers.ServersRoute
 import io.github.zapretkvn.android.ui.settings.SettingsPageRoute
 import io.github.zapretkvn.android.ui.settings.SettingsRoute
 import io.github.zapretkvn.android.updates.UpdateController
-import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.core.designsystem.Motion
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -143,7 +142,7 @@ fun ZapretRoot(deps: AppDependencies) {
                 when (route) {
                     is Route.Tab -> TabsScaffold(navigator, snackbarHostState) { tab, padding ->
                         when (tab) {
-                            AppTab.Home -> HomeRoute(deps, nav, padding)
+                            AppTab.Home -> HomeWithUpdateBanner(deps, nav, padding)
                             AppTab.Servers -> ServersRoute(deps, nav, padding)
                             AppTab.Routing -> RoutingRoute(deps, nav, padding)
                             AppTab.Settings -> SettingsRoute(deps, nav, padding)
@@ -166,7 +165,6 @@ fun ZapretRoot(deps: AppDependencies) {
                     .imePadding(),
             )
         }
-        UpdateDialogHost(deps)
         ImportHost(deps, nav)
     }
 }
@@ -227,31 +225,6 @@ private fun MessagesHost(deps: AppDependencies, snackbarHostState: SnackbarHostS
             snackbarHostState.showSnackbar(it)
         }
     }
-}
-
-/** Диалог «Доступно обновление»: показывается один раз на версию. */
-@Composable
-private fun UpdateDialogHost(deps: AppDependencies) {
-    val updateState by deps.updates.state.collectAsStateWithLifecycle()
-    var dismissedUpdateTag by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(updateState) {
-        if (updateState == UpdateState.Idle || updateState is UpdateState.Checking) {
-            dismissedUpdateTag = null
-        }
-    }
-    val available = (updateState as? UpdateState.Available)?.candidate ?: return
-    if (dismissedUpdateTag == available.release.tag) return
-    UpdateAvailableDialog(
-        candidate = available,
-        onDownload = {
-            dismissedUpdateTag = available.release.tag
-            deps.updates.download()
-        },
-        onLater = {
-            dismissedUpdateTag = available.release.tag
-            deps.updates.cancelAndDelete()
-        },
-    )
 }
 
 /**
