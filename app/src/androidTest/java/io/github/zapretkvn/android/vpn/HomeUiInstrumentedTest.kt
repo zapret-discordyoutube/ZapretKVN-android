@@ -2,10 +2,14 @@ package io.github.zapretkvn.android.vpn
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.hasText
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.profiles.ProfileSource
@@ -61,6 +65,13 @@ class HomeUiInstrumentedTest {
                                 LatencySample(84, measuredAt, null),
                             ),
                         ),
+                        // Плашка сервера на Главной открывает «Серверы» только когда есть из чего
+                        // выбирать, поэтому в группе два сервера.
+                        RuntimeOutboundItem(
+                            tag = "Berlin",
+                            type = "vless",
+                            endpoint = "berlin.example:443",
+                        ),
                     ),
                 ),
             ),
@@ -85,20 +96,28 @@ class HomeUiInstrumentedTest {
     fun compactCardAndSelectorSheetExposeSessionData() {
         composeRule.onNodeWithText("VPN подключён").assertExists()
         composeRule.onNodeWithText("Daily VPN").assertExists()
+        composeRule.onNodeWithText("Всё работает").assertExists()
+        composeRule.onNodeWithText("84 мс · быстро").assertExists()
+        composeRule.onNodeWithText("vpn.example", substring = true).assertDoesNotExist()
+
+        // Карточки ниже героя лениво создаются при прокрутке.
+        val list = composeRule.onNodeWithTag("home-list")
+        list.performScrollToNode(hasText("203.0.113.9"))
         composeRule.onNodeWithText("203.0.113.9").assertExists()
-        composeRule.onNodeWithText("42 мс").assertExists()
+        list.performScrollToNode(hasText("ICMP · 42 мс"))
         composeRule.onNodeWithText("ICMP · 42 мс").assertExists()
         composeRule.onNodeWithText("Relay HTTPS · 84 мс").assertExists()
+        list.performScrollToNode(hasText("↓ 8.0 КБ"))
         composeRule.onNodeWithText("↓ 8.0 КБ").assertExists()
         composeRule.onNodeWithText("↑ 4.0 КБ").assertExists()
         composeRule.onNodeWithContentDescription("График загрузки и отдачи за последние 60 секунд").assertExists()
 
+        // Плашка сервера ведёт на вкладку «Серверы».
+        list.performScrollToNode(hasText("Moscow"))
         composeRule.onNodeWithText("Moscow").performClick()
-        composeRule.onNodeWithText("Серверы").assertExists()
-        composeRule.onAllNodesWithText("VLESS · ********").assertCountEquals(2)
-        composeRule.onNodeWithText("vpn.example", substring = true).assertDoesNotExist()
-        composeRule.onNodeWithText("Проверить оба").assertExists()
-        composeRule.onAllNodesWithText("Relay HTTPS · 84 мс").assertCountEquals(2)
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithTag("profile-servers-sheet").fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     @Test
@@ -146,7 +165,13 @@ class HomeUiInstrumentedTest {
 
     @Test
     fun homeBlocksConnectionUntilProfileAndApplicationAreSelected() {
-        runBlocking { container.uiSettingsStore.setActiveProfile(null) }
+        // Работающая сессия всегда остаётся управляемой («Отключить»), поэтому «Начнём с
+        // профиля» показывается только в покое: сначала останавливаем VPN из подготовки.
+        runBlocking {
+            val stopped = container.vpnController.nextGeneration()
+            container.vpnController.publish(stopped, VpnConnectionState.Stopped)
+            container.uiSettingsStore.setActiveProfile(null)
+        }
         composeRule.waitUntil(10_000) {
             composeRule.onAllNodesWithText("Добавить профиль").fetchSemanticsNodes().isNotEmpty()
         }
@@ -209,7 +234,8 @@ class HomeUiInstrumentedTest {
               "inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true,"route_address":["0.0.0.0/0","::/0"]}],
               "outbounds":[
                 {"type":"vless","tag":"Moscow","server":"vpn.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000001"},
-                {"type":"selector","tag":"zapret-proxy","outbounds":["Moscow"],"default":"Moscow"}
+                {"type":"vless","tag":"Berlin","server":"berlin.example","server_port":443,"uuid":"00000000-0000-4000-8000-000000000002"},
+                {"type":"selector","tag":"zapret-proxy","outbounds":["Moscow","Berlin"],"default":"Moscow"}
               ],
               "route":{"auto_detect_interface":true,"final":"zapret-proxy"}
             }

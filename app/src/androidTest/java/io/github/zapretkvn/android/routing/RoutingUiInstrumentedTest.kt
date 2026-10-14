@@ -82,14 +82,19 @@ class RoutingUiInstrumentedTest {
             }
         }
         composeRule.onNodeWithText("Россия и LAN → напрямую, остальное → VPN").assertExists()
+        expandAdvanced()
         composeRule.onNodeWithTag("routing-list")
             .performScrollToNode(hasText("Последний diff zapret-*"))
         composeRule.onNodeWithText("Последний diff zapret-*").assertExists()
 
-        composeRule.onNodeWithTag("routing-list").performScrollToNode(hasText("Добавить"))
-        composeRule.onNodeWithText("Добавить").performClick()
-        composeRule.onNodeWithTag("routing-rule-values").performTextInput("blocked.example")
+        composeRule.onNodeWithTag("routing-list").performScrollToNode(hasText("Правило"))
+        composeRule.onNodeWithText("Правило").performClick()
+        // Сначала действие (клавиатуры ещё нет), потом значения: пока клавиатура выезжает,
+        // лист меняет размер и касания по координатам промахиваются.
         composeRule.onNodeWithText("Блокировать").performClick()
+        composeRule.onNodeWithTag("routing-rule-values").performTextInput("blocked.example")
+        awaitStableBounds("Сохранить")
+        // Кнопки листа закреплены над клавиатурой: настоящее касание должно попадать в них.
         composeRule.onNodeWithText("Сохранить").performClick()
         composeRule.waitUntil(20_000) {
             runBlocking {
@@ -126,13 +131,13 @@ class RoutingUiInstrumentedTest {
             }.isSuccess
         }
         composeRule.onNodeWithTag("routing-list")
-            .performScrollToNode(hasText("Добавить"))
+            .performScrollToNode(hasText("Правило"))
 
         val buttonBounds = composeRule.onNodeWithTag("routing-add-rule")
             .fetchSemanticsNode()
             .boundsInRoot
         assertTrue(
-            "Кнопка «Добавить» не должна сжиматься до вертикального текста: $buttonBounds",
+            "Кнопка «Правило» не должна сжиматься до вертикального текста: $buttonBounds",
             buttonBounds.width > buttonBounds.height,
         )
     }
@@ -140,6 +145,7 @@ class RoutingUiInstrumentedTest {
     @Test
     fun routingExplainsThatProfileJsonDoesNotStoreGlobalRules() {
         openRoutingTrafficCard()
+        expandAdvanced()
         composeRule.onNodeWithTag("routing-list")
             .performScrollToNode(hasText("Исходный JSON профиля"))
         composeRule.onNodeWithText("Исходный JSON профиля").assertExists()
@@ -151,7 +157,7 @@ class RoutingUiInstrumentedTest {
     @Test
     fun excludeModeShowsWarningAndPersistsAdvancedScope() {
         composeRule.onNodeWithText("Маршруты").performClick()
-        composeRule.onNodeWithText("Приложения напрямую").performClick()
+        composeRule.onNodeWithText("Все кроме").performClick()
         composeRule.waitUntil(10_000) {
             runBlocking { container.appSelectionStore.selection.first().mode == AppScopeMode.Exclude }
         }
@@ -161,6 +167,7 @@ class RoutingUiInstrumentedTest {
     @Test
     fun advancedJsonOpensTheActiveProfileAndBackReturnsToRouting() {
         openRoutingTrafficCard()
+        expandAdvanced()
         composeRule.waitUntil(20_000) {
             runCatching {
                 composeRule.onNode(
@@ -250,6 +257,23 @@ class RoutingUiInstrumentedTest {
         }
     }
 
+    /** Ждёт, пока узел перестанет двигаться (анимация клавиатуры/листа закончилась). */
+    private fun awaitStableBounds(text: String) {
+        var last: androidx.compose.ui.geometry.Rect? = null
+        var stableSince = 0L
+        composeRule.waitUntil(10_000) {
+            val now = composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+            val tick = System.currentTimeMillis()
+            if (now != last) {
+                last = now
+                stableSince = tick
+                false
+            } else {
+                tick - stableSince >= 800
+            }
+        }
+    }
+
     private fun openRoutingTrafficCard() {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.waitUntil(10_000) {
@@ -257,6 +281,14 @@ class RoutingUiInstrumentedTest {
         }
         composeRule.onNodeWithTag("routing-list")
             .performScrollToNode(hasText("Правило трафика"))
+    }
+
+    /** «Дополнительно» свёрнуто по умолчанию: diff и исходный JSON видны только после раскрытия. */
+    private fun expandAdvanced() {
+        composeRule.onNodeWithTag("routing-list").performScrollToNode(hasText("Дополнительно"))
+        // Строку может перекрывать снэкбар «Общие правила сохранены»: нажимаем действием семантики.
+        composeRule.onNodeWithText("Дополнительно").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
     }
 
     private fun profile(): String = ManagedProfileFactory.single(

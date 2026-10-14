@@ -113,11 +113,12 @@ class MainActivity : ComponentActivity() {
             createDiagnosticShare = { container.diagnosticExporter.createShareIntent() },
         )
         observeUpdates()
+        val initialThemeMode = profilesViewModel.state.value.settings.themeMode
         setContent {
             // Корень читает только тему: остальное собирают сами экраны.
             val themeMode by remember {
                 profilesViewModel.state.map { it.settings.themeMode }.distinctUntilChanged()
-            }.collectAsStateWithLifecycle(initialValue = profilesViewModel.state.value.settings.themeMode)
+            }.collectAsStateWithLifecycle(initialValue = initialThemeMode)
             val systemDark = isSystemInDarkTheme()
             val darkTheme = when (themeMode) {
                 ThemeMode.System -> systemDark

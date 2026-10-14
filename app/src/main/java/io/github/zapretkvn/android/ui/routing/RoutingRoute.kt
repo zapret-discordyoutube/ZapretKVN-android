@@ -7,7 +7,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
 import io.github.zapretkvn.android.ui.AppPickerMode
-import io.github.zapretkvn.android.ui.RoutingScreen
+import io.github.zapretkvn.android.ui.nav.AppTab
 
 @Composable
 fun RoutingRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues) {
@@ -16,11 +16,14 @@ fun RoutingRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
     RoutingScreen(
         contentPadding = padding,
         appsState = appsState,
-        appsViewModel = deps.apps,
         routingState = routingState,
-        routingViewModel = deps.routing,
+        onScopeModeChange = deps.apps::setScopeMode,
         onOpenPicker = { nav.openAppPicker(AppPickerMode.VpnScope) },
         onOpenBlockPicker = { nav.openAppPicker(AppPickerMode.Blocked) },
-        onOpenAdvancedJson = { routingState.activeProfileId?.let(deps.profiles::openEditor) },
+        onApplyPreset = deps.routing::applyPreset,
+        onSaveRule = deps.routing::saveRule,
+        onDeleteRule = deps.routing::deleteRule,
+        onOpenJson = { routingState.activeProfileId?.let(deps.profiles::openEditor) },
+        onOpenServers = { nav.switchTab(AppTab.Servers) },
     )
 }

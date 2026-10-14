@@ -56,7 +56,7 @@ class Gate6UiSmokeInstrumentedTest {
         composeRule.onNodeWithText("VPN выключен").assertIsDisplayed()
 
         openTab("Серверы")
-        composeRule.onNodeWithText("Профилей пока нет").assertIsDisplayed()
+        composeRule.onNodeWithText("Пока нет серверов").assertIsDisplayed()
 
         openTab("Маршруты")
         composeRule.onNodeWithText("Область VPN").assertIsDisplayed()

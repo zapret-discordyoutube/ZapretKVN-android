@@ -13,7 +13,7 @@ import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.apps.InstalledApp
-import io.github.zapretkvn.android.ui.AppRow
+import io.github.zapretkvn.android.ui.apps.AppRow
 import io.github.zapretkvn.core.designsystem.ZapretTheme
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.first
@@ -53,9 +53,9 @@ class AppPickerUiInstrumentedTest {
         composeRule.onNodeWithText("Маршруты").performClick()
         composeRule.onNodeWithText("Выбрать приложения").performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag("show-system-apps").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("app-search").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag("show-system-apps").performClick()
+        showSystemApps()
         composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag("app-row-$SETTINGS_PACKAGE")
@@ -111,9 +111,9 @@ class AppPickerUiInstrumentedTest {
         composeRule.onNodeWithText("Блокировка приложений: список пуст").assertExists()
         composeRule.onNodeWithText("Блокировать приложения").performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
-            composeRule.onAllNodesWithTag("show-system-apps").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithTag("app-search").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag("show-system-apps").performClick()
+        showSystemApps()
         composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag("app-row-$SETTINGS_PACKAGE")
@@ -132,6 +132,15 @@ class AppPickerUiInstrumentedTest {
         composeRule.activityRule.scenario.recreate()
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Заблокировано приложений: 1").assertExists()
+    }
+
+    /** Переключатель системных приложений живёт в меню «Ещё» верхней панели. */
+    private fun showSystemApps() {
+        composeRule.onNodeWithContentDescription("Ещё").performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithTag("show-system-apps").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("show-system-apps").performClick()
     }
 
     private companion object {

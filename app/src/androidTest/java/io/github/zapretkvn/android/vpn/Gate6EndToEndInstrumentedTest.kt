@@ -118,6 +118,7 @@ class Gate6EndToEndInstrumentedTest {
         composeRule.onNodeWithText("Профиль готов").assertExists()
         composeRule.onNodeWithText("Выбрать приложения").performClick()
 
+        composeRule.onNodeWithContentDescription("Ещё").performClick()
         composeRule.onNodeWithTag("show-system-apps").performClick()
         composeRule.onNodeWithTag("app-search").performTextInput(SETTINGS_PACKAGE)
         composeRule.waitUntil(20_000) {
@@ -165,14 +166,13 @@ class Gate6EndToEndInstrumentedTest {
         assertNotEquals(activityBeforeRotation, composeRule.activity.hashCode())
 
         openTab("Настройки")
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Диагностика"))
+        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Дополнительно"))
         composeRule.waitUntil(10_000) {
             composeRule.onAllNodesWithText("Профиль сохранён. Подключение не запускалось.")
                 .fetchSemanticsNodes().isEmpty()
         }
-        composeRule.onNodeWithContentDescription(
-            "Диагностика. Состояние VPN, версии и обслуживание DNS",
-        ).performClick()
+        composeRule.onNodeWithText("Дополнительно").performClick()
+        composeRule.onNodeWithText("Диагностика").performClick()
         composeRule.onNodeWithText("Подключено: Gate SS").assertExists()
         composeRule.onNodeWithText("Среда").assertExists()
         composeRule.onNodeWithTag("export-diagnostics").assertExists()

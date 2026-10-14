@@ -10,6 +10,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -27,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,6 +42,7 @@ import io.github.zapretkvn.android.ui.nav.Navigator
 import io.github.zapretkvn.android.ui.nav.Route
 import io.github.zapretkvn.android.ui.nav.rememberNavigator
 import io.github.zapretkvn.android.ui.routing.RoutingRoute
+import io.github.zapretkvn.android.ui.servers.ImportPreviewDialog
 import io.github.zapretkvn.android.ui.servers.ProfilesRoute
 import io.github.zapretkvn.android.ui.servers.ServersRoute
 import io.github.zapretkvn.android.ui.settings.SettingsPageRoute
@@ -150,6 +154,17 @@ fun ZapretRoot(deps: AppDependencies) {
                     is Route.SettingsPage -> SettingsPageRoute(deps, nav, route.page)
                 }
             }
+        }
+        // Вкладки показывают сообщения над нижней панелью; вложенным экранам
+        // нужен свой хост у нижнего края, иначе сообщение увидят только после возврата.
+        if (editorOpen || navigator.top !is Route.Tab) {
+            SnackbarHost(
+                snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .imePadding(),
+            )
         }
         UpdateDialogHost(deps)
         ImportHost(deps, nav)

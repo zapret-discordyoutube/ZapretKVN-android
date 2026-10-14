@@ -172,7 +172,11 @@ expected = [
     # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
     # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/LatencyProbeCoordinator.kt", 1),
-    ("app/src/main/java/io/github/zapretkvn/android/ui/HomeScreen.kt", 1),
+    # Видимое время сессии на Главной: тикает, только пока таймер на экране.
+    ("app/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
+    # Прореживание перерисовки списка серверов (не чаще 4 раз в секунду) во
+    # время пачек замеров. Только UI: сетевых запросов и повторов не создаёт.
+    ("app/src/main/java/io/github/zapretkvn/android/ui/servers/ServersRoute.kt", 1),
     # Единый дебаунс смены сети (перезапуск, пауза и возобновление по правилам
     # сети) плюс ограниченный backoff восстановления. Одновременно активен
     # только один debounce Job; ожидание сети событийное и таймера не добавляет.
@@ -182,7 +186,7 @@ expected = [
 if delays != expected:
     raise SystemExit(f"Unexpected production timer/retry surface: {delays!r}")
 print(
-    "Production delay calls are limited to visible session time, probe stagger, "
+    "Production delay calls are limited to visible session time, server-list redraw throttle, probe stagger, "
     "network debounce, bounded recovery backoff and bootstrap settle."
 )
 PY
@@ -369,7 +373,7 @@ import sys
 root = Path(sys.argv[1])
 surfaces = {
     "README": (root / "docs/README.md").read_text(),
-    "UI": (root / "app/src/main/java/io/github/zapretkvn/android/ui/SettingsScreen.kt").read_text(),
+    "UI": (root / "app/src/main/java/io/github/zapretkvn/android/ui/settings/AboutPage.kt").read_text(),
     "release notes generator": (root / "scripts/create-release-bundle.sh").read_text(),
 }
 required = (

@@ -2,10 +2,12 @@ package io.github.zapretkvn.android.profiles
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -15,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.zapretkvn.android.MainActivity
@@ -105,16 +108,26 @@ class ProfileUiInstrumentedTest {
             container.profileStore.profiles.value.isNotEmpty()
         }
         composeRule.onNodeWithText("Профиль готов").assertDoesNotExist()
+        // Вкладка «Серверы»: шапка активного профиля с кнопкой «Сменить».
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
-        composeRule.onNodeWithText("Буфер обмена").assertExists()
-        composeRule.onNodeWithText("Обновлено:", substring = true).assertExists()
-        composeRule.onNodeWithText("JSON").performScrollTo().performClick()
+        composeRule.onNodeWithText("Сменить").performClick()
+        composeRule.waitForIdle()
+        // Экран «Профили»: карточка с источником, меню ⋮ → «Исходный JSON».
+        composeRule.onNodeWithText("Профиль из буфера").assertExists()
+        composeRule.onNodeWithText("Буфер обмена", substring = true).assertExists()
+        openRawJsonOf("Профиль из буфера")
         composeRule.onNodeWithText("Показать адреса и разрешить редактирование").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             composeRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size >= 2
         }
         composeRule.onAllNodes(hasSetTextAction())[1].performTextReplacement(UPDATED_DIRECT)
         composeRule.onNodeWithText("Validate").performClick()
+        // Проверка выполняется асинхронно в ядре — ждём сообщение.
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            runCatching {
+                composeRule.onNodeWithText("Конфигурация корректна.").fetchSemanticsNode()
+            }.isSuccess
+        }
         composeRule.onNodeWithText("Конфигурация корректна.").assertExists()
         composeRule.onNodeWithText("Сохранить").performClick()
         val profileId = container.profileStore.profiles.value.single().id
@@ -123,11 +136,11 @@ class ProfileUiInstrumentedTest {
         }
         composeRule.onNodeWithContentDescription("Назад").performClick()
 
+        // Стек навигации переживает пересоздание Activity: снова экран «Профили».
         composeRule.activityRule.scenario.recreate()
         composeRule.waitForIdle()
-        composeRule.onNode(hasText("Серверы") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Профиль из буфера").assertExists()
-        composeRule.onNodeWithText("JSON").performScrollTo().performClick()
+        openRawJsonOf("Профиль из буфера")
         composeRule.onNodeWithText("Показать адреса и разрешить редактирование").performClick()
         composeRule.onAllNodes(hasSetTextAction())[1].assertTextContains(UPDATED_DIRECT)
     }
@@ -152,20 +165,15 @@ class ProfileUiInstrumentedTest {
         }
         val profileId = container.profileStore.profiles.value.single().id
 
-        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
-            runCatching { composeRule.onNodeWithText("Серверы").fetchSemanticsNode() }.isSuccess
-        }
-        assertTrue(
-            composeRule.onAllNodesWithText("Серверов: 2", substring = true)
-                .fetchSemanticsNodes()
-                .isNotEmpty(),
-        )
-        composeRule.onNodeWithText("Серверы").performScrollTo().performClick()
+        // Вкладка «Серверы» сразу показывает список серверов активного профиля.
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runCatching {
                 composeRule.onNodeWithTag("profile-servers-sheet").fetchSemanticsNode()
             }.isSuccess
         }
+        assertTrue(
+            composeRule.onAllNodesWithText("2 сервера").fetchSemanticsNodes().isNotEmpty(),
+        )
         composeRule.onNodeWithText("second").performClick()
         composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
             runBlocking {
@@ -208,6 +216,12 @@ class ProfileUiInstrumentedTest {
             }
         }
         assertTrue("Каждый профиль должен содержать ровно один сервер", singleServerProfiles)
+        // Активный профиль — первый; список всех профилей открывается кнопкой «Сменить».
+        composeRule.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+            composeRule.onAllNodesWithText("Сменить").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Сменить").performClick()
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("profiles-list").performScrollToNode(hasText("first"))
         composeRule.onNodeWithText("first").assertExists()
         composeRule.onNodeWithTag("profiles-list").performScrollToNode(hasText("second"))
@@ -216,7 +230,7 @@ class ProfileUiInstrumentedTest {
 
     @Test
     fun settingsExposeAllFourDnsModesAndPersistSelection() {
-        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        openSettingsPage("Сеть и DNS")
         val modes = listOf(
             "Автоматически",
             "DNS Android",
@@ -224,11 +238,11 @@ class ProfileUiInstrumentedTest {
             "Из JSON",
         )
         modes.forEach { label ->
-            composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText(label))
+            composeRule.onNodeWithTag("settings-page-dns").performScrollToNode(hasText(label))
             composeRule.onNodeWithText(label).assertExists()
         }
 
-        composeRule.onNodeWithTag("settings-list")
+        composeRule.onNodeWithTag("settings-page-dns")
             .performScrollToNode(hasText("DNS узла через VPN"))
         composeRule.onNodeWithText("DNS узла через VPN").performClick()
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
@@ -238,16 +252,18 @@ class ProfileUiInstrumentedTest {
             "Перехватывается TCP/UDP 53; встроенный DoH, DoT и mDNS не перехватываются.",
         ).assertExists()
 
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Beta"))
+        composeRule.onNodeWithContentDescription("Назад").performClick()
+
+        openSettingsPage("Обновления")
         composeRule.onNodeWithText("Beta").performClick()
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
             runBlocking {
                 container.uiSettingsStore.settings.first().updateChannel == UpdateChannel.Beta
             }
         }
+        composeRule.onNodeWithContentDescription("Назад").performClick()
 
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Скрытие VPN"))
-        composeRule.onNodeWithText("Скрытие VPN").performClick()
+        openSettingsPage("Дополнительно", "Скрытие VPN")
         composeRule.onNodeWithText("Возможности rootless-режима").assertExists()
         composeRule.onNodeWithTag("vpn-hiding-session-name").performScrollTo().performClick()
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
@@ -278,10 +294,7 @@ class ProfileUiInstrumentedTest {
 
     @Test
     fun settingsConfigureAndPersistNetworkAutomation() {
-        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
-        composeRule.onNodeWithTag("settings-list")
-            .performScrollToNode(hasText("Автоматизация VPN"))
-        composeRule.onNodeWithText("Автоматизация VPN").performClick()
+        openSettingsPage("Автоматизация VPN")
 
         composeRule.onNodeWithTag("network-automation-enabled").performClick()
         composeRule.onNodeWithTag("network-automation-wifi").performScrollTo().performClick()
@@ -311,8 +324,11 @@ class ProfileUiInstrumentedTest {
     @Test
     fun settingsEditDisableAndPersistDnsOverride() {
         runBlocking { container.uiSettingsStore.setDnsMode(DnsMode.Secure) }
-        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
-        composeRule.onNodeWithTag("settings-list")
+        openSettingsPage("Сеть и DNS")
+        // Переопределение спрятано под «Дополнительно» внутри страницы.
+        composeRule.onNodeWithTag("settings-page-dns").performScrollToNode(hasText("Дополнительно"))
+        composeRule.onNodeWithText("Дополнительно").performClick()
+        composeRule.onNodeWithTag("settings-page-dns")
             .performScrollToNode(hasText("ntc.party → 130.255.77.28"))
         composeRule.onNodeWithText("ntc.party → 130.255.77.28").assertExists()
         composeRule.onNodeWithTag("dns-override-edit").performScrollTo().performClick()
@@ -338,22 +354,19 @@ class ProfileUiInstrumentedTest {
 
         composeRule.activityRule.scenario.recreate()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("settings-list")
+        composeRule.onNodeWithTag("settings-page-dns")
             .performScrollToNode(hasText("example.test → 203.0.113.8"))
         composeRule.onNodeWithText("example.test → 203.0.113.8").assertExists()
     }
 
     @Test
     fun settingsSubpagesHaveBackNavigationAndCommunityIsIsolated() {
-        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Сообщество"))
-        composeRule.onNodeWithText("Сообщество").performClick()
+        openSettingsPage("Сообщество")
         composeRule.onNodeWithText("Zapret KVN").assertExists()
         composeRule.onNodeWithText("VPN Discord YouTube").assertExists()
         composeRule.onNodeWithText("Zapret VPN bot").assertExists()
         composeRule.onNodeWithContentDescription("Назад").performClick()
 
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Диагностика"))
         composeRule.runOnUiThread {
             val token = container.vpnController.nextGeneration()
             container.vpnController.publish(
@@ -362,7 +375,7 @@ class ProfileUiInstrumentedTest {
             )
             container.vpnController.publishCoreDiagnosticLog(token, 3, "token=visible-secret")
         }
-        composeRule.onNodeWithText("Диагностика").performClick()
+        openSettingsPage("Дополнительно", "Диагностика")
         composeRule.onNodeWithText("Текущее состояние").assertExists()
         composeRule.onNodeWithText("DNS-200 · DNS через VPN").assertExists()
         composeRule.onNodeWithText("DNS через VPN заблокирован token=•••").assertExists()
@@ -370,7 +383,9 @@ class ProfileUiInstrumentedTest {
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
             container.vpnController.diagnosticsVisible.value
         }
-        composeRule.onNodeWithTag("diagnostic-logs-toggle").performScrollTo().performClick()
+        composeRule.onNodeWithTag("diagnostics-screen")
+            .performScrollToNode(hasTestTag("diagnostic-logs-toggle"))
+        composeRule.onNodeWithTag("diagnostic-logs-toggle").performClick()
         composeRule.onNodeWithText("Скрыть", substring = true).assertExists()
         composeRule.runOnUiThread {
             composeRule.activity.onBackPressedDispatcher.onBackPressed()
@@ -378,12 +393,31 @@ class ProfileUiInstrumentedTest {
         composeRule.waitUntil(UI_TIMEOUT_MILLIS) {
             !container.vpnController.diagnosticsVisible.value
         }
+        // Назад из диагностики ведёт на «Дополнительно», а оттуда — в список настроек.
+        composeRule.onNodeWithText("Скрытие VPN").assertExists()
+        composeRule.onNodeWithContentDescription("Назад").performClick()
 
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("О приложении"))
-        composeRule.onNodeWithText("О приложении").performClick()
+        openSettingsPage("О приложении")
         composeRule.onNodeWithText("Ядро").assertExists()
-        composeRule.onNodeWithText("Известные ограничения MVP").assertExists()
+        composeRule.onNodeWithText("Известные ограничения MVP").performClick()
         composeRule.onNodeWithText("Clash YAML", substring = true).assertExists()
+    }
+
+    /** Открывает страницы настроек по цепочке названий, начиная со списка вкладки «Настройки». */
+    private fun openSettingsPage(first: String, vararg next: String) {
+        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText(first))
+        // Строка может оказаться под нижней панелью: нажимаем семантическим действием.
+        composeRule.onNodeWithText(first).performSemanticsAction(SemanticsActions.OnClick)
+        next.forEach { title ->
+            composeRule.onNodeWithText(title).performClick()
+        }
+    }
+
+    /** Меню ⋮ карточки профиля → «Исходный JSON». */
+    private fun openRawJsonOf(profileName: String) {
+        composeRule.onNodeWithContentDescription("Действия с профилем $profileName").performClick()
+        composeRule.onNodeWithText("Исходный JSON").performClick()
     }
 
     private fun resetDiagnostics() {

@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.updates
 
 import androidx.activity.compose.setContent
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -8,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.ui.UpdateAvailableDialog
@@ -82,14 +84,21 @@ class UpdateUiInstrumentedTest {
     @Test
     fun settingsPersistChannelAndKeepManualCheckAvailable() {
         composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        // Разовая проверка при запуске приложения стартует асинхронно (и без сети кончается
+        // ошибкой): дожидаемся её начала, затем сбрасываем состояние, чтобы страница
+        // стартовала из Idle с кнопкой «Проверить обновления».
+        runCatching {
+            composeRule.waitUntil(5_000) { container.updateController.state.value != UpdateState.Idle }
+        }
         runBlocking {
             container.updateController.cancelAndDelete()
             container.updateController.state.first { it == UpdateState.Idle }
         }
         composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Обновления"))
         composeRule.onNodeWithText("Обновления").assertExists()
+        // Строка может оказаться под нижней панелью: нажимаем семантическим действием.
+        composeRule.onNodeWithText("Обновления").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.onNodeWithText("Проверить обновления").assertExists()
-        composeRule.onNodeWithTag("settings-list").performScrollToNode(hasText("Beta"))
         composeRule.onNode(hasText("Beta") and hasClickAction()).performClick()
         composeRule.waitUntil(10_000) {
             runBlocking { container.uiSettingsStore.settings.first().updateChannel == UpdateChannel.Beta }
