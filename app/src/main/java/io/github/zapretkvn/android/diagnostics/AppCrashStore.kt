@@ -17,21 +17,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-data class AppCrashFrame(
-    val className: String,
-    val methodName: String,
-    val lineNumber: Int,
-)
-
-data class AppCrashRecord(
-    val occurredAtEpochMillis: Long,
-    val threadName: String,
-    val exceptionType: String,
-    val message: String?,
-    val causes: List<String>,
-    val stack: List<AppCrashFrame>,
-)
-
 /** Stores only the newest uncaught app crash. It never writes runtime/core traffic logs. */
 class AppCrashStore(root: File) {
     private val directory = File(root, DIRECTORY_NAME)

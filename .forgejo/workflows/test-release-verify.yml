@@ -52,7 +52,7 @@ jobs:
       - name: Verify tagged source and Android tests
         run: |
           scripts/verify-project.sh
-          ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+          ./gradlew testDebugUnitTest :app:compileDebugAndroidTestKotlin
 
       - name: Download exact prerelease assets
         run: |
@@ -82,3 +82,5 @@ jobs:
           path: |
             published-test/**
             app/build/reports/tests/testDebugUnitTest/**
+            core/*/build/reports/tests/testDebugUnitTest/**
+            feature/*/build/reports/tests/testDebugUnitTest/**

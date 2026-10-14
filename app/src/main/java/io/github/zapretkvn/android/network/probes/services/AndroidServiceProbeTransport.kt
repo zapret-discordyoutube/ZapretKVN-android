@@ -63,7 +63,8 @@ internal class NetworkServiceProbeTransport(
             val millis = elapsedMillis(started)
             var body: String? = null
             var bodyBytes = 0
-            if (endpoint.geo != null && status in endpoint.geo.statuses) {
+            val geoRule = endpoint.geo
+            if (geoRule != null && status in geoRule.statuses) {
                 val stream = if (status >= 400) opened.errorStream else opened.inputStream
                 val sample = stream?.use(::readCapped)
                 bodyBytes = sample?.size ?: 0

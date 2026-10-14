@@ -7,17 +7,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
-enum class TunMtuMode {
-    CoreDefault,
-    Normalize1500,
-}
-
-data class VpnHidingOptions(
-    val blockLocalEndpoints: Boolean = true,
-    val neutralSessionName: Boolean = false,
-    val tunMtuMode: TunMtuMode = TunMtuMode.Normalize1500,
-)
-
 sealed interface RuntimeHardeningResult {
     data class Ready(val root: JsonObject) : RuntimeHardeningResult
     data class Blocked(val message: String) : RuntimeHardeningResult

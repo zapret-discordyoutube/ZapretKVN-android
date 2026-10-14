@@ -5,12 +5,6 @@ import io.github.zapretkvn.android.config.SelectorGroup
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 
-internal fun List<RuntimeSelectorGroup>.primaryGroup(): RuntimeSelectorGroup? =
-    firstOrNull { group -> group.primary && group.items.any { it.tag == group.selected } }
-        ?: firstOrNull { group ->
-        group.selectable && group.items.any { it.tag == group.selected }
-    } ?: firstOrNull { it.items.isNotEmpty() }
-
 internal class ServerPingTargetResolver(
     private val descriptions: Map<String, OutboundDescription>,
     initialGroups: List<SelectorGroup>,

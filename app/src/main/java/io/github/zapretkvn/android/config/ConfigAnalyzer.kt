@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android.config
 
+import io.github.zapretkvn.android.profiles.MANAGED_SELECTOR_TAG_NAME
+
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -24,7 +26,7 @@ data class OutboundDescription(
 )
 
 object ConfigAnalyzer {
-    const val MANAGED_SELECTOR_TAG = "zapret-proxy"
+    const val MANAGED_SELECTOR_TAG = MANAGED_SELECTOR_TAG_NAME
 
     fun hasProfileDns(raw: String): Boolean = runCatching {
         val root = JsonConfig.parse(raw) as? JsonObject ?: return@runCatching false

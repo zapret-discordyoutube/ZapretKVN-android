@@ -7,6 +7,7 @@ import io.github.zapretkvn.android.engines.failover.LatencyHint
 import io.github.zapretkvn.android.engines.hysteria.HysteriaCapabilityClassifier
 import io.github.zapretkvn.android.engines.hysteria.isFailoverEligible
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
+import io.github.zapretkvn.android.network.probes.hint
 import java.util.Locale
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject

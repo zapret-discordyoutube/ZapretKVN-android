@@ -10,14 +10,6 @@ import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class InstalledApp(
-    val packageName: String,
-    val label: String,
-    val system: Boolean,
-    val enabled: Boolean,
-    val suggestion: String? = null,
-)
-
 internal data class AppCatalogSnapshot(
     val apps: List<InstalledApp>,
     val discovery: AppDiscoverySummary,

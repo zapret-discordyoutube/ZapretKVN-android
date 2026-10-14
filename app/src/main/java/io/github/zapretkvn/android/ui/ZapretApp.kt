@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.profiles.ProfileEditorState
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
+import io.github.zapretkvn.core.uimodel.ScreenshotPrivacy
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

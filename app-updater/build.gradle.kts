@@ -22,6 +22,7 @@ extensions.configure<LibraryExtension> {
 }
 
 dependencies {
+    add("api", project(":core:model"))
     add("implementation", "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     add("implementation", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     add("testImplementation", "junit:junit:4.13.2")

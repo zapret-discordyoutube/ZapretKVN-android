@@ -23,12 +23,12 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
     // Состояние обновления меняется при каждом байте загрузки, а списку нужна
     // только строка — перерисовываем его, когда строка действительно другая.
     val updateSummary by remember(deps.updates) {
-        deps.updates.state.map { updateSummary(it, AppInfo.versionName) }.distinctUntilChanged()
+        deps.updates.state.map { updateSummary(it, CurrentAppInfo.versionName) }.distinctUntilChanged()
     }.collectAsStateWithLifecycle(
-        initialValue = remember(deps.updates) { updateSummary(deps.updates.state.value, AppInfo.versionName) },
+        initialValue = remember(deps.updates) { updateSummary(deps.updates.state.value, CurrentAppInfo.versionName) },
     )
     val ui = remember(settings, updateSummary) {
-        buildSettingsMain(settings, updateSummary, AppInfo.versionName)
+        buildSettingsMain(settings, updateSummary, CurrentAppInfo.versionName)
     }
     SettingsMainScreen(
         ui = ui,
@@ -62,7 +62,7 @@ fun SettingsPageRoute(deps: AppDependencies, nav: AppNavigation, page: String) {
             SettingsPage.Diagnostics -> DiagnosticsRoute(deps, nav, padding)
             SettingsPage.Updates -> UpdatesRoute(deps, padding)
             SettingsPage.Community -> CommunityScreen(padding)
-            SettingsPage.About -> AboutScreen(padding)
+            SettingsPage.About -> AboutScreen(padding, CurrentAppInfo)
             SettingsPage.Advanced -> AdvancedRoute(deps, nav, padding)
         }
     }

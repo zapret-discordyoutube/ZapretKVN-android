@@ -19,5 +19,7 @@ extensions.configure<LibraryExtension> {
 }
 
 dependencies {
+    // formatLatency reads the latency value types (LatencyProbeState) from :core:model.
+    add("api", project(":core:model"))
     add("testImplementation", "junit:junit:4.13.2")
 }

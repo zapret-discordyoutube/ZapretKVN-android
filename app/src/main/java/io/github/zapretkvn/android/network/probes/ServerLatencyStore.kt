@@ -27,60 +27,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 
-/** Последний результат одной пробы (Relay HTTPS или ICMP). */
-data class PersistedProbeResult(
-    /** null — проба не удалась, см. [failure]. */
-    val millis: Int?,
-    val failure: LatencyFailure?,
-    val measuredAtEpochMillis: Long,
-    /** Последний удачный замер до неудачи — чтобы показать «Нет ответа · было 42 мс». */
-    val previousMillis: Int? = null,
-    val previousAtEpochMillis: Long? = null,
-) {
-    val failed: Boolean get() = millis == null
-
-    fun toState(): LatencyProbeState {
-        val previous = if (previousMillis != null && previousAtEpochMillis != null) {
-            LatencySample(previousMillis, previousAtEpochMillis, networkIdentity = null)
-        } else {
-            null
-        }
-        return if (millis != null) {
-            LatencyProbeState.Success(LatencySample(millis, measuredAtEpochMillis, networkIdentity = null))
-        } else {
-            LatencyProbeState.Failed(
-                reason = failure ?: LatencyFailure.Failed,
-                previous = previous,
-                failedAtEpochMillis = measuredAtEpochMillis,
-            )
-        }
-    }
-}
-
-/**
- * Пинг сервера, переживающий перезапуск приложения.
- *
- * [fingerprint] — хэш типа и адреса сервера (сам адрес не хранится): если
- * подписка сохранила тег, но сервер за ним поменялся, старый пинг выбрасывается.
- */
-data class PersistedServerLatency(
-    val fingerprint: String?,
-    val relay: PersistedProbeResult? = null,
-    val icmp: PersistedProbeResult? = null,
-) {
-    /** Для ранжирования кандидатов «умной проверки»: Relay HTTPS идёт через сам сервер. */
-    internal fun hint(): LatencyHint? {
-        val primary = relay ?: icmp ?: return null
-        return LatencyHint(millis = primary.millis, failed = primary.failed)
-    }
-
-    /** Что показать в списке серверов без подключения: Relay, иначе ICMP. */
-    fun displayState(): LatencyProbeState? = (relay ?: icmp)?.toState()
-}
-
-/** profileId → tag → последний пинг. */
-typealias ServerLatencyEntries = Map<String, Map<String, PersistedServerLatency>>
-
 object ServerLatencyFingerprint {
     fun of(type: String?, endpoint: String?): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -92,6 +38,12 @@ object ServerLatencyFingerprint {
 
     fun of(descriptions: Map<String, OutboundDescription>): Map<String, String> =
         descriptions.mapValues { (_, description) -> of(description) }
+}
+
+/** Для ранжирования кандидатов «умной проверки»: Relay HTTPS идёт через сам сервер. */
+internal fun PersistedServerLatency.hint(): LatencyHint? {
+    val primary = relay ?: icmp ?: return null
+    return LatencyHint(millis = primary.millis, failed = primary.failed)
 }
 
 /** Чистые преобразования записей; хранилище только применяет их к своему состоянию. */

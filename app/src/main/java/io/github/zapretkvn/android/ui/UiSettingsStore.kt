@@ -24,30 +24,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-enum class ThemeMode {
-    System,
-    Light,
-    Dark,
-    Amoled,
-}
-
-data class UiSettings(
-    val themeMode: ThemeMode = ThemeMode.System,
-    val activeProfileId: String? = null,
-    val rawEditorLineWrap: Boolean = false,
-    val hideServerAddresses: Boolean = true,
-    val dnsMode: DnsMode = DnsMode.FromJson,
-    val proxyIpv4Only: Boolean = true,
-    val dnsOverride: DnsOverride = DnsOverride(),
-    val updateChannel: UpdateChannel = UpdateChannel.Stable,
-    val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
-    val networkAutomation: NetworkAutomationSettings = NetworkAutomationSettings(),
-    /** «Умная проверка»: переключать сервер при подтверждённой низкой скорости. */
-    val slowServerSwitch: Boolean = true,
-    /** Цвета обоев (Material You). По умолчанию — фирменная яркая палитра. */
-    val dynamicColor: Boolean = false,
-)
-
 private val Context.uiSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "ui_settings",
 )
@@ -270,13 +246,6 @@ class UiSettingsStore(
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
         val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
     }
-}
-
-enum class NetworkTransportSetting {
-    Wifi,
-    Cellular,
-    Ethernet,
-    Other,
 }
 
 internal fun resolveUpdateChannel(

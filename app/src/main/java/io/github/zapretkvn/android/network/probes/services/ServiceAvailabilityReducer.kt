@@ -100,10 +100,13 @@ internal object ServiceAvailabilityReducer {
      * запуска, поэтому помечается устаревшим.
      */
     private fun ServiceAvailability.settled(staleWhenOld: Boolean): ServiceAvailability = when (this) {
-        is ServiceAvailability.Checking -> when {
-            previous == null -> ServiceAvailability.NotChecked
-            staleWhenOld || previousStale -> ServiceAvailability.Stale(previous)
-            else -> ServiceAvailability.Result(previous)
+        is ServiceAvailability.Checking -> when (val last = previous) {
+            null -> ServiceAvailability.NotChecked
+            else -> if (staleWhenOld || previousStale) {
+                ServiceAvailability.Stale(last)
+            } else {
+                ServiceAvailability.Result(last)
+            }
         }
         else -> this
     }

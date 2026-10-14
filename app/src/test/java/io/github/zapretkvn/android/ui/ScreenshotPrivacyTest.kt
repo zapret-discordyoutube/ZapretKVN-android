@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.ui
 
+import io.github.zapretkvn.core.uimodel.ScreenshotPrivacy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

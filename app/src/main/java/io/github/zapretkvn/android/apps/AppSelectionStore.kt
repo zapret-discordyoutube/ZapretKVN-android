@@ -14,11 +14,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 
-enum class AppScopeMode {
-    Include,
-    Exclude,
-}
-
 data class AppSelection(
     val allowedPackages: Set<String> = emptySet(),
     val blockedPackages: Set<String> = emptySet(),

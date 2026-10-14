@@ -13,13 +13,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
-enum class DnsMode {
-    Automatic,
-    Android,
-    Secure,
-    FromJson,
-}
-
 internal data class ManagedHealthEndpoint(
     val code: String,
     val host: String,

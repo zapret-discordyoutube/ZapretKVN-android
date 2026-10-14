@@ -63,7 +63,7 @@ grep -Fq 'sha256sum "$downloaded"' "$FORGEJO_PUBLISHER"
 TEST_RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/test-release-verify.yml"
 grep -Fq 'workflow_dispatch:' "$TEST_RELEASE_WORKFLOW"
 grep -Fq 'scripts/verify-test-bundle.sh' "$TEST_RELEASE_WORKFLOW"
-grep -Fq ':app:testDebugUnitTest' "$TEST_RELEASE_WORKFLOW"
+grep -Eq '(^|[[:space:]])testDebugUnitTest' "$TEST_RELEASE_WORKFLOW"
 TEST_PUBLISHER="$PROJECT_ROOT/scripts/publish-forgejo-test.sh"
 grep -Fq 'draft:true,prerelease:true' "$TEST_PUBLISHER"
 grep -Fq 'draft:false,prerelease:true' "$TEST_PUBLISHER"
@@ -119,25 +119,58 @@ if grep -Eq 'WAKE_LOCK|REQUEST_IGNORE_BATTERY_OPTIMIZATIONS|android:process=' "$
     exit 1
 fi
 
+# Every production Kotlin source root: :app, :app-updater, the :core:* libraries and :feature:* modules.
+SCAN_ROOTS=("$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java")
+for module_dir in "$PROJECT_ROOT"/core/*/ "$PROJECT_ROOT"/feature/*/; do
+    [[ -d "${module_dir}src/main/java" ]] && SCAN_ROOTS+=("${module_dir}src/main/java")
+done
+
+# Module boundary: :feature:* hold screens and presenters only. They may use :core:* and androidx,
+# never :app, the VPN runtime, ViewModels or the dependency containers (Route files in :app bind them).
+for build_file in "$PROJECT_ROOT"/feature/*/build.gradle.kts "$PROJECT_ROOT"/core/*/build.gradle.kts; do
+    if grep -Eq 'project\(":(app|app-updater|network-bootstrap|wireguard-import|feature:[a-z]+)"\)' "$build_file"; then
+        echo "$build_file: :core:* and :feature:* modules must not depend on :app or on each other's features" >&2
+        exit 1
+    fi
+done
+for build_file in "$PROJECT_ROOT"/core/*/build.gradle.kts; do
+    if grep -Eq 'project\(":feature:' "$build_file"; then
+        echo "$build_file: :core:* modules must not depend on :feature:*" >&2
+        exit 1
+    fi
+done
+if [[ -n "$(find "$PROJECT_ROOT/feature" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)" ]]; then
+    if grep -R -n -E '^import io\.github\.zapretkvn\.android\.(vpn\.runtime|engines|platform|importer\.(ProfileImporter|SubscriptionClient|ImportParser)\b|profiles\.(ProfilesViewModel|ProfileStore)|[A-Za-z.]*ViewModel|ui\.(AppContainer|AppDependencies|AppNavigation|AppRoot|UiSettingsStore)|AppContainer|BuildConfig|R$)' \
+        "$PROJECT_ROOT"/feature/*/src; then
+        echo "Feature modules must not import the VPN runtime, ViewModels, AppContainer or AppDependencies" >&2
+        exit 1
+    fi
+    if grep -R -n -E '\b(AppDependencies|AppContainer|VpnController|[A-Za-z]+ViewModel)\b' --include=*.kt \
+        "$PROJECT_ROOT"/feature/*/src/main; then
+        echo "Feature modules must not reference ViewModels, VpnController or the dependency containers" >&2
+        exit 1
+    fi
+fi
+
 if grep -R -E 'import android\.util\.Log|\bLog\.[vdiewtf]\(|printStackTrace\(|System\.(out|err)' \
-    "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java"; then
+    "${SCAN_ROOTS[@]}"; then
     echo "Production source must not write credentials or runtime details to Logcat/stdout" >&2
     exit 1
 fi
 if grep -R -E 'addPrimaryClipChangedListener|setPrimaryClip\(' \
-    "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java"; then
+    "${SCAN_ROOTS[@]}"; then
     echo "Application clipboard history/listeners are forbidden; clipboard import is read-on-action only" >&2
     exit 1
 fi
 if grep -R -E 'android\.os\.PowerManager|android\.app\.AlarmManager|androidx\.work|ScheduledExecutorService|scheduleAtFixedRate|scheduleWithFixedDelay' \
-    "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java"; then
+    "${SCAN_ROOTS[@]}"; then
     echo "Production source contains an app-owned wake/alarm/work/periodic scheduler" >&2
     exit 1
 fi
 # The only app-owned scheduler is the platform JobScheduler daily update check (no wakelock, no alarm,
 # no WorkManager, not persisted across reboot because RECEIVE_BOOT_COMPLETED is not requested).
 JOB_SCHEDULER_USERS="$(
-    grep -R -l 'android\.app\.job\.JobScheduler' "$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" || true
+    grep -R -l 'android\.app\.job\.JobScheduler' "${SCAN_ROOTS[@]}" || true
 )"
 if [[ "$JOB_SCHEDULER_USERS" != "$PROJECT_ROOT/app/src/main/java/io/github/zapretkvn/android/updates/UpdateCheckJob.kt" ]]; then
     echo "JobScheduler may only be used by the daily update check (updates/UpdateCheckJob.kt): $JOB_SCHEDULER_USERS" >&2
@@ -154,15 +187,21 @@ import sys
 
 root = Path(sys.argv[1])
 source_root = root / "app/src/main/java"
-for source in source_root.rglob("*.kt"):
-    declaration = next((line for line in source.read_text().splitlines() if line.startswith("package ")), "")
-    expected_package = ".".join(source.relative_to(source_root).parts[:-1])
-    if declaration != "package " + expected_package:
-        raise SystemExit(f"Kotlin package/path mismatch: {source.relative_to(root)}")
+module_roots = [
+    source_root,
+    *sorted(root.glob("core/*/src/main/java")),
+    *sorted(root.glob("feature/*/src/main/java")),
+]
+for module_root in module_roots:
+    for source in module_root.rglob("*.kt"):
+        declaration = next((line for line in source.read_text().splitlines() if line.startswith("package ")), "")
+        expected_package = ".".join(source.relative_to(module_root).parts[:-1])
+        if declaration != "package " + expected_package:
+            raise SystemExit(f"Kotlin package/path mismatch: {source.relative_to(root)}")
 vpn_root = source_root / "io/github/zapretkvn/android/vpn"
 if {path.name for path in vpn_root.glob("*.kt")} != {
     "ZapretVpnService.kt", "ZapretQuickSettingsTileService.kt",
-    "VpnController.kt", "VpnState.kt", "VpnRecoveryPolicy.kt",
+    "VpnController.kt", "VpnRecoveryPolicy.kt",
 }:
     raise SystemExit("Keep VPN lifecycle in vpn/; place adapters, probes and app scope in their packages")
 delays = []
@@ -170,6 +209,8 @@ for source in (
     root / "app/src/main/java",
     root / "app-updater/src/main/java",
     root / "network-bootstrap/src/main/java",
+    *sorted(root.glob("core/*/src/main/java")),
+    *sorted(root.glob("feature/*/src/main/java")),
 ):
     for path in source.rglob("*.kt"):
         count = path.read_text().count("delay(")
@@ -193,11 +234,6 @@ expected = [
     # Пауза после ввода в редакторе JSON перед разбором текста (selectors, серверы,
     # совпадения поиска): один Job на редактор, предыдущий отменяется. Только UI.
     ("app/src/main/java/io/github/zapretkvn/android/profiles/ProfileEditorController.kt", 1),
-    # Видимое время сессии на Главной: тикает, только пока таймер на экране.
-    ("app/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
-    # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка
-    # на экране. Только текст: сетевых запросов и запуска проверок не создаёт.
-    ("app/src/main/java/io/github/zapretkvn/android/ui/home/ServicesCard.kt", 1),
     # Прореживание перерисовки списка серверов (не чаще 4 раз в секунду) во
     # время пачек замеров. Только UI: сетевых запросов и повторов не создаёт.
     ("app/src/main/java/io/github/zapretkvn/android/ui/servers/ServersRoute.kt", 1),
@@ -205,6 +241,11 @@ expected = [
     # сети) плюс ограниченный backoff восстановления. Одновременно активен
     # только один debounce Job; ожидание сети событийное и таймера не добавляет.
     ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/VpnRuntime.kt", 2),
+    # Видимое время сессии на Главной: тикает, только пока таймер на экране.
+    ("feature/home/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
+    # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка
+    # на экране. Только текст: сетевых запросов и запуска проверок не создаёт.
+    ("feature/home/src/main/java/io/github/zapretkvn/android/ui/home/ServicesCard.kt", 1),
     ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/UnderlyingNetworkMonitor.kt", 1),
 ]
 if delays != expected:
@@ -420,7 +461,7 @@ import sys
 root = Path(sys.argv[1])
 surfaces = {
     "README": (root / "docs/README.md").read_text(),
-    "UI": (root / "app/src/main/java/io/github/zapretkvn/android/ui/settings/AboutPage.kt").read_text(),
+    "UI": (root / "feature/settings/src/main/java/io/github/zapretkvn/android/ui/settings/AboutPage.kt").read_text(),
     "release notes generator": (root / "scripts/create-release-bundle.sh").read_text(),
 }
 required = (

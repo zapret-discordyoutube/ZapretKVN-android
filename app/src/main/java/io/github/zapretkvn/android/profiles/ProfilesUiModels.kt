@@ -43,23 +43,6 @@ data class ProfilesUiState(
     val initialized: Boolean = false,
 )
 
-/** Настройки идентификации подписки, редактируемые пользователем. */
-data class SubscriptionIdentityInput(
-    val clientProfile: SubscriptionClientProfile? = null,
-    val sendHwid: Boolean = false,
-    val hwid: String = "",
-)
-
-data class SubscriptionSettingsState(
-    val profileId: String,
-    val profileName: String,
-    val url: String,
-    val clientProfile: SubscriptionClientProfile,
-    val sendHwid: Boolean,
-    val hwid: String,
-    val installationHwid: String,
-)
-
 data class ProfileServerPickerState(
     val profileId: String,
     val profileName: String,
@@ -72,13 +55,6 @@ data class ProfileServerPickerState(
 data class ImportCompletion(
     val profileId: String,
     val profileName: String,
-)
-
-data class SplitRefreshSummary(
-    val updated: Int,
-    val added: Int,
-    val removed: Int,
-    val connectedProfileRemoved: Boolean,
 )
 
 data class SplitRefreshAddition(
@@ -100,36 +76,33 @@ data class SplitRefreshPlan(
     val connectedProfileId: String?,
 )
 
-/** Верхняя граница разложения подписки: дальше список профилей перестаёт быть управляемым. */
-internal const val MAX_SPLIT_PROFILES = 200
-
 data class ImportPreviewState(
-    val suggestedName: String,
-    val sourceDescription: String,
-    val serverCount: Int,
-    val serverLabels: List<String>,
-    val activityWarning: String?,
-    val appendTargets: List<ProfileMetadata>,
-    val importWarnings: List<String> = emptyList(),
+    override val suggestedName: String,
+    override val sourceDescription: String,
+    override val serverCount: Int,
+    override val serverLabels: List<String>,
+    override val activityWarning: String?,
+    override val appendTargets: List<ProfileMetadata>,
+    override val importWarnings: List<String> = emptyList(),
     val refreshProfileId: String? = null,
-    val refreshProfileName: String? = null,
-    val activeRefresh: Boolean = false,
-    val selectionChanged: Boolean = false,
-    val splitRefreshSummary: SplitRefreshSummary? = null,
+    override val refreshProfileName: String? = null,
+    override val activeRefresh: Boolean = false,
+    override val selectionChanged: Boolean = false,
+    override val splitRefreshSummary: SplitRefreshSummary? = null,
     internal val candidate: ImportCandidate,
     internal val preparedJson: String,
     internal val source: SubscriptionSource? = null,
     internal val splitRefreshPlan: SplitRefreshPlan? = null,
-) {
-    val isSingleManaged: Boolean
+) : ImportPreview {
+    override val isSingleManaged: Boolean
         get() = candidate is ImportCandidate.Managed && candidate.servers.size == 1
-    val isRefresh: Boolean get() = refreshProfileId != null
+    override val isRefresh: Boolean get() = refreshProfileId != null
 
     /** Сколько отдельных профилей получится, если разложить подписку по серверам. */
-    val splittableServerCount: Int
+    override val splittableServerCount: Int
         get() = (candidate as? ImportCandidate.Managed)?.servers?.size?.takeIf { it > 1 } ?: 0
 
-    val splitSupported: Boolean get() = splittableServerCount in 2..MAX_SPLIT_PROFILES
+    override val splitSupported: Boolean get() = splittableServerCount in 2..MAX_SPLIT_PROFILES
 
-    val hasSubscriptionUrl: Boolean get() = source != null
+    override val hasSubscriptionUrl: Boolean get() = source != null
 }

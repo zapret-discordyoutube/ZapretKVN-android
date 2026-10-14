@@ -6,8 +6,9 @@ plugins {
 
 apply(plugin = "com.android.library")
 
-// Theme, tokens and shared Compose components. No VPN or profile types here:
-// screens map domain state to plain values before calling these components.
+// Theme, tokens and shared Compose components. Shared widgets may take :core:model value types
+// (flags, preset picker); no ViewModels, stores or VPN runtime:
+// feature screens map domain state to plain values before calling the other components.
 extensions.configure<LibraryExtension> {
     namespace = "io.github.zapretkvn.core.designsystem"
     compileSdk = 36
@@ -33,6 +34,7 @@ dependencies {
     add("api", "androidx.compose.material3:material3")
     add("api", "androidx.compose.material:material-icons-core")
     add("api", "androidx.compose.ui:ui")
+    add("api", project(":core:model"))
     add("api", project(":core:ui-model"))
     // Align transitive lifecycle/savedstate with :app so the module resolves only
     // versions already pinned in gradle/verification-metadata.xml.

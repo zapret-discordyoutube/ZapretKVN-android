@@ -7,11 +7,6 @@ import io.github.zapretkvn.android.ui.apps.AppPickerContent
 import io.github.zapretkvn.android.ui.apps.removeMissing
 import io.github.zapretkvn.android.ui.apps.setSelected
 
-enum class AppPickerMode {
-    VpnScope,
-    Blocked,
-}
-
 /** Точка входа для `AppRoot`; весь экран живёт в пакете `ui.apps`. */
 @Composable
 fun AppPickerScreen(

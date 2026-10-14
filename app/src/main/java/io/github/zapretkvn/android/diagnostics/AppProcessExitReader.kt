@@ -5,17 +5,6 @@ import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 
-data class AppProcessExitRecord(
-    val occurredAtEpochMillis: Long,
-    val reasonCode: Int,
-    val reason: String,
-    val status: Int,
-    val importance: Int,
-    val pssKilobytes: Long,
-    val rssKilobytes: Long,
-    val description: String?,
-)
-
 /** Reads one prior process exit on API 30+ without copying the potentially large ANR trace. */
 object AppProcessExitReader {
     fun read(context: Context): AppProcessExitRecord? {

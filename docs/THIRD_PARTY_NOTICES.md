@@ -145,7 +145,7 @@ APK.
 ## Noto Color Emoji (flags subset)
 
 Flags in server names are drawn with a flags-only subset of Noto Color Emoji
-(`app/src/main/res/font/noto_flags.ttf`), so they look the same on firmware
+(`core/designsystem/src/main/res/font/noto_flags.ttf`), so they look the same on firmware
 whose system emoji font has no flag glyphs.
 
 - Source: <https://github.com/googlefonts/noto-emoji>

@@ -18,15 +18,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class RoutingUiState(
-    val activeProfileId: String? = null,
-    val activeProfileName: String? = null,
-    val inspection: RoutingInspection? = null,
-    val loading: Boolean = false,
-    val message: String? = null,
-    val managedDiff: String? = null,
-)
-
 class RoutingViewModel(
     private val profileStore: ProfileStore,
     private val settingsStore: UiSettingsStore,

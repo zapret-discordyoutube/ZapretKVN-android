@@ -18,7 +18,7 @@ export ZAPRET_DEBUG_VERSION_NAME_SUFFIX=''
 
 cd "$PROJECT_ROOT"
 scripts/verify-project.sh
-./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+./gradlew testDebugUnitTest :app:compileDebugAndroidTestKotlin
 scripts/build-apk-matrix.sh debug "$MATRIX_DIR"
 scripts/create-test-bundle.sh "$TAG" "$MATRIX_DIR" "$OUTPUT_DIR"
 scripts/verify-test-bundle.sh "$TAG" "$OUTPUT_DIR"
