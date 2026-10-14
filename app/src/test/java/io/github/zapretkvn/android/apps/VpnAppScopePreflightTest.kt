@@ -148,6 +148,7 @@ class VpnAppScopePreflightTest {
         assertTrue("com.openai.chatgpt" in packages)
         assertTrue("com.anthropic.claude" in packages)
         assertTrue("com.google.android.apps.bard" in packages)
+        assertTrue("com.google.android.googlequicksearchbox" in packages)
         assertTrue("ai.perplexity.app.android" in packages)
         assertTrue("com.microsoft.copilot" in packages)
         assertTrue("com.deepseek.chat" in packages)
@@ -323,6 +324,45 @@ class VpnAppScopePreflightTest {
                 blockedPackages = setOf("com.example.blocked"),
                 scopeMode = AppScopeMode.Exclude,
             ).needsAppSelection,
+        )
+    }
+
+    @Test
+    fun `Google app joins Gemini by default because the assistant runs inside it`() {
+        val packages = defaultVpnPackages(
+            listOf(
+                installedApp(GEMINI_PACKAGE, system = false, enabled = true, suggestion = "Gemini"),
+                installedApp(
+                    GOOGLE_APP_PACKAGE,
+                    system = true,
+                    enabled = true,
+                    suggestion = PopularAppSuggestions.labelFor(GOOGLE_APP_PACKAGE),
+                ),
+            ),
+        )
+
+        assertEquals(setOf(GEMINI_PACKAGE, GOOGLE_APP_PACKAGE), packages)
+    }
+
+    @Test
+    fun `existing Gemini selection gains the Google app unless the user blocked it`() {
+        assertEquals(
+            setOf(GEMINI_PACKAGE, GOOGLE_APP_PACKAGE, "com.discord"),
+            withGeminiCompanion(
+                allowed = setOf(GEMINI_PACKAGE, "com.discord"),
+                blocked = emptySet(),
+            ),
+        )
+        assertEquals(
+            setOf(GEMINI_PACKAGE),
+            withGeminiCompanion(
+                allowed = setOf(GEMINI_PACKAGE),
+                blocked = setOf(GOOGLE_APP_PACKAGE),
+            ),
+        )
+        assertEquals(
+            setOf("com.discord"),
+            withGeminiCompanion(allowed = setOf("com.discord"), blocked = emptySet()),
         )
     }
 

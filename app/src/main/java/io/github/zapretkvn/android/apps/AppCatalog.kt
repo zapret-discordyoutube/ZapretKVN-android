@@ -233,6 +233,8 @@ object PopularAppSuggestions {
         "com.openai.chatgpt" to "ChatGPT",
         "com.anthropic.claude" to "Claude",
         "com.google.android.apps.bard" to "Gemini",
+        // The Gemini assistant runs inside the Google app, so Gemini needs it in the VPN too.
+        "com.google.android.googlequicksearchbox" to "Google (для Gemini)",
         "ai.perplexity.app.android" to "Perplexity",
         "com.microsoft.copilot" to "Microsoft Copilot",
         "com.deepseek.chat" to "DeepSeek",

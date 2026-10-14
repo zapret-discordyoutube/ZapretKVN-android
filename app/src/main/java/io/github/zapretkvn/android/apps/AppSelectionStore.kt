@@ -73,6 +73,23 @@ class AppSelectionStore(context: Context) {
         }
     }
 
+    /**
+     * The Gemini assistant lives inside the Google app. Users who already routed Gemini
+     * through the VPN get the Google app added once; a later manual choice is kept.
+     */
+    suspend fun migrateGeminiCompanionIfNeeded() {
+        dataStore.edit { preferences ->
+            if (preferences[GEMINI_COMPANION_MIGRATED] == true) return@edit
+            if (preferences[INITIALIZED] == true) {
+                preferences[ALLOWED_PACKAGES] = withGeminiCompanion(
+                    allowed = preferences[ALLOWED_PACKAGES].orEmpty(),
+                    blocked = preferences[BLOCKED_PACKAGES].orEmpty(),
+                )
+            }
+            preferences[GEMINI_COMPANION_MIGRATED] = true
+        }
+    }
+
     suspend fun setAllowed(packageName: String, allowed: Boolean) {
         dataStore.edit { preferences ->
             val packages = normalizePackageNames(
@@ -168,8 +185,19 @@ class AppSelectionStore(context: Context) {
         val BLOCKED_PACKAGES = stringSetPreferencesKey("blocked_packages")
         val INITIALIZED = booleanPreferencesKey("initialized")
         val SCOPE_MODE = stringPreferencesKey("scope_mode")
+        val GEMINI_COMPANION_MIGRATED = booleanPreferencesKey("gemini_companion_migrated")
     }
 }
+
+internal const val GEMINI_PACKAGE = "com.google.android.apps.bard"
+internal const val GOOGLE_APP_PACKAGE = "com.google.android.googlequicksearchbox"
+
+internal fun withGeminiCompanion(allowed: Set<String>, blocked: Set<String>): Set<String> =
+    if (GEMINI_PACKAGE in allowed && GOOGLE_APP_PACKAGE !in blocked) {
+        allowed + GOOGLE_APP_PACKAGE
+    } else {
+        allowed
+    }
 
 internal fun normalizePackageNames(
     packages: Iterable<String>,

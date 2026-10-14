@@ -98,6 +98,7 @@ class AppsViewModel(
                 if (failed) return@launch
                 val installedSuggestedApps = defaultVpnPackages(snapshot.apps)
                 selectionStore.initializeIfNeeded(installedSuggestedApps)
+                selectionStore.migrateGeminiCompanionIfNeeded()
             } catch (failure: CancellationException) {
                 throw failure
             } catch (failure: Exception) {
