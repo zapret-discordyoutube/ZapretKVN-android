@@ -52,6 +52,7 @@ expected_permissions = {
     "android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED",
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION",
     "android.permission.CAMERA",
     "android.permission.QUERY_ALL_PACKAGES",
     "io.github.zapretkvn.android.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
