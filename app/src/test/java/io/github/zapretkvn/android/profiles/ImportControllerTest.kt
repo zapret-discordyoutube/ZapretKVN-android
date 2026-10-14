@@ -1,0 +1,283 @@
+package io.github.zapretkvn.android.profiles
+
+import android.net.Uri
+import io.github.zapretkvn.android.config.ConfigAnalyzer
+import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.importer.SubscriptionFetcher
+import io.github.zapretkvn.android.importer.SubscriptionSource
+import io.github.zapretkvn.android.importer.SubscriptionSourceStore
+import io.github.zapretkvn.android.routing.InstalledRuleSets
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class ImportControllerTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
+    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private val state = MutableStateFlow(ProfilesUiState())
+    private val vpn = FakeVpnPort()
+    private val settings = FakeSettingsPort()
+    private var feed = ""
+    private lateinit var store: ProfileStore
+    private lateinit var sources: SubscriptionSourceStore
+    private lateinit var controller: ImportController
+
+    private val one = vlessLink("one.example", "One", '1')
+    private val two = vlessLink("two.example", "Two", '2')
+
+    @After
+    fun tearDown() {
+        scope.cancel()
+    }
+
+    private fun setUp() = runBlocking {
+        store = ProfileStore(temporaryFolder.newFolder("profiles"), JsonSyntaxValidator, JvmAtomicProfileWriter())
+        store.initialize()
+        sources = SubscriptionSourceStore(temporaryFolder.newFolder("subs"), JvmAtomicProfileWriter())
+        val installed = InstalledRuleSets(
+            1,
+            mapOf("zapret-ru-domains" to "/rs/domains.srs", "zapret-ru-ip" to "/rs/ip.srs"),
+        )
+        val install: suspend () -> InstalledRuleSets = { installed }
+        val operations = ProfilesOperations(state, scope)
+        val service = ImportService(
+            store = store,
+            validator = JsonSyntaxValidator,
+            input = object : ImportInputPort {
+                override suspend fun readDocument(uri: Uri): DocumentContent = error("не используется")
+                override fun readClipboard(): String = feed
+                override suspend fun readQrImage(uri: Uri): String = error("не используется")
+            },
+            subscriptionFetcher = SubscriptionFetcher { feed },
+            subscriptionSourceStore = sources,
+            settings = settings,
+            vpn = vpn,
+            installRuleSets = install,
+        )
+        controller = ImportController(
+            state = state,
+            operations = operations,
+            service = service,
+            committer = ImportCommitter(store, sources, settings, install),
+            splitCommitter = SplitRefreshCommitter(store, sources, {}, ::newProfileId),
+            store = store,
+            vpn = vpn,
+            settings = settings,
+        )
+    }
+
+    private suspend fun idle() {
+        awaitCondition { !state.value.busy }
+    }
+
+    @Test
+    fun `server link in a qr code opens a preview with default routing`() = runBlocking {
+        setUp()
+
+        controller.importQr(one)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+
+        val preview = checkNotNull(state.value.importPreview)
+        assertEquals(1, preview.serverCount)
+        assertTrue(preview.isSingleManaged)
+        assertFalse(preview.isRefresh)
+        assertEquals("QR-код", preview.sourceDescription)
+        assertTrue(preview.preparedJson.contains("zapret-ru-domains"))
+        assertNull(state.value.message)
+    }
+
+    @Test
+    fun `subscription link in a qr code asks for identity instead of previewing`() = runBlocking {
+        setUp()
+
+        controller.importQr("  https://sub.example/list?token=abc  ")
+        awaitCondition { state.value.qrSubscriptionUrl != null }
+
+        assertEquals("https://sub.example/list?token=abc", state.value.qrSubscriptionUrl)
+        assertNull(state.value.importPreview)
+        controller.closeQrSubscription()
+        assertNull(state.value.qrSubscriptionUrl)
+    }
+
+    @Test
+    fun `core rejection of the prepared json is reported and no preview is shown`() = runBlocking {
+        setUp()
+        feed = "{broken"
+
+        controller.importClipboard()
+        awaitCondition { state.value.message != null }
+        idle()
+
+        assertNull(state.value.importPreview)
+        assertFalse(state.value.busy)
+    }
+
+    @Test
+    fun `confirming creates the profile makes it active on first import and closes the preview`() = runBlocking {
+        setUp()
+        controller.importQr(one)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+
+        controller.confirmImport("Мой профиль")
+        awaitCondition { state.value.importCompletion != null }
+        idle()
+
+        val completion = checkNotNull(state.value.importCompletion)
+        assertEquals("Мой профиль", completion.profileName)
+        assertNull(state.value.importPreview)
+        assertEquals(completion.profileId, settings.settings.value.activeProfileId)
+        assertEquals(listOf(DnsMode.Automatic), settings.dnsModes)
+        assertEquals("Профиль сохранён. Подключение не запускалось.", state.value.message)
+        assertEquals(1, store.profiles.value.size)
+        controller.consumeCompletion()
+        assertNull(state.value.importCompletion)
+    }
+
+    @Test
+    fun `second import keeps the active profile`() = runBlocking {
+        setUp()
+        state.value = state.value.copy(settings = state.value.settings.copy(activeProfileId = "existing"))
+        controller.importQr(one)
+        awaitCondition { state.value.importPreview != null }
+        controller.confirmImport("Второй")
+        awaitCondition { state.value.importCompletion != null }
+
+        assertNull(settings.settings.value.activeProfileId)
+        assertTrue(settings.dnsModes.isEmpty())
+    }
+
+    @Test
+    fun `confirm without preview fails with a clear message`() = runBlocking {
+        setUp()
+
+        controller.confirmImport("x")
+        awaitCondition { state.value.message != null }
+
+        assertEquals("Предпросмотр импорта уже закрыт.", state.value.message)
+    }
+
+    @Test
+    fun `subscription is split into one profile per server`() = runBlocking {
+        setUp()
+        feed = "$one\n$two"
+        controller.importUrl("https://sub.example/list")
+        awaitCondition { state.value.importPreview != null }
+        idle()
+        val preview = checkNotNull(state.value.importPreview)
+        assertTrue(preview.splitSupported)
+        assertTrue(preview.hasSubscriptionUrl)
+
+        controller.confirmImportPerServer("Группа")
+        awaitCondition { state.value.importCompletion != null }
+        idle()
+
+        assertEquals(2, store.profiles.value.size)
+        assertEquals("Создано профилей: 2. Подключение не запускалось.", state.value.message)
+        assertEquals(2, state.value.refreshableProfileIds.size)
+        val bindings = store.profiles.value.map { checkNotNull(sources.binding(it.id)) }
+        assertEquals(1, bindings.map { it.splitGroupId }.distinct().size)
+        assertTrue(bindings.all { it.isSplit })
+    }
+
+    @Test
+    fun `single server cannot be split`() = runBlocking {
+        setUp()
+        controller.importQr(one)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+
+        controller.confirmImportPerServer("x")
+        awaitCondition { state.value.message != null }
+
+        assertEquals("Разделять можно только подписку с несколькими серверами.", state.value.message)
+        assertTrue(store.profiles.value.isEmpty())
+    }
+
+    @Test
+    fun `single server is appended to a managed profile`() = runBlocking {
+        setUp()
+        feed = one
+        val base = store.create("База", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Link)
+        state.value = state.value.copy(profiles = store.profiles.value)
+        controller.importQr(two)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+        assertEquals(listOf(base.id), state.value.importPreview?.appendTargets?.map { it.id })
+
+        controller.confirmAppend(base.id)
+        awaitCondition { state.value.importPreview == null }
+        idle()
+
+        assertEquals("Сервер добавлен в База. Работающий VPN не изменён.", state.value.message)
+        assertEquals(2, ConfigAnalyzer.selectorGroups(store.read(base.id).json).single().outbounds.size)
+    }
+
+    @Test
+    fun `manual refresh previews and applies new servers without restarting an idle vpn`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        state.value = state.value.copy(profiles = store.profiles.value)
+        feed = "$one\n$two"
+
+        controller.refreshSubscription(profile.id)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+        val preview = checkNotNull(state.value.importPreview)
+        assertTrue(preview.isRefresh)
+        assertEquals(profile.id, preview.refreshProfileId)
+        assertEquals(2, preview.serverCount)
+
+        controller.confirmRefresh(restartConnected = false)
+        awaitCondition { state.value.importPreview == null }
+        idle()
+
+        assertEquals("Подписка обновлена. Работающий VPN не изменён.", state.value.message)
+        assertEquals(2, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().outbounds.size)
+        assertTrue(vpn.restarts.isEmpty())
+    }
+
+    @Test
+    fun `refresh of a connected profile restarts the vpn only with consent`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        vpn.connected = profile.id
+        feed = "$one\n$two"
+        controller.refreshSubscription(profile.id)
+        awaitCondition { state.value.importPreview != null }
+        assertTrue(checkNotNull(state.value.importPreview).activeRefresh)
+
+        controller.confirmRefresh(restartConnected = true)
+        awaitCondition { vpn.restarts.isNotEmpty() }
+
+        assertEquals(listOf("Подписка обновлена пользователем"), vpn.restarts)
+    }
+
+    @Test
+    fun `refresh without a stored url fails`() = runBlocking {
+        setUp()
+
+        controller.refreshSubscription("missing")
+        awaitCondition { state.value.message != null }
+
+        assertEquals("Для этого профиля не сохранён URL ручного обновления.", state.value.message)
+        assertNotNull(state.value)
+    }
+}

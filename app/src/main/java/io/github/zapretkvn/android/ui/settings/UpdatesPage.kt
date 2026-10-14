@@ -61,7 +61,7 @@ internal fun UpdatesRoute(deps: AppDependencies, padding: PaddingValues) {
         currentVersion = AppInfo.versionName,
         channel = channel,
         ui = ui,
-        onChannelChange = deps.profiles::setUpdateChannel,
+        onChannelChange = deps.profiles.settings::setUpdateChannel,
         onCheck = { deps.updates.check(channel) },
         onDownload = deps.updates::download,
         onInstall = deps.installUpdate,

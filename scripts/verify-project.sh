@@ -185,6 +185,9 @@ expected = [
     # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
     # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/LatencyProbeCoordinator.kt", 1),
+    # Пауза после ввода в редакторе JSON перед разбором текста (selectors, серверы,
+    # совпадения поиска): один Job на редактор, предыдущий отменяется. Только UI.
+    ("app/src/main/java/io/github/zapretkvn/android/profiles/ProfileEditorController.kt", 1),
     # Видимое время сессии на Главной: тикает, только пока таймер на экране.
     ("app/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
     # Прореживание перерисовки списка серверов (не чаще 4 раз в секунду) во

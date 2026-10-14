@@ -34,10 +34,10 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
         ui = ui,
         contentPadding = padding,
         onOpenPage = { page -> nav.openSettingsPage(page.id) },
-        onThemeSelected = deps.profiles::setTheme,
-        onSlowServerSwitchChange = deps.profiles::setSlowServerSwitch,
-        onHideServerAddressesChange = deps.profiles::setHideServerAddresses,
-        onDynamicColorChange = deps.profiles::setDynamicColor,
+        onThemeSelected = deps.profiles.settings::setTheme,
+        onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
+        onHideServerAddressesChange = deps.profiles.settings::setHideServerAddresses,
+        onDynamicColorChange = deps.profiles.settings::setDynamicColor,
     )
 }
 

@@ -77,7 +77,7 @@ internal fun AutomationRoute(deps: AppDependencies, padding: PaddingValues) {
             wifiMessage = if (ssid == null) {
                 WifiMessage.nameUnavailable()
             } else {
-                deps.profiles.addTrustedWifi(ssid)
+                deps.profiles.settings.addTrustedWifi(ssid)
                 WifiMessage.added(ssid)
             }
             readingCurrentWifi = false
@@ -98,9 +98,9 @@ internal fun AutomationRoute(deps: AppDependencies, padding: PaddingValues) {
         settings = settings.networkAutomation,
         readingCurrentWifi = readingCurrentWifi,
         wifiMessage = wifiMessage,
-        onEnabledChange = deps.profiles::setNetworkAutomationEnabled,
-        onTransportChange = deps.profiles::setUseVpnOnNetwork,
-        onPauseOnTrustedChange = deps.profiles::setPauseOnTrustedWifi,
+        onEnabledChange = deps.profiles.settings::setNetworkAutomationEnabled,
+        onTransportChange = deps.profiles.settings::setUseVpnOnNetwork,
+        onPauseOnTrustedChange = deps.profiles.settings::setPauseOnTrustedWifi,
         onAddCurrentWifi = {
             if (locationPermissionGranted) {
                 addCurrentWifi()
@@ -113,8 +113,8 @@ internal fun AutomationRoute(deps: AppDependencies, padding: PaddingValues) {
                 )
             }
         },
-        onAddWifi = deps.profiles::addTrustedWifi,
-        onRemoveWifi = deps.profiles::removeTrustedWifi,
+        onAddWifi = deps.profiles.settings::addTrustedWifi,
+        onRemoveWifi = deps.profiles.settings::removeTrustedWifi,
     )
 }
 

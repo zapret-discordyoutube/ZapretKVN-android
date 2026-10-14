@@ -45,10 +45,10 @@ internal fun DnsRoute(deps: AppDependencies, padding: PaddingValues) {
         ipv4Only = settings.proxyIpv4Only,
         dnsOverride = settings.dnsOverride,
         cacheClearRequested = cacheClearRequested,
-        onDnsModeChange = deps.profiles::setDnsMode,
-        onIpv4OnlyChange = deps.profiles::setProxyIpv4Only,
-        onOverrideEnabledChange = deps.profiles::setDnsOverrideEnabled,
-        onOverrideSave = deps.profiles::setDnsOverride,
+        onDnsModeChange = deps.profiles.settings::setDnsMode,
+        onIpv4OnlyChange = deps.profiles.settings::setProxyIpv4Only,
+        onOverrideEnabledChange = deps.profiles.settings::setDnsOverrideEnabled,
+        onOverrideSave = deps.profiles.settings::setDnsOverride,
         onClearCache = {
             cacheClearRequested = true
             deps.vpn.clearDnsCache()

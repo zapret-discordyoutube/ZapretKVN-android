@@ -31,9 +31,9 @@ internal fun HidingRoute(deps: AppDependencies, padding: PaddingValues) {
     HidingScreen(
         contentPadding = padding,
         options = settings.vpnHiding,
-        onBlockLocalEndpointsChange = deps.profiles::setVpnHidingBlockLocalEndpoints,
-        onNeutralSessionNameChange = deps.profiles::setVpnHidingNeutralSessionName,
-        onMtuModeChange = deps.profiles::setVpnHidingTunMtuMode,
+        onBlockLocalEndpointsChange = deps.profiles.settings::setVpnHidingBlockLocalEndpoints,
+        onNeutralSessionNameChange = deps.profiles.settings::setVpnHidingNeutralSessionName,
+        onMtuModeChange = deps.profiles.settings::setVpnHidingTunMtuMode,
     )
 }
 

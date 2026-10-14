@@ -39,7 +39,7 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
                     subtitle = "Только вид редактора; профиль не меняется.",
                     icon = ZapretIcons.Code,
                     checked = settings.rawEditorLineWrap,
-                    onCheckedChange = deps.profiles::setRawEditorLineWrap,
+                    onCheckedChange = deps.profiles.settings::setRawEditorLineWrap,
                     switchDescription = "Перенос строк в редакторе JSON",
                 )
             }
