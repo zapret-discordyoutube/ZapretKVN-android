@@ -100,6 +100,7 @@ class ZapretVpnService : VpnService() {
                 profileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty(),
                 groupTag = intent.getStringExtra(EXTRA_GROUP_TAG).orEmpty(),
                 startId = startId,
+                stop = intent.getBooleanExtra(EXTRA_STOP_PING, false),
             )
             ACTION_STOP -> runtime.stop(startId, null)
             ACTION_RESUME -> runtime.resume(startId)
@@ -206,6 +207,7 @@ class ZapretVpnService : VpnService() {
         private const val ACTION_RESTART = "io.github.zapretkvn.android.vpn.RESTART"
         private const val ACTION_CLEAR_DNS_CACHE = "io.github.zapretkvn.android.vpn.CLEAR_DNS_CACHE"
         private const val ACTION_PING_GROUP = "io.github.zapretkvn.android.vpn.PING_GROUP"
+        private const val EXTRA_STOP_PING = "stop_ping"
         private const val EXTRA_PROFILE_ID = "profile_id"
         private const val EXTRA_GROUP_TAG = "group_tag"
         private const val EXTRA_OUTBOUND_TAG = "outbound_tag"
@@ -248,10 +250,16 @@ class ZapretVpnService : VpnService() {
         fun clearDnsCacheIntent(context: Context): Intent =
             Intent(context, ZapretVpnService::class.java).setAction(ACTION_CLEAR_DNS_CACHE)
 
-        fun pingGroupIntent(context: Context, profileId: String, groupTag: String): Intent =
+        fun pingGroupIntent(
+            context: Context,
+            profileId: String,
+            groupTag: String,
+            stop: Boolean = false,
+        ): Intent =
             Intent(context, ZapretVpnService::class.java)
                 .setAction(ACTION_PING_GROUP)
                 .putExtra(EXTRA_PROFILE_ID, profileId)
                 .putExtra(EXTRA_GROUP_TAG, groupTag)
+                .putExtra(EXTRA_STOP_PING, stop)
     }
 }

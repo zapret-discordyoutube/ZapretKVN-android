@@ -134,7 +134,9 @@ internal class CoreSession(
 
     val isClosing: Boolean get() = closing.get()
 
-    fun toggleLatencyProbe(group: RuntimeSelectorGroup) = latencyProbeCoordinator.toggle(group)
+    fun startLatencyProbe(group: RuntimeSelectorGroup) = latencyProbeCoordinator.start(group)
+
+    fun stopLatencyProbe() = latencyProbeCoordinator.stop()
 
     /**
      * Группы от ядра: запоминается фактический выбор, а сохранённый пинг

@@ -135,6 +135,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
         ServersScreenActions(
             onSelect = select,
             onMeasure = deps.vpn::measureGroup,
+            onStopMeasure = deps.vpn::stopMeasuring,
             onOpenProfiles = nav.openProfiles,
             onOpenEditor = deps.profiles::openEditor,
         )

@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +50,7 @@ import io.github.zapretkvn.core.designsystem.ZapretIcons
 internal class ServerListActions(
     val onSelect: (groupTag: String, serverTag: String) -> Unit,
     val onMeasure: ((groupTag: String) -> Unit)? = null,
+    val onStopMeasure: ((groupTag: String) -> Unit)? = null,
     val onToggleGroup: (groupTag: String) -> Unit = {},
     val onToggleSection: (sectionKey: String, expand: Boolean) -> Unit = { _, _ -> },
     val onChangeProfile: (() -> Unit)? = null,
@@ -208,10 +210,18 @@ private fun GroupCard(item: ServerListItem.Group, actions: ServerListActions) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.m),
             ) {
-                FilledTonalButton(
-                    onClick = { measure(group.tag) },
-                    enabled = group.live && !group.measuring,
-                ) { Text(if (group.measuring) "Проверяем…" else "Проверить все") }
+                val stop = actions.onStopMeasure
+                if (group.measuring && stop != null) {
+                    OutlinedButton(
+                        onClick = { stop(group.tag) },
+                        modifier = Modifier.testTag("servers-measure-stop"),
+                    ) { Text("Остановить") }
+                } else {
+                    FilledTonalButton(
+                        onClick = { measure(group.tag) },
+                        enabled = group.live && !group.measuring,
+                    ) { Text(if (group.measuring) "Проверяем…" else "Проверить все") }
+                }
                 Text(
                     group.probeLine,
                     style = MaterialTheme.typography.bodySmall,

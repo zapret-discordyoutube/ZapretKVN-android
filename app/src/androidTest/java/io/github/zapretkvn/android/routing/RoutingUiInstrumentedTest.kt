@@ -156,7 +156,7 @@ class RoutingUiInstrumentedTest {
 
     @Test
     fun excludeModeShowsWarningAndPersistsAdvancedScope() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNode(hasText("Маршруты") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Все кроме").performClick()
         composeRule.waitUntil(10_000) {
             runBlocking { container.appSelectionStore.selection.first().mode == AppScopeMode.Exclude }
@@ -275,7 +275,7 @@ class RoutingUiInstrumentedTest {
     }
 
     private fun openRoutingTrafficCard() {
-        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNode(hasText("Маршруты") and hasClickAction()).performClick()
         composeRule.waitUntil(10_000) {
             runCatching { composeRule.onNodeWithTag("routing-list").fetchSemanticsNode() }.isSuccess
         }

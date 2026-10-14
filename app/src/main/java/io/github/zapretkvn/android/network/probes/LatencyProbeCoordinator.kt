@@ -53,13 +53,9 @@ internal class LatencyProbeCoordinator(
     private val closed = AtomicBoolean(false)
     private var active: ActiveProbe? = null
 
-    fun toggle(group: RuntimeSelectorGroup) {
-        val previous = synchronized(lock) { active }
-        if (previous != null) {
-            cancel(previous, stale = false)
-            controller.publishMessage(generation, "Проверка задержек отменена.")
-            return
-        }
+    /** Запускает проверку группы; повторный запуск во время проверки ничего не делает. */
+    fun start(group: RuntimeSelectorGroup) {
+        if (synchronized(lock) { active } != null) return
         if (closed.get() || group.items.isEmpty()) return
         val underlying = networkMonitor.current
         val network = underlying.network
@@ -101,6 +97,13 @@ internal class LatencyProbeCoordinator(
             job.cancel()
             controller.cancelLatencyProbe(generation, requestId, group.tag, networkIdentity)
         }
+    }
+
+    /** Останавливает идущую проверку; уже полученные задержки остаются на месте. */
+    fun stop() {
+        val previous = synchronized(lock) { active } ?: return
+        cancel(previous, stale = false)
+        controller.publishMessage(generation, "Проверка задержек остановлена.")
     }
 
     fun onNetworkChanged() {

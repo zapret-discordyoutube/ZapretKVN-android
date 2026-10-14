@@ -157,6 +157,16 @@ class VpnController(
         )
     }
 
+    /** Останавливает массовую проверку группы; сервис не будится, если VPN не подключён. */
+    fun stopMeasuring(groupTag: String) {
+        val connected = mutableState.value as? VpnConnectionState.Connected ?: return
+        if (groupTag.isBlank()) return
+        ContextCompat.startForegroundService(
+            context,
+            ZapretVpnService.pingGroupIntent(context, connected.profileId, groupTag, stop = true),
+        )
+    }
+
     fun setHomeVisible(visible: Boolean) {
         mutableHomeVisible.value = visible
         if (!visible) {

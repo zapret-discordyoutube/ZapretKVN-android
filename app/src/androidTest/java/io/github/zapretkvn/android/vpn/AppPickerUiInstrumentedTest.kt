@@ -2,6 +2,8 @@ package io.github.zapretkvn.android.vpn
 
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -50,7 +52,7 @@ class AppPickerUiInstrumentedTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runBlocking { container.appSelectionStore.selection.first().initialized }
         }
-        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNode(hasText("Маршруты") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Выбрать приложения").performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag("app-search").fetchSemanticsNodes().isNotEmpty()
@@ -107,9 +109,9 @@ class AppPickerUiInstrumentedTest {
         composeRule.waitUntil(timeoutMillis = 20_000) {
             runBlocking { container.appSelectionStore.selection.first().initialized }
         }
-        composeRule.onNodeWithText("Маршруты").performClick()
+        composeRule.onNode(hasText("Маршруты") and hasClickAction()).performClick()
         composeRule.onNodeWithText("Блокировка приложений: список пуст").assertExists()
-        composeRule.onNodeWithText("Блокировать приложения").performClick()
+        composeRule.onNodeWithText("Выбрать приложения").performClick()
         composeRule.waitUntil(timeoutMillis = 20_000) {
             composeRule.onAllNodesWithTag("app-search").fetchSemanticsNodes().isNotEmpty()
         }

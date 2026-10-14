@@ -53,6 +53,7 @@ import io.github.zapretkvn.core.designsystem.ZapretTopBar
 internal class ServersScreenActions(
     val onSelect: (groupTag: String, serverTag: String) -> Unit,
     val onMeasure: (groupTag: String) -> Unit,
+    val onStopMeasure: (groupTag: String) -> Unit,
     val onOpenProfiles: () -> Unit,
     val onOpenEditor: (profileId: String) -> Unit,
 )
@@ -271,6 +272,7 @@ private fun ServersBody(
         ServerListActions(
             onSelect = actions.onSelect,
             onMeasure = actions.onMeasure,
+            onStopMeasure = actions.onStopMeasure,
             onToggleGroup = { tag -> toggled = if (tag in toggled) toggled - tag else toggled + tag },
             onToggleSection = { key, expand -> sections = sections.with(key, expand) },
             onChangeProfile = actions.onOpenProfiles,
