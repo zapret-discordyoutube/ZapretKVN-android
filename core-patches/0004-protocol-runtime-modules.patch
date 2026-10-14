@@ -984,10 +984,10 @@ index fca1995c..00000000
 -}
 diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
 new file mode 100644
-index 00000000..7972cd44
+index 00000000..58dc3d74
 --- /dev/null
 +++ b/protocol/xraycore/config.go
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,288 @@
 +package xraycore
 +
 +import (
@@ -999,6 +999,7 @@ index 00000000..7972cd44
 +	"strings"
 +
 +	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/common/json/badoption"
 +)
 +
 +type object = map[string]any
@@ -1163,6 +1164,26 @@ index 00000000..7972cd44
 +	return vlessOutbound(u.Hostname(), port, user, stream), nil
 +}
 +
++// xrayHeaders converts sing-box transport headers (name -> list of values) to
++// Xray's shape. Xray reads headers as map[string]string and takes the virtual
++// host from the separate "host" field: "Host" inside ws headers is deprecated
++// and for httpupgrade it is rejected. So the Host header is returned apart
++// (first value), and every other header is returned with its values joined by
++// ", ", the RFC 9110 combined form that is equivalent to repeated header lines.
++// Header names are canonicalized, as sing-box does itself when it builds them.
++func xrayHeaders(source badoption.HTTPHeader) (host string, headers map[string]string) {
++	built := source.Build()
++	host = built.Get("Host")
++	headers = make(map[string]string, len(built))
++	for name, values := range built {
++		if strings.EqualFold(name, "Host") || len(values) == 0 {
++			continue
++		}
++		headers[name] = strings.Join(values, ", ")
++	}
++	return host, headers
++}
++
 +// Existing saved JSON is migrated at the adapter boundary. New imports retain
 +// the original URI and never take this compatibility path.
 +func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
@@ -1202,9 +1223,27 @@ index 00000000..7972cd44
 +		var settings object
 +		switch t.Type {
 +		case "ws":
-+			settings = object{"path": t.WebsocketOptions.Path, "headers": t.WebsocketOptions.Headers.Build()}
++			host, headers := xrayHeaders(t.WebsocketOptions.Headers)
++			settings = object{"path": t.WebsocketOptions.Path}
++			if host != "" {
++				settings["host"] = host
++			}
++			if len(headers) > 0 {
++				settings["headers"] = headers
++			}
 +		case "httpupgrade":
-+			settings = object{"path": t.HTTPUpgradeOptions.Path, "host": t.HTTPUpgradeOptions.Host}
++			// sing-box sends the Host field, not a Host header, so the field wins.
++			host, headers := xrayHeaders(t.HTTPUpgradeOptions.Headers)
++			if t.HTTPUpgradeOptions.Host != "" {
++				host = t.HTTPUpgradeOptions.Host
++			}
++			settings = object{"path": t.HTTPUpgradeOptions.Path}
++			if host != "" {
++				settings["host"] = host
++			}
++			if len(headers) > 0 {
++				settings["headers"] = headers
++			}
 +		case "grpc":
 +			settings = object{"serviceName": t.GRPCOptions.ServiceName}
 +		case "xhttp":
@@ -1236,6 +1275,198 @@ index 00000000..7972cd44
 +		stream[t.Type+"Settings"] = settings
 +	}
 +	return vlessOutbound(o.Server, int(o.ServerPort), user, stream), nil
++}
+diff --git a/protocol/xraycore/config_test.go b/protocol/xraycore/config_test.go
+new file mode 100644
+index 00000000..c851ba6f
+--- /dev/null
++++ b/protocol/xraycore/config_test.go
+@@ -0,0 +1,186 @@
++package xraycore
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"reflect"
++	"testing"
++
++	"github.com/sagernet/sing-box/option"
++	singjson "github.com/sagernet/sing/common/json"
++	"github.com/xtls/xray-core/app/proxyman"
++	"github.com/xtls/xray-core/core"
++	"github.com/xtls/xray-core/infra/conf/serial"
++	"github.com/xtls/xray-core/transport/internet/grpc"
++	"github.com/xtls/xray-core/transport/internet/httpupgrade"
++	"github.com/xtls/xray-core/transport/internet/splithttp"
++	"github.com/xtls/xray-core/transport/internet/websocket"
++)
++
++// legacyOptions parses a raw sing-box VLESS outbound exactly as a saved profile
++// without the original link reaches the adapter.
++func legacyOptions(t *testing.T, text string) option.VLESSOutboundOptions {
++	t.Helper()
++	var options option.VLESSOutboundOptions
++	if err := singjson.UnmarshalContext(context.Background(), []byte(text), &options); err != nil {
++		t.Fatal(err)
++	}
++	return options
++}
++
++// xrayStream runs the generated document through the same Xray parser and
++// builder as NewOutbound and returns the typed transport settings.
++func xrayStream(t *testing.T, options option.VLESSOutboundOptions) (map[string]any, *core.Config, *proxyman.SenderConfig) {
++	t.Helper()
++	data, err := buildConfig(options, "test-dialer")
++	if err != nil {
++		t.Fatal(err)
++	}
++	var document struct {
++		Outbounds []struct {
++			StreamSettings map[string]any `json:"streamSettings"`
++		} `json:"outbounds"`
++	}
++	if err = json.Unmarshal(data, &document); err != nil {
++		t.Fatal(err)
++	}
++	parsed, err := serial.DecodeJSONConfig(bytes.NewReader(data))
++	if err != nil {
++		t.Fatalf("Xray rejected the generated config: %v\n%s", err, data)
++	}
++	config, err := parsed.Build()
++	if err != nil {
++		t.Fatalf("Xray could not build the generated config: %v\n%s", err, data)
++	}
++	instance, err := config.Outbound[0].SenderSettings.GetInstance()
++	if err != nil {
++		t.Fatal(err)
++	}
++	sender, ok := instance.(*proxyman.SenderConfig)
++	if !ok {
++		t.Fatalf("unexpected sender settings %T", instance)
++	}
++	return document.Outbounds[0].StreamSettings, config, sender
++}
++
++func transportSettings(t *testing.T, sender *proxyman.SenderConfig, protocol string) any {
++	t.Helper()
++	for _, settings := range sender.StreamSettings.TransportSettings {
++		if settings.ProtocolName == protocol {
++			instance, err := settings.Settings.GetInstance()
++			if err != nil {
++				t.Fatal(err)
++			}
++			return instance
++		}
++	}
++	t.Fatalf("no %s transport in the Xray config", protocol)
++	return nil
++}
++
++const legacyVLESS = `{"type":"vless","server":"example.net","server_port":443,"uuid":"b831381d-6324-4d53-ad4f-8cda48b30811",`
++
++func TestLegacyWebSocketHeadersUseXrayShape(t *testing.T) {
++	options := legacyOptions(t, legacyVLESS+`
++		"tls":{"enabled":true,"server_name":"front.example.net","alpn":["h2","http/1.1"],"utls":{"enabled":true,"fingerprint":"chrome"}},
++		"transport":{"type":"ws","path":"/ws","headers":{"Host":"cdn.example.com","User-Agent":"UA/1","X-Multi":["a","b"]}}}`)
++	stream, _, sender := xrayStream(t, options)
++	settings := stream["wsSettings"].(map[string]any)
++	if settings["host"] != "cdn.example.com" {
++		t.Fatalf("Host header did not become the Xray host: %v", settings)
++	}
++	want := map[string]any{"User-Agent": "UA/1", "X-Multi": "a, b"}
++	if !reflect.DeepEqual(settings["headers"], want) {
++		t.Fatalf("headers = %v, want %v", settings["headers"], want)
++	}
++	ws := transportSettings(t, sender, "websocket").(*websocket.Config)
++	if ws.Host != "cdn.example.com" || ws.Path != "/ws" {
++		t.Fatalf("Xray websocket host/path: %q %q", ws.Host, ws.Path)
++	}
++	if !reflect.DeepEqual(ws.Header, map[string]string{"User-Agent": "UA/1", "X-Multi": "a, b"}) {
++		t.Fatalf("Xray websocket headers: %v", ws.Header)
++	}
++}
++
++func TestLegacyWebSocketHostOnlyAndNoHeaders(t *testing.T) {
++	stream, _, sender := xrayStream(t, legacyOptions(t, legacyVLESS+`"transport":{"type":"ws","path":"/","headers":{"host":"cdn.example.com"}}}`))
++	settings := stream["wsSettings"].(map[string]any)
++	if _, present := settings["headers"]; present || settings["host"] != "cdn.example.com" {
++		t.Fatalf("host-only headers: %v", settings)
++	}
++	if ws := transportSettings(t, sender, "websocket").(*websocket.Config); ws.Host != "cdn.example.com" || len(ws.Header) != 0 {
++		t.Fatalf("Xray websocket: %q %v", ws.Host, ws.Header)
++	}
++	stream, _, _ = xrayStream(t, legacyOptions(t, legacyVLESS+`"transport":{"type":"ws","path":"/ws"}}`))
++	settings = stream["wsSettings"].(map[string]any)
++	if _, present := settings["headers"]; present {
++		t.Fatalf("empty headers must be omitted: %v", settings)
++	}
++	if _, present := settings["host"]; present {
++		t.Fatalf("empty host must be omitted: %v", settings)
++	}
++}
++
++func TestLegacyHTTPUpgradeHostAndHeadersUseXrayShape(t *testing.T) {
++	options := legacyOptions(t, legacyVLESS+`
++		"transport":{"type":"httpupgrade","host":"cdn.example.com","path":"/up","headers":{"Host":"ignored.example.com","X-Multi":["a","b"],"User-Agent":"UA/1"}}}`)
++	stream, _, sender := xrayStream(t, options)
++	settings := stream["httpupgradeSettings"].(map[string]any)
++	if settings["host"] != "cdn.example.com" {
++		t.Fatalf("the Host field must win over a Host header: %v", settings)
++	}
++	hu := transportSettings(t, sender, "httpupgrade").(*httpupgrade.Config)
++	if hu.Host != "cdn.example.com" || hu.Path != "/up" {
++		t.Fatalf("Xray httpupgrade host/path: %q %q", hu.Host, hu.Path)
++	}
++	if !reflect.DeepEqual(hu.Header, map[string]string{"User-Agent": "UA/1", "X-Multi": "a, b"}) {
++		t.Fatalf("Xray httpupgrade headers: %v", hu.Header)
++	}
++
++	// Without the Host field, Xray (which rejects Host in headers) gets the header value as host.
++	stream, _, sender = xrayStream(t, legacyOptions(t, legacyVLESS+`"transport":{"type":"httpupgrade","path":"/up","headers":{"Host":"cdn2.example.com"}}}`))
++	if stream["httpupgradeSettings"].(map[string]any)["host"] != "cdn2.example.com" {
++		t.Fatalf("Host header fallback: %v", stream["httpupgradeSettings"])
++	}
++	if hu = transportSettings(t, sender, "httpupgrade").(*httpupgrade.Config); hu.Host != "cdn2.example.com" || len(hu.Header) != 0 {
++		t.Fatalf("Xray httpupgrade: %q %v", hu.Host, hu.Header)
++	}
++}
++
++func TestLegacyGRPCAndXHTTPAreAcceptedByXray(t *testing.T) {
++	_, _, sender := xrayStream(t, legacyOptions(t, legacyVLESS+`"transport":{"type":"grpc","service_name":"svc"}}`))
++	if g := transportSettings(t, sender, "grpc").(*grpc.Config); g.ServiceName != "svc" {
++		t.Fatalf("Xray grpc service: %q", g.ServiceName)
++	}
++	_, _, sender = xrayStream(t, legacyOptions(t, legacyVLESS+`
++		"transport":{"type":"xhttp","host":"cdn.example.com","path":"/x","headers":{"X-Foo":"bar"},"x_padding_bytes":"100-1000"}}`))
++	sh := transportSettings(t, sender, "splithttp").(*splithttp.Config)
++	if sh.Host != "cdn.example.com" || sh.Path != "/x" || sh.Headers["X-Foo"] != "bar" {
++		t.Fatalf("Xray xhttp: %q %q %v", sh.Host, sh.Path, sh.Headers)
++	}
++}
++
++// Imports keep the original link, which is already Xray-native: its output
++// must not change with the legacy header conversion.
++func TestURITransportsKeepTheirShape(t *testing.T) {
++	const id = "b831381d-6324-4d53-ad4f-8cda48b30811"
++	cases := map[string]struct {
++		key  string
++		want map[string]any
++	}{
++		"ws":          {"wsSettings", map[string]any{"path": "/ws", "headers": map[string]any{"Host": "cdn.example.com"}}},
++		"httpupgrade": {"httpupgradeSettings", map[string]any{"path": "/ws", "host": "cdn.example.com"}},
++	}
++	for network, want := range cases {
++		options := option.VLESSOutboundOptions{URI: "vless://" + id + "@example.net:443?type=" + network + "&security=none&path=/ws&host=cdn.example.com"}
++		stream, _, _ := xrayStream(t, options)
++		if !reflect.DeepEqual(stream[want.key], want.want) {
++			t.Fatalf("%s URI settings = %v, want %v", network, stream[want.key], want.want)
++		}
++	}
++	_, _, sender := xrayStream(t, option.VLESSOutboundOptions{URI: "vless://" + id + "@example.net:443?type=ws&security=none&path=/ws&host=cdn.example.com"})
++	if ws := transportSettings(t, sender, "websocket").(*websocket.Config); ws.Host != "cdn.example.com" {
++		t.Fatalf("Xray websocket host from URI: %q", ws.Host)
++	}
 +}
 diff --git a/protocol/xraycore/logger.patch b/protocol/xraycore/logger.patch
 new file mode 100644
