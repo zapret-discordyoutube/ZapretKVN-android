@@ -113,12 +113,16 @@ class MainActivity : ComponentActivity() {
             createDiagnosticShare = { container.diagnosticExporter.createShareIntent() },
         )
         observeUpdates()
-        val initialThemeMode = profilesViewModel.state.value.settings.themeMode
+        val initialSettings = profilesViewModel.state.value.settings
+        val initialAppearance = initialSettings.themeMode to initialSettings.dynamicColor
         setContent {
-            // Корень читает только тему: остальное собирают сами экраны.
-            val themeMode by remember {
-                profilesViewModel.state.map { it.settings.themeMode }.distinctUntilChanged()
-            }.collectAsStateWithLifecycle(initialValue = initialThemeMode)
+            // Корень читает только оформление: остальное собирают сами экраны.
+            val appearance by remember {
+                profilesViewModel.state
+                    .map { it.settings.themeMode to it.settings.dynamicColor }
+                    .distinctUntilChanged()
+            }.collectAsStateWithLifecycle(initialValue = initialAppearance)
+            val (themeMode, dynamicColor) = appearance
             val systemDark = isSystemInDarkTheme()
             val darkTheme = when (themeMode) {
                 ThemeMode.System -> systemDark
@@ -135,7 +139,11 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = systemBarStyle, navigationBarStyle = systemBarStyle)
                 onDispose {}
             }
-            ZapretTheme(darkTheme = darkTheme, amoledTheme = themeMode == ThemeMode.Amoled) {
+            ZapretTheme(
+                darkTheme = darkTheme,
+                amoledTheme = themeMode == ThemeMode.Amoled,
+                dynamicColor = dynamicColor,
+            ) {
                 ZapretRoot(dependencies)
             }
         }

@@ -135,18 +135,7 @@ private fun ProfileCard(card: ProfileCardUi, busy: Boolean, actions: ProfileActi
                 card.counts?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
-                card.flags?.let { flags ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalAlignment = Alignment.CenterVertically) {
-                        Text(flags, style = MaterialTheme.typography.bodyMedium)
-                        if (card.extraFlags > 0) {
-                            Text(
-                                "+${card.extraFlags}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
+                card.flags?.let { flags -> FlagStrip(flags, card.extraFlags, size = FlagSmall) }
                 Text(
                     card.meta,
                     style = MaterialTheme.typography.bodySmall,

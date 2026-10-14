@@ -37,6 +37,7 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
         onThemeSelected = deps.profiles::setTheme,
         onSlowServerSwitchChange = deps.profiles::setSlowServerSwitch,
         onHideServerAddressesChange = deps.profiles::setHideServerAddresses,
+        onDynamicColorChange = deps.profiles::setDynamicColor,
     )
 }
 

@@ -743,6 +743,10 @@ class ProfilesViewModel(
         settingsStore.setThemeMode(mode)
     }
 
+    fun setDynamicColor(enabled: Boolean) = operation(markBusy = false) {
+        settingsStore.setDynamicColor(enabled)
+    }
+
     fun setRawEditorLineWrap(enabled: Boolean) = operation(markBusy = false) {
         settingsStore.setRawEditorLineWrap(enabled)
     }

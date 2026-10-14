@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.ui.servers
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,9 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -24,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -34,15 +36,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.core.designsystem.Monogram
 import io.github.zapretkvn.core.designsystem.Spacing
-import io.github.zapretkvn.core.designsystem.ToneBadge
 import io.github.zapretkvn.core.designsystem.ZapretIcons
 import io.github.zapretkvn.core.designsystem.toneColor
 
 /**
  * Одна строка сервера на все места: вкладка «Серверы», быстрый выбор на Главной.
  *
- * Название переносится (до трёх строк, без «…»), протокол — бейдж, адрес маскируется
- * заранее (в [ServerRowUi.endpoint]). Выбранный сервер: тональный фон и галочка на флаге.
+ * Компактная: флаг 28 dp, название (переносится, без «…»), под ним мелко протокол
+ * (и адрес, только если пользователь отключил скрытие адресов), справа задержка:
+ * число и маленькое слово цветом тона. Высота одиночной строки ~56 dp.
+ * Выбранный сервер: тональный фон и галочка на флаге.
  * [onClick] == null — строка справочная (группа выбирается автоматически).
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -53,15 +56,7 @@ internal fun ServerRow(
     onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
-    val shape = MaterialTheme.shapes.large.let {
-        val zero = CornerSize(0.dp)
-        when (position) {
-            RowPosition.Only -> it
-            RowPosition.First -> it.copy(bottomStart = zero, bottomEnd = zero)
-            RowPosition.Middle -> it.copy(topStart = zero, topEnd = zero, bottomStart = zero, bottomEnd = zero)
-            RowPosition.Last -> it.copy(topStart = zero, topEnd = zero)
-        }
-    }
+    val shape = cardShape(position)
     val container = if (row.selected) {
         MaterialTheme.colorScheme.secondaryContainer
     } else {
@@ -89,16 +84,13 @@ internal fun ServerRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 72.dp)
-                .padding(horizontal = Spacing.l, vertical = Spacing.m),
+                .heightIn(min = ROW_MIN_HEIGHT)
+                .padding(horizontal = Spacing.l, vertical = Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
             Leading(row)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-            ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     row.title,
                     style = MaterialTheme.typography.titleSmall,
@@ -107,44 +99,61 @@ internal fun ServerRow(
                 )
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.s),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                     itemVerticalAlignment = Alignment.CenterVertically,
                 ) {
-                    ProtocolChip(row.protocol)
+                    Text(
+                        row.protocol,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     row.endpoint?.let {
                         Text(
                             it,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    row.badge?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    if (wide) LatencyInline(row.latency)
                 }
-                row.badge?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                if (wide) LatencyBlock(row.latency, Alignment.Start)
             }
-            if (!wide) LatencyBlock(row.latency, Alignment.End, Modifier.widthIn(max = 132.dp))
+            if (!wide) LatencyBlock(row.latency)
         }
         if (position == RowPosition.First || position == RowPosition.Middle) RowDivider()
     }
 }
 
 private const val WIDE_FONT_SCALE = 1.5f
+private val ROW_MIN_HEIGHT = 56.dp
+
+/** Скругления карточки по положению строки; соседние строки склеиваются в одну карточку. */
+@Composable
+internal fun cardShape(position: RowPosition): CornerBasedShape {
+    val base = MaterialTheme.shapes.large
+    val zero = CornerSize(0.dp)
+    return when (position) {
+        RowPosition.Only -> base
+        RowPosition.First -> base.copy(bottomStart = zero, bottomEnd = zero)
+        RowPosition.Middle -> base.copy(topStart = zero, topEnd = zero, bottomStart = zero, bottomEnd = zero)
+        RowPosition.Last -> base.copy(topStart = zero, topEnd = zero)
+    }
+}
 
 @Composable
 private fun Leading(row: ServerRowUi) {
-    Box(modifier = Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.size(LEADING_SIZE), contentAlignment = Alignment.Center) {
         if (row.flag != null) {
-            Text(row.flag, style = MaterialTheme.typography.titleLarge)
+            FlagBadge(row.flag, size = LEADING_SIZE)
         } else {
-            Monogram(row.monogram, Modifier.size(36.dp))
+            Monogram(row.monogram, Modifier.size(26.dp))
         }
         if (row.selected) {
             Icon(
@@ -153,48 +162,118 @@ private fun Leading(row: ServerRowUi) {
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .size(16.dp)
+                    .size(14.dp)
                     .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
             )
         }
     }
 }
 
-@Composable
-private fun ProtocolChip(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.shapes.small)
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    )
-}
+private val LEADING_SIZE = 28.dp
 
+/** Задержка справа: число (цвет тона) и под ним слово того же тона. */
 @Composable
-private fun LatencyBlock(
-    latency: LatencyDisplay,
-    horizontal: Alignment.Horizontal,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier, horizontalAlignment = horizontal, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+private fun LatencyBlock(latency: LatencyDisplay) {
+    val untested = latency.value == DASH && !latency.failed
+    Column(horizontalAlignment = Alignment.End) {
+        if (!untested) {
+            Text(
+                latency.value,
+                style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
+                color = if (latency.value == DASH) MaterialTheme.colorScheme.onSurfaceVariant else toneColor(latency.tone),
+                textAlign = TextAlign.End,
+            )
+        }
         Text(
-            latency.value,
-            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-            color = if (latency.value == DASH) MaterialTheme.colorScheme.onSurfaceVariant else toneColor(latency.tone),
-            textAlign = if (horizontal == Alignment.End) TextAlign.End else TextAlign.Start,
+            latency.word,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (latency.tone == io.github.zapretkvn.core.designsystem.Tone.Neutral) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                toneColor(latency.tone)
+            },
+            textAlign = TextAlign.End,
         )
-        ToneBadge(latency.word, latency.tone, icon = latency.icon.vector())
     }
 }
 
-private fun LatencyIcon.vector() = when (this) {
-    LatencyIcon.None -> null
-    LatencyIcon.Ok -> ZapretIcons.Ok
-    LatencyIcon.Slow -> ZapretIcons.Warning
-    LatencyIcon.Failed -> ZapretIcons.Close
-    LatencyIcon.Old -> ZapretIcons.Hourglass
+/** Задержка в одну строку для крупного шрифта: число и слово рядом с протоколом. */
+@Composable
+private fun LatencyInline(latency: LatencyDisplay) {
+    val text = if (latency.value == DASH) latency.word else "${latency.value} · ${latency.word}"
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (latency.tone == io.github.zapretkvn.core.designsystem.Tone.Neutral) {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+            toneColor(latency.tone)
+        },
+    )
+}
+
+/**
+ * Заголовок секции «страна»: флаг, название, «8 серверов · лучший 84 мс» и шеврон.
+ * Развёрнутая секция — верх общей карточки со строками под ней.
+ */
+@Composable
+internal fun SectionRow(
+    item: ServerListItem.Section,
+    onToggle: (key: String, expand: Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val section = item.section
+    val shape = cardShape(if (item.expanded) RowPosition.First else RowPosition.Only)
+    Column(
+        modifier = modifier
+            .padding(top = Spacing.s)
+            .fillMaxWidth()
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(onClickLabel = if (item.expanded) "Свернуть" else "Развернуть", role = Role.Button) {
+                onToggle(section.key, !item.expanded)
+            }
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${section.title}, ${item.meta}"
+                stateDescription = if (item.expanded) "развёрнуто" else "свёрнуто"
+            }
+            .testTag("server-section-${section.code ?: "other"}"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = ROW_MIN_HEIGHT)
+                .padding(start = Spacing.l, end = Spacing.s, top = Spacing.xs, bottom = Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+        ) {
+            if (section.flag != null) {
+                FlagBadge(section.flag, size = LEADING_SIZE)
+            } else {
+                Icon(
+                    ZapretIcons.Globe,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(LEADING_SIZE).padding(2.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(section.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    item.meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                if (item.expanded) ZapretIcons.ExpandLess else ZapretIcons.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(Spacing.s),
+            )
+        }
+        if (item.expanded) RowDivider()
+    }
 }
 
 /** Тонкий разделитель между строками одной карточки (между строками с общим фоном). */

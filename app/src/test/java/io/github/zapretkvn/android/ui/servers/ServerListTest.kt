@@ -192,6 +192,134 @@ class ServerListTest {
         assertEquals(keys.size, keys.toSet().size)
     }
 
+    // --- секции по странам ---
+
+    private val us = "🇺🇸"
+
+    /** 20 серверов: 8 NL, 6 DE, 4 US, 2 без страны. Выбран первый. */
+    private fun bigGroup(selectedTag: String? = null): List<ServerGroupUi> {
+        val nlItems = (1..8).map { RuntimeOutboundItem("$nl NL$it", "vless", "n$it.example:443", relay = ok(100 + it)) }
+        val deItems = (1..6).map { RuntimeOutboundItem("VLESS $de DE$it", "vless", "d$it.example:443", relay = ok(50 + it)) }
+        val usItems = (1..4).map { RuntimeOutboundItem("$us US$it", "vless", "u$it.example:443") }
+        val none = (1..2).map { RuntimeOutboundItem("plain$it", "vless", "p$it.example:443") }
+        val all = nlItems + deItems + usItems + none
+        return groups(rtGroup(all, selected = selectedTag ?: all.first().tag))
+    }
+
+    private fun sections(model: ServerListModel) = model.items.filterIsInstance<ServerListItem.Section>()
+
+    @Test
+    fun bigGroupIsSplitIntoCountrySectionsWithOtherLast() {
+        val model = buildServerList(bigGroup(), header(), ServerFilter())
+        val s = sections(model)
+        assertEquals(listOf("NL", "DE", "US", null), s.map { it.section.code })
+        assertEquals(listOf(8, 6, 4, 2), s.map { it.section.rows.size })
+        assertEquals("Другие", s.last().section.title)
+        assertEquals(101, s[0].section.bestMillis)
+        assertEquals("лучший 101 мс", s[0].meta.substringAfter("·").trim())
+        assertTrue(s[0].meta.startsWith("8 серверов"))
+        assertEquals(null, s.last().section.bestMillis)
+    }
+
+    @Test
+    fun onlySectionWithSelectedServerIsExpandedByDefault() {
+        val model = buildServerList(bigGroup(), header(), ServerFilter())
+        val s = sections(model)
+        assertEquals(listOf(true, false, false, false), s.map { it.expanded })
+        assertEquals(8, servers(model).size)
+        assertTrue(s[0].hasSelected)
+        assertTrue(model.selectedIndex > 0)
+        // Строки раскрытой секции: Middle…, последняя — Last.
+        val positions = model.items.filterIsInstance<ServerListItem.Server>().map { it.position }
+        assertEquals(RowPosition.Last, positions.last())
+        assertTrue(positions.dropLast(1).all { it == RowPosition.Middle })
+    }
+
+    @Test
+    fun userStateOpensAndClosesSections() {
+        val base = buildServerList(bigGroup(), header(), ServerFilter())
+        val deKey = sections(base)[1].section.key
+        val nlKey = sections(base)[0].section.key
+        val opened = buildServerList(bigGroup(), header(), ServerFilter(), sections = SectionState().with(deKey, true))
+        assertEquals(14, servers(opened).size)
+        val closed = buildServerList(bigGroup(), header(), ServerFilter(), sections = SectionState().with(nlKey, false))
+        assertEquals(0, servers(closed).size)
+        assertTrue(sections(closed)[0].meta.endsWith("выбран"))
+        // Секция «выбран» остаётся открытой, когда выбор уехал: сохранён в pinnedTags.
+        val moved = bigGroup(selectedTag = "VLESS $de DE1")
+        val pinned = buildServerList(moved, header(), ServerFilter(), pinnedTags = setOf("$nl NL1"))
+        assertEquals(listOf(true, true, false, false), sections(pinned).map { it.expanded })
+    }
+
+    @Test
+    fun sectionStateSurvivesSaveRestore() {
+        val state = SectionState().with("a", true).with("b", false)
+        assertEquals(state, SectionState.restore(state.save()))
+    }
+
+    @Test
+    fun activeSearchOrFastChipShowsFlatListWithoutSections() {
+        val byQuery = buildServerList(bigGroup(), header(), ServerFilter(query = "de"))
+        assertTrue(sections(byQuery).isEmpty())
+        assertEquals(6, servers(byQuery).size)
+        val fast = buildServerList(bigGroup(), header(), ServerFilter(chip = ServerChip.Fast))
+        assertTrue(sections(fast).isEmpty())
+        assertEquals(14, servers(fast).size) // NL и DE с задержками
+        val country = buildServerList(bigGroup(), header(), ServerFilter(chip = ServerChip.Country("US")))
+        assertTrue(sections(country).isEmpty())
+        assertEquals(4, servers(country).size)
+    }
+
+    @Test
+    fun groupOfTwelveOrFewerStaysFlat() {
+        val g = groups(rtGroup(items(12) { i -> if (i % 2 == 0) nl else de }))
+        assertTrue(sections(buildServerList(g, header(), ServerFilter())).isEmpty())
+    }
+
+    @Test
+    fun bigGroupWithoutAnyCountryStaysFlat() {
+        val model = buildServerList(groups(rtGroup(items(20))), header(), ServerFilter())
+        assertTrue(sections(model).isEmpty())
+        assertEquals(20, servers(model).size)
+    }
+
+    @Test
+    fun smallSectionsAnimateAndBigOnesDoNot() {
+        val many = items(20) { nl } + items(2, "x") { de }
+        val model = buildServerList(groups(rtGroup(many)), header(), ServerFilter())
+        assertTrue(model.items.filterIsInstance<ServerListItem.Server>().none { it.animate }) // 20 > 15
+        val small = buildServerList(bigGroup(), header(), ServerFilter())
+        assertTrue(small.items.filterIsInstance<ServerListItem.Server>().all { it.animate })
+    }
+
+    @Test
+    fun sectionOrderFollowsSort() {
+        val byFastest = buildServerList(bigGroup(), header(), ServerFilter(), sort = ServerSort.Fastest)
+        assertEquals(listOf("DE", "NL", "US", null), sections(byFastest).map { it.section.code })
+        val byName = buildServerList(bigGroup(), header(), ServerFilter(), sort = ServerSort.Name)
+        val titles = sections(byName).map { it.section.title }
+        assertEquals(titles.dropLast(1).sorted(), titles.dropLast(1))
+        assertEquals("Другие", titles.last())
+    }
+
+    @Test
+    fun sectionAndItemKeysAreUnique() {
+        val model = buildServerList(bigGroup(), header(), ServerFilter(), sections = SectionState().with("sec:zapret-proxy:DE", true))
+        val keys = model.items.map { it.key }
+        assertEquals(keys.size, keys.toSet().size)
+    }
+
+    @Test
+    fun activeSearchDropsProfileCardAndSingleGroupCard() {
+        val g = bigGroup()
+        val idle = buildServerList(g, header(), ServerFilter())
+        assertTrue(idle.items.any { it is ServerListItem.Profile })
+        assertTrue(idle.items.any { it is ServerListItem.Group })
+        val searching = buildServerList(g, header(), ServerFilter(query = "nl"))
+        assertEquals(listOf("tools"), searching.items.take(1).map { it.key })
+        assertTrue(searching.items.none { it is ServerListItem.Profile || it is ServerListItem.Group })
+    }
+
     private fun servers(model: ServerListModel) =
         model.items.filterIsInstance<ServerListItem.Server>().map { it.row }
 }

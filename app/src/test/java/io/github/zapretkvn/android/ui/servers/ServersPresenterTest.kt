@@ -145,10 +145,19 @@ class ServersPresenterTest {
         val g = live(group(listOf(item("vpn.example.com:443"), item("Berlin"))), hide = true)
         val masked = g.rows[0]
         assertEquals("********", masked.title)
-        assertEquals("********", masked.endpoint)
+        assertNull(masked.endpoint)
         assertFalse(masked.searchText.contains("example"))
         assertEquals("Berlin", g.rows[1].title)
-        assertEquals("********", g.rows[1].endpoint)
+        // Адрес скрыт — строки с ним нет совсем, и в озвучке его тоже нет.
+        assertNull(g.rows[1].endpoint)
+        assertFalse(g.rows[1].a11y.contains("*"))
+        assertFalse(g.rows[1].a11y.contains("example"))
+    }
+
+    @Test
+    fun visibleAddressesShowEndpoint() {
+        val g = live(group(listOf(item("Berlin"))), hide = false)
+        assertEquals("Berlin.example:443", g.rows.single().endpoint)
     }
 
     @Test

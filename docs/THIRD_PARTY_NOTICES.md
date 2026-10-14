@@ -124,6 +124,17 @@ APK.
 - Source: <https://github.com/JetBrains/kotlin>
 - License: Apache License 2.0.
 
+## Noto Color Emoji (flags subset)
+
+Flags in server names are drawn with a flags-only subset of Noto Color Emoji
+(`app/src/main/res/font/noto_flags.ttf`), so they look the same on firmware
+whose system emoji font has no flag glyphs.
+
+- Source: <https://github.com/googlefonts/noto-emoji>
+- Upstream version: 2.051 (noto-emoji 20250818)
+- Copyright: 2013 Google LLC.
+- License: SIL Open Font License 1.1, retained in `res/raw/noto_emoji_license.txt`.
+
 ## ZXing Android Embedded and ZXing Core
 
 - Sources: <https://github.com/journeyapps/zxing-android-embedded> and

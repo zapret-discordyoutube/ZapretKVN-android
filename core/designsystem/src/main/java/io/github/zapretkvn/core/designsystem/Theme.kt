@@ -19,62 +19,62 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
-// Fallback for Android 8–11 (no dynamic color): a full tonal scheme from the
-// brand blue, so cards and containers do not collapse into one flat surface.
+// Фирменная палитра — по умолчанию на всех версиях Android: динамические
+// цвета на монохромных обоях превращают графики и акценты в серо-белые.
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0057D9),
+    primary = Color(0xFF2F5BEA),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFD9E2FF),
-    onPrimaryContainer = Color(0xFF001A43),
-    secondary = Color(0xFF006A6A),
+    primaryContainer = Color(0xFFDCE4FF),
+    onPrimaryContainer = Color(0xFF001849),
+    secondary = Color(0xFF0D9488),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFF9CF1F0),
-    onSecondaryContainer = Color(0xFF002020),
-    tertiary = Color(0xFF4C5F7D),
+    secondaryContainer = Color(0xFFC9F5EE),
+    onSecondaryContainer = Color(0xFF00201C),
+    tertiary = Color(0xFF7C3AED),
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFD4E3FF),
-    onTertiaryContainer = Color(0xFF061C36),
-    background = Color(0xFFF9F9FF),
-    onBackground = Color(0xFF1A1B20),
-    surface = Color(0xFFF9F9FF),
-    onSurface = Color(0xFF1A1B20),
-    surfaceVariant = Color(0xFFE1E2EC),
-    onSurfaceVariant = Color(0xFF44474F),
+    tertiaryContainer = Color(0xFFEDE3FF),
+    onTertiaryContainer = Color(0xFF250059),
+    background = Color(0xFFF6F7FB),
+    onBackground = Color(0xFF171A23),
+    surface = Color(0xFFF6F7FB),
+    onSurface = Color(0xFF171A23),
+    surfaceVariant = Color(0xFFE1E4EF),
+    onSurfaceVariant = Color(0xFF454A5A),
     surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFF3F3FA),
-    surfaceContainer = Color(0xFFEDEDF4),
-    surfaceContainerHigh = Color(0xFFE7E8EE),
-    surfaceContainerHighest = Color(0xFFE2E2E9),
-    outline = Color(0xFF757780),
-    outlineVariant = Color(0xFFC5C6D0),
+    surfaceContainerLow = Color(0xFFFFFFFF),
+    surfaceContainer = Color(0xFFF0F2F8),
+    surfaceContainerHigh = Color(0xFFE9ECF4),
+    surfaceContainerHighest = Color(0xFFE2E6EF),
+    outline = Color(0xFF767B8C),
+    outlineVariant = Color(0xFFC9CDDA),
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFFADC6FF),
-    onPrimary = Color(0xFF002E69),
-    primaryContainer = Color(0xFF004494),
-    onPrimaryContainer = Color(0xFFD9E2FF),
-    secondary = Color(0xFF80D5D4),
-    onSecondary = Color(0xFF003737),
-    secondaryContainer = Color(0xFF004F4F),
-    onSecondaryContainer = Color(0xFF9CF1F0),
-    tertiary = Color(0xFFB4C7E8),
-    onTertiary = Color(0xFF1E314C),
-    tertiaryContainer = Color(0xFF344863),
-    onTertiaryContainer = Color(0xFFD4E3FF),
-    background = Color(0xFF101318),
-    onBackground = Color(0xFFE2E2E9),
-    surface = Color(0xFF101318),
-    onSurface = Color(0xFFE2E2E9),
-    surfaceVariant = Color(0xFF44474F),
-    onSurfaceVariant = Color(0xFFC5C6D0),
-    surfaceContainerLowest = Color(0xFF0B0E13),
-    surfaceContainerLow = Color(0xFF181B21),
-    surfaceContainer = Color(0xFF1C1F25),
-    surfaceContainerHigh = Color(0xFF272A30),
-    surfaceContainerHighest = Color(0xFF32353B),
-    outline = Color(0xFF8F9099),
-    outlineVariant = Color(0xFF44474F),
+    primary = Color(0xFF8AA8FF),
+    onPrimary = Color(0xFF00225F),
+    primaryContainer = Color(0xFF2A47B8),
+    onPrimaryContainer = Color(0xFFDCE4FF),
+    secondary = Color(0xFF4FDBC8),
+    onSecondary = Color(0xFF003731),
+    secondaryContainer = Color(0xFF0B4F47),
+    onSecondaryContainer = Color(0xFFC9F5EE),
+    tertiary = Color(0xFFC4A8FF),
+    onTertiary = Color(0xFF3B0A8C),
+    tertiaryContainer = Color(0xFF4C2A9E),
+    onTertiaryContainer = Color(0xFFEDE3FF),
+    background = Color(0xFF0D1018),
+    onBackground = Color(0xFFE3E5EE),
+    surface = Color(0xFF0D1018),
+    onSurface = Color(0xFFE3E5EE),
+    surfaceVariant = Color(0xFF3F4455),
+    onSurfaceVariant = Color(0xFFBFC4D4),
+    surfaceContainerLowest = Color(0xFF080A10),
+    surfaceContainerLow = Color(0xFF151925),
+    surfaceContainer = Color(0xFF1A1F2C),
+    surfaceContainerHigh = Color(0xFF232838),
+    surfaceContainerHighest = Color(0xFF2D3344),
+    outline = Color(0xFF8A8FA0),
+    outlineVariant = Color(0xFF3F4455),
 )
 
 fun amoledColorScheme(base: ColorScheme): ColorScheme = base.copy(
@@ -109,6 +109,7 @@ val ZapretShapes = Shapes(
 fun ZapretTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     amoledTheme: Boolean = false,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -116,20 +117,22 @@ fun ZapretTheme(
     // not on every theme recomposition.
     val configuration = LocalConfiguration.current
     val useDarkColors = darkTheme || amoledTheme
-    val colors = remember(useDarkColors, amoledTheme, configuration) {
+    val colors = remember(useDarkColors, amoledTheme, dynamicColor, configuration) {
+        val dynamic = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         val base = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && useDarkColors ->
-                dynamicDarkColorScheme(context)
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
+            dynamic && useDarkColors -> dynamicDarkColorScheme(context)
+            dynamic -> dynamicLightColorScheme(context)
             useDarkColors -> DarkColors
             else -> LightColors
         }
         if (amoledTheme) amoledColorScheme(base) else base
     }
     val status = if (useDarkColors) DarkStatusColors else LightStatusColors
+    val accents = if (useDarkColors) DarkAccentColors else LightAccentColors
 
     CompositionLocalProvider(
         LocalStatusColors provides status,
+        LocalAccentColors provides accents,
         LocalAmoled provides amoledTheme,
     ) {
         MaterialTheme(

@@ -44,6 +44,8 @@ data class UiSettings(
     val networkAutomation: NetworkAutomationSettings = NetworkAutomationSettings(),
     /** «Умная проверка»: переключать сервер при подтверждённой низкой скорости. */
     val slowServerSwitch: Boolean = true,
+    /** Цвета обоев (Material You). По умолчанию — фирменная яркая палитра. */
+    val dynamicColor: Boolean = false,
 )
 
 private val Context.uiSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -70,6 +72,7 @@ class UiSettingsStore(
                     ?: ThemeMode.System,
                 activeProfileId = preferences[ACTIVE_PROFILE_ID],
                 rawEditorLineWrap = preferences[RAW_EDITOR_LINE_WRAP] ?: false,
+                dynamicColor = preferences[DYNAMIC_COLOR] ?: false,
                 hideServerAddresses = preferences[HIDE_SERVER_ADDRESSES] ?: true,
                 dnsMode = preferences[DNS_MODE]
                     ?.let { stored -> DnsMode.entries.firstOrNull { it.name == stored } }
@@ -112,6 +115,10 @@ class UiSettingsStore(
 
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[THEME_MODE] = mode.name }
+    }
+
+    suspend fun setDynamicColor(enabled: Boolean) {
+        dataStore.edit { it[DYNAMIC_COLOR] = enabled }
     }
 
     suspend fun setActiveProfile(id: String?) {
@@ -235,6 +242,7 @@ class UiSettingsStore(
 
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
         val RAW_EDITOR_LINE_WRAP = booleanPreferencesKey("raw_editor_line_wrap")
         val HIDE_SERVER_ADDRESSES = booleanPreferencesKey("hide_server_addresses")

@@ -74,10 +74,49 @@ internal val DarkStatusColors = StatusColors(
 
 val LocalStatusColors = staticCompositionLocalOf { LightStatusColors }
 
+/**
+ * Акценты графиков и плиток. Не зависят от обоев, чтобы скорость, отдача и
+ * задержка всегда различались цветом (и всегда подписаны словами).
+ */
+@Immutable
+data class AccentColors(
+    val download: Color,
+    val upload: Color,
+    val ping: Color,
+    val session: Color,
+    val heroStart: Color,
+    val heroEnd: Color,
+    val connecting: Color,
+)
+
+internal val LightAccentColors = AccentColors(
+    download = Color(0xFF2F6BFF),
+    upload = Color(0xFFFF6B3D),
+    ping = Color(0xFF12A37A),
+    session = Color(0xFF8B5CF6),
+    heroStart = Color(0xFF3B6CFF),
+    heroEnd = Color(0xFF14B8A6),
+    connecting = Color(0xFFF5A524),
+)
+
+internal val DarkAccentColors = AccentColors(
+    download = Color(0xFF6E9BFF),
+    upload = Color(0xFFFF8A5C),
+    ping = Color(0xFF3DDC97),
+    session = Color(0xFFB794FF),
+    heroStart = Color(0xFF4F7BFF),
+    heroEnd = Color(0xFF22D3B6),
+    connecting = Color(0xFFFFB547),
+)
+
+val LocalAccentColors = staticCompositionLocalOf { LightAccentColors }
+
 /** На чистом чёрном тональные карточки почти не видны — им нужна тонкая обводка. */
 val LocalAmoled = staticCompositionLocalOf { false }
 
 object ZapretColors {
     val status: StatusColors
         @Composable @ReadOnlyComposable get() = LocalStatusColors.current
+    val accent: AccentColors
+        @Composable @ReadOnlyComposable get() = LocalAccentColors.current
 }

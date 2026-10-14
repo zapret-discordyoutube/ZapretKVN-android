@@ -1,7 +1,6 @@
 package io.github.zapretkvn.android.ui.servers
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,9 +34,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import io.github.zapretkvn.core.designsystem.Motion
 import io.github.zapretkvn.core.designsystem.Spacing
 import io.github.zapretkvn.core.designsystem.ZapretCard
 import io.github.zapretkvn.core.designsystem.ZapretIcons
@@ -48,15 +50,20 @@ internal class ServerListActions(
     val onSelect: (groupTag: String, serverTag: String) -> Unit,
     val onMeasure: ((groupTag: String) -> Unit)? = null,
     val onToggleGroup: (groupTag: String) -> Unit = {},
+    val onToggleSection: (sectionKey: String, expand: Boolean) -> Unit = { _, _ -> },
     val onChangeProfile: (() -> Unit)? = null,
 )
 
-/** Состояние панели поиска и чипов (закреплена вверху списка). */
+/**
+ * Состояние фильтров над списком. Ничего не закреплено: чипы прокручиваются вместе
+ * со списком. [onQuery] == null — строка поиска живёт снаружи (в шапке экрана),
+ * в списке остаются только чипы.
+ */
 @Stable
 internal class ServerTools(
     val filter: ServerFilter,
     val chips: ServerChips,
-    val onQuery: (String) -> Unit,
+    val onQuery: ((String) -> Unit)?,
     val onChip: (ServerChip) -> Unit,
     val onReset: () -> Unit,
 )
@@ -64,11 +71,10 @@ internal class ServerTools(
 internal const val SERVER_LIST_TAG = "profile-servers-sheet"
 
 /**
- * Список серверов: профиль → группы → строки. Один `LazyColumn` с `key` и
- * `contentType`; поиск и чипы закреплены. Ничего не считает сам — рисует
- * готовую [ServerListModel].
+ * Список серверов: профиль → группы → (секции по странам) → строки. Один `LazyColumn`
+ * с `key` и `contentType`; чипы и поиск не закреплены. Ничего не считает сам —
+ * рисует готовую [ServerListModel].
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ServerList(
     model: ServerListModel,
@@ -80,21 +86,13 @@ internal fun ServerList(
     testTag: String = SERVER_LIST_TAG,
     leading: (@Composable () -> Unit)? = null,
 ) {
-    val items = model.items
-    val toolsIndex = items.indexOfFirst { it is ServerListItem.Tools }
     LazyColumn(
         state = listState,
         modifier = modifier.testTag(testTag),
         contentPadding = contentPadding,
     ) {
         if (leading != null) item(key = "leading", contentType = "leading") { leading() }
-        if (toolsIndex < 0 || tools == null) {
-            serverItems(items, actions, tools)
-        } else {
-            serverItems(items.subList(0, toolsIndex), actions, tools)
-            stickyHeader(key = "tools", contentType = "tools") { ServerToolsBar(tools) }
-            serverItems(items.subList(toolsIndex + 1, items.size), actions, tools)
-        }
+        serverItems(model.items, actions, tools)
     }
 }
 
@@ -106,14 +104,16 @@ private fun LazyListScope.serverItems(
     items(list, key = { it.key }, contentType = { it.contentType }) { item ->
         when (item) {
             is ServerListItem.Profile -> ProfileHeaderCard(item.header, actions.onChangeProfile)
-            ServerListItem.Tools -> Unit
+            ServerListItem.Tools -> if (tools != null) ServerToolsBar(tools)
             is ServerListItem.Group -> GroupCard(item, actions)
+            is ServerListItem.Section -> SectionRow(item, actions.onToggleSection)
             is ServerListItem.Server -> ServerRow(
                 row = item.row,
                 position = item.position,
                 onClick = if (item.readOnly) null else {
                     { actions.onSelect(item.row.groupTag, item.row.tag) }
                 },
+                modifier = if (item.animate) Modifier.animateItem(fadeInSpec = tween(Motion.QUICK), placementSpec = null) else Modifier,
             )
             is ServerListItem.Note -> Text(
                 item.text,
@@ -147,17 +147,7 @@ internal fun ProfileHeaderCard(header: ProfileHeaderUi, onChange: (() -> Unit)?)
             Text(it, style = MaterialTheme.typography.bodyMedium)
         }
         header.flags?.let { flags ->
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalAlignment = Alignment.CenterVertically) {
-                // Флаги декоративны: страны названы в строках серверов.
-                Text(flags, style = MaterialTheme.typography.titleMedium, modifier = Modifier.clearAndSetSemantics {})
-                if (header.extraFlags > 0) {
-                    Text(
-                        "+${header.extraFlags}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            FlagStrip(flags, header.extraFlags)
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -205,7 +195,7 @@ private fun GroupCard(item: ServerListItem.Group, actions: ServerListActions) {
             }
         }
         if (!item.expanded) {
-            group.currentLine?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            group.currentLine?.let { FlagAwareText(it, style = MaterialTheme.typography.bodyMedium) }
             TextButton(onClick = { actions.onToggleGroup(group.tag) }) {
                 Text("Показать ${group.rows.size}")
             }
@@ -246,33 +236,43 @@ private fun GroupCard(item: ServerListItem.Group, actions: ServerListActions) {
     }
 }
 
+/** Ряд флагов профиля (декоративный: страны названы в строках серверов). */
+@Composable
+internal fun FlagStrip(strip: String, extra: Int, modifier: Modifier = Modifier, size: Dp = FlagSmall) {
+    val flags = remember(strip) { splitFlagStrip(strip) }
+    Row(
+        modifier = modifier.clearAndSetSemantics {},
+        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        flags.forEach { FlagBadge(it, size = size) }
+        if (extra > 0) {
+            Text(
+                "+$extra",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** Чипы (и, если задан [ServerTools.onQuery], поле поиска) — обычный элемент списка, не закреплён. */
 @Composable
 private fun ServerToolsBar(tools: ServerTools) {
     var moreOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(vertical = Spacing.s),
+            .padding(bottom = Spacing.s),
         verticalArrangement = Arrangement.spacedBy(Spacing.s),
     ) {
-        OutlinedTextField(
-            value = tools.filter.query,
-            onValueChange = tools.onQuery,
-            placeholder = { Text("Поиск по названию или стране") },
-            leadingIcon = { Icon(ZapretIcons.Search, contentDescription = null) },
-            trailingIcon = {
-                if (tools.filter.query.isNotEmpty()) {
-                    IconButton(onClick = { tools.onQuery("") }) {
-                        Icon(ZapretIcons.Close, contentDescription = "Очистить поиск")
-                    }
-                }
-            },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("profile-servers-filter"),
-        )
+        tools.onQuery?.let { onQuery ->
+            ServerSearchField(
+                query = tools.filter.query,
+                onQuery = onQuery,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(Spacing.s),
@@ -281,7 +281,7 @@ private fun ServerToolsBar(tools: ServerTools) {
                 FilterChip(
                     selected = tools.filter.chip == chip.chip,
                     onClick = { tools.onChip(chip.chip) },
-                    label = { Text(chip.label) },
+                    label = { FlagAwareText(chip.label, style = MaterialTheme.typography.labelLarge) },
                 )
             }
             if (tools.chips.more.isNotEmpty()) {
@@ -293,7 +293,7 @@ private fun ServerToolsBar(tools: ServerTools) {
                 DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
                     tools.chips.more.forEach { chip ->
                         DropdownMenuItem(
-                            text = { Text(chip.label) },
+                            text = { FlagAwareText(chip.label) },
                             onClick = {
                                 moreOpen = false
                                 tools.onChip(chip.chip)
@@ -304,6 +304,33 @@ private fun ServerToolsBar(tools: ServerTools) {
             }
         }
     }
+}
+
+/** Компактное поле поиска серверов (одна строка, 48 dp). */
+@Composable
+internal fun ServerSearchField(
+    query: String,
+    onQuery: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQuery,
+        placeholder = { Text("Название или страна") },
+        leadingIcon = { Icon(ZapretIcons.Search, contentDescription = null) },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQuery("") }) {
+                    Icon(ZapretIcons.Close, contentDescription = "Очистить поиск")
+                }
+            }
+        },
+        singleLine = true,
+        modifier = modifier
+            .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
+            .testTag("profile-servers-filter"),
+    )
 }
 
 /**
@@ -323,11 +350,16 @@ internal fun ServerPickerContent(
     leading: (@Composable () -> Unit)? = null,
 ) {
     var filter by rememberSaveable(stateSaver = FilterSaver) { mutableStateOf(ServerFilter()) }
-    var toggled by remember { mutableStateOf(emptySet<String>()) }
+    var toggled by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
+    var sections by rememberSaveable(stateSaver = SectionStateSaver) { mutableStateOf(SectionState()) }
     val chips = remember(groups) { serverChips(groups) }
     val cards = groups.size > 1 || onMeasure != null
-    val model = remember(groups, filter, toggled, cards) {
-        buildServerList(groups, header = null, filter = filter, toggledGroups = toggled, compact = true, groupCards = cards)
+    val pinned = rememberPinnedTags(groups)
+    val model = remember(groups, filter, toggled, cards, sections, pinned) {
+        buildServerList(
+            groups, header = null, filter = filter, toggledGroups = toggled, compact = true,
+            groupCards = cards, sections = sections, pinnedTags = pinned,
+        )
     }
     val tools = remember(model.showTools, chips, filter) {
         if (model.showTools) {
@@ -347,6 +379,7 @@ internal fun ServerPickerContent(
             onSelect = onSelect,
             onMeasure = onMeasure,
             onToggleGroup = { tag -> toggled = if (tag in toggled) toggled - tag else toggled + tag },
+            onToggleSection = { key, expand -> sections = sections.with(key, expand) },
         )
     }
     ServerList(
@@ -359,6 +392,23 @@ internal fun ServerPickerContent(
         leading = leading,
     )
 }
+
+/** Теги, выбранные при первом показе: их секции остаются раскрытыми, даже когда выбор переехал. */
+@Composable
+internal fun rememberPinnedTags(groups: List<ServerGroupUi>): Set<String> {
+    val initial = rememberSaveable { ArrayList(groups.flatMap { g -> g.rows.filter { it.selected }.map { it.tag } }) }
+    return remember(initial) { initial.toSet() }
+}
+
+internal val StringSetSaver = androidx.compose.runtime.saveable.Saver<Set<String>, ArrayList<String>>(
+    save = { ArrayList(it) },
+    restore = { it.toSet() },
+)
+
+internal val SectionStateSaver = androidx.compose.runtime.saveable.Saver<SectionState, ArrayList<String>>(
+    save = { it.save() },
+    restore = { SectionState.restore(it) },
+)
 
 /** Строка поиска переживает поворот экрана; чип — нет (сбрасывается на «Все»). */
 internal val FilterSaver = androidx.compose.runtime.saveable.Saver<ServerFilter, String>(

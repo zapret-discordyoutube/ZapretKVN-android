@@ -178,7 +178,8 @@ internal fun serverRowUi(
     val title = parsed?.title ?: masked
     val protocolType = type.ifBlank { parsed?.protocolPrefix.orEmpty() }
     val protocol = protocolLabel(protocolType).ifBlank { "Сервер" }
-    val shownEndpoint = ScreenshotPrivacy.serverEndpoint(endpoint, hideAddresses)
+    // Адрес скрыт — строки с ним нет совсем (ни «********», ни в озвучке); показываем только по настройке.
+    val shownEndpoint = if (hideAddresses) null else endpoint
     val countryName = parsed?.countryName
     val search = buildString {
         append(title)
@@ -616,10 +617,28 @@ internal sealed interface ServerListItem {
         override val contentType get() = "group"
     }
 
+    /** Свёрнутая/развёрнутая секция «страна» внутри группы с большим числом серверов. */
+    data class Section(
+        val section: CountrySection,
+        val expanded: Boolean,
+        val hasSelected: Boolean,
+    ) : ServerListItem {
+        override val key get() = section.key
+        override val contentType get() = "section"
+        val meta: String
+            get() = buildString {
+                append(countLabel(section.rows.size, "сервер", "сервера", "серверов"))
+                section.bestLabel?.let { append(" · лучший ").append(it) }
+                if (hasSelected && !expanded) append(" · выбран")
+            }
+    }
+
     data class Server(
         val row: ServerRowUi,
         val position: RowPosition,
         val readOnly: Boolean,
+        /** Строка появляется плавно: только в небольших секциях (≤ [ANIMATE_SECTION_MAX]). */
+        val animate: Boolean = false,
     ) : ServerListItem {
         override val key get() = row.key
         override val contentType get() = "server"
@@ -644,6 +663,93 @@ internal data class ServerListModel(
     val uniqueServers: Int,
 )
 
+/** Группа с большим числом серверов делится на секции по странам. */
+internal const val SECTION_THRESHOLD = 12
+
+/** Анимация раскрытия — только для секций не длиннее этого, иначе раскрываем мгновенно. */
+internal const val ANIMATE_SECTION_MAX = 15
+
+internal const val OTHER_SECTION_TITLE = "Другие"
+
+/** Секция «страна» внутри группы: заголовок со счётчиком и лучшей задержкой. */
+@Immutable
+internal data class CountrySection(
+    val key: String,
+    val code: String?,
+    val flag: String?,
+    val title: String,
+    val rows: List<ServerRowUi>,
+    /** Лучшая свежая задержка в мс (только удачные свежие замеры) или null. */
+    val bestMillis: Int?,
+) {
+    val bestLabel: String? get() = bestMillis?.let { formatPing(it.toLong()) }
+}
+
+/**
+ * Состояние раскрытия секций, заданное пользователем. Без записи секция раскрыта,
+ * если в ней выбранный сервер; запись «открыто»/«закрыто» это переопределяет.
+ */
+@Immutable
+internal data class SectionState(
+    val opened: Set<String> = emptySet(),
+    val closed: Set<String> = emptySet(),
+) {
+    fun expanded(key: String, byDefault: Boolean): Boolean =
+        key in opened || (byDefault && key !in closed)
+
+    fun with(key: String, expand: Boolean): SectionState =
+        if (expand) copy(opened = opened + key, closed = closed - key)
+        else copy(opened = opened - key, closed = closed + key)
+
+    fun save(): ArrayList<String> = ArrayList<String>().apply {
+        opened.forEach { add("o:$it") }
+        closed.forEach { add("c:$it") }
+    }
+
+    companion object {
+        fun restore(list: List<String>) = SectionState(
+            opened = list.filter { it.startsWith("o:") }.map { it.drop(2) }.toSet(),
+            closed = list.filter { it.startsWith("c:") }.map { it.drop(2) }.toSet(),
+        )
+    }
+}
+
+private fun sectionKey(groupTag: String, code: String?) = "sec:$groupTag:${code ?: "other"}"
+
+/**
+ * Делит строки группы на секции по странам. Порядок: как строки (подписка) или по
+ * сортировке [sort]; «Другие» (без страны) всегда в конце. Если делить нечего
+ * (меньше двух секций или ни у кого нет страны) — null: показываем плоский список.
+ */
+internal fun countrySections(
+    groupTag: String,
+    rows: List<ServerRowUi>,
+    sort: ServerSort = ServerSort.Subscription,
+): List<CountrySection>? {
+    if (rows.none { it.countryCode != null }) return null
+    val byCode = LinkedHashMap<String?, MutableList<ServerRowUi>>()
+    rows.forEach { byCode.getOrPut(it.countryCode) { mutableListOf() } += it }
+    if (byCode.size < 2) return null
+    val sections = byCode.map { (code, list) ->
+        val first = list.first()
+        CountrySection(
+            key = sectionKey(groupTag, code),
+            code = code,
+            flag = first.flag.takeIf { code != null },
+            title = if (code == null) OTHER_SECTION_TITLE else first.countryName ?: code,
+            rows = list,
+            bestMillis = list.filter { it.latency.band != null }.mapNotNull { it.latency.rankMillis }.minOrNull(),
+        )
+    }
+    val (named, other) = sections.partition { it.code != null }
+    val ordered = when (sort) {
+        ServerSort.Subscription -> named
+        ServerSort.Fastest -> named.sortedWith(compareBy<CountrySection> { it.bestMillis == null }.thenBy { it.bestMillis ?: 0 })
+        ServerSort.Name -> named.sortedBy { it.title.lowercase() }
+    }
+    return ordered + other
+}
+
 internal fun buildServerList(
     groups: List<ServerGroupUi>,
     header: ProfileHeaderUi?,
@@ -652,6 +758,10 @@ internal fun buildServerList(
     toggledGroups: Set<String> = emptySet(),
     compact: Boolean = false,
     groupCards: Boolean = true,
+    sections: SectionState = SectionState(),
+    sort: ServerSort = ServerSort.Subscription,
+    /** Серверы, чьи секции раскрыты по умолчанию кроме выбранного (где был выбор при открытии экрана). */
+    pinnedTags: Set<String> = emptySet(),
 ): ServerListModel {
     val uniqueServers = groups.flatMap { it.rows }.distinctBy { it.tag }.size
     val single = uniqueServers == 1
@@ -662,7 +772,8 @@ internal fun buildServerList(
     val collapsible = groups.size > 1 && !single
 
     val items = mutableListOf<ServerListItem>()
-    if (header != null) items += ServerListItem.Profile(header)
+    // Идёт поиск или фильтр: карточка профиля не нужна, результаты должны быть сразу под рукой.
+    if (header != null && !activeFilter.active) items += ServerListItem.Profile(header)
     if (showTools) items += ServerListItem.Tools
     if (single) {
         groups.firstOrNull()?.rows?.firstOrNull()?.let { row ->
@@ -680,7 +791,7 @@ internal fun buildServerList(
         if (activeFilter.active && rows.isEmpty()) continue
         val expanded = activeFilter.active || !collapsible ||
             ((group.tag == defaultExpanded) != (group.tag in toggledGroups))
-        if (groupCards) {
+        if (groupCards && !(activeFilter.active && groups.size == 1)) {
             items += ServerListItem.Group(
                 group = group,
                 expanded = expanded,
@@ -689,10 +800,16 @@ internal fun buildServerList(
                 showControls = true,
             )
         }
-        if (!group.selectable && !compact && groupCards) {
+        if (!group.selectable && !compact && groupCards && !(activeFilter.active && groups.size == 1)) {
             items += ServerListItem.Note("auto-${group.tag}", "Сервер выбирается автоматически. Менять не нужно")
         }
-        if (expanded) {
+        if (!expanded) continue
+        val countrySections = if (!activeFilter.active && group.rows.size > SECTION_THRESHOLD) {
+            countrySections(group.tag, rows, sort)
+        } else {
+            null
+        }
+        if (countrySections == null) {
             rows.forEachIndexed { index, row ->
                 val pos = when {
                     rows.size == 1 -> RowPosition.Only
@@ -702,6 +819,19 @@ internal fun buildServerList(
                 }
                 items += ServerListItem.Server(row, pos, readOnly = !group.selectable)
                 anyRows = true
+            }
+        } else {
+            for (section in countrySections) {
+                val hasSelected = section.rows.any { it.selected }
+                val open = sections.expanded(section.key, byDefault = hasSelected || section.rows.any { it.tag in pinnedTags })
+                items += ServerListItem.Section(section, expanded = open, hasSelected = hasSelected)
+                if (!open) continue
+                val animate = section.rows.size <= ANIMATE_SECTION_MAX
+                section.rows.forEachIndexed { index, row ->
+                    val pos = if (index == section.rows.lastIndex) RowPosition.Last else RowPosition.Middle
+                    items += ServerListItem.Server(row, pos, readOnly = !group.selectable, animate = animate)
+                    anyRows = true
+                }
             }
         }
     }

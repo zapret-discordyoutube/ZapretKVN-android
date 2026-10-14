@@ -47,6 +47,7 @@ internal fun SettingsMainScreen(
     onThemeSelected: (ThemeMode) -> Unit,
     onSlowServerSwitchChange: (Boolean) -> Unit,
     onHideServerAddressesChange: (Boolean) -> Unit,
+    onDynamicColorChange: (Boolean) -> Unit,
 ) {
     var themeSheetOpen by rememberSaveable { mutableStateOf(false) }
     if (themeSheetOpen) {
@@ -100,8 +101,19 @@ internal fun SettingsMainScreen(
                 )
                 RowDivider()
                 SwitchRow(
+                    title = "Цвета обоев",
+                    subtitle = "Подстраивать цвета приложения под обои (Android 12+). " +
+                        "Выключено — фирменная яркая палитра.",
+                    icon = ZapretIcons.Palette,
+                    checked = ui.dynamicColor,
+                    onCheckedChange = onDynamicColorChange,
+                    modifier = Modifier.testTag("dynamic-color"),
+                    switchDescription = "Цвета обоев",
+                )
+                RowDivider()
+                SwitchRow(
                     title = "Скрывать адреса серверов",
-                    subtitle = "Адреса серверов и ссылки подписок заменяются звёздочками на всех экранах.",
+                    subtitle = "Адреса серверов и ссылки подписок не показываются нигде, в том числе на скриншотах.",
                     icon = ZapretIcons.Shield,
                     checked = ui.hideServerAddresses,
                     onCheckedChange = onHideServerAddressesChange,
