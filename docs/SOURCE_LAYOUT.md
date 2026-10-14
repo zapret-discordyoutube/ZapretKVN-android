@@ -21,7 +21,12 @@ app/src/main/java/io/github/zapretkvn/android/
 ├── importer/            импорт ключей, QR и подписок
 ├── config/, routing/    native JSON и правила
 ├── updates/             обновления приложения
-└── ui/                  Compose-интерфейс и presentation
+└── ui/                  Compose-интерфейс: AppRoot, nav/, home/, servers/,
+                         routing/, apps/, settings/ (экран + презентер на пакет)
+
+core/
+├── ui-model/            чистые форматтеры и тексты (без Android и домена)
+└── designsystem/        тема, токены, общие Compose-компоненты, иконки
 ```
 
 `ZapretVpnService` и `ZapretQuickSettingsTileService` остаются в пакете `vpn`:
@@ -31,7 +36,9 @@ app/src/main/java/io/github/zapretkvn/android/
 Четыре движка сохраняют прежние границы: sing-box исполняет routing/DNS и владеет
 единственным системным TUN; Xray, Hysteria и Amnezia WG/AWG обслуживают свой
 transport. Встроенные Go-адаптеры изменяются через `core-patches`. Пустые
-Kotlin-пакеты Xray/Amnezia и дополнительные Gradle-модули не создаются.
+Kotlin-пакеты Xray/Amnezia не создаются. Для движков и рантайма отдельные
+Gradle-модули тоже не создаются; исключение — UI-модули `core/ui-model` и
+`core/designsystem` (0.9.0): они не знают про VPN, профили и сторы.
 
 Существующие `app-updater`, `network-bootstrap`, `wireguard-import`
 остаются независимыми библиотеками. Тесты перенесённых компонентов также
