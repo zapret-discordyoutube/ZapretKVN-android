@@ -25,6 +25,7 @@ import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSource
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.network.BootstrapCache
+import io.github.zapretkvn.android.network.geo.ServerCountryStore
 import io.github.zapretkvn.android.network.probes.ServerLatencyEntries
 import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
@@ -38,6 +39,7 @@ import io.github.zapretkvn.android.ui.UiSettingsStore
 import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
+import io.github.zapretkvn.core.uimodel.endpointHostKey
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -194,6 +196,7 @@ class ProfilesViewModel(
     private val bootstrapCache: BootstrapCache,
     private val ruleSetAssets: RuleSetAssetManager,
     private val serverLatencyStore: ServerLatencyStore? = null,
+    private val serverCountryStore: ServerCountryStore? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ProfilesUiState())
     private var serverSummaryKey: List<Pair<String, Long>>? = null
@@ -202,6 +205,10 @@ class ProfilesViewModel(
     /** Последний пинг серверов всех профилей, сохранённый между запусками. */
     val serverLatency: StateFlow<ServerLatencyEntries> =
         serverLatencyStore?.entries ?: MutableStateFlow<ServerLatencyEntries>(emptyMap()).asStateFlow()
+
+    /** Хост сервера → код страны по его адресу (офлайн-таблица GeoIP); сам адрес не показывается. */
+    val serverCountries: StateFlow<Map<String, String>> =
+        serverCountryStore?.countries ?: MutableStateFlow<Map<String, String>>(emptyMap()).asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -1103,6 +1110,19 @@ class ProfilesViewModel(
         }
     }
 
+    /** Страны серверов: запускается при старте и когда профили изменились (импорт, обновление подписки). */
+    private fun requestServerCountries(summaries: Map<String, ProfileServerSummary>) {
+        val store = serverCountryStore ?: return
+        fun hosts(summary: ProfileServerSummary?) = summary?.groups.orEmpty()
+            .flatMap { group -> group.options.mapNotNull { endpointHostKey(it.endpoint) } }
+            .toSet()
+        val activeId = mutableState.value.settings.activeProfileId
+        store.request(
+            hosts = summaries.values.flatMapTo(mutableSetOf()) { hosts(it) },
+            priority = hosts(summaries[activeId]),
+        )
+    }
+
     private fun isConnectedTo(profileId: String): Boolean =
         (vpnController.state.value as? VpnConnectionState.Connected)?.profileId == profileId
 
@@ -1135,6 +1155,7 @@ class ProfilesViewModel(
             // Пинг исчезнувших профилей и серверов удаляется; при сбое чтения
             // любого профиля ничего не трогаем, чтобы не потерять его историю.
             if (complete) serverLatencyStore?.retain(fingerprints)
+            requestServerCountries(summaries)
         }
     }
 
@@ -1244,6 +1265,7 @@ class ProfilesViewModel(
         private val bootstrapCache: BootstrapCache,
         private val ruleSetAssets: RuleSetAssetManager,
         private val serverLatencyStore: ServerLatencyStore? = null,
+        private val serverCountryStore: ServerCountryStore? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -1259,6 +1281,7 @@ class ProfilesViewModel(
                 bootstrapCache,
                 ruleSetAssets,
                 serverLatencyStore,
+                serverCountryStore,
             ) as T
         }
     }

@@ -134,13 +134,30 @@ fun endpointHost(endpoint: String?): String? {
 }
 
 /**
- * Дополняет имена без флага страной: сначала по серверу с тем же адресом,
- * у которого флаг есть (часто это VLESS и Hysteria на одном узле), затем по
- * словам имени и по имени хоста. Возвращает тег → код страны только для тех,
- * у кого флага в имени не было.
+ * Ключ хоста для таблицы «хост → страна»: хост из endpoint в нижнем регистре,
+ * без точки в конце и без зоны IPv6. Один и тот же ключ используют хранилище
+ * стран и презентеры, поэтому адрес в интерфейсе нигде не показывается.
  */
-fun inferCountries(servers: List<Pair<String, String?>>): Map<String, String> {
-    val parsed = servers.map { (tag, endpoint) -> Triple(tag, ServerName.parse(tag), endpointHost(endpoint)) }
+fun endpointHostKey(endpoint: String?): String? =
+    endpointHost(endpoint)
+        ?.trim()
+        ?.substringBefore('%')
+        ?.trimEnd('.')
+        ?.lowercase(Locale.ROOT)
+        ?.ifEmpty { null }
+
+/**
+ * Дополняет имена без флага страной. Порядок: эмодзи-флаг в имени (такие
+ * серверы сюда не попадают) → страна по IP сервера из офлайн-таблицы
+ * ([geoByHost]: ключ хоста → код) → сервер с тем же адресом и флагом в имени
+ * (часто VLESS и Hysteria на одном узле) → слова в имени → слова в имени хоста.
+ * Возвращает тег → код страны только для тех, у кого флага в имени не было.
+ */
+fun inferCountries(
+    servers: List<Pair<String, String?>>,
+    geoByHost: Map<String, String> = emptyMap(),
+): Map<String, String> {
+    val parsed = servers.map { (tag, endpoint) -> Triple(tag, ServerName.parse(tag), endpointHostKey(endpoint)) }
     val byHost = parsed
         .filter { it.second.countryCode != null && it.third != null }
         .groupBy({ it.third!! }, { it.second.countryCode!! })
@@ -148,7 +165,8 @@ fun inferCountries(servers: List<Pair<String, String?>>): Map<String, String> {
     return buildMap {
         parsed.forEach { (tag, name, host) ->
             if (name.countryCode != null) return@forEach
-            val code = host?.let(byHost::get)
+            val code = host?.let(geoByHost::get)
+                ?: host?.let(byHost::get)
                 ?: CountryGuess.fromName(name.title)
                 ?: CountryGuess.fromHost(host)
             if (code != null) put(tag, code)

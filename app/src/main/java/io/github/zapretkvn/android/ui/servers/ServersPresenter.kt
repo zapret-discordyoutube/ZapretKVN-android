@@ -175,23 +175,25 @@ internal fun serverRowUi(
     selected: Boolean,
     countryHint: String? = null,
 ): ServerRowUi {
-    // Тег, похожий на адрес, при скрытии показываем маской целиком и не разбираем.
+    // Страна и протокол берутся из настоящего тега, даже когда его текст скрыт маской:
+    // маскируется только то, что видно на экране, а не то, что мы о сервере знаем.
     val masked = ScreenshotPrivacy.serverLabel(tag, hideAddresses)
-    val parsed = if (masked == tag) ServerName.parse(tag) else null
-    val title = parsed?.title ?: masked
-    val protocolType = type.ifBlank { parsed?.protocolPrefix.orEmpty() }
+    val labelHidden = masked != tag
+    val parsed = ServerName.parse(tag)
+    val title = if (labelHidden) masked else parsed.title
+    val protocolType = type.ifBlank { parsed.protocolPrefix.orEmpty() }
     val protocol = protocolLabel(protocolType).ifBlank { "Сервер" }
     // Адрес скрыт — строки с ним нет совсем (ни «********», ни в озвучке); показываем только по настройке.
     val shownEndpoint = if (hideAddresses) null else endpoint
-    // Нет флага в имени (часто у Hysteria) — страна по соседнему серверу на том же
+    // Нет флага в имени — страна по адресу сервера (GeoIP), по соседу на том же
     // адресе или по словам имени/хоста, см. inferCountries.
-    val hintCode = countryHint?.takeIf { parsed?.countryCode == null && masked == tag }
-    val countryCode = parsed?.countryCode ?: hintCode
-    val flag = parsed?.flag ?: hintCode?.let(CountryGuess::flagOf)
-    val countryName = parsed?.countryName ?: hintCode?.let(::russianCountryName)
+    val hintCode = countryHint?.takeIf { parsed.countryCode == null }
+    val countryCode = parsed.countryCode ?: hintCode
+    val flag = parsed.flag ?: hintCode?.let(CountryGuess::flagOf)
+    val countryName = parsed.countryName ?: hintCode?.let(::russianCountryName)
     val search = buildString {
         append(title)
-        parsed?.let { append(' ').append(it.original) }
+        if (!labelHidden) append(' ').append(parsed.original)
         append(' ').append(protocol)
         countryName?.let { append(' ').append(it) }
         countryCode?.let { append(' ').append(it) }
@@ -414,9 +416,13 @@ internal fun liveServerGroups(
     groups: List<RuntimeSelectorGroup>,
     hideAddresses: Boolean,
     nowEpochMillis: Long,
+    hostCountries: Map<String, String> = emptyMap(),
 ): List<ServerGroupUi> {
     val primaryTag = (groups.firstOrNull { it.primary } ?: groups.firstOrNull())?.tag
-    val hints = inferCountries(groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first })
+    val hints = inferCountries(
+        groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first },
+        hostCountries,
+    )
     return groups.filter { it.items.isNotEmpty() }.map { group ->
         buildGroup(
             tag = group.tag,
@@ -440,9 +446,10 @@ internal fun offlineServerGroups(
     savedLatency: Map<String, PersistedServerLatency>,
     hideAddresses: Boolean,
     nowEpochMillis: Long,
+    hostCountries: Map<String, String> = emptyMap(),
 ): List<ServerGroupUi> {
     val primaryTag = summary.primaryGroup?.tag
-    val hints = summaryCountryHints(summary)
+    val hints = summaryCountryHints(summary, hostCountries)
     return summary.groups.filter { it.options.isNotEmpty() }.map { group ->
         buildGroup(
             tag = group.tag,
@@ -492,8 +499,14 @@ internal fun serverStats(tags: Collection<String>, countryHints: Map<String, Str
 }
 
 /** Подсказки стран для серверов профиля без флага в имени. */
-internal fun summaryCountryHints(summary: ProfileServerSummary): Map<String, String> =
-    inferCountries(summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first })
+internal fun summaryCountryHints(
+    summary: ProfileServerSummary,
+    hostCountries: Map<String, String> = emptyMap(),
+): Map<String, String> =
+    inferCountries(
+        summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first },
+        hostCountries,
+    )
 
 internal fun russianCountryName(code: String): String? =
     java.util.Locale("", code).getDisplayCountry(java.util.Locale("ru")).takeIf(String::isNotBlank)
@@ -901,15 +914,18 @@ internal fun buildServersUi(
     live: Boolean,
     hideAddresses: Boolean,
     nowEpochMillis: Long,
+    hostCountries: Map<String, String> = emptyMap(),
 ): ServersUi {
     if (profiles.isEmpty()) return ServersUi.Empty
     val profile = profiles.firstOrNull { it.id == activeProfileId } ?: return ServersUi.NoActive
     val summary = summaries[profile.id]
     val groups = when {
         live && runtimeGroups.any { it.items.isNotEmpty() } ->
-            liveServerGroups(runtimeGroups, hideAddresses, nowEpochMillis)
+            liveServerGroups(runtimeGroups, hideAddresses, nowEpochMillis, hostCountries)
         summary != null ->
-            offlineServerGroups(summary, savedLatency[profile.id].orEmpty(), hideAddresses, nowEpochMillis)
+            offlineServerGroups(
+                summary, savedLatency[profile.id].orEmpty(), hideAddresses, nowEpochMillis, hostCountries,
+            )
         else -> emptyList()
     }
     if (groups.isEmpty()) {

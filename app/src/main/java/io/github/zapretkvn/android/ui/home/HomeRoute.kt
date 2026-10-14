@@ -26,6 +26,7 @@ import io.github.zapretkvn.core.uimodel.protocolMonogram
 fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues) {
     val state by deps.profiles.state.collectAsStateWithLifecycle()
     val serverLatency by deps.profiles.serverLatency.collectAsStateWithLifecycle()
+    val hostCountries by deps.profiles.serverCountries.collectAsStateWithLifecycle()
     val appsState by deps.apps.state.collectAsStateWithLifecycle()
     val routingState by deps.routing.state.collectAsStateWithLifecycle()
     val vpnState by deps.vpn.state.collectAsStateWithLifecycle()
@@ -37,11 +38,11 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val summary = activeProfile?.let { state.serverSummaries[it.id] }
     val latency = activeProfile?.let { serverLatency[it.id] }.orEmpty()
     val hide = state.settings.hideServerAddresses
-    val server = remember(vpnState is VpnConnectionState.Connected, selectorGroups, summary, latency, hide) {
+    val server = remember(vpnState is VpnConnectionState.Connected, selectorGroups, summary, latency, hide, hostCountries) {
         if (vpnState is VpnConnectionState.Connected) {
-            onlineServer(selectorGroups, hide)
+            onlineServer(selectorGroups, hide, hostCountries)
         } else {
-            offlineServer(summary, latency, hide)
+            offlineServer(summary, latency, hide, hostCountries)
         }
     }
     val input = HomeInput(
@@ -93,13 +94,20 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     HomeScreen(ui = ui, stats = { sessionStats.value }, callbacks = callbacks, contentPadding = padding)
 }
 
-private fun onlineServer(groups: List<RuntimeSelectorGroup>, hide: Boolean): HomeServerUi? {
+private fun onlineServer(
+    groups: List<RuntimeSelectorGroup>,
+    hide: Boolean,
+    hostCountries: Map<String, String>,
+): HomeServerUi? {
     val group = groups.primaryGroup() ?: return null
     val item = group.items.firstOrNull { it.tag == group.selected } ?: return null
-    val name = ServerName.parse(ScreenshotPrivacy.serverLabel(item.tag, hide))
-    val hint = inferCountries(groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first })[item.tag]
+    val name = ServerName.parse(item.tag)
+    val hint = inferCountries(
+        groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first },
+        hostCountries,
+    )[item.tag]
     return HomeServerUi(
-        title = name.title,
+        title = homeServerTitle(item.tag, name, hide),
         flag = name.flag ?: hint?.let(CountryGuess::flagOf),
         protocol = protocolLabel(item.type),
         monogram = protocolMonogram(item.type),
@@ -115,15 +123,19 @@ private fun offlineServer(
     summary: ProfileServerSummary?,
     latency: Map<String, PersistedServerLatency>,
     hide: Boolean,
+    hostCountries: Map<String, String>,
 ): HomeServerUi? {
     if (summary == null || summary.serverCount == 0) return null
     val label = summary.selectedLabel ?: return null
     val option = summary.primaryGroup?.options?.firstOrNull { it.tag == label }
-    val name = ServerName.parse(ScreenshotPrivacy.serverLabel(label, hide))
+    val name = ServerName.parse(label)
     val saved = latency[label]?.displayState()
-    val hint = inferCountries(summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first })[label]
+    val hint = inferCountries(
+        summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first },
+        hostCountries,
+    )[label]
     return HomeServerUi(
-        title = name.title,
+        title = homeServerTitle(label, name, hide),
         flag = name.flag ?: hint?.let(CountryGuess::flagOf),
         protocol = option?.type?.let(::protocolLabel) ?: "",
         monogram = protocolMonogram(option?.type.orEmpty()),
@@ -133,6 +145,12 @@ private fun offlineServer(
         icmp = null,
         switchable = summary.switchable,
     )
+}
+
+/** Флаг и страна берутся из настоящего тега; скрывается только показываемый текст. */
+private fun homeServerTitle(tag: String, name: ServerName, hide: Boolean): String {
+    val masked = ScreenshotPrivacy.serverLabel(tag, hide)
+    return if (masked != tag) masked else name.title
 }
 
 private fun ProfileServerSummary?.errorContext(): VpnErrorContext {

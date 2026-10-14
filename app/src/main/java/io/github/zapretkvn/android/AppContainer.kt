@@ -24,6 +24,9 @@ import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.network.BootstrapCache
 import io.github.zapretkvn.android.network.BootstrapResolver
 import io.github.zapretkvn.android.network.VpnNetworkProvider
+import io.github.zapretkvn.android.network.geo.DohHostAddressResolver
+import io.github.zapretkvn.android.network.geo.GeoIpCountry
+import io.github.zapretkvn.android.network.geo.ServerCountryStore
 import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
@@ -155,6 +158,17 @@ class AppContainer(
         backgroundScope,
     )
 
+    /**
+     * Страна сервера по его адресу: офлайн-таблица GeoIP из ассетов плюс разовое разрешение
+     * имён по DoH (раз в 7 суток на хост). VPN-рантайм не затрагивается.
+     */
+    val serverCountryStore = ServerCountryStore(
+        file = File(appContext.noBackupFilesDir, "network/server-countries.json"),
+        geo = GeoIpCountry { appContext.assets.open("geoip/country.bin") },
+        resolver = DohHostAddressResolver(physicalNetwork = { nonVpnNetwork(appContext) }),
+        scope = backgroundScope,
+    )
+
     init {
         // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
         // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
@@ -173,6 +187,7 @@ class AppContainer(
             bootstrapCache,
             ruleSetAssetManager,
             serverLatencyStore,
+            serverCountryStore,
         )
 
     val appsViewModelFactory: AppsViewModel.Factory

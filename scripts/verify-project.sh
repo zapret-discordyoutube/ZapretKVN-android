@@ -177,6 +177,10 @@ for source in (
             delays.append((str(path.relative_to(root)), count))
 delays.sort()
 expected = [
+    # Случайная пауза 0,15–1,2 с между разовыми DoH-запросами страны сервера внутри
+    # одной пачки (не больше 3 параллельно): запросы не идут залпом. Пачка стартует
+    # только после импорта/обновления профиля или при запуске; повторов и циклов нет.
+    ("app/src/main/java/io/github/zapretkvn/android/network/geo/ServerCountryStore.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
     # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
     # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
@@ -448,6 +452,40 @@ for entry in entries:
     if digest != entry["sha256"]:
         raise SystemExit(f"Rule-set asset hash mismatch: {path}: {digest}")
 print("Packaged rule-set manifest and hashes are valid.")
+PY
+
+python3 - "$PROJECT_ROOT" <<'PY'
+from pathlib import Path
+import hashlib
+import json
+import re
+import struct
+import sys
+
+root = Path(sys.argv[1])
+asset_root = root / "app/src/main/assets/geoip"
+manifest = json.loads((asset_root / "manifest.json").read_text())
+blob = (asset_root / manifest["file"]).read_bytes()
+if hashlib.sha256(blob).hexdigest() != manifest["sha256"] or len(blob) != manifest["bytes"]:
+    raise SystemExit("GeoIP country asset hash/size mismatch")
+if blob[:4] != b"ZGC1" or manifest.get("format") != "ZGC1":
+    raise SystemExit("GeoIP country asset has an unexpected format")
+if len(blob) > 3 * 1024 * 1024:
+    raise SystemExit("GeoIP country asset exceeds the 3 MiB budget")
+if manifest.get("license") != "CC-BY-4.0" or manifest.get("attribution") != "IP Geolocation by DB-IP":
+    raise SystemExit("GeoIP manifest lost the DB-IP license/attribution")
+if not re.fullmatch(r"\d{4}-\d{2}", manifest["month"]) or not manifest["source"].endswith(
+    f"dbip-country-lite-{manifest['month']}.csv.gz"
+):
+    raise SystemExit("GeoIP manifest source/month mismatch")
+month, count = struct.unpack_from(">IB", blob, 4)
+if month != int(manifest["month"].replace("-", "")) or count != manifest["countries"]:
+    raise SystemExit("GeoIP asset header disagrees with its manifest")
+notices = (root / "docs/THIRD_PARTY_NOTICES.md").read_text()
+for required in ("IP Geolocation by DB-IP", "https://db-ip.com", "CC BY 4.0"):
+    if required not in notices:
+        raise SystemExit(f"Third-party notices omit the DB-IP attribution: {required!r}")
+print("Packaged GeoIP country asset, manifest and attribution are valid.")
 PY
 
 PERFORMANCE_POLICY="$PROJECT_ROOT/scripts/gate8-performance-summary.jq"

@@ -6,6 +6,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -73,6 +74,8 @@ class UpdateControllerInstrumentedTest {
         withTimeout(5_000) { controller.state.first { it is UpdateState.Available } }
 
         assertEquals(1, connected)
+        // Временная сессия закрывается в finally проверки — сразу после публикации состояния.
+        withTimeout(5_000) { while (restored == 0) delay(20) }
         assertEquals(1, restored)
         controller.cancelAndDelete()
     }

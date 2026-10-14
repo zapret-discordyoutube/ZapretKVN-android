@@ -65,4 +65,42 @@ class CountryGuessTest {
         assertEquals("2001:db8::7", endpointHost("2001:db8::7"))
         assertNull(endpointHost(null))
     }
+
+    @Test
+    fun `host key is lowercase without port brackets zone or trailing dot`() {
+        assertEquals("a.example", endpointHostKey("A.Example.:443"))
+        assertEquals("2001:db8::7", endpointHostKey("[2001:DB8::7]:443"))
+        assertEquals("fe80::1", endpointHostKey("[fe80::1%wlan0]:443"))
+        assertNull(endpointHostKey("  "))
+        assertNull(endpointHostKey(null))
+    }
+
+    @Test
+    fun `geoip of the address wins over sibling and name words but not over a flag`() {
+        val servers = listOf(
+            "VLESS 🇳🇱 Amsterdam-2" to "185.12.34.56:443",
+            // Тот же адрес, что у соседа с флагом NL, но таблица говорит DE: таблица главнее соседа.
+            "Hysteria 2" to "185.12.34.56:8443",
+            // В имени слово «Finland», по адресу — SE: адрес главнее слов в имени.
+            "Finland fast" to "Edge.Example.com:443",
+            // Флаг в имени остаётся как есть и в подсказки не попадает.
+            "VLESS 🇫🇮 Helsinki" to "edge.example.com:8443",
+            // Таблицы по адресу нет: работают прежние догадки по имени.
+            "Frankfurt 3" to "203.0.113.9:443",
+        )
+        val geo = mapOf("185.12.34.56" to "DE", "edge.example.com" to "SE")
+        val result = inferCountries(servers, geo)
+        assertEquals("DE", result["Hysteria 2"])
+        assertEquals("SE", result["Finland fast"])
+        assertNull(result["VLESS 🇫🇮 Helsinki"])
+        assertNull(result["VLESS 🇳🇱 Amsterdam-2"])
+        assertEquals("DE", result["Frankfurt 3"])
+    }
+
+    @Test
+    fun `without geoip behaviour is unchanged`() {
+        val result = inferCountries(listOf("Hysteria 2" to "185.12.34.56:8443", "x" to null))
+        assertNull(result["Hysteria 2"])
+        assertNull(result["x"])
+    }
 }

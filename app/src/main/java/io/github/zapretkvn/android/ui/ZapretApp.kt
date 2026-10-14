@@ -29,6 +29,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +55,7 @@ internal fun RawEditorScreen(
     lineWrap: Boolean,
     hideServerAddresses: Boolean,
     busy: Boolean,
+    snackbarHost: @Composable () -> Unit = {},
 ) {
     var confirmDiscard by remember { mutableStateOf(false) }
     // Sensitive endpoints must be concealed again after Activity recreation.
@@ -74,6 +78,38 @@ internal fun RawEditorScreen(
                 },
             )
         },
+        // Кнопки — в нижней панели, а сообщения — над ней: снекбар больше не
+        // перекрывает «Validate» и «Сохранить».
+        bottomBar = {
+            Surface(tonalElevation = 2.dp) {
+                Box(
+                    Modifier
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = viewModel::formatEditor, enabled = !busy) { Text("Format") }
+                        OutlinedButton(onClick = viewModel::validateEditor, enabled = !busy) { Text("Validate") }
+                        if (editor.hasBackup) {
+                            OutlinedButton(onClick = viewModel::restoreBackup, enabled = !busy) {
+                                Text("Restore backup")
+                            }
+                        }
+                        Button(
+                            onClick = viewModel::saveEditor,
+                            enabled = editor.hasUnsavedChanges && !busy,
+                        ) { Text("Сохранить") }
+                    }
+                }
+            }
+        },
+        snackbarHost = snackbarHost,
     ) { padding ->
         Column(
             modifier = Modifier
@@ -154,25 +190,6 @@ internal fun RawEditorScreen(
                 )
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(onClick = viewModel::formatEditor, enabled = !busy) { Text("Format") }
-                OutlinedButton(onClick = viewModel::validateEditor, enabled = !busy) { Text("Validate") }
-                if (editor.hasBackup) {
-                    OutlinedButton(onClick = viewModel::restoreBackup, enabled = !busy) {
-                        Text("Restore backup")
-                    }
-                }
-                Button(
-                    onClick = viewModel::saveEditor,
-                    enabled = editor.hasUnsavedChanges && !busy,
-                ) { Text("Сохранить") }
-            }
-            Spacer(Modifier.height(8.dp))
         }
     }
 

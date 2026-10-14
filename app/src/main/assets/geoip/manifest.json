@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "format": "ZGC1",
+  "database": "DB-IP IP to Country Lite",
+  "month": "2026-10",
+  "source": "https://download.db-ip.com/free/dbip-country-lite-2026-10.csv.gz",
+  "source_sha256": "097426b8ddae89157d444a59ac1847e873f7943c32d52becc4371c8b0273af80",
+  "license": "CC-BY-4.0",
+  "attribution": "IP Geolocation by DB-IP",
+  "attribution_url": "https://db-ip.com",
+  "file": "country.bin",
+  "sha256": "1a1798ca4e8dd96cf58d57b3300280223311b00919bfe9d67727618ff5480f78",
+  "bytes": 2040011,
+  "ipv4_entries": 362105,
+  "ipv6_entries": 344268,
+  "ipv6_prefix_bits": 48,
+  "countries": 250
+}

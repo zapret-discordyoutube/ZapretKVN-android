@@ -54,6 +54,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
     val profiles = deps.profiles
     val state by profiles.state.collectAsStateWithLifecycle()
     val savedLatency by profiles.serverLatency.collectAsStateWithLifecycle()
+    val hostCountries by profiles.serverCountries.collectAsStateWithLifecycle()
     val vpnState by deps.vpn.state.collectAsStateWithLifecycle()
     val initialGroups = remember(deps.vpn) { deps.vpn.selectorGroups.value }
     val runtimeFlow = remember(deps.vpn) { deps.vpn.selectorGroups.throttleLatest(UPDATE_PERIOD_MILLIS) }
@@ -64,7 +65,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
     val groupsForUi: List<RuntimeSelectorGroup> = if (live) runtimeGroups else emptyList()
     val ui = remember(
         state.profiles, activeId, state.serverSummaries, savedLatency,
-        groupsForUi, live, state.settings.hideServerAddresses,
+        groupsForUi, live, state.settings.hideServerAddresses, hostCountries,
     ) {
         buildServersUi(
             profiles = state.profiles,
@@ -75,6 +76,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             live = live,
             hideAddresses = state.settings.hideServerAddresses,
             nowEpochMillis = System.currentTimeMillis(),
+            hostCountries = hostCountries,
         )
     }
 
@@ -160,13 +162,17 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
     var addSheetOpen by remember { mutableStateOf(false) }
 
     val activeId = state.settings.activeProfileId
-    val sections = remember(state.profiles, state.serverSummaries, activeId, state.refreshableProfileIds) {
+    val hostCountries by deps.profiles.serverCountries.collectAsStateWithLifecycle()
+    val sections = remember(
+        state.profiles, state.serverSummaries, activeId, state.refreshableProfileIds, hostCountries,
+    ) {
         profileSections(
             profiles = state.profiles,
             summaries = state.serverSummaries,
             activeProfileId = activeId,
             refreshableIds = state.refreshableProfileIds,
             nowEpochMillis = System.currentTimeMillis(),
+            hostCountries = hostCountries,
         )
     }
     val latestActive by rememberUpdatedState(activeId)

@@ -103,6 +103,24 @@ The APK contains only the pinned RU IP binary rule-set. Its SHA-256 and source
 URL are recorded in `app/src/main/assets/rule-sets/manifest.json`; the upstream
 license is retained as `app/src/main/res/raw/sing_geoip_license.txt`.
 
+## DB-IP IP to Country Lite
+
+- Source: <https://db-ip.com/db/download/ip-to-country-lite>
+- Snapshot: `dbip-country-lite-2026-10.csv.gz`, downloaded from
+  <https://download.db-ip.com/free/dbip-country-lite-2026-10.csv.gz>.
+- License: Creative Commons Attribution 4.0 International (CC BY 4.0),
+  <https://creativecommons.org/licenses/by/4.0/>.
+- Attribution: **IP Geolocation by DB-IP** (<https://db-ip.com>).
+
+The application packages a compact, derived copy of this table
+(`app/src/main/assets/geoip/country.bin`, built by
+`scripts/build-geoip-country.py`; source month, SHA-256 and sizes in
+`app/src/main/assets/geoip/manifest.json`). It is used offline, only to show a
+country flag next to a server from the server's own IP address. The table is
+refreshed only together with the application; nothing is downloaded at runtime.
+The derived copy merges neighbouring ranges of one country and keeps IPv6
+ranges at /48 precision.
+
 The generated `libbox.aar` also contains the Go modules resolved by the pinned
 `go.mod` and `go.sum`. Their exact source versions are therefore reproducible
 from the commit above. Their original copyright and license files remain in the

@@ -128,7 +128,7 @@ fun ZapretRoot(deps: AppDependencies) {
 
     Box(Modifier.fillMaxSize()) {
         if (editorOpen) {
-            EditorRoute(deps)
+            EditorRoute(deps, snackbarHostState)
         } else {
             BackHandler(enabled = navigator.canGoBack) { navigator.back() }
             AnimatedContent(
@@ -156,7 +156,7 @@ fun ZapretRoot(deps: AppDependencies) {
         }
         // Вкладки показывают сообщения над нижней панелью; вложенным экранам
         // нужен свой хост у нижнего края, иначе сообщение увидят только после возврата.
-        if (editorOpen || navigator.top !is Route.Tab) {
+        if (!editorOpen && navigator.top !is Route.Tab) {
             SnackbarHost(
                 snackbarHostState,
                 modifier = Modifier
@@ -278,7 +278,7 @@ private fun ImportHost(deps: AppDependencies, nav: AppNavigation) {
 }
 
 @Composable
-private fun EditorRoute(deps: AppDependencies) {
+private fun EditorRoute(deps: AppDependencies, snackbarHostState: SnackbarHostState) {
     val state by deps.profiles.state.collectAsStateWithLifecycle()
     val editor = state.editor ?: return
     RawEditorScreen(
@@ -287,6 +287,7 @@ private fun EditorRoute(deps: AppDependencies) {
         state.settings.rawEditorLineWrap,
         state.settings.hideServerAddresses,
         state.busy,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     )
 }
 
