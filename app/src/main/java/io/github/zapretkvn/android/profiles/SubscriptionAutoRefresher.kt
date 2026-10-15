@@ -8,7 +8,7 @@ import java.io.IOException
 internal data class SubscriptionAutoRefreshReport(val updated: Int, val skipped: Int)
 
 /**
- * Фоновое обновление подписок: тот же путь, что у ручного «Обновить (без кэша)» →
+ * Фоновое обновление подписок (суточное задание `UpdateCheckJobService`): тот же путь, что у ручного «Обновить (без кэша)» →
  * «Сохранить без перезапуска» — [ImportService.refreshPreview] и [ProfileStore.update].
  *
  * До 0.5.5 подписки обновлялись только вручную, и новые серверы не доходили до людей,

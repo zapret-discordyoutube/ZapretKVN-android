@@ -56,7 +56,6 @@ import io.github.zapretkvn.android.updates.UpdateCheckJobService
 import io.github.zapretkvn.android.profiles.AndroidImportInput
 import io.github.zapretkvn.android.profiles.ImportService
 import io.github.zapretkvn.android.profiles.SubscriptionAutoRefresher
-import io.github.zapretkvn.android.profiles.SubscriptionRefreshJobService
 import io.github.zapretkvn.android.profiles.UiSettingsStorePort
 import io.github.zapretkvn.android.profiles.VpnControllerPort
 import io.github.zapretkvn.android.updates.UpdateController
@@ -207,10 +206,9 @@ class AppContainer(
         // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
         // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
         backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }
-        backgroundScope.launch { SubscriptionRefreshJobService.schedule(appContext) }
     }
 
-    /** Фоновое обновление подписок тем же путём, что ручное «Обновить (без кэша)». */
+    /** Обновление подписок суточным заданием [UpdateCheckJobService] тем же путём, что ручное «Обновить (без кэша)». */
     internal val subscriptionAutoRefresher: SubscriptionAutoRefresher by lazy {
         SubscriptionAutoRefresher(
             service = ImportService(

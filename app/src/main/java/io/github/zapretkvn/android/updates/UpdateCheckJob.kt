@@ -7,11 +7,19 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import io.github.zapretkvn.android.ZapretApplication
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 import kotlin.random.Random
 
 /**
- * Суточная проверка обновлений через платформенный JobScheduler (без WorkManager, будильников и wakelock).
+ * Суточное фоновое задание через платформенный JobScheduler (без WorkManager, будильников и wakelock):
+ * проверка обновлений приложения и обновление подписок. Это единственный планировщик приложения
+ * (`scripts/verify-project.sh`), поэтому подписки обновляются тем же пробуждением, а не своим заданием.
  *
  * Задание не сохраняется между перезагрузками, потому что RECEIVE_BOOT_COMPLETED приложению не нужен
  * и не запрашивается: оно заново ставится при любом запуске процесса приложения (см. [schedule]).
@@ -20,14 +28,24 @@ class UpdateCheckJobService : JobService() {
     @Volatile
     private var stoppedBySystem = false
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var subscriptionRefresh: Job? = null
+
     override fun onStartJob(params: JobParameters): Boolean {
         stoppedBySystem = false
         val container = (application as ZapretApplication).container
-        val job = container.updateController.startBackground {
+        val update = container.updateController.startBackground {
             container.uiSettingsStore.settings.first().updateChannel
-        } ?: return false
-        job.invokeOnCompletion {
-            // Повтор не нужен: задание суточное, а неудачу следующая проверка исправит сама.
+        }
+        // Новые серверы подписок приходят без ручного «Обновить» (15.10.2026). Работающий VPN
+        // не перезапускается: список применится при следующем подключении.
+        val refresh = scope.launch { container.subscriptionAutoRefresher.refreshAll() }
+        subscriptionRefresh = refresh
+        scope.launch {
+            listOfNotNull(update, refresh).joinAll()
+            // Повтор не нужен: задание суточное, а неудачу следующий проход исправит сам.
             if (!stoppedBySystem) jobFinished(params, false)
         }
         return true
@@ -36,6 +54,7 @@ class UpdateCheckJobService : JobService() {
     override fun onStopJob(params: JobParameters): Boolean {
         stoppedBySystem = true
         (application as ZapretApplication).container.updateController.stopBackground()
+        subscriptionRefresh?.cancel()
         return true
     }
 
