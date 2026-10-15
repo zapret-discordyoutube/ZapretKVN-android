@@ -13,6 +13,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import java.net.NetworkInterface
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
@@ -98,6 +99,10 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     @Volatile
     var current: UnderlyingNetworkState = UnderlyingNetworkState()
         private set
+
+    /** Когда [current] менялся последний раз (elapsedRealtime); 0 — ещё ни разу. */
+    @Volatile
+    private var lastChangeElapsedMillis = 0L
 
     private inner class UnderlyingNetworkCallback : ConnectivityManager.NetworkCallback {
         constructor() : super()
@@ -238,6 +243,18 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     ): UnderlyingNetworkState {
         require(settleAttempts > 0)
         var candidate = awaitUnderlying(timeoutMillis, accept)
+        // Окно устоя защищает от только что появившейся, мигающей сети. Его не ждём,
+        // если сеть уже простояла без изменений дольше окна или Android её уже
+        // подтвердил (VALIDATED: системная проверка интернета прошла, сеть не «только
+        // что мигнула»). Монитор создаётся вместе со службой, поэтому на холодном
+        // подключении его собственный возраст меньше окна — без признака VALIDATED
+        // каждое подключение платило бы лишние settleMillis (250 мс). Смену сети во
+        // время операции по-прежнему ловит runOnStableNetwork.
+        val changedAt = lastChangeElapsedMillis
+        val settledByAge = changedAt > 0 && SystemClock.elapsedRealtime() - changedAt >= settleMillis
+        if (candidate == current && !candidate.captivePortal && (candidate.validated || settledByAge)) {
+            return candidate
+        }
         repeat(settleAttempts) {
             delay(settleMillis)
             val latest = current
@@ -408,6 +425,7 @@ class UnderlyingNetworkMonitor(context: Context) : AutoCloseable {
     private fun publish(next: UnderlyingNetworkState) {
         if (next == current) return
         current = next
+        lastChangeElapsedMillis = SystemClock.elapsedRealtime()
         observers.forEach { observer -> observer(next) }
     }
 
