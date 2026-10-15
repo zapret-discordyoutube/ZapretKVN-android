@@ -237,6 +237,10 @@ for source in (
             delays.append((str(path.relative_to(root)), count))
 delays.sort()
 expected = [
+    # Слушатель службы очереди обновлений: работает, только пока включён VPN и выбран канал Stable.
+    # Одна пауза pause(): после сбоя связи 60 → 180 с и 2 мин после разрешения или слишком быстрого
+    # ответа. Остальное время вопрос держит сама служба (до 4,5 мин), таймера на стороне приложения нет.
+    ("app-updater/src/main/java/io/github/zapretkvn/android/updates/ReleaseWaitClient.kt", 1),
     # Случайная пауза 0,15–1,2 с между разовыми DoH-запросами страны сервера внутри
     # одной пачки (не больше 3 параллельно): запросы не идут залпом. Пачка стартует
     # только после импорта/обновления профиля или при запуске; повторов и циклов нет.
@@ -271,7 +275,7 @@ if delays != expected:
     raise SystemExit(f"Unexpected production timer/retry surface: {delays!r}")
 print(
     "Production delay calls are limited to visible session time, server-list redraw throttle, probe stagger, "
-    "service-check pauses, card age label, "
+    "service-check pauses, card age label, update queue listener pauses, "
     "network debounce, bounded recovery backoff and bootstrap settle."
 )
 PY
