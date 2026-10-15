@@ -68,4 +68,25 @@ class HomePresenterTest {
         assertEquals("Ошибка VPN", statusLabel(VpnConnectionState.Error("x")))
         assertEquals("Через VPN: 2 · заблокировано: 1", appsSummary(AppScopeMode.Include, 2, 1))
     }
+
+    @Test
+    fun `link lost replaces the connected headline and status only while connected`() {
+        val connected = VpnConnectionState.Connected("p", "Daily", 0L)
+        val lost = HomeInput(connected, true, 3, 0, AppScopeMode.Include, "Amsterdam-2", linkLost = true)
+        val headline = homeHeadline(HomeStage.Connected, lost)
+        assertEquals("Нет связи с сервером", headline.title)
+        assertTrue(headline.hint!!.contains("Перезапустите"))
+        assertTrue(headline.hint.contains("смените сервер"))
+        assertEquals("Нет связи с сервером", statusLabel(connected, linkLost = true))
+        assertEquals(io.github.zapretkvn.core.designsystem.Tone.Warning, statusTone(connected, linkLost = true))
+        // Перезапуск остаётся вторым действием главного экрана.
+        assertEquals(HomeAction.Restart, homeActions(HomeStage.Connected, AppScopeMode.Include).second)
+
+        // Без флага и вне «Подключено» ничего не меняется.
+        assertEquals("VPN подключён", statusLabel(connected))
+        assertEquals("VPN выключен", statusLabel(VpnConnectionState.Stopped, linkLost = true))
+        val stoppedLost = lost.copy(vpnState = VpnConnectionState.Stopped)
+        assertEquals(false, stoppedLost.isLinkLost())
+        assertEquals("Всё работает", homeHeadline(HomeStage.Connected, lost.copy(linkLost = false)).title)
+    }
 }

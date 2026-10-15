@@ -157,6 +157,26 @@ class HomeUiInstrumentedTest {
         )
         composeRule.onNodeWithText("VPN подключён").assertExists()
         composeRule.onNodeWithText("Отключить").assertExists()
+
+        // Сервер не отвечает, замены нет: поверх «Подключено» подпись, перезапуск и смена сервера.
+        container.vpnController.publishLinkLost(generation, true)
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Нет связи с сервером").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("VPN подключён").assertDoesNotExist()
+        composeRule.onNodeWithText("Перезапустить").assertExists()
+        composeRule.onNodeWithText("Сменить сервер").assertExists()
+        composeRule.onNodeWithText("Отключить").assertExists()
+
+        // Любая новая публикация состояния снимает флаг.
+        container.vpnController.publish(
+            generation,
+            VpnConnectionState.Connected(profile, "Daily VPN", System.currentTimeMillis()),
+        )
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodesWithText("Нет связи с сервером").fetchSemanticsNodes().isEmpty()
+        }
+        composeRule.onNodeWithText("VPN подключён").assertExists()
     }
 
     @Test

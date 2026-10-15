@@ -12,6 +12,9 @@ internal class DiagnosticRuntimeMap private constructor(
     private val targetsByRawTag: Map<String, DiagnosticTargetContext>,
     private val selectedRawTag: String?,
 ) {
+    /** Безопасная цель по сырому тегу outbound; null, если такого тега в профиле нет. */
+    fun targetFor(rawTag: String): DiagnosticTargetContext? = targetsByRawTag[rawTag]
+
     fun resolve(rawMessage: String): DiagnosticTargetContext {
         val matched = targetsByRawTag.entries.firstOrNull { (rawTag, _) ->
             rawTag.isNotBlank() && (

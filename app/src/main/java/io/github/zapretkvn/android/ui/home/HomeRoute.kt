@@ -21,6 +21,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val appsState by deps.apps.state.collectAsStateWithLifecycle()
     val routingState by deps.routing.state.collectAsStateWithLifecycle()
     val vpnState by deps.vpn.state.collectAsStateWithLifecycle()
+    val linkLost by deps.vpn.linkLost.collectAsStateWithLifecycle()
     val selectorGroups by deps.vpn.selectorGroups.collectAsStateWithLifecycle()
     // Трафик тикает раз в секунду: читается только в листовых карточках через лямбду.
     val sessionStats = deps.vpn.sessionStats.collectAsStateWithLifecycle()
@@ -45,6 +46,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         blockedAppCount = appsState.blockedPackages.size,
         scopeMode = appsState.scopeMode,
         serverTitle = server?.title,
+        linkLost = linkLost,
     )
     val stage = homeStage(input)
     val (primary, secondary) = homeActions(stage, appsState.scopeMode)
@@ -65,6 +67,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         errorContext = summary.errorContext(),
         appVersion = BuildConfig.VERSION_NAME,
         services = ServiceCatalog.resolve(state.settings.serviceChecks).map { it.id },
+        linkLost = linkLost,
     )
     val callbacks = remember(deps, nav) {
         HomeCallbacks(

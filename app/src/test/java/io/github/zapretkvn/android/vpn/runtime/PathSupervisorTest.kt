@@ -168,4 +168,49 @@ class PathSupervisorTest {
         assertEquals(listOf("c"), PathSupervisor.rank(plan, hints).map { it.id })
         assertEquals(supervisor.candidates(plan, hints), PathSupervisor.rank(plan, hints))
     }
+
+    @Test
+    fun `dead server without replacement reports an unrecovered reason`() {
+        val probe = supervisor.onHint(timeout("a")) { plan("a", "vless", "a") } as PathDecision.Probe
+        val decision = supervisor.onProbeResult(probe.episode, false, plan("a", "vless", "a"), emptyMap())
+        assertTrue((decision as PathDecision.Ignore).reason in PathSupervisor.DEAD_UNRECOVERED_REASONS)
+    }
+
+    @Test
+    fun `switch rate limit reports an unrecovered reason`() {
+        val ids = arrayOf("a", "b", "c", "d", "e")
+        var current = "a"
+        repeat(PathSupervisor.MAX_SWITCHES_PER_WINDOW) {
+            val probe = supervisor.onHint(timeout(current)) { plan(current, "vless", *ids) } as PathDecision.Probe
+            val switch = supervisor.onProbeResult(probe.episode, false, plan(current, "vless", *ids), emptyMap())
+                as PathDecision.Switch
+            supervisor.onSwitchResult(switch.episode, committed = true)
+            current = switch.toId
+            now += PathSupervisor.COMMIT_FENCE_MILLIS
+        }
+        val probe = supervisor.onHint(timeout(current)) { plan(current, "vless", *ids) } as PathDecision.Probe
+        val decision = supervisor.onProbeResult(probe.episode, false, plan(current, "vless", *ids), emptyMap())
+        assertEquals(PathSupervisor.REASON_SWITCH_RATE_LIMIT, (decision as PathDecision.Ignore).reason)
+    }
+
+    @Test
+    fun `false alarm and stale probe are not unrecovered failures`() {
+        val alive = supervisor.onHint(timeout("a")) { plan("a") } as PathDecision.Probe
+        val ignored = supervisor.onProbeResult(alive.episode, true, plan("a"), emptyMap()) as PathDecision.Ignore
+        assertFalse(ignored.reason in PathSupervisor.DEAD_UNRECOVERED_REASONS)
+        val stale = supervisor.onProbeResult(alive.episode, false, plan("a"), emptyMap()) as PathDecision.Ignore
+        assertFalse(stale.reason in PathSupervisor.DEAD_UNRECOVERED_REASONS)
+    }
+
+    @Test
+    fun `passive stall alarm goes through the same single probe and is muted after a false alarm`() {
+        // Подозрение детектора приходит как обычная подсказка о таймауте текущего сервера.
+        val probe = supervisor.onHint(timeout("a")) { plan("a") }
+        assertTrue(probe is PathDecision.Probe)
+        // Пока проба идёт, вторая тревога не запускает ещё одну.
+        assertTrue(supervisor.onHint(timeout("a")) { plan("a") } is PathDecision.Ignore)
+        supervisor.onProbeResult((probe as PathDecision.Probe).episode, true, plan("a"), emptyMap())
+        now += 5 * 60_000L
+        assertTrue(supervisor.onHint(timeout("a")) { plan("a") } is PathDecision.Probe)
+    }
 }

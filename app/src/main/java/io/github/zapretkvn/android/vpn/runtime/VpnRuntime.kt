@@ -206,7 +206,14 @@ internal class VpnRuntime(
 
     fun resume(startId: Int) = post(Message.Resume(startId, manual = true))
 
-    fun onScreenInteractive(interactive: Boolean) = switching.onScreenInteractive(interactive)
+    /** Экран включён/погашен: «умная проверка» и поток счётчиков трафика сессии следуют за ним. */
+    @Volatile private var screenInteractive = true
+
+    fun onScreenInteractive(interactive: Boolean) {
+        screenInteractive = interactive
+        switching.onScreenInteractive(interactive)
+        postCall { sessions.active()?.onScreenInteractive(interactive) }
+    }
 
     /** Запросы остановки фиксируются при вызове, а не при обработке актором. */
     private class StopRequests {
@@ -317,6 +324,7 @@ internal class VpnRuntime(
         ) : Message
         data class SessionNetwork(val session: CoreSession, val state: UnderlyingNetworkState) : Message
         data class CoreHints(val generation: Long, val hints: List<PathHint>) : Message
+        data class DnsFailures(val generation: Long, val hint: DnsFailureHint) : Message
         data class ObserverUnavailable(val generation: Long, val message: String) : Message
         data class InjectedFailure(val session: CoreSession, val code: HysteriaFailureCode) : Message
         data class InjectedHint(val session: CoreSession, val code: HysteriaFailureCode) : Message
@@ -358,6 +366,7 @@ internal class VpnRuntime(
             is Message.StartFinished -> onStartFinished(message)
             is Message.SessionNetwork -> automation.onSessionNetwork(message.session, message.state)
             is Message.CoreHints -> switching.onCoreHints(message.generation, message.hints)
+            is Message.DnsFailures -> switching.onDnsFailures(message.generation, message.hint)
             is Message.ObserverUnavailable -> onObserverUnavailable(message)
             is Message.InjectedFailure -> switching.onInjectedFailure(message.session, message.code)
             is Message.InjectedHint -> switching.onInjectedHint(message.session, message.code)
@@ -414,7 +423,10 @@ internal class VpnRuntime(
         }
         terminalError = false
         supervisor.reset()
-        controller.beginConnectionDiagnostic(token, restartDiagnosticTrigger(message.reason), profileId)
+        val trigger = restartDiagnosticTrigger(message.reason)
+        // Причина - в журнал приложения и в события завершающейся сессии: до открытия новой.
+        timeline("Перезапуск ($trigger): ${message.reason}.")
+        controller.beginConnectionDiagnostic(token, trigger, profileId)
         controller.startConnectionDiagnosticStage(token, "profile", "Профиль и область приложений")
         controller.publish(token, VpnConnectionState.Starting(profileId, message.reason, updaterRouting))
         host.showForeground(ForegroundState.Restarting)
@@ -862,6 +874,7 @@ internal class VpnRuntime(
         override fun onCoreLogs(generation: Long, messages: List<String>) {
             val hints = CoreLogHints.from(messages)
             if (hints.isNotEmpty()) post(Message.CoreHints(generation, hints))
+            CoreLogHints.dnsFailures(messages)?.let { post(Message.DnsFailures(generation, it)) }
         }
 
         override fun onObserverUnavailable(generation: Long, message: String) =
@@ -887,6 +900,8 @@ internal class VpnRuntime(
             })
             switching.onSessionActivated(session)
             if (!controller.diagnosticsVisible.value) session.closeLogClient()
+            // Поток счётчиков трафика сессии идёт, пока экран горит (или открыты главная/диагностика).
+            session.onScreenInteractive(screenInteractive)
         }
 
         override fun onInjectedFailure(session: CoreSession, code: HysteriaFailureCode) =
@@ -910,20 +925,7 @@ internal class VpnRuntime(
 
     private fun server(tag: String): String = log.server(tag)
 
-    private fun restartDiagnosticTrigger(reason: String): String = when (reason) {
-        "Смена сети Android" -> "network_change"
-        "Автоматическое переподключение" -> "auto_recovery"
-        "Сброс DNS-состояния" -> "dns_cache_clear"
-        "Изменение маршрутизации" -> "routing_change"
-        "Подписка обновлена пользователем" -> "subscription_refresh"
-        "Смена режима DNS" -> "dns_mode_change"
-        "Смена IP-стратегии DNS" -> "dns_strategy_change"
-        "Смена защиты от localhost-чекеров" -> "endpoint_policy_change"
-        "Смена имени VPN-сессии" -> "session_name_change"
-        "Смена MTU для скрытия VPN" -> "mtu_change"
-        REPLACEMENT_REASON -> "server_replacement"
-        else -> "restart"
-    }
+    private fun restartDiagnosticTrigger(reason: String): String = RestartTriggers.fromReason(reason)
 
     /** Операции актора для координаторов политик; вызываются только внутри актора. */
     private inner class ActorOps : NetworkAutomationOps, ServerSwitchOps {
@@ -976,6 +978,7 @@ internal class VpnRuntime(
         override fun onUnderlyingNetworkReplaced() {
             switching.cancelOperation()
             supervisor.reset()
+            switching.onNetworkReplaced()
         }
 
         override fun terminateSession(session: CoreSession, code: HysteriaFailureCode, message: String) =
@@ -1005,7 +1008,7 @@ internal class VpnRuntime(
     }
 
     private companion object {
-        const val REPLACEMENT_REASON = "Переключение на резервный сервер"
+        const val REPLACEMENT_REASON = RestartTriggers.REPLACEMENT_REASON
 
         fun monotonicNow(): Long = android.os.SystemClock.elapsedRealtime()
     }

@@ -43,6 +43,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
@@ -108,6 +112,25 @@ internal class CoreSession(
      * повторном включении диагностики (ему нужен свежий backlog).
      */
     private val diagnosticLogTap = DiagnosticLogTap(controller, generation)
+
+    /**
+     * Единственный источник счётчиков трафика сессии. Его питает либо status-клиент
+     * главной (1 Гц, прореживается до одного отсчёта в 5 с), либо отдельный
+     * [speedMonitorClient] (5 с), но не оба сразу.
+     */
+    private val trafficFlow = MutableSharedFlow<TrafficSample>(
+        replay = 1,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    private val trafficLock = Any()
+    private var lastTrafficEmitElapsed = Long.MIN_VALUE
+
+    /** Экран включён: пока он горит, отсчёты идут и без главной (счётчики накопительные). */
+    @Volatile private var screenInteractive = true
+
+    /** Потребитель «умной проверки»: получает (downlinkTotal, connections) с каждым отсчётом. */
+    @Volatile private var speedConsumer: ((Long, Int) -> Unit)? = null
     private var speedMonitorClient: CommandClient? = null
     private var runtimeErrorClient: CommandClient? = null
     private val runtimeErrorClientAvailable = AtomicBoolean(false)
@@ -240,16 +263,82 @@ internal class CoreSession(
     }
 
     /**
-     * Отдельный CommandStatus «умной проверки» (раз в 5 с), пока сессия жива и
-     * настройка включена. Главный status-клиент (1 Гц) живёт только при
-     * видимой главной.
+     * Отсчёты счётчиков ядра (CommandStatus), накопительные с начала сессии, не чаще
+     * одного в ~5 с. Поток открыт, пока сессия живёт и экран включён (или открыты
+     * главная/диагностика); при погашенном экране отсчёты не идут и клиент закрыт.
+     * `replay = 1`: подписчик сразу получает последний отсчёт - сверяйте его
+     * [TrafficSample.elapsedRealtimeMillis] с текущим временем, он может быть старым.
+     * Подписка бесплатна: клиентов CommandStatus столько же, сколько без неё.
+     */
+    fun trafficSamples(): SharedFlow<TrafficSample> = trafficFlow.asSharedFlow()
+
+    /** Последний отсчёт (или null, если ещё не было). */
+    fun lastTrafficSample(): TrafficSample? = trafficFlow.replayCache.lastOrNull()
+
+    /**
+     * Принять отсчёт от любого из двух клиентов. [throttle] - источник чаще, чем раз в
+     * 5 с (status главной): лишние отсчёты отбрасываются.
+     */
+    private fun acceptTraffic(uplinkTotal: Long, downlinkTotal: Long, connections: Int, throttle: Boolean) {
+        if (closing.get()) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        synchronized(trafficLock) {
+            val minInterval = if (throttle) SAMPLE_MIN_INTERVAL_MILLIS else SAMPLE_DEDUP_MILLIS
+            if (lastTrafficEmitElapsed != Long.MIN_VALUE && now - lastTrafficEmitElapsed < minInterval) return
+            lastTrafficEmitElapsed = now
+        }
+        trafficFlow.tryEmit(TrafficSample(now, uplinkTotal, downlinkTotal, connections))
+        controller.recordSessionTraffic(generation, now, uplinkTotal, downlinkTotal)
+        speedConsumer?.invoke(downlinkTotal, connections)
+    }
+
+    /**
+     * Экран включился или погас. Идёт из потока Android: клиент открывается/закрывается
+     * в [scope], а не на вызывающем потоке.
+     */
+    fun onScreenInteractive(interactive: Boolean) {
+        screenInteractive = interactive
+        if (closing.get()) return
+        scope.launch { reconcileTrafficClient() }
+    }
+
+    /**
+     * «Умная проверка»: подписка на отсчёты потока [trafficSamples] (раз в ~5 с).
+     * Отдельного клиента CommandStatus она не открывает - им управляет экран и главная.
      */
     @Synchronized
     fun openSpeedMonitorClient(onSample: (Long, Int) -> Unit) {
-        if (closing.get() || speedMonitorClient != null) return
+        if (closing.get()) return
+        throughputDetector.reset()
+        speedConsumer = onSample
+        reconcileTrafficClient()
+    }
+
+    @Synchronized
+    fun closeSpeedMonitorClient() {
+        if (speedConsumer == null) return
+        speedConsumer = null
+        throughputDetector.reset()
+    }
+
+    /**
+     * Отдельный клиент CommandStatus (5 с) нужен, пока экран горит или открыта диагностика,
+     * и только если главная не держит свой status-клиент: тот питает поток сам.
+     */
+    @Synchronized
+    private fun reconcileTrafficClient() {
+        val diagnosticsObserved = logClient != null || diagnosticLogTap.enabled
+        val wanted = !closing.get() && statusClient == null && (screenInteractive || diagnosticsObserved)
+        if (wanted) openTrafficClientLocked() else closeTrafficClientLocked()
+    }
+
+    private fun openTrafficClientLocked() {
+        if (speedMonitorClient != null) return
         throughputDetector.reset()
         val candidate = Libbox.newCommandClient(
-            SpeedMonitorClientHandler(controller, generation, onSample),
+            SpeedMonitorClientHandler(controller, generation) { up, down, connections ->
+                acceptTraffic(up, down, connections, throttle = false)
+            },
             CommandClientOptions().apply {
                 addCommand(Libbox.CommandStatus)
                 statusInterval = SPEED_MONITOR_INTERVAL_NANOS
@@ -268,8 +357,7 @@ internal class CoreSession(
         }
     }
 
-    @Synchronized
-    fun closeSpeedMonitorClient() {
+    private fun closeTrafficClientLocked() {
         val current = speedMonitorClient ?: return
         speedMonitorClient = null
         runCatching { current.disconnect() }
@@ -392,7 +480,9 @@ internal class CoreSession(
     fun openStatusClient() {
         if (closing.get() || statusClient != null) return
         val candidate = Libbox.newCommandClient(
-            StatusClientHandler(controller, generation),
+            StatusClientHandler(controller, generation) { up, down, connections ->
+                acceptTraffic(up, down, connections, throttle = true)
+            },
             CommandClientOptions().apply {
                 addCommand(Libbox.CommandStatus)
                 statusInterval = STATUS_INTERVAL_NANOS
@@ -408,6 +498,8 @@ internal class CoreSession(
             statusClientCounted = true
             VpnRuntimeMetrics.statusClientOpened()
             controller.publishStatusStream(generation, true)
+            // Главная питает поток сама: отдельный 5-секундный клиент больше не нужен.
+            reconcileTrafficClient()
         } catch (_: Throwable) {
             runCatching { candidate.disconnect() }
             controller.publishStatusStream(generation, false)
@@ -424,6 +516,8 @@ internal class CoreSession(
             VpnRuntimeMetrics.statusClientClosed()
         }
         controller.publishStatusStream(generation, false)
+        // Главная скрыта: если экран горит, поток продолжит отдельный 5-секундный клиент.
+        if (current != null) reconcileTrafficClient()
     }
 
     @Synchronized
@@ -443,6 +537,7 @@ internal class CoreSession(
             logClientCounted = true
             VpnRuntimeMetrics.logClientOpened()
             controller.publishDiagnosticLogStream(generation, true)
+            reconcileTrafficClient()
         } catch (_: Throwable) {
             runCatching { candidate.disconnect() }
             controller.publishDiagnosticLogStream(generation, false)
@@ -460,6 +555,7 @@ internal class CoreSession(
             VpnRuntimeMetrics.logClientClosed()
         }
         controller.publishDiagnosticLogStream(generation, false)
+        reconcileTrafficClient()
     }
 
     /**
@@ -488,7 +584,11 @@ internal class CoreSession(
             RuntimeErrorLogClientHandler(
                 generation = generation,
                 onLogs = onLogs,
-                onEntry = { level, message -> controller.recordCoreFailure(generation, level, message) },
+                onEntry = { level, message ->
+                    controller.recordCoreFailure(generation, level, message)
+                    // Важные строки копятся всегда, а не только пока открыта диагностика.
+                    controller.recordCoreLine(generation, level, message)
+                },
                 onConnected = { runtimeErrorClientAvailable.set(true) },
                 onDisconnected = { message ->
                     val expectedClose = closing.get() || closeRequested.get()
@@ -565,6 +665,7 @@ internal class CoreSession(
             timedStopStage("close_clients", "Отключение клиентов libbox") {
                 closeStatusClient()
                 closeSpeedMonitorClient()
+                synchronized(this) { closeTrafficClientLocked() }
                 closeLogClient()
                 val failureClient = synchronized(resourceLock) {
                     runtimeErrorClient.also { runtimeErrorClient = null }
@@ -611,6 +712,12 @@ internal class CoreSession(
 
         /** Отсчёт «умной проверки»: окно 20 с — это 4 отсчёта. */
         const val SPEED_MONITOR_INTERVAL_NANOS = 5_000_000_000L
+
+        /** Источник чаще 5 с (status главной, 1 Гц) прореживается до одного отсчёта в этот срок. */
+        const val SAMPLE_MIN_INTERVAL_MILLIS = 4_500L
+
+        /** Два клиента не должны дать два отсчёта подряд при переключении источника. */
+        const val SAMPLE_DEDUP_MILLIS = 1_500L
         const val MAX_FAILURE_LOG_BATCH_LINES = 32
 
         /** Столько снимок групп, противоречащий команде, считается устаревшим. */
@@ -654,6 +761,7 @@ internal abstract class BaseClientHandler : CommandClientHandler {
 private class StatusClientHandler(
     private val controller: VpnController,
     private val generation: Long,
+    private val onSample: (uplinkTotal: Long, downlinkTotal: Long, connections: Int) -> Unit,
 ) : BaseClientHandler() {
     override fun writeStatus(message: StatusMessage) {
         if (generation != controller.currentGeneration() || !message.trafficAvailable) return
@@ -665,19 +773,20 @@ private class StatusClientHandler(
             uploadTotal = message.uplinkTotal,
             downloadTotal = message.downlinkTotal,
         )
+        onSample(message.uplinkTotal, message.downlinkTotal, maxOf(message.connectionsIn, message.connectionsOut))
     }
 }
 
 private class SpeedMonitorClientHandler(
     private val controller: VpnController,
     private val generation: Long,
-    private val onSample: (downlinkTotal: Long, connections: Int) -> Unit,
+    private val onSample: (uplinkTotal: Long, downlinkTotal: Long, connections: Int) -> Unit,
 ) : BaseClientHandler() {
     override fun writeStatus(message: StatusMessage) {
         if (generation != controller.currentGeneration() || !message.trafficAvailable) return
         // connectionsIn — трекеры traffic manager-а: каждое маршрутизированное
         // соединение; connectionsOut — только соединения route ConnectionManager.
-        onSample(message.downlinkTotal, maxOf(message.connectionsIn, message.connectionsOut))
+        onSample(message.uplinkTotal, message.downlinkTotal, maxOf(message.connectionsIn, message.connectionsOut))
     }
 }
 

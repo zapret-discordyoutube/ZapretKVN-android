@@ -44,7 +44,15 @@ data class HomeInput(
     val scopeMode: AppScopeMode,
     /** Короткое имя текущего сервера без флага и протокола, если известно. */
     val serverTitle: String?,
+    /** Подключено, но сервер подтверждённо не отвечает и автоматическая замена не помогла. */
+    val linkLost: Boolean = false,
 )
+
+/** Подпись и заголовок «Нет связи с сервером» показываются только поверх состояния «Подключено». */
+fun HomeInput.isLinkLost(): Boolean = linkLost && vpnState is VpnConnectionState.Connected
+
+const val LINK_LOST_LABEL = "Нет связи с сервером"
+const val LINK_LOST_CHANGE_SERVER = "Сменить сервер"
 
 fun homeStage(input: HomeInput): HomeStage {
     val state = input.vpnState
@@ -67,7 +75,12 @@ fun homeStage(input: HomeInput): HomeStage {
 }
 
 /** Короткий статус для чипа. Эти слова ищут тесты и TalkBack — менять осторожно. */
-fun statusLabel(state: VpnConnectionState): String = when (state) {
+fun statusLabel(state: VpnConnectionState, linkLost: Boolean = false): String = when {
+    linkLost && state is VpnConnectionState.Connected -> LINK_LOST_LABEL
+    else -> baseStatusLabel(state)
+}
+
+private fun baseStatusLabel(state: VpnConnectionState): String = when (state) {
     VpnConnectionState.Stopped -> "VPN выключен"
     is VpnConnectionState.Starting -> "Подключение"
     is VpnConnectionState.Connected -> "VPN подключён"
@@ -77,7 +90,10 @@ fun statusLabel(state: VpnConnectionState): String = when (state) {
     is VpnConnectionState.Error -> "Ошибка VPN"
 }
 
-fun statusTone(state: VpnConnectionState): Tone = when (state) {
+fun statusTone(state: VpnConnectionState, linkLost: Boolean = false): Tone =
+    if (linkLost && state is VpnConnectionState.Connected) Tone.Warning else baseStatusTone(state)
+
+private fun baseStatusTone(state: VpnConnectionState): Tone = when (state) {
     is VpnConnectionState.Connected -> Tone.Good
     is VpnConnectionState.Error -> Tone.Bad
     is VpnConnectionState.Starting,
@@ -119,7 +135,12 @@ fun homeHeadline(stage: HomeStage, input: HomeInput): HomeHeadline {
             "Подключаемся…",
             (input.vpnState as? VpnConnectionState.Starting)?.message,
         )
-        HomeStage.Connected -> HomeHeadline(
+        HomeStage.Connected -> if (input.isLinkLost()) {
+            HomeHeadline(
+                LINK_LOST_LABEL,
+                "VPN подключён, но данные не идут. Перезапустите VPN или смените сервер.",
+            )
+        } else HomeHeadline(
             "Всё работает",
             buildString {
                 append(server?.let { "Вы в сети через $it. " } ?: "Вы в сети через VPN. ")

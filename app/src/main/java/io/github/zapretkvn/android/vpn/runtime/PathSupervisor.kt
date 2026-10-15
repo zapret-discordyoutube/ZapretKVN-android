@@ -180,13 +180,13 @@ internal class PathSupervisor(
                     "Совместимый резервный сервер не найден.",
                 )
             } else {
-                PathDecision.Ignore("no candidate")
+                PathDecision.Ignore(REASON_NO_CANDIDATE)
             }
         }
         if (switchTimes.size >= MAX_SWITCHES_PER_WINDOW) {
             state = State.Idle
             networkWideHoldUntil = now + NETWORK_WIDE_HOLD_MILLIS
-            return PathDecision.Ignore("switch rate limit")
+            return PathDecision.Ignore(REASON_SWITCH_RATE_LIMIT)
         }
         state = State.Switching(episode, plan.currentId, candidate.id)
         return PathDecision.Switch(episode, plan.groupTag, plan.currentId, candidate.id)
@@ -232,6 +232,15 @@ internal class PathSupervisor(
 
     companion object {
         const val HYSTERIA_TYPE = "hysteria2"
+
+        /**
+         * Причины [PathDecision.Ignore] после подтверждённо мёртвого сервера: сервер не
+         * отвечает, а действовать автоматике нечем. Для них пользователю показывается
+         * «Нет связи с сервером» (остальные Ignore — устаревший сигнал или ложная тревога).
+         */
+        const val REASON_NO_CANDIDATE = "no candidate"
+        const val REASON_SWITCH_RATE_LIMIT = "switch rate limit"
+        val DEAD_UNRECOVERED_REASONS = setOf(REASON_NO_CANDIDATE, REASON_SWITCH_RATE_LIMIT)
 
         /**
          * Порядок замены: сначала лучший сохранённый пинг, затем порядок профиля.

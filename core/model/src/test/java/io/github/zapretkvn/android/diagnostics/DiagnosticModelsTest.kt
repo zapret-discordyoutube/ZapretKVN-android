@@ -104,7 +104,7 @@ class DiagnosticModelsTest {
                 stats = it.stats
             }
         }
-        val attempts = (1L..4L).map { generation ->
+        val attempts = (1L..8L).map { generation ->
             DiagnosticConnectionAttempt(
                 generation = generation,
                 trigger = "attempt-$generation",
@@ -116,7 +116,7 @@ class DiagnosticModelsTest {
             )
         }
         val state = DiagnosticState(
-            previousConnectionAttempts = attempts.take(3),
+            previousConnectionAttempts = attempts.take(7),
             connectionAttempt = attempts.last(),
         )
 
@@ -125,7 +125,8 @@ class DiagnosticModelsTest {
         assertFalse(startup.any { it.message == "routine-0" })
         assertEquals(80L, stats.receivedLines)
         assertEquals(32L, stats.droppedLines)
-        assertEquals(listOf(2L, 3L, 4L), state.recentConnectionAttempts.map { it.generation })
+        assertEquals(6, MAX_DIAGNOSTIC_ATTEMPTS)
+        assertEquals(listOf(3L, 4L, 5L, 6L, 7L, 8L), state.recentConnectionAttempts.map { it.generation })
     }
 
     @Test
@@ -251,5 +252,82 @@ class DiagnosticModelsTest {
 
         assertEquals("close_libbox_service", attempt.slowestCompletedStage?.key)
         assertEquals(710L, attempt.slowestCompletedStage?.durationMillis)
+    }
+
+    private fun ring(limit: Int, lines: List<DiagnosticLogLine>): DiagnosticLogAppendResult {
+        var kept = emptyList<DiagnosticLogLine>()
+        var stats = DiagnosticLogStats()
+        lines.forEach { line ->
+            kept.appendPrioritizedBounded(line, stats, limit).also {
+                kept = it.lines
+                stats = it.stats
+            }
+        }
+        return DiagnosticLogAppendResult(kept, stats)
+    }
+
+    private fun core(level: Int, message: String, at: Long) = CoreDiagnosticClassifier.classify(level, message)
+        .copy(receivedAtEpochMillis = at, lastReceivedAtEpochMillis = at)
+
+    @Test
+    fun `quota evicts debug first, then info, and priority evidence last`() {
+        val lines = listOf(
+            core(5, "info one", 1),
+            core(7, "trace one", 2),
+            core(2, "boom error one", 3),
+            core(6, "debug one", 4),
+            core(5, "info two", 5),
+            core(2, "boom error two", 6),
+            // limit 6 reached; each next line forces one eviction
+            core(5, "info three", 7),
+            core(5, "info four", 8),
+            core(5, "info five", 9),
+        )
+        val result = ring(limit = 6, lines = lines).lines.map { it.message }
+
+        assertEquals(6, result.size)
+        assertFalse("trace evicted first", "trace one" in result)
+        assertFalse("debug evicted second", "debug one" in result)
+        assertFalse("then the oldest info", "info one" in result)
+        assertTrue("boom error one" in result)
+        assertTrue("boom error two" in result)
+    }
+
+    @Test
+    fun `priority lines are evicted only when nothing less valuable remains, oldest first`() {
+        val lines = (1..6).map { core(2, "error $it", it.toLong()) } + core(2, "error 7", 7)
+        val result = ring(limit = 6, lines = lines).lines.map { it.message }
+        assertEquals(listOf("error 2", "error 3", "error 4", "error 5", "error 6", "error 7"), result)
+    }
+
+    @Test
+    fun `a debug line does not push out ordinary info under pressure`() {
+        val full = (1..4).map { core(5, "info $it", it.toLong()) }
+        val result = ring(limit = 4, lines = full + core(7, "trace late", 9))
+        assertEquals(listOf("info 1", "info 2", "info 3", "info 4"), result.lines.map { it.message })
+        assertEquals(1L, result.stats.droppedLines)
+    }
+
+    @Test
+    fun `consecutive routine dns lines collapse into one counted line`() {
+        val lines = (1..50).map { core(5, "dns: exchanged host$it.example A", it.toLong()) }
+        val result = ring(limit = 8, lines = lines + core(2, "dns: exchange failed: i/o timeout", 60))
+        assertEquals(2, result.lines.size)
+        assertEquals(50, result.lines.first().repeatCount)
+        assertEquals(DiagnosticLogCategory.Dns, result.lines.first().category)
+        assertEquals(49L, result.stats.coalescedLines)
+        assertTrue(result.lines.last().priority)
+    }
+
+    @Test
+    fun `reconnect, quic, dial and idle markers are priority evidence`() {
+        listOf(
+            "outbound/hysteria2[a]: connection closed: timeout: no recent network activity",
+            "quic stream reset by peer",
+            "reconnecting to server",
+            "dial tcp x:443 something",
+        ).forEach { message ->
+            assertTrue(message, CoreDiagnosticClassifier.classify(5, message).priority)
+        }
     }
 }

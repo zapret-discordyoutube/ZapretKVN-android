@@ -156,7 +156,7 @@ class ZapretVpnService : VpnService() {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .addAction(0, "Открыть", openIntent)
-        if (state == ForegroundState.Connected) {
+        if (state == ForegroundState.Connected || state == ForegroundState.LinkLost) {
             (container.vpnController.state.value as? VpnConnectionState.Connected)?.let { connected ->
                 val restartAction = PendingIntent.getService(
                     this,

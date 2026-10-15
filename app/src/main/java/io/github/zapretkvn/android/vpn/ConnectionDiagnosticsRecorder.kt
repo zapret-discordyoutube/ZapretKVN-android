@@ -18,6 +18,7 @@ import io.github.zapretkvn.android.diagnostics.DiagnosticStageTiming
 import io.github.zapretkvn.android.diagnostics.DiagnosticState
 import io.github.zapretkvn.android.diagnostics.DiagnosticStopAttempt
 import io.github.zapretkvn.android.diagnostics.DiagnosticStopOutcome
+import io.github.zapretkvn.android.diagnostics.DiagnosticTargetContext
 import io.github.zapretkvn.android.diagnostics.DiagnosticVpnPolicy
 import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_ATTEMPTS
 import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_LOG_LINES
@@ -53,6 +54,9 @@ internal class ConnectionDiagnosticsRecorder(
 
     @Volatile
     private var diagnosticRuntimeMap: DiagnosticRuntimeMap? = null
+
+    /** Безопасная цель по сырому тегу outbound текущей карты (для истории сессий). */
+    fun targetFor(rawTag: String): DiagnosticTargetContext? = diagnosticRuntimeMap?.targetFor(rawTag)
 
     /** Новая сессия: карта целей прежней больше не годится. */
     fun resetRuntimeMap() {

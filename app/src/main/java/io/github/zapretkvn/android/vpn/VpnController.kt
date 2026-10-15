@@ -14,6 +14,7 @@ import io.github.zapretkvn.android.diagnostics.DiagnosticState
 import io.github.zapretkvn.android.diagnostics.RuntimeErrorJournal
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
+import io.github.zapretkvn.android.diagnostics.SessionHistory
 import io.github.zapretkvn.android.diagnostics.SessionTrafficAccumulator
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.UnderlyingNetworkState
@@ -39,9 +40,18 @@ class VpnController(
     previousCrash: AppCrashRecord? = null,
 ) {
     internal val runtimeErrors = RuntimeErrorJournal()
+
+    /**
+     * Последние сессии в памяти: итог, трафик, ключевые события. Живёт с
+     * контроллером, а не с экраном диагностики, поэтому момент сбоя в нём есть,
+     * даже если диагностику никто не открывал. Детектор и автоматика пишут сюда
+     * через [recordKeyEvent].
+     */
+    internal val sessionHistory = SessionHistory()
     private val mutableState = MutableStateFlow<VpnConnectionState>(VpnConnectionState.Stopped)
     private val mutableGroups = MutableStateFlow<List<RuntimeSelectorGroup>>(emptyList())
     private val mutableMessage = MutableStateFlow<String?>(null)
+    private val mutableLinkLost = MutableStateFlow(false)
     private val mutableHomeVisible = MutableStateFlow(false)
     private val mutableDiagnosticsVisible = MutableStateFlow(false)
     private val latestGeneration = AtomicLong(0)
@@ -67,6 +77,13 @@ class VpnController(
     val state: StateFlow<VpnConnectionState> = mutableState.asStateFlow()
     val selectorGroups: StateFlow<List<RuntimeSelectorGroup>> = mutableGroups.asStateFlow()
     val message: StateFlow<String?> = mutableMessage.asStateFlow()
+
+    /**
+     * «Подключено, но связи с сервером нет»: сервер подтверждённо не отвечает, а
+     * заменить его автоматика не смогла. Только при [VpnConnectionState.Connected];
+     * любая смена состояния и новое поколение сессии сбрасывают флаг.
+     */
+    val linkLost: StateFlow<Boolean> = mutableLinkLost.asStateFlow()
     val sessionStats: StateFlow<VpnSessionStats> = mutableSessionStats.asStateFlow()
     val diagnostics: StateFlow<DiagnosticState> = diagnosticsRecorder.diagnostics
 
@@ -247,6 +264,8 @@ class VpnController(
         // Publish diagnostics first: StateFlow collectors may resume immediately on
         // the state write and terminal states must already have a terminal attempt.
         diagnosticsRecorder.updateDiagnosticConnectionState(generation, safeState)
+        sessionHistory.onState(generation, safeState)
+        mutableLinkLost.value = false
         mutableState.value = safeState
         synchronized(trafficLock) {
             when (safeState) {
@@ -285,8 +304,15 @@ class VpnController(
     internal fun publishRecoverableFailure(generation: Long, failure: VpnConnectionState.Error) =
         diagnosticsRecorder.recordRecoverableFailure(generation, failure)
 
+    /** Поднять или снять «Нет связи с сервером»; устаревшее поколение и не-Connected игнорируются. */
+    internal fun publishLinkLost(generation: Long, lost: Boolean) {
+        if (generation != currentGeneration()) return
+        mutableLinkLost.value = lost && mutableState.value is VpnConnectionState.Connected
+    }
+
     internal fun nextGeneration(): Long {
         val generation = latestGeneration.incrementAndGet()
+        mutableLinkLost.value = false
         diagnosticsRecorder.resetRuntimeMap()
         // Clear the previous session once, before callbacks can publish data for
         // this generation. Repeated Starting progress updates must not erase the
@@ -303,10 +329,22 @@ class VpnController(
         generation: Long,
         trigger: String,
         profileId: String? = null,
-    ) = diagnosticsRecorder.beginConnectionDiagnostic(generation, trigger, profileId)
+    ) {
+        diagnosticsRecorder.beginConnectionDiagnostic(generation, trigger, profileId)
+        if (generation == currentGeneration()) {
+            sessionHistory.open(
+                generation,
+                trigger,
+                DiagnosticRuntimeMap.profileOnly(profileId)?.profile?.profileRef,
+            )
+        }
+    }
 
-    internal fun attachDiagnosticRuntimeMap(generation: Long, runtimeMap: DiagnosticRuntimeMap) =
+    internal fun attachDiagnosticRuntimeMap(generation: Long, runtimeMap: DiagnosticRuntimeMap) {
         diagnosticsRecorder.attachDiagnosticRuntimeMap(generation, runtimeMap)
+        // Сначала профиль, затем выбранный сервер (resolve("") даёт цель выбранного outbound).
+        sessionHistory.updateTarget(generation, runtimeMap.resolve(""))
+    }
 
     internal fun startConnectionDiagnosticStage(generation: Long, key: String, label: String) =
         diagnosticsRecorder.startConnectionDiagnosticStage(generation, key, label)
@@ -356,8 +394,10 @@ class VpnController(
     internal fun cancelCurrentConnectionDiagnostic(reason: String = "superseded") =
         diagnosticsRecorder.cancelCurrentConnectionDiagnostic(reason)
 
-    internal fun beginStopDiagnostic(generation: Long, trigger: String) =
+    internal fun beginStopDiagnostic(generation: Long, trigger: String) {
+        sessionHistory.onStopRequested(trigger)
         diagnosticsRecorder.beginStopDiagnostic(generation, trigger)
+    }
 
     internal fun startStopDiagnosticStage(generation: Long, key: String, label: String) =
         diagnosticsRecorder.startStopDiagnosticStage(generation, key, label)
@@ -377,11 +417,36 @@ class VpnController(
     }
 
     /** Решение автоматики без ошибки: только в диагностику, без snackbar. */
-    internal fun publishDiagnosticInfo(message: String) =
+    internal fun publishDiagnosticInfo(message: String) {
         diagnosticsRecorder.publishDiagnosticInfo(message)
+        sessionHistory.recordKeyEvent(currentGeneration(), message)
+    }
 
-    internal fun publishDiagnosticWarning(message: String) =
+    internal fun publishDiagnosticWarning(message: String) {
         diagnosticsRecorder.publishDiagnosticWarning(message)
+        sessionHistory.recordKeyEvent(currentGeneration(), message)
+    }
+
+    /**
+     * Ключевое событие текущей сессии для отчёта (тревога детектора, ручная или
+     * автоматическая смена сервера и т. п.). Текст маскируется; попадает только в
+     * память, на диск не пишется. [generation] - поколение сессии, к которой
+     * относится событие; неизвестное поколение -> самая свежая сессия.
+     */
+    internal fun recordKeyEvent(generation: Long, text: String) =
+        sessionHistory.recordKeyEvent(generation, text)
+
+    /** Отсчёт счётчиков ядра (единый поток CoreSession) в историю сессий. */
+    internal fun recordSessionTraffic(
+        generation: Long,
+        elapsedRealtimeMillis: Long,
+        uplinkTotal: Long,
+        downlinkTotal: Long,
+    ) = sessionHistory.recordTraffic(generation, elapsedRealtimeMillis, uplinkTotal, downlinkTotal)
+
+    /** Строка core-лога: важные (уровень <= WARN и маркеры обрыва) копятся всегда, при любом экране. */
+    internal fun recordCoreLine(generation: Long, level: Int, message: String) =
+        sessionHistory.recordCoreLine(generation, level, message)
 
     internal fun publishDiagnosticNetwork(generation: Long, state: UnderlyingNetworkState) =
         diagnosticsRecorder.publishDiagnosticNetwork(generation, state)
@@ -449,8 +514,12 @@ class VpnController(
 
     internal fun markLatencyStale(generation: Long) = latencyPublisher.markLatencyStale(generation)
 
-    internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) =
+    internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) {
         latencyPublisher.publishSelection(generation, groupTag, outboundTag)
+        diagnosticsRecorder.targetFor(outboundTag)
+            ?.takeIf { it.protocol !in GROUP_PROTOCOLS }
+            ?.let { sessionHistory.updateTarget(generation, it) }
+    }
 
     // ---- Трафик и статистика сессии. ----
 
@@ -506,6 +575,8 @@ class VpnController(
         mutableMessage.value = null
     }
 }
+
+private val GROUP_PROTOCOLS = setOf("selector", "urltest")
 
 internal object VpnFailureCodeSanitizer {
     private val supportCode = Regex("[A-Z]{2,5}-\\d{3}")

@@ -71,6 +71,14 @@ internal class ServerSwitchCoordinator(
     /** Антифлап «умной проверки» переживает переподключения. */
     private val smartPolicy = SlowServerSwitchPolicy { clock() }
 
+    /** Пассивный детектор «подключено, но данные не идут»; без таймеров и своих запросов. */
+    private val stallDetector = StallDetector()
+
+    private var trafficJob: Job? = null
+
+    /** «Нет связи с сервером» показано пользователю (только в акторе). */
+    private var linkLost = false
+
     // Читаются из потоков libbox/Android: только volatile-флаги.
     @Volatile private var smartSwitchEnabled = true
     @Volatile private var screenInteractive = true
@@ -124,6 +132,8 @@ internal class ServerSwitchCoordinator(
             return
         }
         supervisor.reset()
+        stallDetector.reset(keepCooldown = false)
+        setLinkLost(session, false, "сервер выбран вручную")
         ops.clearPendingReplacement()
         session.resetThroughputWindow()
         // Ручной выбор фиксируется на 30 минут; failover это не затрагивает.
@@ -132,17 +142,23 @@ internal class ServerSwitchCoordinator(
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
             val outcome = try {
-                switcher.switch(session, groupTag, outboundTag)
+                // Та же проверка связи, что у failover: недоступный сервер не остаётся выбранным.
+                switcher.switch(
+                    session,
+                    groupTag,
+                    outboundTag,
+                    SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 SwitchOutcome.RolledBack(error)
             }
-            postToActor { onSelectDone(session, outcome, startId) }
+            postToActor { onSelectDone(session, outboundTag, outcome, startId) }
         }
     }
 
-    private fun onSelectDone(session: CoreSession, outcome: SwitchOutcome, startId: Int) {
+    private fun onSelectDone(session: CoreSession, outboundTag: String, outcome: SwitchOutcome, startId: Int) {
         if (sessions.active() !== session || session.generation != controller.currentGeneration()) return
         when (outcome) {
             SwitchOutcome.Committed -> {
@@ -151,7 +167,11 @@ internal class ServerSwitchCoordinator(
                 onExitChanged(session)
             }
             is SwitchOutcome.RolledBack -> {
-                controller.publishMessage(VpnFailureStates.from(outcome.error).message)
+                val failure = VpnFailureStates.from(outcome.error)
+                timeline("Выбранный ${server(outboundTag)} не прошёл проверку связи (${failure.code}): прежний сервер возвращён.")
+                controller.publishMessage(
+                    "Сервер ${server(outboundTag)} не прошёл проверку связи, оставлен прежний. ${failure.message}",
+                )
                 host.showForeground(ForegroundState.Connected)
             }
             is SwitchOutcome.CoreUnreachable -> {
@@ -172,12 +192,7 @@ internal class ServerSwitchCoordinator(
                 is PathDecision.Ignore -> Unit
                 is PathDecision.Probe -> {
                     timeline("${server(decision.serverId)}: ${hint.code.name} в логе ядра — проверка связи.")
-                    probeCode = hint.code
-                    runOperation(Operation.Probe) { previous ->
-                        previous?.cancelAndJoin()
-                        val result = container.vpnLivenessProbe.check()
-                        postToActor { onProbeDone(session, decision.episode, result) }
-                    }
+                    startProbe(session, decision, hint.code)
                     return
                 }
                 else -> {
@@ -185,6 +200,16 @@ internal class ServerSwitchCoordinator(
                     return
                 }
             }
+        }
+    }
+
+    /** Одна проба через текущий сервер: единственная активная проверка, которую запускает надзор. */
+    private fun startProbe(session: CoreSession, decision: PathDecision.Probe, code: HysteriaFailureCode) {
+        probeCode = code
+        runOperation(Operation.Probe) { previous ->
+            previous?.cancelAndJoin()
+            val result = container.vpnLivenessProbe.check()
+            postToActor { onProbeDone(session, decision.episode, result) }
         }
     }
 
@@ -200,12 +225,19 @@ internal class ServerSwitchCoordinator(
             hints = latencyHints(session.profileId),
         )
         when (result) {
-            is LivenessResult.Alive -> timeline(
-                "Сервер отвечает (${result.endpoint}, ${result.elapsedMillis} мс): ложная тревога, переключения нет.",
-            )
+            is LivenessResult.Alive -> {
+                timeline(
+                    "Сервер отвечает (${result.endpoint}, ${result.elapsedMillis} мс): ложная тревога, переключения нет.",
+                )
+                setLinkLost(session, false, "сервер ответил на проверку")
+            }
             LivenessResult.Unknown -> timeline("VPN-сеть Android недоступна для проверки; переключения нет.")
             is LivenessResult.Dead -> if (decision is PathDecision.Ignore) {
                 timeline("Сервер не отвечает (${result.detail}); подходящей замены нет, остаёмся.")
+                // Сервер подтверждённо мёртв, а автоматике действовать нечем: статус не «Подключено».
+                if (decision.reason in PathSupervisor.DEAD_UNRECOVERED_REASONS) {
+                    setLinkLost(session, true, "сервер не отвечает, замены нет")
+                }
             }
         }
         apply(session, decision, probeCode, (result as? LivenessResult.Dead)?.detail)
@@ -298,11 +330,14 @@ internal class ServerSwitchCoordinator(
                         "${clock() - startedAt} мс; ядро не перезапускалось.",
                 )
                 session.resetThroughputWindow()
+                stallDetector.reset()
+                setLinkLost(session, false, "переключение на ${server(toId)}")
                 controller.clearConnectionIdentity(session.generation)
                 onExitChanged(session)
             }
             is SwitchOutcome.RolledBack -> {
                 supervisor.onSwitchResult(episode, committed = false)
+                setLinkLost(session, true, "резервный сервер не прошёл проверку")
                 timeline(
                     "Резервный ${server(toId)} тоже не прошёл проверку " +
                         "(${VpnFailureStates.from(outcome.error).code}): вероятно, сбой сети. " +
@@ -334,6 +369,84 @@ internal class ServerSwitchCoordinator(
         healthVerifier.verify(session, ParsedConfig.parse(candidateJson), dnsServer, reportStages = false)
     }
 
+    // ---- Пассивный детектор «связь пропала при статусе Подключено» ----
+
+    /**
+     * Отсчёт счётчиков ядра (в акторе). Источник — единый поток трафика сессии,
+     * см. подписку в [onSessionActivated]. Погасший экран отсчёты не принимает.
+     */
+    fun onTrafficSample(session: CoreSession, sample: TrafficSample) {
+        if (!isCurrent(session)) return
+        // replay=1 отдаёт новому подписчику последний отсчёт, он может быть старым.
+        if (!screenInteractive || clock() - sample.elapsedRealtimeMillis > StallDetector.MAX_GAP_MILLIS) {
+            stallDetector.reset()
+            return
+        }
+        onStallEvent(session, stallDetector.onSample(sample))
+    }
+
+    /** Нетегированные отказы DNS по таймауту из лога ядра (в акторе). */
+    fun onDnsFailures(generation: Long, hint: DnsFailureHint) {
+        val session = sessions.active() ?: return
+        if (session.generation != generation || !isCurrent(session) || !screenInteractive) return
+        val now = clock()
+        for (name in hint.names) {
+            val event = stallDetector.onDnsFailure(now, name) ?: continue
+            onStallEvent(session, event)
+            return
+        }
+    }
+
+    /** Сеть под сессией сменилась: окна детектора начинаются заново, антифлап тревог сохраняется. */
+    fun onNetworkReplaced() = stallDetector.reset()
+
+    private fun onStallEvent(session: CoreSession, event: StallEvent?) {
+        when (event) {
+            null -> Unit
+            StallEvent.Recovered -> setLinkLost(session, false, "входящий трафик снова идёт")
+            is StallEvent.Suspected -> onStallSuspected(session, event)
+        }
+    }
+
+    /**
+     * Накопились пассивные признаки обрыва: тот же путь, что у подсказки ядра,
+     * то есть одна проба [VpnLivenessProbe] через текущий сервер; мёртв — обычный
+     * failover с проверкой кандидата. Никаких периодических проб и веера серверов.
+     */
+    private fun onStallSuspected(session: CoreSession, event: StallEvent.Suspected) {
+        val plan = currentPlan(session) ?: return
+        timeline("Подозрение на обрыв связи (${event.kind.name}): ${event.detail}.")
+        if (ops.lifecycleBusy() || operationKind == Operation.Select || operationKind == Operation.Failover) {
+            timeline("Проверка связи отложена: уже идёт другая операция над сервером.")
+            return
+        }
+        val code = HysteriaFailureCode.TARGET_NETWORK_TIMEOUT
+        val decision = supervisor.onHint(PathHint(plan.currentId, plan.currentType, code)) { plan }
+        when (decision) {
+            is PathDecision.Probe -> {
+                timeline("${server(decision.serverId)}: проверка связи через текущий сервер.")
+                startProbe(session, decision, code)
+            }
+            is PathDecision.Ignore -> timeline("Проверка связи не запущена: ${decision.reason ?: "сигнал заглушён"}.")
+            else -> apply(session, decision, code)
+        }
+    }
+
+    /**
+     * Показать или снять «Нет связи с сервером»: флаг для главного экрана и текст
+     * foreground-уведомления. Снимается ростом входящего трафика, ответом сервера
+     * на проверку, успешной сменой сервера и новой сессией.
+     */
+    private fun setLinkLost(session: CoreSession, lost: Boolean, reason: String) {
+        if (linkLost == lost || !isCurrent(session)) return
+        linkLost = lost
+        controller.publishLinkLost(session.generation, lost)
+        host.showForeground(if (lost) ForegroundState.LinkLost else ForegroundState.Connected)
+        val text = if (lost) "Нет связи с сервером: $reason." else "Связь с сервером восстановилась: $reason."
+        timeline(text)
+        controller.recordKeyEvent(session.generation, text)
+    }
+
     // ---- «Умная проверка» скорости ----
 
     fun onSmartSwitchSetting(enabled: Boolean) {
@@ -347,12 +460,27 @@ internal class ServerSwitchCoordinator(
     /** Экран включился или погас: монитор скорости нужен, только пока он горит. */
     fun onScreenInteractive(interactive: Boolean) {
         screenInteractive = interactive
-        postToActor { sessions.active()?.let(::applySpeedMonitor) }
+        postToActor {
+            // Погасший экран: данные не идут, это не обрыв. Окна детектора начинаются заново.
+            stallDetector.reset()
+            sessions.active()?.let(::applySpeedMonitor)
+        }
     }
 
     /** Сессия стала активной: привязать антифлап к профилю и открыть монитор скорости. */
     fun onSessionActivated(session: CoreSession) {
         smartPolicy.bindProfile(session.profileId)
+        // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
+        stallDetector.reset(keepCooldown = false)
+        linkLost = false
+        // Единый поток трафика сессии (CoreSession.trafficSamples) — единственный вход детектора.
+        // Подписка живёт, пока сессия не сменится; отсчёты чужих сессий отсекает isCurrent.
+        trafficJob?.cancel()
+        trafficJob = scope.launch {
+            session.trafficSamples().collect { sample ->
+                postToActor { onTrafficSample(session, sample) }
+            }
+        }
         if (smartSwitchEnabled && screenInteractive) {
             session.openSpeedMonitorClient { total, connections ->
                 postToActor { onSpeedSample(session, total, connections) }

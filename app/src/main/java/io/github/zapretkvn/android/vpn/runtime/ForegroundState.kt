@@ -9,6 +9,9 @@ internal enum class ForegroundState(val text: String) {
     CreatingTun("Создание TUN"),
     CheckingHealth("Проверка DNS и HTTPS"),
     Connected("Подключено"),
+
+    /** Сервер подтверждённо не отвечает, замены нет: статус не должен оставаться «Подключено». */
+    LinkLost("Нет связи с сервером"),
     Paused("VPN на паузе по правилу сети"),
     Restarting("Перезапуск VPN"),
     AwaitingNetwork("Ожидание сети Android"),

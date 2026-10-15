@@ -243,6 +243,7 @@ class VpnServiceInstrumentedTest {
             )
             assertEquals("server-a", groups.first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }.selected)
 
+            VpnTestHooks.succeedNextSwitchVerification()
             container.vpnController.selectOutbound(
                 profile.id,
                 ConfigAnalyzer.MANAGED_SELECTOR_TAG,

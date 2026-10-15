@@ -91,7 +91,7 @@ class DiagnosticExporter(
         val network = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 8)
+            put("report_version", 9)
             put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
                 buildJsonObject {
                     val failure = record.failure
@@ -144,6 +144,9 @@ class DiagnosticExporter(
                 },
             )
             put("vpn", vpnStateJson(vpnController.state.value))
+            val sessions = vpnController.sessionHistory.snapshot()
+            put("session_traffic", sessionTrafficJson(sessions.lastOrNull { it.active }))
+            put("session_history", buildJsonArray { sessions.forEach { add(sessionRecordJson(it)) } })
             put("runtime_resources", runtimeResourcesJson(diagnostics.effectiveOverlay))
             put(
                 "vpn_system_policy",
@@ -273,6 +276,57 @@ class DiagnosticExporter(
         if (state is VpnConnectionState.Connected) {
             put("connected_at_epoch_ms", state.connectedAtEpochMillis)
         }
+    }
+
+    /** Трафик текущей сессии по единому потоку счётчиков ядра; null - сессии нет. */
+    private fun sessionTrafficJson(session: SessionRecordSnapshot?): JsonObject = buildJsonObject {
+        put("active", session != null)
+        if (session == null) return@buildJsonObject
+        put("generation", session.generation)
+        put("uplink_bytes", session.uplinkBytes)
+        put("downlink_bytes", session.downlinkBytes)
+        put("peak_downlink_bytes_per_s", session.peakDownlinkBytesPerSecond)
+        put("seconds_since_last_downlink", session.secondsSinceLastDownlink?.let(::JsonPrimitive) ?: JsonNull)
+        put("seconds_since_last_sample", session.secondsSinceLastSample?.let(::JsonPrimitive) ?: JsonNull)
+        put("samples", session.sampleCount)
+    }
+
+    /** Последние сессии: итог, причина конца, трафик и ключевые события. Адресов серверов здесь нет. */
+    private fun sessionRecordJson(session: SessionRecordSnapshot): JsonObject = buildJsonObject {
+        put("generation", session.generation)
+        put("active", session.active)
+        put("trigger", session.trigger)
+        put("profile_ref", session.profileRef?.let(::JsonPrimitive) ?: JsonNull)
+        put("server_tag", session.serverTag?.let(::JsonPrimitive) ?: JsonNull)
+        put("server_ref", session.serverRef?.let(::JsonPrimitive) ?: JsonNull)
+        put("protocol", session.protocol?.let(::JsonPrimitive) ?: JsonNull)
+        put("started_at_epoch_ms", session.startedAtEpochMillis)
+        put("connected_at_epoch_ms", session.connectedAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+        put("ended_at_epoch_ms", session.endedAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+        put("end_reason", session.endReason?.let(::JsonPrimitive) ?: JsonNull)
+        put("uplink_bytes", session.uplinkBytes)
+        put("downlink_bytes", session.downlinkBytes)
+        put("peak_downlink_bytes_per_s", session.peakDownlinkBytesPerSecond)
+        put("last_downlink_epoch_ms", session.lastDownlinkAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+        put("seconds_since_last_downlink", session.secondsSinceLastDownlink?.let(::JsonPrimitive) ?: JsonNull)
+        put("last_sample_epoch_ms", session.lastSampleAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+        put("samples", session.sampleCount)
+        put("key_events_dropped", session.eventsDropped)
+        put(
+            "key_events",
+            buildJsonArray {
+                session.events.forEach { event ->
+                    add(
+                        buildJsonObject {
+                            put("at_epoch_ms", event.atEpochMillis)
+                            put("last_epoch_ms", event.lastAtEpochMillis)
+                            put("repeat", event.repeat)
+                            put("text", event.text)
+                        },
+                    )
+                }
+            },
+        )
     }
 
     private fun runtimeResourcesJson(effectiveOverlay: String?): JsonObject {

@@ -131,6 +131,8 @@ data class HomeUi(
     val appVersion: String,
     /** Сервисы, выбранные в настройках: карточка показывает и проверяет только их. */
     val services: List<ServiceId> = ServiceCatalog.defaults.map { it.id },
+    /** Подключено, но сервер не отвечает: подпись «Нет связи с сервером» и кнопка смены сервера. */
+    val linkLost: Boolean = false,
 )
 
 class HomeCallbacks(
@@ -224,11 +226,12 @@ fun HomeScreen(
 
 @Composable
 private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
-    val tone = statusTone(ui.vpnState)
+    val linkLost = ui.linkLost && ui.vpnState is VpnConnectionState.Connected
+    val tone = statusTone(ui.vpnState, linkLost)
     val accent = ZapretColors.accent
     val glow by animateColorAsState(
         when (ui.stage) {
-            HomeStage.Connected -> accent.heroEnd
+            HomeStage.Connected -> if (linkLost) accent.connecting else accent.heroEnd
             HomeStage.Starting, HomeStage.Reconnecting, HomeStage.Stopping -> accent.connecting
             HomeStage.Error -> MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.primary
@@ -257,7 +260,7 @@ private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            StatusPill(statusLabel(ui.vpnState), tone)
+            StatusPill(statusLabel(ui.vpnState, linkLost), tone)
             Box(Modifier.weight(1f))
             (ui.vpnState as? VpnConnectionState.Connected)?.let {
                 ElapsedTime(sinceEpochMillis = it.connectedAtEpochMillis)
@@ -348,6 +351,15 @@ private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
                     .fillMaxWidth()
                     .heightIn(min = 48.dp),
             ) { Text(ui.secondary.label) }
+        }
+        if (linkLost) {
+            TextButton(
+                onClick = callbacks.onOpenServers,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("home-change-server"),
+            ) { Text(LINK_LOST_CHANGE_SERVER) }
         }
     }
 }

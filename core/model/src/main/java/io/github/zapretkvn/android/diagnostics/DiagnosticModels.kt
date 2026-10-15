@@ -204,6 +204,11 @@ object CoreDiagnosticClassifier {
         "connection refused",
         "failed",
         "error",
+        "reconnect",
+        "no recent network activity",
+        "quic",
+        "dial",
+        "closed",
     )
 }
 
@@ -336,8 +341,11 @@ fun List<DiagnosticLogLine>.appendBounded(
 ): List<DiagnosticLogLine> = (this + line).takeLast(limit)
 
 /**
- * In-memory priority ring. Repeated adjacent messages are coalesced and salient
- * handshake/TUN/errors survive routine packet noise. Nothing is written to disk.
+ * In-memory priority ring. Repeated adjacent messages are coalesced, adjacent
+ * routine DNS lines collapse into one counter, and salient handshake/TUN/errors
+ * survive routine packet noise. Under quota pressure DEBUG/TRACE lines go first,
+ * then ordinary INFO lines, and priority lines are evicted last (oldest first).
+ * Nothing is written to disk.
  */
 fun List<DiagnosticLogLine>.appendPrioritizedBounded(
     line: DiagnosticLogLine,
@@ -355,22 +363,41 @@ fun List<DiagnosticLogLine>.appendPrioritizedBounded(
             stats = received.copy(coalescedLines = received.coalescedLines + 1),
         )
     }
+    // DNS noise (one line per resolved name) must not push real evidence out.
+    if (last != null && last.isDnsNoiseLike(line)) {
+        return DiagnosticLogAppendResult(
+            lines = dropLast(1) + last.copy(
+                repeatCount = last.repeatCount + line.repeatCount,
+                lastReceivedAtEpochMillis = line.lastReceivedAtEpochMillis,
+            ),
+            stats = received.copy(coalescedLines = received.coalescedLines + line.repeatCount),
+        )
+    }
     if (limit <= 0) {
         return DiagnosticLogAppendResult(emptyList(), received.copy(droppedLines = received.droppedLines + 1))
     }
     if (size < limit) return DiagnosticLogAppendResult(this + line, received)
 
-    val routineIndex = indexOfFirst { !it.priority }
-    if (!line.priority && routineIndex < 0) {
+    // Oldest line of the least valuable rank is the eviction candidate.
+    var victimIndex = 0
+    var victimRank = Int.MAX_VALUE
+    forEachIndexed { index, candidate ->
+        val rank = candidate.evictionRank()
+        if (rank < victimRank) {
+            victimRank = rank
+            victimIndex = index
+        }
+    }
+    if (line.evictionRank() < victimRank) {
+        // Everything retained is more valuable than the newcomer.
         return DiagnosticLogAppendResult(
             this,
             received.copy(droppedLines = received.droppedLines + line.repeatCount),
         )
     }
-    val removeIndex = if (routineIndex >= 0) routineIndex else 0
-    val removed = this[removeIndex]
+    val removed = this[victimIndex]
     val next = toMutableList().apply {
-        removeAt(removeIndex)
+        removeAt(victimIndex)
         add(line)
     }
     return DiagnosticLogAppendResult(
@@ -378,6 +405,22 @@ fun List<DiagnosticLogLine>.appendPrioritizedBounded(
         received.copy(droppedLines = received.droppedLines + removed.repeatCount),
     )
 }
+
+/** 0 - DEBUG/TRACE, 1 - ordinary INFO/NOTICE, 2 - priority evidence (evicted last). */
+private fun DiagnosticLogLine.evictionRank(): Int = when {
+    priority -> 2
+    level >= 6 -> 0
+    else -> 1
+}
+
+private fun DiagnosticLogLine.isDnsNoiseLike(other: DiagnosticLogLine): Boolean =
+    category == DiagnosticLogCategory.Dns && other.category == DiagnosticLogCategory.Dns &&
+        !priority && !other.priority &&
+        level == other.level &&
+        source == other.source &&
+        attempt == other.attempt &&
+        stage == other.stage &&
+        target == other.target
 
 private fun DiagnosticLogLine.sameDiagnosticMessage(other: DiagnosticLogLine): Boolean =
     level == other.level &&
@@ -392,5 +435,5 @@ const val MAX_DIAGNOSTIC_LOG_LINES = 80
 const val MAX_DIAGNOSTIC_STARTUP_LOG_LINES = 48
 const val MAX_DIAGNOSTIC_CORE_BATCH_LINES = 48
 const val MAX_DIAGNOSTIC_LOG_LINE_CHARS = 600
-const val MAX_DIAGNOSTIC_ATTEMPTS = 3
+const val MAX_DIAGNOSTIC_ATTEMPTS = 6
 const val MAX_DIAGNOSTIC_STAGES = 48
