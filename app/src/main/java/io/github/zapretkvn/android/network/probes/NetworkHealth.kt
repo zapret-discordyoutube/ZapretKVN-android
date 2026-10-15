@@ -7,6 +7,7 @@ import io.github.zapretkvn.android.config.BootstrapHostOverlay
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.ManagedHealthEndpoint
 import io.github.zapretkvn.android.config.ManagedHealthProbe
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.ProxyBootstrapTarget
 import io.github.zapretkvn.android.config.ProxyIpFamily
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
@@ -126,8 +127,15 @@ class ProxyBootstrapper(
         rawJson: String,
         underlying: Network,
         noCacheLookup: Boolean = false,
+    ): PreparedBootstrap = prepare(profileId, ParsedConfig.parse(rawJson), underlying, noCacheLookup)
+
+    suspend fun prepare(
+        profileId: String,
+        config: ParsedConfig,
+        underlying: Network,
+        noCacheLookup: Boolean = false,
     ): PreparedBootstrap {
-        val target = BootstrapConfig.target(rawJson) ?: return PreparedBootstrap(null, emptyList(), 0)
+        val target = BootstrapConfig.target(config) ?: return PreparedBootstrap(null, emptyList(), 0)
         val now = System.currentTimeMillis()
         if (!target.requiresDns) {
             val literal = numericAddresses(listOf(target.hostname))

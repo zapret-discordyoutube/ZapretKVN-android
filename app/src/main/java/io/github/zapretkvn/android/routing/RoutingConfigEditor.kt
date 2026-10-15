@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.routing
 
 import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.string
 import java.security.MessageDigest
 import kotlinx.serialization.json.JsonArray
@@ -14,12 +15,14 @@ import kotlinx.serialization.json.put
 
 /** Pure route/dns compiler. Callers choose whether the result is stored or used as a runtime overlay. */
 object RoutingConfigEditor {
-    fun inspect(raw: String): RoutingInspection {
-        val root = root(raw)
+    fun inspect(raw: String): RoutingInspection = inspect(ParsedConfig.parse(raw))
+
+    fun inspect(config: ParsedConfig): RoutingInspection {
+        val root = root(config)
         val route = root["route"] as? JsonObject ?: JsonObject(emptyMap())
         val rules = (route["rules"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
         val directTag = directTag(root)
-        val proxyTag = BootstrapConfig.selectedProxyTag(raw)
+        val proxyTag = BootstrapConfig.selectedProxyTag(config)
             ?: inferredProxyTag(root, rules, directTag)
         val final = route.string("final")
         val ruRule = rules.firstOrNull(::isRuRule)
@@ -64,9 +67,30 @@ object RoutingConfigEditor {
         preset: RoutingPreset,
         manualRules: List<ManagedRoutingRule>,
         installed: InstalledRuleSets,
-    ): RoutingEditResult {
-        val beforeRoot = root(raw)
-        val selectedProxyTag = BootstrapConfig.selectedProxyTag(raw)
+    ): RoutingEditResult = applyParsed(ParsedConfig.parse(raw), preset, manualRules, installed).result
+
+    /** Результат [applyParsed]: обычный [result] и разобранное дерево его [RoutingEditResult.json]. */
+    class ParsedEdit internal constructor(
+        val result: RoutingEditResult,
+        /** Дерево, из которого получен [RoutingEditResult.json]; повторного разбора не требует. */
+        val config: ParsedConfig,
+    )
+
+    fun apply(
+        config: ParsedConfig,
+        preset: RoutingPreset,
+        manualRules: List<ManagedRoutingRule>,
+        installed: InstalledRuleSets,
+    ): RoutingEditResult = applyParsed(config, preset, manualRules, installed).result
+
+    fun applyParsed(
+        config: ParsedConfig,
+        preset: RoutingPreset,
+        manualRules: List<ManagedRoutingRule>,
+        installed: InstalledRuleSets,
+    ): ParsedEdit {
+        val beforeRoot = root(config)
+        val selectedProxyTag = BootstrapConfig.selectedProxyTag(config)
         val needsProxy = preset != RoutingPreset.Custom || manualRules.any {
             it.action == RoutingRuleAction.Proxy && it.outboundTag.isNullOrBlank()
         }
@@ -147,17 +171,27 @@ object RoutingConfigEditor {
             nextRoot["dns"] = JsonObject(dns)
         }
 
-        val json = JsonConfig.format(JsonObject(nextRoot))
-        val inspection = inspect(json)
-        return RoutingEditResult(
-            json = json,
-            inspection = inspection,
-            diff = managedDiff(beforeRoot, JsonConfig.parse(json) as JsonObject),
+        // Дерево уже построено этим кодом и совпадает с разбором его же текста
+        // (RoutingConfigEditorTest сверяет это), поэтому повторный parse не нужен.
+        val nextObject = JsonObject(nextRoot)
+        val json = JsonConfig.format(nextObject)
+        val nextConfig = ParsedConfig.of(nextObject, json)
+        val inspection = inspect(nextConfig)
+        return ParsedEdit(
+            result = RoutingEditResult(
+                json = json,
+                inspection = inspection,
+                diff = managedDiff(beforeRoot, nextObject),
+            ),
+            config = nextConfig,
         )
     }
 
-    fun rebindManagedRuleSetPaths(raw: String, installed: InstalledRuleSets): String {
-        val root = root(raw)
+    fun rebindManagedRuleSetPaths(raw: String, installed: InstalledRuleSets): String =
+        rebindManagedRuleSetPaths(ParsedConfig.parse(raw), installed)
+
+    fun rebindManagedRuleSetPaths(config: ParsedConfig, installed: InstalledRuleSets): String {
+        val root = root(config)
         val route = root["route"] as? JsonObject ?: return JsonConfig.format(root)
         val sets = route["rule_set"] as? JsonArray ?: return JsonConfig.format(root)
         var changed = false
@@ -177,8 +211,10 @@ object RoutingConfigEditor {
         return JsonConfig.format(JsonObject(root.toMutableMap().apply { this["route"] = nextRoute }))
     }
 
-    fun usesManagedLocalRuleSets(raw: String): Boolean {
-        val route = root(raw)["route"] as? JsonObject ?: return false
+    fun usesManagedLocalRuleSets(raw: String): Boolean = usesManagedLocalRuleSets(ParsedConfig.parse(raw))
+
+    fun usesManagedLocalRuleSets(config: ParsedConfig): Boolean {
+        val route = root(config)["route"] as? JsonObject ?: return false
         return ruleSets(route).any { it.string("tag") == RU_DOMAINS_TAG || it.string("tag") == RU_IP_TAG }
     }
 
@@ -304,7 +340,7 @@ object RoutingConfigEditor {
         }
     }
 
-    private fun root(raw: String): JsonObject = JsonConfig.parse(raw) as? JsonObject
+    private fun root(config: ParsedConfig): JsonObject = config.root
         ?: error("Корень конфигурации должен быть JSON-объектом.")
 
     private fun directTag(root: JsonObject): String? =

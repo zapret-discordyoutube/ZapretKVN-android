@@ -28,8 +28,11 @@ data class OutboundDescription(
 object ConfigAnalyzer {
     const val MANAGED_SELECTOR_TAG = MANAGED_SELECTOR_TAG_NAME
 
-    fun hasProfileDns(raw: String): Boolean = runCatching {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return@runCatching false
+    fun hasProfileDns(raw: String): Boolean = runCatching { ParsedConfig.parse(raw) }
+        .getOrNull()?.let(::hasProfileDns) ?: false
+
+    fun hasProfileDns(config: ParsedConfig): Boolean = runCatching {
+        val root = config.root ?: return@runCatching false
         val dns = root["dns"] as? JsonObject ?: return@runCatching false
         val servers = (dns["servers"] as? JsonArray)
             ?.mapNotNull { (it as? JsonObject)?.string("tag") }
@@ -43,8 +46,11 @@ object ConfigAnalyzer {
      * Reports DNS servers that are present but unreachable from final/rules.
      * This is diagnostic only: user-authored JSON is never normalized here.
      */
-    fun dnsWarnings(raw: String): List<String> = runCatching {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return@runCatching emptyList()
+    fun dnsWarnings(raw: String): List<String> = runCatching { ParsedConfig.parse(raw) }
+        .getOrNull()?.let(::dnsWarnings) ?: emptyList()
+
+    fun dnsWarnings(config: ParsedConfig): List<String> = runCatching {
+        val root = config.root ?: return@runCatching emptyList()
         val dns = root["dns"] as? JsonObject ?: return@runCatching emptyList()
         val servers = (dns["servers"] as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
@@ -96,6 +102,8 @@ object ConfigAnalyzer {
 
     fun selectorGroups(raw: String): List<SelectorGroup> = selectorGroups(JsonConfig.parse(raw))
 
+    fun selectorGroups(config: ParsedConfig): List<SelectorGroup> = selectorGroups(config.element)
+
     fun selectorGroups(root: JsonElement): List<SelectorGroup> {
         val outbounds = (root as? JsonObject)?.get("outbounds") as? JsonArray ?: return emptyList()
         return outbounds.mapNotNull { element ->
@@ -109,8 +117,10 @@ object ConfigAnalyzer {
         }
     }
 
-    fun serverOutboundTags(raw: String): List<String> {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return emptyList()
+    fun serverOutboundTags(raw: String): List<String> = serverOutboundTags(ParsedConfig.parse(raw))
+
+    fun serverOutboundTags(config: ParsedConfig): List<String> {
+        val root = config.root ?: return emptyList()
         val outbounds = root["outbounds"] as? JsonArray ?: return emptyList()
         return outbounds.mapNotNull { element ->
             val outbound = element as? JsonObject ?: return@mapNotNull null
@@ -120,8 +130,11 @@ object ConfigAnalyzer {
         }
     }
 
-    fun outboundDescriptions(raw: String): Map<String, OutboundDescription> {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return emptyMap()
+    fun outboundDescriptions(raw: String): Map<String, OutboundDescription> =
+        outboundDescriptions(ParsedConfig.parse(raw))
+
+    fun outboundDescriptions(config: ParsedConfig): Map<String, OutboundDescription> {
+        val root = config.root ?: return emptyMap()
         val outbounds = root["outbounds"] as? JsonArray ?: return emptyMap()
         return outbounds.mapNotNull { element ->
             val outbound = element as? JsonObject ?: return@mapNotNull null
@@ -137,8 +150,11 @@ object ConfigAnalyzer {
         }.toMap()
     }
 
-    fun selectServer(raw: String, selectorTag: String, serverTag: String): String {
-        val root = JsonConfig.parse(raw) as? JsonObject
+    fun selectServer(raw: String, selectorTag: String, serverTag: String): String =
+        selectServer(ParsedConfig.parse(raw), selectorTag, serverTag)
+
+    fun selectServer(config: ParsedConfig, selectorTag: String, serverTag: String): String {
+        val root = config.root
             ?: throw IllegalArgumentException("Корень конфигурации должен быть объектом.")
         val outbounds = root["outbounds"] as? JsonArray
             ?: throw IllegalArgumentException("В конфигурации нет outbounds.")
@@ -167,7 +183,12 @@ object ConfigAnalyzer {
 
     fun addManagedSelector(raw: String, serverTags: List<String>): String {
         require(serverTags.isNotEmpty()) { "Нужен хотя бы один сервер." }
-        val root = JsonConfig.parse(raw) as? JsonObject
+        return addManagedSelector(ParsedConfig.parse(raw), serverTags)
+    }
+
+    fun addManagedSelector(config: ParsedConfig, serverTags: List<String>): String {
+        require(serverTags.isNotEmpty()) { "Нужен хотя бы один сервер." }
+        val root = config.root
             ?: throw IllegalArgumentException("Корень конфигурации должен быть объектом.")
         val outbounds = root["outbounds"] as? JsonArray
             ?: throw IllegalArgumentException("В конфигурации нет outbounds.")

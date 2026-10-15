@@ -1,7 +1,7 @@
 package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.config.ConfigAnalyzer
-import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
 import io.github.zapretkvn.android.engines.failover.LatencyHint
 import io.github.zapretkvn.android.engines.hysteria.HysteriaCapabilityClassifier
@@ -36,7 +36,18 @@ internal object FailoverPlanner {
         primaryGroupTag: String?,
         serverId: String? = null,
     ): FailoverPlan? {
-        val root = runCatching { JsonConfig.parse(rawJson) }.getOrNull() as? JsonObject ?: return null
+        val config = runCatching { ParsedConfig.parse(rawJson) }.getOrNull() ?: return null
+        return plan(config, runtimeSelections, primaryGroupTag, serverId)
+    }
+
+    /** Тот же план по уже разобранному профилю: без повторного разбора JSON. */
+    fun plan(
+        config: ParsedConfig,
+        runtimeSelections: Map<String, String>,
+        primaryGroupTag: String?,
+        serverId: String? = null,
+    ): FailoverPlan? {
+        val root = config.root ?: return null
         val byTag = (root["outbounds"] as? JsonArray).orEmpty()
             .mapNotNull { it as? JsonObject }
             .mapNotNull { outbound -> outbound.text("tag")?.let { it to outbound } }
@@ -45,7 +56,7 @@ internal object FailoverPlanner {
         fun isProxy(tag: String?): Boolean = typeOf(tag)?.let { it !in NON_PROXY_TYPES } == true
         fun currentOf(tag: String, default: String?): String? = runtimeSelections[tag] ?: default
 
-        val groups = ConfigAnalyzer.selectorGroups(root)
+        val groups = ConfigAnalyzer.selectorGroups(config)
         val group = if (serverId != null) {
             groups.firstOrNull { it.tag == primaryGroupTag && currentOf(it.tag, it.default) == serverId }
                 ?: groups.firstOrNull { currentOf(it.tag, it.default) == serverId }

@@ -3,54 +3,37 @@ package io.github.zapretkvn.android.vpn
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
-import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import io.github.zapretkvn.android.diagnostics.AppCrashRecord
 import io.github.zapretkvn.android.diagnostics.AppProcessExitReader
-import io.github.zapretkvn.android.diagnostics.CoreDiagnosticClassifier
 import io.github.zapretkvn.android.diagnostics.DiagnosticAttemptOutcome
-import io.github.zapretkvn.android.diagnostics.DiagnosticConnectionAttempt
-import io.github.zapretkvn.android.diagnostics.DiagnosticFailure
 import io.github.zapretkvn.android.diagnostics.DiagnosticFailureClassifier
-import io.github.zapretkvn.android.diagnostics.DiagnosticLogCategory
-import io.github.zapretkvn.android.diagnostics.DiagnosticLogLine
-import io.github.zapretkvn.android.diagnostics.DiagnosticLogSource
-import io.github.zapretkvn.android.diagnostics.DiagnosticLogStats
-import io.github.zapretkvn.android.diagnostics.DiagnosticNetworkState
-import io.github.zapretkvn.android.diagnostics.DiagnosticReportRedactor
 import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
-import io.github.zapretkvn.android.diagnostics.DiagnosticStageTiming
 import io.github.zapretkvn.android.diagnostics.DiagnosticState
-import io.github.zapretkvn.android.diagnostics.DiagnosticStopAttempt
-import io.github.zapretkvn.android.diagnostics.DiagnosticStopOutcome
-import io.github.zapretkvn.android.diagnostics.DiagnosticVpnPolicy
-import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_ATTEMPTS
-import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_LOG_LINES
-import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_LOG_LINE_CHARS
-import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STAGES
-import io.github.zapretkvn.android.diagnostics.MAX_DIAGNOSTIC_STARTUP_LOG_LINES
 import io.github.zapretkvn.android.diagnostics.RuntimeErrorJournal
-import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.diagnostics.SessionTrafficAccumulator
-import io.github.zapretkvn.android.diagnostics.appendPrioritizedBounded
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.UnderlyingNetworkState
-import io.github.zapretkvn.android.network.probes.LatencyProbeReducer
-import io.github.zapretkvn.android.network.probes.VpnHealthStage
-import io.github.zapretkvn.android.platform.VpnSystemPolicy
-import java.util.concurrent.atomic.AtomicLong
 import io.github.zapretkvn.android.network.probes.ProbeLane
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityState
 import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.network.probes.services.ServiceId
+import io.github.zapretkvn.android.platform.VpnSystemPolicy
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 
+/**
+ * Фасад состояния VPN для UI и сервиса: состояние подключения, статистика,
+ * доступность сервисов и команды сервису. Диагностику подключения ведёт
+ * [ConnectionDiagnosticsRecorder], публикацию групп и задержек — [LatencyPublisher];
+ * здесь остаются только делегирующие вызовы и поколение сессии.
+ */
 class VpnController(
     private val context: Context,
     previousCrash: AppCrashRecord? = null,
@@ -61,12 +44,16 @@ class VpnController(
     private val mutableMessage = MutableStateFlow<String?>(null)
     private val mutableHomeVisible = MutableStateFlow(false)
     private val mutableDiagnosticsVisible = MutableStateFlow(false)
-    private val mutableDiagnostics = MutableStateFlow(
-        DiagnosticState(
+    private val latestGeneration = AtomicLong(0)
+    private val diagnosticsRecorder = ConnectionDiagnosticsRecorder(
+        initial = DiagnosticState(
             previousCrash = previousCrash,
             previousProcessExit = AppProcessExitReader.read(context),
         ),
+        currentGeneration = { latestGeneration.get() },
+        runtimeErrors = runtimeErrors,
     )
+    private val latencyPublisher = LatencyPublisher(mutableGroups) { latestGeneration.get() }
     private val mutableServiceAvailability = MutableStateFlow(ServiceAvailabilityState.Initial)
     private val mutableEnabledServices = MutableStateFlow(ServiceCatalog.defaultIds)
     @Volatile
@@ -74,15 +61,13 @@ class VpnController(
     private val trafficAccumulator = SessionTrafficAccumulator()
     private val mutableSessionStats = MutableStateFlow(trafficAccumulator.value)
     private val trafficLock = Any()
-    private val latestGeneration = AtomicLong(0)
-    @Volatile
-    private var diagnosticRuntimeMap: DiagnosticRuntimeMap? = null
 
     val state: StateFlow<VpnConnectionState> = mutableState.asStateFlow()
     val selectorGroups: StateFlow<List<RuntimeSelectorGroup>> = mutableGroups.asStateFlow()
     val message: StateFlow<String?> = mutableMessage.asStateFlow()
     val sessionStats: StateFlow<VpnSessionStats> = mutableSessionStats.asStateFlow()
-    val diagnostics: StateFlow<DiagnosticState> = mutableDiagnostics.asStateFlow()
+    val diagnostics: StateFlow<DiagnosticState> = diagnosticsRecorder.diagnostics
+
     internal val homeVisible: StateFlow<Boolean> = mutableHomeVisible.asStateFlow()
     internal val serviceAvailability: StateFlow<ServiceAvailabilityState> =
         mutableServiceAvailability.asStateFlow()
@@ -220,7 +205,7 @@ class VpnController(
 
     fun setDiagnosticsVisible(visible: Boolean) {
         mutableDiagnosticsVisible.value = visible
-        if (!visible) publishDiagnosticLogStream(currentGeneration(), false)
+        if (!visible) diagnosticsRecorder.publishDiagnosticLogStream(currentGeneration(), false)
     }
 
     internal fun publish(generation: Long, state: VpnConnectionState) {
@@ -245,7 +230,7 @@ class VpnController(
         }
         // Publish diagnostics first: StateFlow collectors may resume immediately on
         // the state write and terminal states must already have a terminal attempt.
-        updateDiagnosticConnectionState(generation, safeState)
+        diagnosticsRecorder.updateDiagnosticConnectionState(generation, safeState)
         mutableState.value = safeState
         synchronized(trafficLock) {
             when (safeState) {
@@ -281,26 +266,12 @@ class VpnController(
      * Диагностика обязана зафиксировать отказ, а состоянием VPN станет
      * [VpnConnectionState.Reconnecting], а не терминальная ошибка.
      */
-    internal fun publishRecoverableFailure(generation: Long, failure: VpnConnectionState.Error) {
-        if (generation < currentGeneration()) return
-        val message = sanitizeDiagnosticText(failure.message, 360)
-        recordConnectionFailure(
-            generation,
-            failure.copy(
-                message = message,
-                code = VpnFailureCodeSanitizer.sanitize(failure.code).ifBlank {
-                    DiagnosticFailureClassifier.classify(message).supportCode
-                },
-                technicalDetail = failure.technicalDetail
-                    ?.let { sanitizeDiagnosticText(it, 240) }
-                    ?.takeIf(String::isNotBlank),
-            ),
-        )
-    }
+    internal fun publishRecoverableFailure(generation: Long, failure: VpnConnectionState.Error) =
+        diagnosticsRecorder.recordRecoverableFailure(generation, failure)
 
     internal fun nextGeneration(): Long {
         val generation = latestGeneration.incrementAndGet()
-        diagnosticRuntimeMap = null
+        diagnosticsRecorder.resetRuntimeMap()
         // Clear the previous session once, before callbacks can publish data for
         // this generation. Repeated Starting progress updates must not erase the
         // initial CommandGroup snapshot when it arrives quickly.
@@ -310,90 +281,19 @@ class VpnController(
 
     internal fun currentGeneration(): Long = latestGeneration.get()
 
+    // ---- Диагностика подключения: ConnectionDiagnosticsRecorder. ----
+
     internal fun beginConnectionDiagnostic(
         generation: Long,
         trigger: String,
         profileId: String? = null,
-    ) {
-        if (generation != currentGeneration()) return
-        val elapsed = SystemClock.elapsedRealtime()
-        val epoch = System.currentTimeMillis()
-        val initialRuntimeMap = DiagnosticRuntimeMap.profileOnly(profileId)
-        diagnosticRuntimeMap = initialRuntimeMap
-        mutableDiagnostics.update { current ->
-            val previous = current.connectionAttempt?.finishForReplacement(elapsed)
-            val history = (current.previousConnectionAttempts + listOfNotNull(previous))
-                .takeLast(MAX_DIAGNOSTIC_ATTEMPTS - 1)
-            current.copy(
-                generation = generation,
-                lastFailure = null,
-                coreLogs = emptyList(),
-                coreLogStats = DiagnosticLogStats(),
-                logStreamActive = false,
-                network = null,
-                vpnPolicy = null,
-                effectiveOverlay = null,
-                previousConnectionAttempts = history,
-                connectionAttempt = DiagnosticConnectionAttempt(
-                    generation = generation,
-                    trigger = trigger.take(40),
-                    startedAtEpochMillis = epoch,
-                    startedAtElapsedRealtimeMillis = elapsed,
-                    target = initialRuntimeMap?.profile,
-                ),
-            )
-        }
-    }
+    ) = diagnosticsRecorder.beginConnectionDiagnostic(generation, trigger, profileId)
 
-    internal fun attachDiagnosticRuntimeMap(
-        generation: Long,
-        runtimeMap: DiagnosticRuntimeMap,
-    ) {
-        if (generation != currentGeneration()) return
-        diagnosticRuntimeMap = runtimeMap
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation }
-                ?: return@update current
-            current.copy(
-                connectionAttempt = attempt.copy(target = runtimeMap.profile),
-            )
-        }
-    }
+    internal fun attachDiagnosticRuntimeMap(generation: Long, runtimeMap: DiagnosticRuntimeMap) =
+        diagnosticsRecorder.attachDiagnosticRuntimeMap(generation, runtimeMap)
 
-    internal fun startConnectionDiagnosticStage(
-        generation: Long,
-        key: String,
-        label: String,
-    ) {
-        val elapsed = SystemClock.elapsedRealtime()
-        val epoch = System.currentTimeMillis()
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
-                ?: return@update current
-            // HTTPS-проба идёт параллельно DNS-пробе: её старт не закрывает DNS-этап,
-            // тот завершается своим отчётом, чтобы длительность каждого была честной.
-            val completed = attempt.stages.completeRunningStage(
-                elapsed = elapsed,
-                status = DiagnosticStageStatus.Success,
-                keepRunning = { running -> key == HTTPS_PROBE_STAGE_KEY && running.key in PARALLEL_DNS_STAGE_KEYS },
-            )
-            val stage = DiagnosticStageTiming(
-                key = key.take(48),
-                label = label.take(80),
-                startedAtEpochMillis = epoch,
-                startedAtElapsedRealtimeMillis = elapsed,
-                attempt = generation,
-                target = diagnosticRuntimeMap?.resolve("") ?: attempt.target,
-            )
-            current.copy(
-                connectionAttempt = attempt.copy(
-                    stages = (completed + stage).takeLast(MAX_DIAGNOSTIC_STAGES),
-                ),
-            )
-        }
-    }
+    internal fun startConnectionDiagnosticStage(generation: Long, key: String, label: String) =
+        diagnosticsRecorder.startConnectionDiagnosticStage(generation, key, label)
 
     /**
      * Записывает уже завершённую стадию, которая шла параллельно другим
@@ -410,251 +310,97 @@ class VpnController(
         durationMillis: Long,
         status: DiagnosticStageStatus,
         detail: String? = null,
-    ) {
-        val safeDetail = detail
-            ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
-            ?.takeIf(String::isNotBlank)
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
-                ?: return@update current
-            val stage = DiagnosticStageTiming(
-                key = key.take(48),
-                label = label.take(80),
-                startedAtEpochMillis = startedAtEpochMillis,
-                startedAtElapsedRealtimeMillis = startedAtElapsedRealtimeMillis,
-                durationMillis = durationMillis.coerceAtLeast(0L),
-                status = status,
-                detail = safeDetail,
-                attempt = generation,
-                target = diagnosticRuntimeMap?.resolve("") ?: attempt.target,
-            )
-            val before = attempt.stages.takeWhile { it.startedAtElapsedRealtimeMillis <= startedAtElapsedRealtimeMillis }
-            val after = attempt.stages.drop(before.size)
-            current.copy(
-                connectionAttempt = attempt.copy(
-                    stages = (before + stage + after).takeLast(MAX_DIAGNOSTIC_STAGES),
-                ),
-            )
-        }
-    }
+    ) = diagnosticsRecorder.recordConnectionDiagnosticStage(
+        generation,
+        key,
+        label,
+        startedAtElapsedRealtimeMillis,
+        startedAtEpochMillis,
+        durationMillis,
+        status,
+        detail,
+    )
 
-    internal fun beginConnectionCandidate(generation: Long, candidateAttemptId: Int) {
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
-                ?: return@update current
-            current.copy(
-                connectionAttempt = attempt.copy(candidateAttemptId = candidateAttemptId.coerceAtLeast(1)),
-            )
-        }
-    }
+    internal fun beginConnectionCandidate(generation: Long, candidateAttemptId: Int) =
+        diagnosticsRecorder.beginConnectionCandidate(generation, candidateAttemptId)
 
     internal fun recordConnectionVpnNetwork(
         generation: Long,
         identity: String? = null,
         lost: Boolean = false,
-    ) {
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
-                ?: return@update current
-            current.copy(
-                connectionAttempt = attempt.copy(
-                    vpnNetworkIdentity = identity?.take(40) ?: attempt.vpnNetworkIdentity,
-                    vpnNetworkLost = attempt.vpnNetworkLost || lost,
-                ),
-            )
-        }
-    }
+    ) = diagnosticsRecorder.recordConnectionVpnNetwork(generation, identity, lost)
 
     internal fun finishConnectionDiagnosticStage(
         generation: Long,
         key: String,
         status: DiagnosticStageStatus,
         detail: String? = null,
-    ) {
-        val elapsed = SystemClock.elapsedRealtime()
-        val safeDetail = detail
-            ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
-            ?.takeIf(String::isNotBlank)
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
-                ?: return@update current
-            val safeKey = key.take(48)
-            current.copy(
-                connectionAttempt = attempt.copy(
-                    stages = attempt.stages.map { stage ->
-                        if (stage.key == safeKey && stage.status == DiagnosticStageStatus.Running) {
-                            stage.copy(
-                                durationMillis = (elapsed - stage.startedAtElapsedRealtimeMillis)
-                                    .coerceAtLeast(0L),
-                                status = status,
-                                detail = safeDetail,
-                                attempt = stage.attempt ?: generation,
-                                target = stage.target ?: attempt.target,
-                            )
-                        } else {
-                            stage
-                        }
-                    },
-                ),
-            )
-        }
+    ) = diagnosticsRecorder.finishConnectionDiagnosticStage(generation, key, status, detail)
+
+    internal fun cancelCurrentConnectionDiagnostic(reason: String = "superseded") =
+        diagnosticsRecorder.cancelCurrentConnectionDiagnostic(reason)
+
+    internal fun beginStopDiagnostic(generation: Long, trigger: String) =
+        diagnosticsRecorder.beginStopDiagnostic(generation, trigger)
+
+    internal fun startStopDiagnosticStage(generation: Long, key: String, label: String) =
+        diagnosticsRecorder.startStopDiagnosticStage(generation, key, label)
+
+    internal fun finishStopDiagnosticStage(generation: Long, key: String, error: Throwable? = null) =
+        diagnosticsRecorder.finishStopDiagnosticStage(generation, key, error)
+
+    internal fun completeStopDiagnostic(generation: Long) =
+        diagnosticsRecorder.completeStopDiagnostic(generation)
+
+    internal fun publishMessage(message: String) {
+        mutableMessage.value = diagnosticsRecorder.logUserMessage(message)
     }
 
-    internal fun cancelCurrentConnectionDiagnostic(reason: String = "superseded") {
-        finishConnectionDiagnostic(
-            generation = null,
-            outcome = DiagnosticAttemptOutcome.Cancelled,
-            stageStatus = DiagnosticStageStatus.Cancelled,
-            cancellationReason = reason,
-        )
+    internal fun publishMessage(generation: Long, message: String) {
+        if (generation == currentGeneration()) publishMessage(message)
     }
 
-    internal fun beginStopDiagnostic(generation: Long, trigger: String) {
-        val elapsed = SystemClock.elapsedRealtime()
-        val epoch = System.currentTimeMillis()
-        mutableDiagnostics.update { current ->
-            current.copy(
-                generation = generation,
-                stopAttempt = DiagnosticStopAttempt(
-                    generation = generation,
-                    trigger = trigger.take(40),
-                    startedAtEpochMillis = epoch,
-                    startedAtElapsedRealtimeMillis = elapsed,
-                    target = diagnosticRuntimeMap?.resolve("")
-                        ?: current.connectionAttempt?.target,
-                ),
-            )
-        }
-    }
+    /** Решение автоматики без ошибки: только в диагностику, без snackbar. */
+    internal fun publishDiagnosticInfo(message: String) =
+        diagnosticsRecorder.publishDiagnosticInfo(message)
 
-    internal fun startStopDiagnosticStage(
+    internal fun publishDiagnosticWarning(message: String) =
+        diagnosticsRecorder.publishDiagnosticWarning(message)
+
+    internal fun publishDiagnosticNetwork(generation: Long, state: UnderlyingNetworkState) =
+        diagnosticsRecorder.publishDiagnosticNetwork(generation, state)
+
+    internal fun publishVpnSystemPolicy(generation: Long, policy: VpnSystemPolicy) =
+        diagnosticsRecorder.publishVpnSystemPolicy(generation, policy)
+
+    internal fun publishEffectiveOverlay(generation: Long, overlay: String) =
+        diagnosticsRecorder.publishEffectiveOverlay(generation, overlay)
+
+    internal fun clearCoreDiagnosticLogs(generation: Long) =
+        diagnosticsRecorder.clearCoreDiagnosticLogs(generation)
+
+    internal fun publishCoreDiagnosticLog(generation: Long, level: Int, message: String) =
+        diagnosticsRecorder.publishCoreDiagnosticLog(generation, level, message)
+
+    internal fun recordCoreFailure(generation: Long, level: Int, message: String) =
+        diagnosticsRecorder.recordCoreFailure(generation, level, message)
+
+    internal fun recordCommandLogDisconnect(generation: Long, message: String, expectedClose: Boolean) =
+        diagnosticsRecorder.recordCommandLogDisconnect(generation, message, expectedClose)
+
+    internal fun publishCoreDiagnosticLogs(
         generation: Long,
-        key: String,
-        label: String,
-    ) {
-        val elapsed = SystemClock.elapsedRealtime()
-        val epoch = System.currentTimeMillis()
-        mutableDiagnostics.update { current ->
-            val attempt = current.stopAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticStopOutcome.Running }
-                ?: return@update current
-            val completed = attempt.stages.completeRunningStage(
-                elapsed = elapsed,
-                status = DiagnosticStageStatus.Success,
-            )
-            current.copy(
-                stopAttempt = attempt.copy(
-                    stages = (completed + DiagnosticStageTiming(
-                        key = key.take(48),
-                        label = label.take(80),
-                        startedAtEpochMillis = epoch,
-                        startedAtElapsedRealtimeMillis = elapsed,
-                        attempt = generation,
-                        target = attempt.target,
-                    )).takeLast(MAX_DIAGNOSTIC_STAGES),
-                ),
-            )
-        }
-    }
+        entries: List<Pair<Int, String>>,
+        ingressDropped: Int,
+    ) = diagnosticsRecorder.publishCoreDiagnosticLogs(generation, entries, ingressDropped)
 
-    internal fun finishStopDiagnosticStage(
-        generation: Long,
-        key: String,
-        error: Throwable? = null,
-    ) {
-        val elapsed = SystemClock.elapsedRealtime()
-        val safeKey = key.take(48)
-        val detail = error?.let {
-            sanitizeDiagnosticText(
-                generateSequence(it) { cause -> cause.cause }
-                    .mapNotNull(Throwable::message)
-                    .firstOrNull(String::isNotBlank)
-                    ?: it.javaClass.simpleName,
-                MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS,
-            )
-        }
-        mutableDiagnostics.update { current ->
-            val attempt = current.stopAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticStopOutcome.Running }
-                ?: return@update current
-            current.copy(
-                stopAttempt = attempt.copy(
-                    stages = attempt.stages.map { stage ->
-                        if (stage.key == safeKey && stage.status == DiagnosticStageStatus.Running) {
-                            stage.copy(
-                                durationMillis = (elapsed - stage.startedAtElapsedRealtimeMillis)
-                                    .coerceAtLeast(0L),
-                                status = if (error == null) {
-                                    DiagnosticStageStatus.Success
-                                } else {
-                                    DiagnosticStageStatus.Failed
-                                },
-                                detail = detail,
-                                attempt = stage.attempt ?: generation,
-                                target = stage.target ?: attempt.target,
-                            )
-                        } else {
-                            stage
-                        }
-                    },
-                ),
-            )
-        }
-    }
+    internal fun publishDiagnosticLogStream(generation: Long, active: Boolean) =
+        diagnosticsRecorder.publishDiagnosticLogStream(generation, active)
 
-    internal fun completeStopDiagnostic(generation: Long) {
-        val elapsed = SystemClock.elapsedRealtime()
-        mutableDiagnostics.update { current ->
-            val attempt = current.stopAttempt
-                ?.takeIf { it.generation == generation && it.outcome == DiagnosticStopOutcome.Running }
-                ?: return@update current
-            current.copy(
-                stopAttempt = attempt.copy(
-                    totalDurationMillis = (elapsed - attempt.startedAtElapsedRealtimeMillis)
-                        .coerceAtLeast(0L),
-                    outcome = DiagnosticStopOutcome.Completed,
-                    stages = attempt.stages.completeRunningStage(
-                        elapsed,
-                        DiagnosticStageStatus.Success,
-                    ),
-                ),
-            )
-        }
-    }
+    // ---- Группы серверов и задержки: LatencyPublisher. ----
 
-    internal fun publishGroups(generation: Long, groups: List<RuntimeSelectorGroup>) {
-        mutableGroups.update { current ->
-            if (generation != currentGeneration()) return@update current
-            val priorGroups = current.associateBy(RuntimeSelectorGroup::tag)
-            groups.map { incoming ->
-                val prior = priorGroups[incoming.tag]
-                val priorItems = prior?.items?.associateBy(RuntimeOutboundItem::tag).orEmpty()
-                incoming.copy(
-                    probeProgress = prior?.probeProgress,
-                    items = incoming.items.map { item ->
-                        val previous = priorItems[item.tag] ?: return@map item
-                        item.copy(
-                            icmp = previous.icmp,
-                            relay = when {
-                                prior?.probeProgress?.running == true -> previous.relay
-                                item.relay.lastSample()?.measuredAtEpochMillis
-                                    ?.let { incomingTime ->
-                                        incomingTime >
-                                            (previous.relay.lastSample()?.measuredAtEpochMillis ?: 0L)
-                                    } == true -> item.relay
-                                previous.relay == LatencyProbeState.NotTested -> item.relay
-                                else -> previous.relay
-                            },
-                        )
-                    },
-                )
-            }
-        }
-    }
+    internal fun publishGroups(generation: Long, groups: List<RuntimeSelectorGroup>) =
+        latencyPublisher.publishGroups(generation, groups)
 
     internal fun beginLatencyProbe(
         generation: Long,
@@ -662,22 +408,7 @@ class VpnController(
         groupTag: String,
         networkIdentity: String,
         icmpTargets: Set<String>,
-    ): Boolean {
-        var started = false
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            val result = LatencyProbeReducer.begin(
-                groups,
-                requestId,
-                groupTag,
-                networkIdentity,
-                icmpTargets,
-            )
-            started = result.started
-            result.groups
-        }
-        return started
-    }
+    ): Boolean = latencyPublisher.beginLatencyProbe(generation, requestId, groupTag, networkIdentity, icmpTargets)
 
     internal fun publishLatencyBatch(
         generation: Long,
@@ -686,269 +417,31 @@ class VpnController(
         networkIdentity: String,
         relay: Map<String, LatencyProbeState> = emptyMap(),
         icmp: Map<String, LatencyProbeState> = emptyMap(),
-    ) {
-        if (relay.isEmpty() && icmp.isEmpty()) return
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            LatencyProbeReducer.publishBatch(
-                groups,
-                requestId,
-                groupTag,
-                networkIdentity,
-                relay,
-                icmp,
-            )
-        }
-    }
+    ) = latencyPublisher.publishLatencyBatch(generation, requestId, groupTag, networkIdentity, relay, icmp)
 
     internal fun completeLatencyProbe(
         generation: Long,
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-    ) {
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            LatencyProbeReducer.complete(groups, requestId, groupTag, networkIdentity)
-        }
-    }
+    ) = latencyPublisher.completeLatencyProbe(generation, requestId, groupTag, networkIdentity)
 
     internal fun cancelLatencyProbe(
         generation: Long,
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-    ) {
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            LatencyProbeReducer.cancel(groups, requestId, groupTag, networkIdentity)
-        }
-    }
+    ) = latencyPublisher.cancelLatencyProbe(generation, requestId, groupTag, networkIdentity)
 
-    internal fun markLatencyStale(generation: Long) {
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            LatencyProbeReducer.markStale(groups)
-        }
-    }
+    internal fun markLatencyStale(generation: Long) = latencyPublisher.markLatencyStale(generation)
 
-    internal fun publishBackgroundIcmp(
-        generation: Long,
-        outboundTag: String,
-        state: LatencyProbeState,
-    ) {
-        if (generation != currentGeneration() || outboundTag.isBlank()) return
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            groups.map { group ->
-                group.copy(
-                    items = group.items.map { item ->
-                        if (item.tag == outboundTag && item.icmp !is LatencyProbeState.Running) {
-                            item.copy(icmp = state)
-                        } else {
-                            item
-                        }
-                    },
-                )
-            }
-        }
-    }
+    internal fun publishBackgroundIcmp(generation: Long, outboundTag: String, state: LatencyProbeState) =
+        latencyPublisher.publishBackgroundIcmp(generation, outboundTag, state)
 
-    internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) {
-        mutableGroups.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            groups.map { group ->
-                if (group.tag == groupTag) group.copy(selected = outboundTag) else group
-            }
-        }
-    }
+    internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) =
+        latencyPublisher.publishSelection(generation, groupTag, outboundTag)
 
-    internal fun publishMessage(message: String) {
-        val safe = sanitizeDiagnosticText(message, 360)
-        mutableMessage.value = safe
-        appendApplicationDiagnosticLog(level = 5, message = safe, generation = currentGeneration())
-    }
-
-    internal fun publishMessage(generation: Long, message: String) {
-        if (generation == currentGeneration()) publishMessage(message)
-    }
-
-    /** Решение автоматики без ошибки: только в диагностику, без snackbar. */
-    internal fun publishDiagnosticInfo(message: String) {
-        val safe = sanitizeDiagnosticText(message, 360)
-        appendApplicationDiagnosticLog(level = 4, message = safe, generation = currentGeneration())
-    }
-
-    internal fun publishDiagnosticWarning(message: String) {
-        val safe = sanitizeDiagnosticText(message, 360)
-        appendApplicationDiagnosticLog(level = 3, message = safe, generation = currentGeneration())
-    }
-
-    internal fun publishDiagnosticNetwork(generation: Long, state: UnderlyingNetworkState) {
-        if (generation < latestGeneration.get()) return
-        mutableDiagnostics.update {
-            it.copy(
-                generation = generation,
-                network = DiagnosticNetworkState(
-                    available = state.network != null,
-                    transport = state.transport,
-                    interfaceName = state.interfaceName,
-                    metered = state.metered,
-                    validated = state.validated,
-                    captivePortal = state.captivePortal,
-                    privateDnsMode = state.privateDnsMode.name.lowercase(),
-                    privateDnsActive = state.privateDnsActive,
-                ),
-            )
-        }
-    }
-
-    internal fun publishVpnSystemPolicy(generation: Long, policy: VpnSystemPolicy) {
-        if (generation < latestGeneration.get()) return
-        mutableDiagnostics.update {
-            it.copy(
-                generation = generation,
-                vpnPolicy = DiagnosticVpnPolicy(
-                    statusAvailable = policy.statusAvailable,
-                    alwaysOn = policy.alwaysOn,
-                    lockdown = policy.lockdown,
-                ),
-            )
-        }
-    }
-
-    internal fun publishEffectiveOverlay(generation: Long, overlay: String) {
-        if (generation < latestGeneration.get()) return
-        mutableDiagnostics.update { it.copy(generation = generation, effectiveOverlay = overlay) }
-    }
-
-    internal fun clearCoreDiagnosticLogs(generation: Long) {
-        if (generation != currentGeneration()) return
-        mutableDiagnostics.update {
-            it.copy(
-                coreLogs = emptyList(),
-                coreLogStats = DiagnosticLogStats(),
-            )
-        }
-    }
-
-    internal fun publishCoreDiagnosticLog(generation: Long, level: Int, message: String) {
-        publishCoreDiagnosticLogs(generation, listOf(level to message), ingressDropped = 0)
-    }
-
-    internal fun recordCoreFailure(generation: Long, level: Int, message: String) {
-        if (level !in 0..3) return
-        val tagged = Regex("outbound/([^\\[]+)\\[([^]]+)]").find(message)
-        val component = tagged?.groupValues?.get(1) ?: "sing-box"
-        val stage = mutableDiagnostics.value.connectionAttempt
-            ?.takeIf { it.generation == generation }
-            ?.stages?.lastOrNull { it.status == DiagnosticStageStatus.Running }?.key ?: "runtime"
-        val failure = RuntimeErrors.capture(
-            component = component,
-            stage = stage,
-            message = message,
-            sessionGeneration = generation,
-            targetId = tagged?.groupValues?.get(2).orEmpty(),
-            level = level,
-        )
-        // Отмена QUIC-потока (error code 0) — штатное закрытие; строка остаётся в журнале ядра.
-        if (RuntimeErrors.isBenignStreamCancel(failure)) return
-        runtimeErrors.record(failure)
-        mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
-    }
-
-    internal fun recordCommandLogDisconnect(generation: Long, message: String, expectedClose: Boolean) {
-        val failure = RuntimeErrors.commandLogFailure(generation, message, expectedClose)
-        if (failure == null) {
-            // A locally requested close is lifecycle evidence, not a runtime failure.
-            publishCoreDiagnosticLog(generation, 4, "CommandLog: $message")
-        } else {
-            runtimeErrors.record(failure)
-            mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
-        }
-    }
-
-    internal fun publishCoreDiagnosticLogs(
-        generation: Long,
-        entries: List<Pair<Int, String>>,
-        ingressDropped: Int,
-    ) {
-        if (generation != currentGeneration()) return
-        val attemptSnapshot = mutableDiagnostics.value.connectionAttempt
-            ?.takeIf { it.generation == generation }
-        val currentStage = attemptSnapshot
-            ?.stages
-            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
-            ?.key
-        val runtimeMap = diagnosticRuntimeMap
-        val lines = entries.mapNotNull { (level, message) ->
-            val target = runtimeMap?.resolve(message) ?: attemptSnapshot?.target
-            val safe = sanitizeDiagnosticText(message, MAX_DIAGNOSTIC_LOG_LINE_CHARS)
-            safe.takeIf(String::isNotEmpty)?.let {
-                CoreDiagnosticClassifier.classify(level, it).copy(
-                    attempt = generation,
-                    stage = currentStage,
-                    target = target,
-                )
-            }
-        }
-        if (lines.isEmpty() && ingressDropped <= 0) return
-        mutableDiagnostics.update { current ->
-            var coreLogs = current.coreLogs
-            var coreStats = current.coreLogStats
-            var startupLogs = current.connectionAttempt?.startupCoreLogs.orEmpty()
-            var startupStats = current.connectionAttempt?.startupCoreLogStats
-                ?: DiagnosticLogStats()
-            lines.forEach { line ->
-                coreLogs.appendPrioritizedBounded(line, coreStats, MAX_DIAGNOSTIC_LOG_LINES).also {
-                    coreLogs = it.lines
-                    coreStats = it.stats
-                }
-                if (current.connectionAttempt?.outcome == DiagnosticAttemptOutcome.Running) {
-                    startupLogs.appendPrioritizedBounded(
-                        line,
-                        startupStats,
-                        MAX_DIAGNOSTIC_STARTUP_LOG_LINES,
-                    ).also {
-                        startupLogs = it.lines
-                        startupStats = it.stats
-                    }
-                }
-            }
-            if (ingressDropped > 0) {
-                coreStats = coreStats.copy(
-                    receivedLines = coreStats.receivedLines + ingressDropped,
-                    droppedLines = coreStats.droppedLines + ingressDropped,
-                )
-                if (current.connectionAttempt?.outcome == DiagnosticAttemptOutcome.Running) {
-                    startupStats = startupStats.copy(
-                        receivedLines = startupStats.receivedLines + ingressDropped,
-                        droppedLines = startupStats.droppedLines + ingressDropped,
-                    )
-                }
-            }
-            val startupAttempt = current.connectionAttempt?.let { attempt ->
-                if (attempt.outcome == DiagnosticAttemptOutcome.Running) {
-                    attempt.copy(
-                        startupCoreLogs = startupLogs,
-                        startupCoreLogStats = startupStats,
-                    )
-                } else {
-                    attempt
-                }
-            }
-            current.copy(
-                coreLogs = coreLogs,
-                coreLogStats = coreStats,
-                connectionAttempt = startupAttempt,
-            )
-        }
-    }
-
-    internal fun publishDiagnosticLogStream(generation: Long, active: Boolean) {
-        if (generation < latestGeneration.get()) return
-        mutableDiagnostics.update { it.copy(logStreamActive = active) }
-    }
+    // ---- Трафик и статистика сессии. ----
 
     internal fun publishStatusStream(generation: Long, active: Boolean) {
         synchronized(trafficLock) {
@@ -994,215 +487,6 @@ class VpnController(
 
     fun consumeMessage() {
         mutableMessage.value = null
-    }
-
-    private fun updateDiagnosticConnectionState(
-        generation: Long,
-        state: VpnConnectionState,
-    ) {
-        when (state) {
-            is VpnConnectionState.Starting -> mutableDiagnostics.update { current ->
-                if (generation > current.generation) {
-                    current.copy(
-                        generation = generation,
-                        lastFailure = null,
-                        coreLogs = emptyList(),
-                        coreLogStats = DiagnosticLogStats(),
-                        logStreamActive = false,
-                        network = null,
-                        vpnPolicy = null,
-                        effectiveOverlay = null,
-                    )
-                } else {
-                    current
-                }
-            }
-            is VpnConnectionState.Error -> recordConnectionFailure(generation, state)
-            is VpnConnectionState.Reconnecting -> publishDiagnosticLogStream(generation, false)
-            is VpnConnectionState.Paused -> {
-                cancelCurrentConnectionDiagnostic()
-                publishDiagnosticLogStream(generation, false)
-            }
-            VpnConnectionState.Stopped,
-            is VpnConnectionState.Stopping,
-            -> publishDiagnosticLogStream(generation, false)
-            is VpnConnectionState.Connected -> finishConnectionDiagnostic(
-                generation = generation,
-                outcome = DiagnosticAttemptOutcome.Connected,
-                stageStatus = DiagnosticStageStatus.Success,
-                cancellationReason = null,
-            )
-        }
-    }
-
-    private fun recordConnectionFailure(generation: Long, state: VpnConnectionState.Error) {
-        val runningAttempt = mutableDiagnostics.value.connectionAttempt
-            ?.takeIf { it.generation == generation }
-        val failureStage = runningAttempt
-            ?.stages
-            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
-            ?.key
-        val failureTarget = diagnosticRuntimeMap?.resolve("") ?: runningAttempt?.target
-        finishConnectionDiagnostic(
-            generation = generation,
-            outcome = DiagnosticAttemptOutcome.Failed,
-            stageStatus = DiagnosticStageStatus.Failed,
-            cancellationReason = null,
-        )
-        val safe = sanitizeDiagnosticText(state.message, 360)
-        val now = System.currentTimeMillis()
-        val failure = DiagnosticFailure(
-            type = DiagnosticFailureClassifier.classify(safe),
-            supportCode = state.code,
-            message = safe,
-            technicalDetail = state.technicalDetail
-                ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
-                ?.takeIf(String::isNotBlank),
-            occurredAtEpochMillis = now,
-            attempt = generation,
-            stage = failureStage,
-            target = failureTarget,
-        )
-        val line = DiagnosticLogLine(
-            level = 2,
-            message = safe,
-            receivedAtEpochMillis = now,
-            source = DiagnosticLogSource.Application,
-            category = DiagnosticLogCategory.Lifecycle,
-            priority = true,
-            attempt = generation,
-            stage = failureStage,
-            target = failureTarget,
-        )
-        mutableDiagnostics.update {
-            val attempt = it.connectionAttempt
-            val failedAttempt = if (attempt?.generation == generation) {
-                attempt.copy(failure = failure)
-            } else {
-                attempt
-            }
-            val application = it.applicationLogs.appendPrioritizedBounded(
-                line,
-                it.applicationLogStats,
-                MAX_DIAGNOSTIC_LOG_LINES,
-            )
-            it.copy(
-                generation = generation,
-                lastFailure = failure,
-                applicationLogs = application.lines,
-                applicationLogStats = application.stats,
-                logStreamActive = false,
-                connectionAttempt = failedAttempt,
-            )
-        }
-    }
-
-    private fun finishConnectionDiagnostic(
-        generation: Long?,
-        outcome: DiagnosticAttemptOutcome,
-        stageStatus: DiagnosticStageStatus,
-        cancellationReason: String?,
-    ) {
-        val elapsed = SystemClock.elapsedRealtime()
-        mutableDiagnostics.update { current ->
-            val attempt = current.connectionAttempt
-                ?.takeIf {
-                    it.outcome == DiagnosticAttemptOutcome.Running &&
-                        (generation == null || it.generation == generation)
-                }
-                ?: return@update current
-            current.copy(
-                connectionAttempt = attempt.copy(
-                    totalDurationMillis = (elapsed - attempt.startedAtElapsedRealtimeMillis)
-                        .coerceAtLeast(0L),
-                    outcome = outcome,
-                    cancellationReason = cancellationReason?.take(40),
-                    stages = attempt.stages.completeRunningStage(elapsed, stageStatus),
-                ),
-            )
-        }
-    }
-
-    private fun List<DiagnosticStageTiming>.completeRunningStage(
-        elapsed: Long,
-        status: DiagnosticStageStatus,
-        keepRunning: (DiagnosticStageTiming) -> Boolean = { false },
-    ): List<DiagnosticStageTiming> = map { stage ->
-        if (stage.status == DiagnosticStageStatus.Running && !keepRunning(stage)) {
-            stage.copy(
-                durationMillis = (elapsed - stage.startedAtElapsedRealtimeMillis).coerceAtLeast(0L),
-                status = status,
-            )
-        } else {
-            stage
-        }
-    }
-
-    private fun DiagnosticConnectionAttempt.finishForReplacement(
-        elapsed: Long,
-    ): DiagnosticConnectionAttempt = if (outcome == DiagnosticAttemptOutcome.Running) {
-        copy(
-            totalDurationMillis = (elapsed - startedAtElapsedRealtimeMillis).coerceAtLeast(0L),
-            outcome = DiagnosticAttemptOutcome.Cancelled,
-            cancellationReason = "superseded",
-            stages = stages.completeRunningStage(elapsed, DiagnosticStageStatus.Cancelled),
-        )
-    } else {
-        this
-    }
-
-    private fun appendApplicationDiagnosticLog(
-        level: Int,
-        message: String,
-        generation: Long? = null,
-    ) {
-        if (message.isEmpty()) return
-        val attempt = mutableDiagnostics.value.connectionAttempt
-            ?.takeIf { generation == null || it.generation == generation }
-        val stage = attempt
-            ?.stages
-            ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
-            ?.key
-        val line = DiagnosticLogLine(
-            level = level,
-            message = message.take(MAX_DIAGNOSTIC_LOG_LINE_CHARS),
-            receivedAtEpochMillis = System.currentTimeMillis(),
-            source = DiagnosticLogSource.Application,
-            category = DiagnosticLogCategory.Lifecycle,
-            priority = level <= 3,
-            attempt = generation ?: attempt?.generation,
-            stage = stage,
-            target = diagnosticRuntimeMap?.resolve("") ?: attempt?.target,
-        )
-        mutableDiagnostics.update {
-            val result = it.applicationLogs.appendPrioritizedBounded(
-                line,
-                it.applicationLogStats,
-                MAX_DIAGNOSTIC_LOG_LINES,
-            )
-            it.copy(applicationLogs = result.lines, applicationLogStats = result.stats)
-        }
-    }
-
-    private fun sanitizeDiagnosticText(message: String, maxLength: Int): String =
-        DiagnosticReportRedactor.redact(message)
-            .replace(ANSI_ESCAPE, "")
-            .replace(NEW_LINES, " ")
-            .trim()
-            .take(maxLength)
-
-    private companion object {
-        const val MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS = 160
-        val HTTPS_PROBE_STAGE_KEY = VpnHealthStage.HttpsProbe.diagnosticKey
-
-        /** DNS-этапы проверки, идущие параллельно HTTPS-пробе (см. VpnHealthPipeline). */
-        val PARALLEL_DNS_STAGE_KEYS = setOf(
-            VpnHealthStage.DnsUdpProbe.diagnosticKey,
-            VpnHealthStage.DnsTcpProbe.diagnosticKey,
-            VpnHealthStage.DnsAndroidProbe.diagnosticKey,
-        )
-        val ANSI_ESCAPE = Regex("\u001B(?:\\[[0-?]*[ -/]*[@-~]|[@-_])")
-        val NEW_LINES = Regex("[\\r\\n]+")
     }
 }
 

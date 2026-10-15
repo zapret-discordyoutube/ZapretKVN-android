@@ -12,6 +12,7 @@ import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
 import io.github.zapretkvn.android.config.RuntimeConfigResult
@@ -120,6 +121,7 @@ internal class SessionStarter(
     private val scope: kotlinx.coroutines.CoroutineScope,
 ) {
     private val controller get() = container.vpnController
+    private val healthVerifier = SessionHealthVerifier(container)
 
     /**
      * Ожидание физической сети вынесено за пределы бюджета подключения: он не
@@ -234,24 +236,41 @@ internal class SessionStarter(
         var profile = container.profileStore.read(profileId)
         // Один вызов на попытку: он нужен и для переподвязки путей, и для итогового routing.
         val installed = container.ruleSetAssetManager.ensureInstalled()
-        if (RoutingConfigEditor.usesManagedLocalRuleSets(profile.json)) {
-            val rebound = RoutingConfigEditor.rebindManagedRuleSetPaths(profile.json, installed)
+        // Профиль разбирается один раз на каждую смену его текста; дальше по пути
+        // подключения идёт готовое дерево ([ParsedConfig]), а не строка.
+        var profileConfig = ParsedConfig.parse(profile.json)
+        if (RoutingConfigEditor.usesManagedLocalRuleSets(profileConfig)) {
+            val rebound = RoutingConfigEditor.rebindManagedRuleSetPaths(profileConfig, installed)
             if (rebound != profile.json) {
                 container.profileStore.update(profileId, rebound)
                 profile = container.profileStore.read(profileId)
+                profileConfig = ParsedConfig.parse(profile.json)
             }
         }
         request.replacement
             ?.takeIf { it.profileId == profileId }
-            ?.let { pending -> profile = profile.copy(json = pending.candidateJson) }
-        val storedRouting = withContext(Dispatchers.Default) { RoutingConfigEditor.inspect(profile.json) }
+            ?.let { pending ->
+                profile = profile.copy(json = pending.candidateJson)
+                profileConfig = ParsedConfig.parse(pending.candidateJson)
+            }
+        val storedConfig = profileConfig
+        val storedRouting = withContext(Dispatchers.Default) { RoutingConfigEditor.inspect(storedConfig) }
         val policy = container.routingPolicyStore.getOrInitialize(
             GlobalRoutingPolicy(preset = storedRouting.preset, rules = storedRouting.rules),
         )
-        val effectiveRouting = withContext(Dispatchers.Default) {
-            RoutingConfigEditor.apply(profile.json, policy.preset, policy.rules, installed).json
+        val routingEdit = withContext(Dispatchers.Default) {
+            RoutingConfigEditor.applyParsed(storedConfig, policy.preset, policy.rules, installed)
         }
-        profile = profile.copy(json = VpnTestHooks.transformEffectiveRouting(effectiveRouting))
+        val effectiveRouting = routingEdit.result.json
+        val effectiveJson = VpnTestHooks.transformEffectiveRouting(effectiveRouting)
+        // Дерево результата маршрутизации уже есть; повторный разбор нужен, только
+        // если тестовый хук подменил текст.
+        val effectiveConfig = if (effectiveJson == effectiveRouting) {
+            routingEdit.config
+        } else {
+            ParsedConfig.parse(effectiveJson)
+        }
+        profile = profile.copy(json = effectiveJson)
         val uiSettings = container.uiSettingsStore.settings.first()
         val configuredDnsMode = uiSettings.dnsMode
         check(dnsMode != DnsMode.Automatic) {
@@ -259,7 +278,7 @@ internal class SessionStarter(
         }
         val vpnHiding = uiSettings.vpnHiding
         if (dnsMode == DnsMode.FromJson) {
-            ConfigAnalyzer.dnsWarnings(profile.json).forEach(controller::publishDiagnosticWarning)
+            ConfigAnalyzer.dnsWarnings(effectiveConfig).forEach(controller::publishDiagnosticWarning)
         }
         val appSelection = container.appSelectionStore.selection.first()
         val selectedPackages = appSelection.selectedPackagesForTunBoundary()
@@ -301,7 +320,7 @@ internal class SessionStarter(
         controller.startConnectionDiagnosticStage(token, "bootstrap", "Bootstrap DNS и доступность сервера")
         // До bootstrap: его ошибки («VPN-сервер не отвечает: host:port») уже
         // показывают адрес сервера как «<сервер ep-…>».
-        ServerAddressRedactor.registerProfile(profileId, profile.json)
+        ServerAddressRedactor.registerProfile(profileId, effectiveConfig)
         val networkBootstrap = monitor.runOnStableNetwork(
             maxNetworkChanges = BOOTSTRAP_MAX_NETWORK_CHANGES,
             timeoutMillis = NETWORK_USABLE_WAIT_MILLIS,
@@ -332,7 +351,7 @@ internal class SessionStarter(
             }
             container.proxyBootstrapper.prepare(
                 profileId = profileId,
-                rawJson = profile.json,
+                config = effectiveConfig,
                 underlying = checkNotNull(underlying.network),
                 noCacheLookup = request.noCacheLookup,
             )
@@ -347,9 +366,9 @@ internal class SessionStarter(
         }
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
-        val runtimeJson = when (
+        val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(
-                profile.json,
+                effectiveConfig,
                 enableTrafficStats = true,
                 options = RuntimeConfigOptions(
                     dnsMode = dnsMode,
@@ -364,10 +383,12 @@ internal class SessionStarter(
                 ),
             )
         ) {
-            is RuntimeConfigResult.Ready -> runtime.json
+            is RuntimeConfigResult.Ready -> runtime
             is RuntimeConfigResult.Invalid -> error(runtime.message)
         }
-        controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeJson, dnsMode))
+        val runtimeJson = runtimeReady.json
+        val runtimeConfig = runtimeReady.config
+        controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeConfig, dnsMode))
         // Проверка ядром не зависит от adapter и command server и идёт рядом с ними;
         // результат нужен строго перед startOrReloadService (awaitConfigCheck).
         val configCheck = CoreConfigCheckRun.launch(
@@ -380,9 +401,9 @@ internal class SessionStarter(
         controller.startConnectionDiagnosticStage(token, "platform_adapter", "Подготовка Android VPN adapter")
         controller.publish(token, VpnConnectionState.Starting(profileId, "Создание TUN", updaterRouting))
         foreground(ForegroundState.CreatingTun)
-        val outboundDescriptions = ConfigAnalyzer.outboundDescriptions(profile.json)
-        val selectorGroups = ConfigAnalyzer.selectorGroups(profile.json)
-        val primaryGroupTag = BootstrapConfig.selectedProxyTag(runtimeJson)
+        val outboundDescriptions = ConfigAnalyzer.outboundDescriptions(effectiveConfig)
+        val selectorGroups = ConfigAnalyzer.selectorGroups(effectiveConfig)
+        val primaryGroupTag = BootstrapConfig.selectedProxyTag(runtimeConfig)
         val selectedOutboundTag = selectorGroups
             .firstOrNull { it.tag == primaryGroupTag }
             ?.default
@@ -399,7 +420,7 @@ internal class SessionStarter(
         val session = CoreSession(
             profileId = profileId,
             profileName = profile.metadata.name,
-            profileJson = profile.json,
+            profileConfig = effectiveConfig,
             generation = token,
             networkMonitor = monitor,
             networkPolicyKey = underlying.policyKey(),
@@ -454,7 +475,7 @@ internal class SessionStarter(
             controller.startConnectionDiagnosticStage(token, "core_service", "Запуск sing-box и создание TUN")
             // Имена серверов группы: локальный DNS-транспорт спрашивает их
             // сначала доверенным путём, а не системным резолвером.
-            ServerNameRegistry.replace(BootstrapConfig.serverHostnames(runtimeJson))
+            ServerNameRegistry.replace(BootstrapConfig.serverHostnames(runtimeConfig))
             commandServer.startOrReloadService(
                 runtimeJson,
                 OverrideOptions().apply {
@@ -487,13 +508,13 @@ internal class SessionStarter(
             session.attachGroupClient(groupClient)
             groupClient.connect()
             checkCurrent(token)
-            reconcileSelectorSelection(session, groupClient, runtimeJson)
+            reconcileSelectorSelection(session, groupClient, runtimeConfig)
             checkCurrent(token)
             controller.publish(token, VpnConnectionState.Starting(profileId, "Проверка DNS и HTTPS", updaterRouting))
             foreground(ForegroundState.CheckingHealth)
             val dnsServer = session.platform().internalDnsServer ?: error("libbox не передал внутренний DNS TUN.")
             val failedBefore = request.replacement?.takeIf { it.profileId == profileId }?.failedTag
-            verified = verifyWithFallback(session, profile.json, dnsServer, budget, failedBefore)
+            verified = verifyWithFallback(session, effectiveConfig, dnsServer, budget, failedBefore)
             checkCurrent(token)
             controller.startConnectionDiagnosticStage(token, "finalize", "Финализация сессии")
             // Bootstrap готовился для исходного сервера: после перехода на резервный
@@ -593,31 +614,11 @@ internal class SessionStarter(
     private class VerifiedServer(val health: HealthCheckResult, val switched: Boolean)
 
     /** Та же проверка DNS/HTTPS для выбранного сервера и для каждого кандидата. */
-    private suspend fun verifyServer(session: CoreSession, json: String, dnsServer: String): HealthCheckResult {
-        val token = session.generation
-        return container.vpnHealthPipeline.verify(
-            mode = session.runtimeDnsMode,
-            internalDnsServer = dnsServer,
-            proxyIpFamily = BootstrapConfig.selectedProxyIpFamily(json),
-            onNetworkLease = { identity -> controller.recordConnectionVpnNetwork(token, identity.toString()) },
-            onNetworkLost = { controller.recordConnectionVpnNetwork(token, lost = true) },
-            onStageStarted = { stage ->
-                controller.startConnectionDiagnosticStage(token, stage.diagnosticKey, stage.diagnosticLabel)
-            },
-            onStageFinished = { stage, outcome, detail ->
-                controller.finishConnectionDiagnosticStage(
-                    generation = token,
-                    key = stage.diagnosticKey,
-                    status = when (outcome) {
-                        VpnHealthStageOutcome.Success -> DiagnosticStageStatus.Success
-                        VpnHealthStageOutcome.Recovered -> DiagnosticStageStatus.Recovered
-                        VpnHealthStageOutcome.Failed -> DiagnosticStageStatus.Failed
-                    },
-                    detail = detail,
-                )
-            },
-        )
-    }
+    private suspend fun verifyServer(session: CoreSession, json: String, dnsServer: String): HealthCheckResult =
+        verifyServer(session, ParsedConfig.parse(json), dnsServer)
+
+    private suspend fun verifyServer(session: CoreSession, config: ParsedConfig, dnsServer: String): HealthCheckResult =
+        healthVerifier.verify(session, config, dnsServer, reportStages = true)
 
     /**
      * Проверяет выбранный сервер; если мёртв именно он
@@ -633,13 +634,13 @@ internal class SessionStarter(
      */
     private suspend fun verifyWithFallback(
         session: CoreSession,
-        selectedJson: String,
+        selected: ParsedConfig,
         dnsServer: String,
         budget: StartupBudget,
         failedBefore: String?,
     ): VerifiedServer {
         val failure = try {
-            return VerifiedServer(verifyServer(session, selectedJson, dnsServer), switched = false)
+            return VerifiedServer(verifyServer(session, selected, dnsServer), switched = false)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -648,7 +649,7 @@ internal class SessionStarter(
         val token = session.generation
         val evidence = RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token))
         val original = RuntimeStartupFailure(failure, evidence)
-        val plan = FailoverPlanner.plan(session.profileJson, session.runtimeSelections(), session.primaryGroupTag)
+        val plan = FailoverPlanner.plan(session.profileConfig, session.runtimeSelections(), session.primaryGroupTag)
         val code = StartupFallbackPolicy.deadServerCode(failure, evidence, plan) ?: throw original
         checkNotNull(plan)
         val dead = listOfNotNull(plan.currentId, failedBefore).toMutableList()
@@ -735,9 +736,9 @@ internal class SessionStarter(
      * трафик уходили через застрявший в кэше outbound. Отказ команды не
      * прерывает подключение: фактический сервер виден в диагностике.
      */
-    private suspend fun reconcileSelectorSelection(session: CoreSession, client: CommandClient, runtimeJson: String) {
+    private suspend fun reconcileSelectorSelection(session: CoreSession, client: CommandClient, runtime: ParsedConfig) {
         val selections = withContext(Dispatchers.Default) {
-            SelectorCacheReconciliation.selections(ConfigAnalyzer.selectorGroups(runtimeJson))
+            SelectorCacheReconciliation.selections(ConfigAnalyzer.selectorGroups(runtime))
         }
         selections.forEach { selection ->
             try {

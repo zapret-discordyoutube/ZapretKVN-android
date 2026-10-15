@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.profiles.ProfileStore
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
@@ -73,9 +74,11 @@ internal class ServerSwitcher(
     ): SwitchOutcome = session.switchLock.withLock {
         require(groupTag.isNotBlank() && outboundTag.isNotBlank()) { "Сервер не выбран." }
         val stored = profileStore.read(session.profileId)
+        // Сохранённый профиль разбирается один раз на оба обращения.
+        val storedConfig = ParsedConfig.parse(stored.json)
         val previous = session.runtimeSelections()[groupTag]
-            ?: ConfigAnalyzer.selectorGroups(stored.json).firstOrNull { it.tag == groupTag }?.default
-        val candidate = ConfigAnalyzer.selectServer(stored.json, groupTag, outboundTag)
+            ?: ConfigAnalyzer.selectorGroups(storedConfig).firstOrNull { it.tag == groupTag }?.default
+        val candidate = ConfigAnalyzer.selectServer(storedConfig, groupTag, outboundTag)
         withContext(Dispatchers.Default) { CoreConfigCheck.check(candidate) }
         val client = session.groupClient()
             ?: return@withLock SwitchOutcome.CoreUnreachable(

@@ -1,16 +1,12 @@
 package io.github.zapretkvn.wireguardimport
 
+import io.github.zapretkvn.android.profiles.OutboundSpec
+import io.github.zapretkvn.android.profiles.ProfileSkeleton
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.util.Base64
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 class WireGuardImportException(message: String) : Exception(message)
 
@@ -56,15 +52,17 @@ object WireGuardConfigParser {
         }
 
         val endpointTag = if (amnezia != null) "amneziawg-out" else "wireguard-out"
-        val allowedPrefixes = peers.flatMap(WireGuardPeer::allowedIPs).distinct()
+        val allowedPrefixes = peers.flatMap(OutboundSpec.WireGuard.Peer::allowedIPs).distinct()
         val json = buildProfileJson(
-            endpointTag = endpointTag,
-            addresses = addresses,
-            privateKey = privateKey,
-            listenPort = listenPort,
-            mtu = mtu,
-            peers = peers,
-            amnezia = amnezia,
+            endpoint = OutboundSpec.WireGuard(
+                tag = endpointTag,
+                mtu = mtu,
+                addresses = addresses,
+                privateKey = privateKey,
+                listenPort = listenPort,
+                peers = peers,
+                amnezia = amnezia,
+            ),
             dnsServers = dnsServers,
             allowedPrefixes = allowedPrefixes,
         )
@@ -140,7 +138,7 @@ object WireGuardConfigParser {
         return WireGuardDocument(ValueMap(interfaceValues), peers.map(::ValueMap))
     }
 
-    private fun parsePeer(index: Int, values: ValueMap): WireGuardPeer {
+    private fun parsePeer(index: Int, values: ValueMap): OutboundSpec.WireGuard.Peer {
         rejectUnsupportedPeerKeys(values, index)
         val publicKey = canonicalKey(
             checkNotNull(values.single("publickey", required = true)),
@@ -155,7 +153,7 @@ object WireGuardConfigParser {
             if (it.value.equals("off", ignoreCase = true)) JsonPrimitive(0)
             else parseHeaderRange(it.value, "PersistentKeepalive")
         }
-        return WireGuardPeer(
+        return OutboundSpec.WireGuard.Peer(
             address = endpoint?.first,
             port = endpoint?.second,
             publicKey = publicKey,
@@ -218,116 +216,36 @@ object WireGuardConfigParser {
         return result.takeIf { it.isNotEmpty() }
     }
 
+    /**
+     * Каркас профиля (tun, direct, hijack-dns, route.final) собирает общий [ProfileSkeleton];
+     * здесь только то, что принадлежит WireGuard: endpoint, dns с detour в туннель и
+     * маршрут AllowedIPs в endpoint.
+     */
     private fun buildProfileJson(
-        endpointTag: String,
-        addresses: List<String>,
-        privateKey: String,
-        listenPort: Int?,
-        mtu: Int,
-        peers: List<WireGuardPeer>,
-        amnezia: Map<String, JsonElement>?,
+        endpoint: OutboundSpec.WireGuard,
         dnsServers: List<String>,
         allowedPrefixes: List<String>,
-    ): String = JSON.encodeToString(
-        JsonElement.serializer(),
-        buildJsonObject {
-            put(
-                "dns",
-                buildJsonObject {
-                    put(
-                        "servers",
-                        buildJsonArray {
-                            add(buildJsonObject {
-                                put("type", "local")
-                                put("tag", BOOTSTRAP_DNS_TAG)
-                            })
-                            dnsServers.forEachIndexed { index, server ->
-                                add(buildJsonObject {
-                                    put("type", "udp")
-                                    put("tag", "$IMPORTED_DNS_TAG_PREFIX${index + 1}")
-                                    put("server", server)
-                                    if (allowedPrefixes.any { prefixContains(it, server) }) {
-                                        put("detour", endpointTag)
-                                    }
-                                })
-                            }
-                        },
-                    )
-                    put("final", dnsServers.indices.firstOrNull()?.let { "$IMPORTED_DNS_TAG_PREFIX${it + 1}" }
-                        ?: BOOTSTRAP_DNS_TAG)
-                },
-            )
-            put(
-                "endpoints",
-                buildJsonArray {
-                    add(buildJsonObject {
-                        put("type", "wireguard")
-                        put("tag", endpointTag)
-                        put("mtu", mtu)
-                        put("address", JsonArray(addresses.map(::JsonPrimitive)))
-                        put("private_key", privateKey)
-                        listenPort?.let { put("listen_port", it) }
-                        put("peers", JsonArray(peers.map { it.toJson() }))
-                        amnezia?.let { put("amnezia", JsonObject(it)) }
-                    })
-                },
-            )
-            put(
-                "inbounds",
-                buildJsonArray {
-                    add(buildJsonObject {
-                        put("type", "tun")
-                        put("tag", "tun-in")
-                        put(
-                            "address",
-                            JsonArray(listOf("172.19.0.1/30", "fdfe:dcba:9876::1/126").map(::JsonPrimitive)),
+    ): String = ProfileSkeleton.render(
+        ProfileSkeleton.build(
+            endpoints = listOf(endpoint.toSingBoxJson()),
+            dns = ProfileSkeleton.dns(
+                servers = listOf(ProfileSkeleton.dnsLocalServer(BOOTSTRAP_DNS_TAG)) +
+                    dnsServers.mapIndexed { index, server ->
+                        ProfileSkeleton.dnsUdpServer(
+                            tag = "$IMPORTED_DNS_TAG_PREFIX${index + 1}",
+                            server = server,
+                            detour = endpoint.tag.takeIf { allowedPrefixes.any { prefixContains(it, server) } },
                         )
-                        put("auto_route", true)
-                    })
-                },
-            )
-            put(
-                "outbounds",
-                buildJsonArray {
-                    add(buildJsonObject {
-                        put("type", "direct")
-                        put("tag", "direct")
-                    })
-                },
-            )
-            put(
-                "route",
-                buildJsonObject {
-                    put("auto_detect_interface", true)
-                    put("default_domain_resolver", BOOTSTRAP_DNS_TAG)
-                    put(
-                        "rules",
-                        buildJsonArray {
-                            add(buildJsonObject {
-                                put("port", 53)
-                                put("action", "hijack-dns")
-                            })
-                            add(buildJsonObject {
-                                put("ip_cidr", JsonArray(allowedPrefixes.map(::JsonPrimitive)))
-                                put("action", "route")
-                                put("outbound", endpointTag)
-                            })
-                        },
-                    )
-                    put("final", "direct")
-                },
-            )
-        },
-    ) + "\n"
-
-    private fun WireGuardPeer.toJson(): JsonObject = buildJsonObject {
-        address?.let { put("address", it) }
-        port?.let { put("port", it) }
-        put("public_key", publicKey)
-        preSharedKey?.let { put("pre_shared_key", it) }
-        put("allowed_ips", JsonArray(allowedIPs.map(::JsonPrimitive)))
-        persistentKeepalive?.let { put("persistent_keepalive_interval", it) }
-    }
+                    },
+                final = dnsServers.indices.firstOrNull()?.let { "$IMPORTED_DNS_TAG_PREFIX${it + 1}" }
+                    ?: BOOTSTRAP_DNS_TAG,
+            ),
+            hijackDns = true,
+            routeRules = listOf(ProfileSkeleton.routeByCidr(allowedPrefixes, endpoint.tag)),
+            defaultDomainResolver = BOOTSTRAP_DNS_TAG,
+            final = ProfileSkeleton.DIRECT_TAG,
+        ),
+    )
 
     private fun rejectUnsupportedInterfaceKeys(values: ValueMap) {
         val unknown = values.keys - SUPPORTED_INTERFACE_KEYS
@@ -535,15 +453,6 @@ object WireGuardConfigParser {
         val peers: List<ValueMap>,
     )
 
-    private data class WireGuardPeer(
-        val address: String?,
-        val port: Int?,
-        val publicKey: String,
-        val preSharedKey: String?,
-        val allowedIPs: List<String>,
-        val persistentKeepalive: JsonElement?,
-    )
-
     private data class IniValue(val value: String, val originalKey: String, val lineNumber: Int)
 
     private class ValueMap(private val values: Map<String, List<IniValue>>) {
@@ -639,10 +548,4 @@ object WireGuardConfigParser {
     private const val ANDROID_WIREGUARD_MTU = 1280
     private const val MAX_AWG_STRING_LENGTH = 65_531
     private const val MAX_OBFUSCATION_SIZE = 65_535
-
-    private val JSON = Json {
-        explicitNulls = true
-        prettyPrint = true
-        prettyPrintIndent = "  "
-    }
 }

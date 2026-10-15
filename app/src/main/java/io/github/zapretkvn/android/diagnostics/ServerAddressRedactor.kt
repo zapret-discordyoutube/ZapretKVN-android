@@ -1,6 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
-import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ParsedConfig
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,7 +34,12 @@ object ServerAddressRedactor {
 
     /** Все серверы профиля: `outbounds[].server` и `endpoints[].peers[].address`. */
     fun registerProfile(profileId: String, rawJson: String) {
-        val root = runCatching { JsonConfig.parse(rawJson) as? JsonObject }.getOrNull() ?: return
+        val config = runCatching { ParsedConfig.parse(rawJson) }.getOrNull() ?: return
+        registerProfile(profileId, config)
+    }
+
+    fun registerProfile(profileId: String, config: ParsedConfig) {
+        val root = config.root ?: return
         val pairs = mutableListOf<Pair<String, String>>()
         (root["outbounds"] as? JsonArray)?.forEach { element ->
             val outbound = element as? JsonObject ?: return@forEach

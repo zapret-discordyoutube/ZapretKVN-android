@@ -221,6 +221,7 @@ vpn_root = source_root / "io/github/zapretkvn/android/vpn"
 if {path.name for path in vpn_root.glob("*.kt")} != {
     "ZapretVpnService.kt", "ZapretQuickSettingsTileService.kt",
     "VpnController.kt", "VpnRecoveryPolicy.kt",
+    "ConnectionDiagnosticsRecorder.kt", "LatencyPublisher.kt",
 }:
     raise SystemExit("Keep VPN lifecycle in vpn/; place adapters, probes and app scope in their packages")
 delays = []
@@ -261,9 +262,13 @@ expected = [
     # время пачек замеров. Только UI: сетевых запросов и повторов не создаёт.
     ("app/src/main/java/io/github/zapretkvn/android/ui/servers/ServersRoute.kt", 1),
     # Единый дебаунс смены сети (перезапуск, пауза и возобновление по правилам
-    # сети) плюс ограниченный backoff восстановления. Одновременно активен
-    # только один debounce Job; ожидание сети событийное и таймера не добавляет.
-    ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/VpnRuntime.kt", 2),
+    # сети). Одновременно активен только один debounce Job; ожидание сети
+    # событийное и таймера не добавляет.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/NetworkAutomationCoordinator.kt", 1),
+    # Ограниченный backoff восстановления после отказа попытки (VpnRecoveryPolicy:
+    # не больше MAX_ATTEMPTS подряд и MAX_TOTAL_ATTEMPTS на серию); ожидание сети
+    # событийное и таймера не добавляет.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/RecoveryCoordinator.kt", 1),
     # Видимое время сессии на Главной: тикает, только пока таймер на экране.
     ("feature/home/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
     # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка

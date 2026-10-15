@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.diagnostics
 import io.github.zapretkvn.android.config.ManagedHealthProbe
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.string
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -17,8 +18,11 @@ import kotlinx.serialization.json.put
 
 /** A structural view of the effective runtime overlay. It never copies endpoints or match values. */
 object EffectiveOverlaySummary {
-    fun create(runtimeJson: String, dnsMode: DnsMode): String {
-        val root = JsonConfig.parse(runtimeJson) as? JsonObject ?: error("Runtime JSON is not an object.")
+    fun create(runtimeJson: String, dnsMode: DnsMode): String =
+        create(ParsedConfig.parse(runtimeJson), dnsMode)
+
+    fun create(runtime: ParsedConfig, dnsMode: DnsMode): String {
+        val root = runtime.root ?: error("Runtime JSON is not an object.")
         val dns = root["dns"] as? JsonObject
         val route = root["route"] as? JsonObject
         val inbounds = (root["inbounds"] as? JsonArray)

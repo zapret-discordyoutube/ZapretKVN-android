@@ -71,7 +71,20 @@ data class RuntimeConfigOptions(
 )
 
 sealed interface RuntimeConfigResult {
-    data class Ready(val json: String) : RuntimeConfigResult
+    data class Ready(val json: String) : RuntimeConfigResult {
+        @Volatile
+        private var parsed: ParsedConfig? = null
+
+        /**
+         * Разобранный [json]. Сборщик уже держит это дерево и передаёт его сюда,
+         * поэтому потребителям runtime JSON не нужен ещё один разбор; у `Ready`,
+         * созданного вручную, дерево разбирается при первом обращении.
+         */
+        val config: ParsedConfig
+            get() = parsed ?: ParsedConfig.parse(json).also { parsed = it }
+
+        internal fun withConfig(config: ParsedConfig): Ready = apply { parsed = config }
+    }
     data class Invalid(val message: String) : RuntimeConfigResult
 }
 
@@ -85,12 +98,22 @@ object RuntimeConfigBuilder {
         enableTrafficStats: Boolean = false,
         options: RuntimeConfigOptions = RuntimeConfigOptions(),
     ): RuntimeConfigResult {
-        val storedRoot = try {
-            JsonConfig.parse(raw) as? JsonObject
-                ?: return invalid("Корень конфигурации должен быть JSON-объектом.")
+        val config = try {
+            ParsedConfig.parse(raw)
         } catch (_: Exception) {
             return invalid("JSON содержит синтаксическую ошибку.")
         }
+        return build(config, enableTrafficStats, options)
+    }
+
+    /** Та же сборка по уже разобранному профилю: без повторного разбора JSON. */
+    fun build(
+        config: ParsedConfig,
+        enableTrafficStats: Boolean = false,
+        options: RuntimeConfigOptions = RuntimeConfigOptions(),
+    ): RuntimeConfigResult {
+        val storedRoot = config.root
+            ?: return invalid("Корень конфигурации должен быть JSON-объектом.")
         // Materialize Android endpoint defaults before hardening so the outer
         // TUN can be clamped to the effective userspace WireGuard MTU.
         val compatibleRoot = applyAndroidWireGuardCompatibility(storedRoot)
@@ -152,7 +175,7 @@ object RuntimeConfigBuilder {
             outbound?.string("type") == "selector" &&
                 outbound.string("tag") == ConfigAnalyzer.MANAGED_SELECTOR_TAG
         } == true
-        val selectedProxyTag = BootstrapConfig.selectedProxyTag(raw)
+        val selectedProxyTag = BootstrapConfig.selectedProxyTag(config)
         if (options.dnsMode in PROXY_DNS_MODES && selectedProxyTag == null) {
             return invalid("Для управляемого DNS нужен выбранный proxy/selector outbound.")
         }
@@ -230,8 +253,7 @@ object RuntimeConfigBuilder {
             blockedPackages = blockedPackages,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
-        val runtime = (dnsOverlay as RuntimeConfigResult.Ready).json
-        return RuntimeConfigResult.Ready(runtime)
+        return dnsOverlay as RuntimeConfigResult.Ready
     }
 
     /**
@@ -442,7 +464,9 @@ object RuntimeConfigBuilder {
             resolverTag?.let { route["default_domain_resolver"] = JsonPrimitive(it) }
             next["route"] = JsonObject(route)
         }
-        return RuntimeConfigResult.Ready(JsonConfig.format(JsonObject(next)))
+        val nextObject = JsonObject(next)
+        val json = JsonConfig.format(nextObject)
+        return RuntimeConfigResult.Ready(json).withConfig(ParsedConfig.of(nextObject, json))
     }
 
     private fun packageRejectRules(packages: Set<String>): List<JsonObject> =

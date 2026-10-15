@@ -7,9 +7,6 @@ import java.security.MessageDigest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 data class ManagedServer(
     val displayName: String,
@@ -27,26 +24,6 @@ data class ManagedServer(
     val importNotes: List<String> = emptyList(),
 )
 
-data class TlsSettings(
-    val enabled: Boolean = false,
-    val serverName: String? = null,
-    val insecure: Boolean = false,
-    val utlsFingerprint: String? = null,
-    val realityPublicKey: String? = null,
-    val realityShortId: String? = null,
-    val alpn: List<String> = emptyList(),
-    val echConfigPem: String? = null,
-)
-
-data class TransportSettings(
-    val type: String,
-    val path: String? = null,
-    val host: String? = null,
-    val serviceName: String? = null,
-    val mode: String? = null,
-    val xhttpOptions: JsonObject? = null,
-)
-
 object ProtocolOutboundBuilders {
     fun vless(
         displayName: String,
@@ -61,17 +38,16 @@ object ProtocolOutboundBuilders {
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("vless", server, serverPort, transport),
-        outbound = buildJsonObject {
-            put("type", "vless")
-            uri?.let { put("uri", it) }
-            put("server", server)
-            put("server_port", serverPort)
-            put("uuid", uuid)
-            put("encryption", encryption)
-            flow?.takeIf(String::isNotBlank)?.let { put("flow", it) }
-            putTls(tls)
-            transport?.let { put("transport", it.toJson()) }
-        },
+        outbound = OutboundSpec.Vless(
+            server = server,
+            serverPort = serverPort,
+            uuid = uuid,
+            encryption = encryption,
+            uri = uri,
+            flow = flow,
+            tls = tls,
+            transport = transport,
+        ).toSingBoxJson(),
     )
 
     fun vmess(
@@ -86,16 +62,15 @@ object ProtocolOutboundBuilders {
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("vmess", server, serverPort, transport),
-        outbound = buildJsonObject {
-            put("type", "vmess")
-            put("server", server)
-            put("server_port", serverPort)
-            put("uuid", uuid)
-            put("security", security)
-            if (alterId != 0) put("alter_id", alterId)
-            putTls(tls)
-            transport?.let { put("transport", it.toJson()) }
-        },
+        outbound = OutboundSpec.Vmess(
+            server = server,
+            serverPort = serverPort,
+            uuid = uuid,
+            security = security,
+            alterId = alterId,
+            tls = tls,
+            transport = transport,
+        ).toSingBoxJson(),
     )
 
     fun trojan(
@@ -108,14 +83,13 @@ object ProtocolOutboundBuilders {
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("trojan", server, serverPort, transport),
-        outbound = buildJsonObject {
-            put("type", "trojan")
-            put("server", server)
-            put("server_port", serverPort)
-            put("password", password)
-            putTls(tls)
-            transport?.let { put("transport", it.toJson()) }
-        },
+        outbound = OutboundSpec.Trojan(
+            server = server,
+            serverPort = serverPort,
+            password = password,
+            tls = tls,
+            transport = transport,
+        ).toSingBoxJson(),
     )
 
     fun shadowsocks(
@@ -127,13 +101,12 @@ object ProtocolOutboundBuilders {
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("shadowsocks", server, serverPort, null),
-        outbound = buildJsonObject {
-            put("type", "shadowsocks")
-            put("server", server)
-            put("server_port", serverPort)
-            put("method", method)
-            put("password", password)
-        },
+        outbound = OutboundSpec.Shadowsocks(
+            server = server,
+            serverPort = serverPort,
+            method = method,
+            password = password,
+        ).toSingBoxJson(),
     )
 
     fun hysteria2(
@@ -159,32 +132,22 @@ object ProtocolOutboundBuilders {
         refreshIdentityKey = uri?.takeIf(String::isNotBlank)
             ?.let { hysteria2CredentialIdentity(password) }
             ?: identity("hysteria2", server, serverPort, null),
-        outbound = buildJsonObject {
-            put("type", "hysteria2")
-            put("server", server)
-            put("server_port", serverPort)
-            put("password", password)
-            uri?.takeIf(String::isNotBlank)?.let { put("uri", it) }
-            obfsPassword?.takeIf(String::isNotEmpty)?.let { value ->
-                put(
-                    "obfs",
-                    buildJsonObject {
-                        put("type", obfsType?.takeIf(String::isNotBlank) ?: "salamander")
-                        put("password", value)
-                        obfsMinPacketSize?.takeIf { it > 0 }?.let { put("min_packet_size", it) }
-                        obfsMaxPacketSize?.takeIf { it > 0 }?.let { put("max_packet_size", it) }
-                    },
-                )
-            }
-            upMbps?.takeIf { it > 0 }?.let { put("up_mbps", it) }
-            downMbps?.takeIf { it > 0 }?.let { put("down_mbps", it) }
-            if (serverPorts.isNotEmpty()) {
-                put("server_ports", JsonArray(serverPorts.map(::JsonPrimitive)))
-            }
-            hopInterval?.takeIf(String::isNotBlank)?.let { put("hop_interval", it) }
-            certificateSha256?.takeIf(String::isNotBlank)?.let { put("certificate_sha256", it) }
-            putTls(tls, allowTcpOnlyTlsFeatures = false)
-        },
+        outbound = OutboundSpec.Hysteria2(
+            server = server,
+            serverPort = serverPort,
+            password = password,
+            tls = tls,
+            obfsPassword = obfsPassword,
+            obfsType = obfsType,
+            upMbps = upMbps,
+            downMbps = downMbps,
+            serverPorts = serverPorts,
+            hopInterval = hopInterval,
+            certificateSha256 = certificateSha256,
+            obfsMinPacketSize = obfsMinPacketSize,
+            obfsMaxPacketSize = obfsMaxPacketSize,
+            uri = uri,
+        ).toSingBoxJson(),
     )
 
     fun tuic(
@@ -201,18 +164,17 @@ object ProtocolOutboundBuilders {
     ): ManagedServer = ManagedServer(
         displayName = displayName,
         identityKey = identity("tuic", server, serverPort, null),
-        outbound = buildJsonObject {
-            put("type", "tuic")
-            put("server", server)
-            put("server_port", serverPort)
-            put("uuid", uuid)
-            put("password", password)
-            congestionControl?.takeIf(String::isNotBlank)?.let { put("congestion_control", it) }
-            udpRelayMode?.takeIf(String::isNotBlank)?.let { put("udp_relay_mode", it) }
-            if (zeroRttHandshake) put("zero_rtt_handshake", true)
-            heartbeat?.takeIf(String::isNotBlank)?.let { put("heartbeat", it) }
-            putTls(tls, allowTcpOnlyTlsFeatures = false)
-        },
+        outbound = OutboundSpec.Tuic(
+            server = server,
+            serverPort = serverPort,
+            uuid = uuid,
+            password = password,
+            congestionControl = congestionControl,
+            udpRelayMode = udpRelayMode,
+            zeroRttHandshake = zeroRttHandshake,
+            heartbeat = heartbeat,
+            tls = tls,
+        ).toSingBoxJson(),
     )
 
     private fun identity(
@@ -231,88 +193,6 @@ object ProtocolOutboundBuilders {
         transport?.mode.orEmpty(),
         transport?.xhttpOptions?.toString().orEmpty(),
     ).joinToString("|")
-
-    /**
-     * QUIC-протоколы не могут исполнить uTLS и REALITY: рукопожатие идёт внутри
-     * quic-go, а не поверх net.Conn. Ядро принимает такой конфиг на проверке, но
-     * затем рвёт каждое соединение с "unsupported usage for uTLS", поэтому поля
-     * не доходят до QUIC-аутбаундов физически, а не только по договорённости.
-     */
-    private fun kotlinx.serialization.json.JsonObjectBuilder.putTls(
-        settings: TlsSettings,
-        allowTcpOnlyTlsFeatures: Boolean = true,
-    ) {
-        if (!settings.enabled) return
-        put(
-            "tls",
-            buildJsonObject {
-                put("enabled", true)
-                settings.serverName?.takeIf(String::isNotBlank)?.let { put("server_name", it) }
-                if (settings.insecure) put("insecure", true)
-                settings.utlsFingerprint
-                    ?.takeIf { allowTcpOnlyTlsFeatures && it.isNotBlank() }
-                    ?.let { fingerprint ->
-                    put(
-                        "utls",
-                        buildJsonObject {
-                            put("enabled", true)
-                            put("fingerprint", fingerprint)
-                        },
-                    )
-                }
-                settings.realityPublicKey
-                    ?.takeIf { allowTcpOnlyTlsFeatures && it.isNotBlank() }
-                    ?.let { publicKey ->
-                    put(
-                        "reality",
-                        buildJsonObject {
-                            put("enabled", true)
-                            put("public_key", publicKey)
-                            settings.realityShortId
-                                ?.takeIf(String::isNotBlank)
-                                ?.let { put("short_id", it) }
-                        },
-                    )
-                }
-                if (settings.alpn.isNotEmpty()) {
-                    put("alpn", JsonArray(settings.alpn.map(::JsonPrimitive)))
-                }
-                settings.echConfigPem?.takeIf(String::isNotBlank)?.let { pem ->
-                    put(
-                        "ech",
-                        buildJsonObject {
-                            put("enabled", true)
-                            put("config", pem)
-                        },
-                    )
-                }
-            },
-        )
-    }
-
-    private fun TransportSettings.toJson(): JsonObject = buildJsonObject {
-        put("type", type)
-        when (type) {
-            "ws", "http", "httpupgrade" -> {
-                path?.takeIf(String::isNotBlank)?.let { put("path", it) }
-                host?.takeIf(String::isNotBlank)?.let { value ->
-                    if (type == "http") {
-                        put("host", buildJsonArray { add(JsonPrimitive(value)) })
-                    } else {
-                        put("headers", buildJsonObject { put("Host", value) })
-                    }
-                }
-            }
-            "grpc" -> serviceName?.takeIf(String::isNotBlank)?.let { put("service_name", it) }
-            "xhttp" -> {
-                put("x_padding_bytes", "100-1000")
-                mode?.takeIf(String::isNotBlank)?.let { put("mode", it) }
-                path?.takeIf(String::isNotBlank)?.let { put("path", it) }
-                host?.takeIf(String::isNotBlank)?.let { put("host", it) }
-                xhttpOptions?.forEach { (key, value) -> put(key, value) }
-            }
-        }
-    }
 
     /**
      * The raw Hysteria2 URI is retained in the outbound for round-tripping, but must never be
@@ -356,49 +236,14 @@ object ManagedProfileFactory {
     fun subscription(servers: List<ManagedServer>): String {
         require(servers.isNotEmpty()) { "Подписка не содержит серверов." }
         val taggedServers = taggedServers(servers)
-        val tags = taggedServers.map(TaggedServer::tag)
-        val serverOutbounds = taggedServers.map(TaggedServer::outbound)
-        val selector = buildJsonObject {
-            put("type", "selector")
-            put("tag", ConfigAnalyzer.MANAGED_SELECTOR_TAG)
-            put("outbounds", JsonArray(tags.map(::JsonPrimitive)))
-            put("default", tags.first())
-            put("interrupt_exist_connections", true)
-        }
-        val direct = buildJsonObject {
-            put("type", "direct")
-            put("tag", "direct")
-        }
-        return JsonConfig.format(
-            buildJsonObject {
-                put(
-                    "inbounds",
-                    buildJsonArray {
-                        add(
-                            buildJsonObject {
-                                put("type", "tun")
-                                put("tag", "tun-in")
-                                put(
-                                    "address",
-                                    buildJsonArray {
-                                        add(JsonPrimitive("172.19.0.1/30"))
-                                        add(JsonPrimitive("fdfe:dcba:9876::1/126"))
-                                    },
-                                )
-                                put("auto_route", true)
-                            },
-                        )
-                    },
-                )
-                put("outbounds", JsonArray(serverOutbounds + selector + direct))
-                put(
-                    "route",
-                    buildJsonObject {
-                        put("auto_detect_interface", true)
-                        put("final", ConfigAnalyzer.MANAGED_SELECTOR_TAG)
-                    },
-                )
-            },
+        return ProfileSkeleton.render(
+            ProfileSkeleton.build(
+                outbounds = taggedServers.map(TaggedServer::outbound),
+                group = ProfileSkeleton.Group(
+                    tag = ConfigAnalyzer.MANAGED_SELECTOR_TAG,
+                    members = taggedServers.map(TaggedServer::tag),
+                ),
+            ),
         )
     }
 

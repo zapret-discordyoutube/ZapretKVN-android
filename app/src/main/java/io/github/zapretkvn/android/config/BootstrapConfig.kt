@@ -32,15 +32,19 @@ enum class ProxyIpFamily {
 }
 
 object BootstrapConfig {
-    fun selectedProxyTag(raw: String): String? = selectedProxyTag(JsonConfig.parse(raw) as? JsonObject ?: return null)
+    fun selectedProxyTag(raw: String): String? = selectedProxyTag(ParsedConfig.parse(raw))
+
+    fun selectedProxyTag(config: ParsedConfig): String? = selectedProxyTag(config.root ?: return null)
 
     /**
      * Returns an exact address-family capability only for the selected userspace
      * WireGuard endpoint. Other outbound types keep their resolver-driven behavior.
      */
-    fun selectedProxyIpFamily(raw: String): ProxyIpFamily {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return ProxyIpFamily.Unspecified
-        val target = target(raw) ?: return ProxyIpFamily.Unspecified
+    fun selectedProxyIpFamily(raw: String): ProxyIpFamily = selectedProxyIpFamily(ParsedConfig.parse(raw))
+
+    fun selectedProxyIpFamily(config: ParsedConfig): ProxyIpFamily {
+        val root = config.root ?: return ProxyIpFamily.Unspecified
+        val target = target(config) ?: return ProxyIpFamily.Unspecified
         if (target.outboundType != "wireguard") return ProxyIpFamily.Unspecified
         val endpoint = (root["endpoints"] as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
@@ -68,7 +72,12 @@ object BootstrapConfig {
     fun serverHostnames(raw: String): Set<String> {
         // Вызывается перед запуском ядра: некорректный JSON не должен срывать
         // сессию — без набора имён транспорт просто работает по-прежнему.
-        val root = runCatching { JsonConfig.parse(raw) as? JsonObject }.getOrNull() ?: return emptySet()
+        val config = runCatching { ParsedConfig.parse(raw) }.getOrNull() ?: return emptySet()
+        return serverHostnames(config)
+    }
+
+    fun serverHostnames(config: ParsedConfig): Set<String> {
+        val root = config.root ?: return emptySet()
         val names = LinkedHashSet<String>()
         fun add(value: String?) {
             val host = value?.trim()?.trimEnd('.')?.lowercase()?.takeIf(String::isNotEmpty) ?: return
@@ -81,8 +90,10 @@ object BootstrapConfig {
         return names
     }
 
-    fun target(raw: String): ProxyBootstrapTarget? {
-        val root = JsonConfig.parse(raw) as? JsonObject ?: return null
+    fun target(raw: String): ProxyBootstrapTarget? = target(ParsedConfig.parse(raw))
+
+    fun target(config: ParsedConfig): ProxyBootstrapTarget? {
+        val root = config.root ?: return null
         val outbounds = (root["outbounds"] as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
             .orEmpty()

@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.vpn.runtime
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.OutboundDescription
+import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.SelectorGroup
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticBatchCollector
 import io.github.zapretkvn.android.diagnostics.VpnRuntimeMetrics
@@ -55,8 +56,11 @@ import kotlinx.coroutines.sync.Mutex
 internal class CoreSession(
     val profileId: String,
     val profileName: String,
-    /** JSON профиля этой сессии: состав selector-групп не меняется, пока она жива. */
-    val profileJson: String,
+    /**
+     * Профиль этой сессии, разобранный один раз при запуске: состав selector-групп
+     * не меняется, пока она жива.
+     */
+    val profileConfig: ParsedConfig,
     val generation: Long,
     val networkMonitor: DefaultNetworkMonitor,
     val networkPolicyKey: UnderlyingPolicyKey,
@@ -72,6 +76,9 @@ internal class CoreSession(
     private val latencyStore: ServerLatencyStore,
     serviceProbePaths: AndroidServiceProbePaths,
 ) : AutoCloseable {
+    /** JSON профиля этой сессии (текст [profileConfig]). */
+    val profileJson: String get() = profileConfig.raw
+
     private val closing = AtomicBoolean(false)
     private val tunCloseStarted = AtomicBoolean(false)
     private val cleanupStarted = AtomicBoolean(false)

@@ -21,5 +21,8 @@ extensions.configure<LibraryExtension> {
 }
 
 dependencies {
+    // Profile skeleton and outbound specs are built as kotlinx JsonObject trees; exposed so
+    // :app and :wireguard-import share one JSON type with the builders.
+    add("api", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     add("testImplementation", "junit:junit:4.13.2")
 }
