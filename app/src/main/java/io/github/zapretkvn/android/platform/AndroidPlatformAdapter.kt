@@ -20,6 +20,7 @@ import io.github.zapretkvn.android.engines.singbox.RouteSpec
 import io.github.zapretkvn.android.engines.singbox.consume
 import io.github.zapretkvn.android.network.AndroidLocalDnsTransport
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
+import io.github.zapretkvn.android.network.UnderlyingNetworkHint
 import io.github.zapretkvn.android.vpn.ZapretVpnService
 import io.nekohasekai.libbox.BridgeOptions
 import io.nekohasekai.libbox.BridgeSession
@@ -171,7 +172,10 @@ internal class AndroidPlatformAdapter(
         }
         verifyProtectCapability()
         VpnTestHooks.afterTunEstablished()
-        networkMonitor.current.network?.let { service.setUnderlyingNetworks(arrayOf(it)) }
+        networkMonitor.current.network?.let {
+            service.setUnderlyingNetworks(arrayOf(it))
+            UnderlyingNetworkHint.network = it
+        }
         return descriptor.fd
     }
 
@@ -215,6 +219,7 @@ internal class AndroidPlatformAdapter(
             interfaceListeners[listener] = networkMonitor.observe { state ->
                 state.network?.let { service.setUnderlyingNetworks(arrayOf(it)) }
                     ?: service.setUnderlyingNetworks(null)
+                UnderlyingNetworkHint.network = state.network
                 listener.updateDefaultInterface(
                     state.interfaceName.orEmpty(),
                     state.interfaceIndex,
@@ -310,6 +315,7 @@ internal class AndroidPlatformAdapter(
         }
         internalDnsServer = null
         service.setUnderlyingNetworks(null)
+        UnderlyingNetworkHint.network = null
         synchronized(pfdLock) {
             val descriptor = tunDescriptor
             tunDescriptor = null

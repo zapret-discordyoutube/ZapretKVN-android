@@ -62,6 +62,9 @@ import io.github.zapretkvn.android.profiles.VpnControllerPort
 import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.updates.UpdateDirectConnections
 import io.github.zapretkvn.android.updates.UpdateEnvironment
+import io.github.zapretkvn.android.network.DirectNetworkFacts
+import io.github.zapretkvn.android.network.UnderlyingNetworkHint
+import io.github.zapretkvn.android.network.chooseDirectNetwork
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
@@ -346,16 +349,33 @@ class AppContainer(
 // underlying physical transports while a VPN holds the default network.
 private fun nonVpnNetwork(context: Context): Network? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
-    val physical = connectivity.allNetworks.mapNotNull { network ->
+    val networks = connectivity.allNetworks
+    val facts = networks.mapNotNull { network ->
         val capabilities = connectivity.getNetworkCapabilities(network) ?: return@mapNotNull null
         if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         ) {
             return@mapNotNull null
         }
-        network to capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        DirectNetworkFacts(
+            id = network.networkHandle,
+            validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+            captivePortal = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL),
+            suspended = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED),
+            transportRank = when {
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 2
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
+                else -> 0
+            },
+            notMetered = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+        )
     }
-    return (physical.firstOrNull { it.second } ?: physical.firstOrNull())?.first
+    // Сеть, через которую работает VPN, потом сеть системы по умолчанию (при выключенном VPN).
+    val preferred = listOfNotNull(UnderlyingNetworkHint.network, connectivity.activeNetwork).map { it.networkHandle }
+    val chosen = chooseDirectNetwork(facts, preferred) ?: return null
+    return networks.firstOrNull { it.networkHandle == chosen }
 }
 
 /** Сеть с лимитом трафика. Физическая сеть важнее VPN: именно по ней пойдёт загрузка. */
