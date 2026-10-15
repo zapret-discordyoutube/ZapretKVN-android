@@ -906,9 +906,11 @@ class VpnServiceInstrumentedTest {
         container.uiSettingsStore.setDnsMode(DnsMode.Secure)
         val profile = createProfile(container, "Dead internal DNS", TWO_SERVER_DIRECT_CONFIG)
         try {
-            VpnTestHooks.failNextDnsProbe()
-            val state = startAndAwaitTerminal(container.vpnController, profile.id)
-            assertTrue(state is VpnConnectionState.Error)
+            // DNS-200 повторяется политикой восстановления: мёртвый DNS проваливает
+            // каждую попытку серии, и только тогда отказ становится терминальным.
+            VpnTestHooks.failNextDnsProbes(VpnRecoveryPolicy.MAX_ATTEMPTS + 1)
+            val state = startAndAwaitTerminal(container.vpnController, profile.id, timeoutMillis = 60_000)
+            assertTrue("Dead internal DNS unexpectedly connected: $state", state is VpnConnectionState.Error)
             assertTrue((state as VpnConnectionState.Error).message.contains("DNS через VPN"))
             val dnsStage = container.vpnController.diagnostics.value.connectionAttempt
                 ?.stages
@@ -1019,19 +1021,16 @@ class VpnServiceInstrumentedTest {
                 )
                 try {
                     VpnTestHooks.reset()
-                    val state = startAndAwaitTerminal(container.vpnController, profile.id, timeoutMillis = 30_000)
+                    // До терминальной ошибки DNS-200 проходит серию повторов политики восстановления.
+                    val state = startAndAwaitTerminal(container.vpnController, profile.id, timeoutMillis = 60_000)
                     assertTrue("Dead proxy unexpectedly connected: $state", state is VpnConnectionState.Error)
-                    // Причина отказа приходит в одном из двух видов в зависимости от гонки: собственная
-                    // ошибка health-проверки («DNS через VPN не отвечает») либо, если ядро успело
-                    // записать ошибку мёртвого outbound, его строка (RuntimeErrors.startupEvidence):
-                    // «[hysteria2][dns_tcp|runtime] … outbound/hysteria2[dead-proxy]: connect error …».
-                    // Оба вида — отказ из-за мёртвого прокси, несущего DoH; главное, что VPN не поднят.
-                    val message = (state as VpnConnectionState.Error).message
-                    assertTrue(
-                        "Unexpected failure text: $state",
-                        message.contains("DNS через VPN") ||
-                            (message.startsWith("[hysteria2][") && message.contains("[dead-proxy]")),
-                    )
+                    // Типизированная ошибка health-проверки («DNS через VPN не отвечает», DNS-200)
+                    // не подменяется строкой ядра: свидетельство мёртвого outbound остаётся только
+                    // в technicalDetail (core_evidence=…). Отказ должен прийти быстро, а не по
+                    // общему 20-секундному тайм-ауту проверки (VPN-120).
+                    val error = state as VpnConnectionState.Error
+                    assertTrue("Unexpected failure: $state", error.message.contains("DNS через VPN"))
+                    assertNotEquals("Health check hit the global timeout: $state", "VPN-120", error.code)
                     awaitCompletelyIdle(context)
                 } finally {
                     stopIfNeeded(container.vpnController, context)

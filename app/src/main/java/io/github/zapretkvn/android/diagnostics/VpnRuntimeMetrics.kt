@@ -116,7 +116,7 @@ internal object VpnTestHooks {
     private val nextHealthSuccess = AtomicBoolean(false)
     private val nextHealthFailure = AtomicBoolean(false)
     private val nextBootstrapResolutionFailure = AtomicBoolean(false)
-    private val nextDnsProbeFailure = AtomicBoolean(false)
+    private val nextDnsProbeFailures = AtomicInteger(0)
     private val nextHttpsProbeFailure = AtomicBoolean(false)
     private val nextCaptivePortal = AtomicBoolean(false)
     private val nextVpnSystemPolicy = AtomicReference<VpnSystemPolicy?>(null)
@@ -181,9 +181,12 @@ internal object VpnTestHooks {
         nextBootstrapResolutionFailure.set(true)
     }
 
-    fun failNextDnsProbe() {
+    fun failNextDnsProbe() = failNextDnsProbes(1)
+
+    /** Мёртвый внутренний DNS: столько DNS-проб подряд провалятся (повторы запуска тоже). */
+    fun failNextDnsProbes(count: Int) {
         check(BuildConfig.DEBUG)
-        nextDnsProbeFailure.set(true)
+        nextDnsProbeFailures.set(count)
     }
 
     fun failNextHttpsProbe() {
@@ -232,7 +235,7 @@ internal object VpnTestHooks {
         nextHealthSuccess.set(false)
         nextHealthFailure.set(false)
         nextBootstrapResolutionFailure.set(false)
-        nextDnsProbeFailure.set(false)
+        nextDnsProbeFailures.set(0)
         nextHttpsProbeFailure.set(false)
         nextCaptivePortal.set(false)
         nextVpnSystemPolicy.set(null)
@@ -271,7 +274,7 @@ internal object VpnTestHooks {
         BuildConfig.DEBUG && nextBootstrapResolutionFailure.compareAndSet(true, false)
 
     fun consumeDnsProbeFailure(): Boolean =
-        BuildConfig.DEBUG && nextDnsProbeFailure.compareAndSet(true, false)
+        BuildConfig.DEBUG && nextDnsProbeFailures.getAndUpdate { if (it > 0) it - 1 else 0 } > 0
 
     fun consumeHttpsProbeFailure(): Boolean =
         BuildConfig.DEBUG && nextHttpsProbeFailure.compareAndSet(true, false)

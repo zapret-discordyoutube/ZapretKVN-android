@@ -57,6 +57,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -459,37 +460,79 @@ class VpnHealthPipeline internal constructor(
                     error
                 }
             }
-            val httpsError = try {
-                httpsStage(
-                    vpnNetwork = vpnNetwork,
-                    proxyIpFamily = proxyIpFamily,
-                    deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
-                    // Если DNS уже провален, долгую спасательную пробу не ждём:
-                    // быстрый отказ нужен для перехода на следующий DNS-режим.
-                    rescueAllowed = { !dnsFailed.get() },
-                    onStageStarted = onStageStarted,
-                    onStageFinished = onStageFinished,
-                )
-                null
-            } catch (cancelled: CancellationException) {
-                dns.cancel()
-                throw cancelled
-            } catch (error: Throwable) {
-                error
+            val httpsRunning = AtomicBoolean(false)
+            val https = async {
+                try {
+                    httpsStage(
+                        vpnNetwork = vpnNetwork,
+                        proxyIpFamily = proxyIpFamily,
+                        deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
+                        // Если DNS уже провален, долгую спасательную пробу не ждём:
+                        // быстрый отказ нужен для перехода на следующий DNS-режим.
+                        rescueAllowed = { !dnsFailed.get() },
+                        onStageStarted = { stage ->
+                            httpsRunning.set(true)
+                            onStageStarted(stage)
+                        },
+                        onStageFinished = { stage, outcome, detail ->
+                            httpsRunning.set(false)
+                            onStageFinished(stage, outcome, detail)
+                        },
+                    )
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    error
+                }
             }
-            if (httpsError == null) {
-                if (dns.isActive) {
+            // Решает первый завершившийся результат. Успех HTTPS доказывает и DNS:
+            // DNS-проба тогда отменяется. Провал DNS-пробы (уже с повтором запроса) —
+            // сильный признак мёртвого DNS: HTTPS, который резолвит через тот же DNS,
+            // ждал бы все свои тайм-ауты до общего лимита 20 с, поэтому ему остаётся
+            // короткая фора — на живом туннеле HTTPS к этому моменту обычно уже готов.
+            val httpsFirst = select {
+                https.onAwait { error -> true to error }
+                dns.onAwait { error -> false to error }
+            }
+            val dnsError: Throwable?
+            val httpsError: Throwable?
+            if (httpsFirst.first) {
+                httpsError = httpsFirst.second
+                if (httpsError == null) {
                     dns.cancelAndJoin()
                     runningDnsStage.getAndSet(null)?.let { stage ->
                         onStageFinished(stage, VpnHealthStageOutcome.Success, "superseded=https_ok")
                     }
+                    return@coroutineScope HealthCheckResult(externalIpProbeAllowed = true)
                 }
-                return@coroutineScope HealthCheckResult(externalIpProbeAllowed = true)
+                dnsError = dns.await()
+            } else {
+                dnsError = httpsFirst.second
+                httpsError = if (dnsError == null) {
+                    https.await()
+                } else {
+                    // Обёртка отличает «HTTPS успешен» (ошибки нет) от «фора истекла» (null).
+                    val graced = withTimeoutOrNull(HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS) { listOf(https.await()) }
+                    if (graced != null) {
+                        graced.single()
+                    } else {
+                        https.cancelAndJoin()
+                        if (httpsRunning.getAndSet(false)) {
+                            onStageFinished(
+                                VpnHealthStage.HttpsProbe,
+                                VpnHealthStageOutcome.Failed,
+                                "cancelled=dns_failed",
+                            )
+                        }
+                        dnsError
+                    }
+                }
+                if (httpsError == null) return@coroutineScope HealthCheckResult(externalIpProbeAllowed = true)
             }
             // HTTPS не прошёл: причину определяет DNS-проба (классификация DNS-200
             // нужна AutomaticDnsFallbackPolicy), иначе остаётся ошибка HTTPS.
-            val dnsError = dns.await()
-            throw dnsError ?: httpsError
+            throw dnsError ?: checkNotNull(httpsError)
         }
     }
 
@@ -1078,6 +1121,9 @@ class VpnHealthPipeline internal constructor(
 
         /** Один повтор системного запроса, если ответа нет за это время (потеря UDP-пакета). */
         const val HEALTH_DNS_HEDGE_MILLIS = 800L
+
+        /** Фора HTTPS-пробе после окончательного провала DNS-пробы. */
+        const val HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS = 1_500L
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
         const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L
