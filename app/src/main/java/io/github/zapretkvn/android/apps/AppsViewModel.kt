@@ -20,9 +20,13 @@ class AppsViewModel(
         val loading: Boolean = false,
         val error: String? = null,
         val warning: String? = null,
+        val message: String? = null,
     )
 
     private val catalog = MutableStateFlow(CatalogState())
+
+    /** Номер изменения пакетов, при котором каталог читался последний раз. */
+    private var loadedPackageSequence: Int? = null
 
     init {
         refresh()
@@ -42,6 +46,7 @@ class AppsViewModel(
             loading = catalogState.loading,
             error = catalogState.error,
             warning = catalogState.warning,
+            message = catalogState.message,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -54,6 +59,7 @@ class AppsViewModel(
         catalog.value = catalog.value.copy(loading = true, error = null, warning = null)
         viewModelScope.launch {
             try {
+                val sequence = appCatalog.packageChangeSequence()
                 val snapshot = appCatalog.load()
                 val rawProblemText = snapshot.rawProblemText()
                 val failed = snapshot.discovery.completeness == AppDiscoveryCompleteness.Failed
@@ -64,9 +70,13 @@ class AppsViewModel(
                     warning = rawProblemText.takeUnless { failed },
                 )
                 if (failed) return@launch
+                loadedPackageSequence = sequence
                 val installedSuggestedApps = defaultVpnPackages(snapshot.apps)
-                selectionStore.initializeIfNeeded(installedSuggestedApps)
+                val adopted = selectionStore.adoptSuggestions(installedSuggestedApps)
                 selectionStore.migrateGeminiCompanionIfNeeded()
+                adoptedAppsMessage(adopted, snapshot.apps)?.let { message ->
+                    catalog.value = catalog.value.copy(message = message)
+                }
             } catch (failure: CancellationException) {
                 throw failure
             } catch (failure: Exception) {
@@ -77,6 +87,19 @@ class AppsViewModel(
                 catalog.value = catalog.value.copy(loading = false)
             }
         }
+    }
+
+    /**
+     * Возврат в приложение: каталог перечитывается, только если с прошлого чтения что-то
+     * установили или удалили, — так новый Telegram попадает в VPN до нажатия «Подключить».
+     */
+    fun refreshIfPackagesChanged() {
+        if (loadedPackageSequence == appCatalog.packageChangeSequence()) return
+        refresh()
+    }
+
+    fun consumeMessage() {
+        catalog.value = catalog.value.copy(message = null)
     }
 
     fun setAllowed(packageName: String, allowed: Boolean) {
@@ -124,3 +147,16 @@ internal fun defaultVpnPackages(installedApps: List<InstalledApp>): Set<String> 
     .filter { it.suggestion != null }
     .map(InstalledApp::packageName)
     .toSet()
+
+/** Сообщение о приложениях, которые сами попали в VPN; `null`, если ничего не добавлено. */
+internal fun adoptedAppsMessage(adopted: Set<String>, apps: List<InstalledApp>): String? {
+    if (adopted.isEmpty()) return null
+    val labels = apps.asSequence()
+        .filter { it.packageName in adopted }
+        .map(InstalledApp::label)
+        .sorted()
+        .toList()
+        .ifEmpty { adopted.sorted() }
+    return "Через VPN теперь идут и новые приложения: ${labels.joinToString()}. " +
+        "Если VPN уже включён, нажмите «Перезапустить» на Главной."
+}

@@ -24,7 +24,13 @@ internal class ImportController(
     }
 
     fun importClipboard() = operations.run {
-        preview(service.clipboardRequest())
+        val request = service.clipboardRequest()
+        val value = request.raw.trim()
+        if (service.isSubscriptionLink(value)) {
+            promptSubscriptionLink(value, SubscriptionLinkOrigin.Clipboard)
+        } else {
+            preview(request)
+        }
     }
 
     fun importQr(contents: String) = operations.run {
@@ -35,12 +41,12 @@ internal class ImportController(
         handleQrContents(service.qrImageContents(uri), "QR-код из галереи")
     }
 
-    fun closeQrSubscription() {
-        state.update { it.copy(qrSubscriptionUrl = null) }
+    fun closeSubscriptionLinkPrompt() {
+        state.update { it.copy(subscriptionLinkPrompt = null) }
     }
 
-    fun importQrSubscription(url: String, identity: SubscriptionIdentityInput) {
-        closeQrSubscription()
+    fun importPromptedSubscription(url: String, identity: SubscriptionIdentityInput) {
+        closeSubscriptionLinkPrompt()
         importUrl(url, identity)
     }
 
@@ -130,10 +136,14 @@ internal class ImportController(
     private suspend fun handleQrContents(contents: String, sourceDescription: String) {
         val value = contents.trim()
         if (service.isSubscriptionLink(value)) {
-            state.update { it.copy(qrSubscriptionUrl = value, message = null) }
+            promptSubscriptionLink(value, SubscriptionLinkOrigin.Qr)
         } else {
             preview(service.qrRequest(value, sourceDescription))
         }
+    }
+
+    private fun promptSubscriptionLink(url: String, origin: SubscriptionLinkOrigin) {
+        state.update { it.copy(subscriptionLinkPrompt = SubscriptionLinkPrompt(url, origin), message = null) }
     }
 
     private suspend fun preview(request: ImportRequest) {

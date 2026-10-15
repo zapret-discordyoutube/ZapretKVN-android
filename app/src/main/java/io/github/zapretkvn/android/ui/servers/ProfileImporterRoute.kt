@@ -17,6 +17,7 @@ import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import io.github.zapretkvn.android.importer.qrImportScanOptions
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
+import io.github.zapretkvn.android.profiles.SubscriptionLinkPrompt
 
 private val IMPORT_MIME_TYPES = arrayOf(
     "application/json",
@@ -33,7 +34,7 @@ private val IMPORT_MIME_TYPES = arrayOf(
 @Composable
 internal fun rememberProfileImporter(
     viewModel: ProfilesViewModel,
-    qrSubscriptionUrl: String?,
+    subscriptionLinkPrompt: SubscriptionLinkPrompt?,
     hideServerAddresses: Boolean,
 ): ProfileImporter {
     var urlDialogOpen by remember { mutableStateOf(false) }
@@ -76,13 +77,13 @@ internal fun rememberProfileImporter(
             },
         )
     }
-    qrSubscriptionUrl?.let { qrUrl ->
+    subscriptionLinkPrompt?.let { prompt ->
         UrlImportDialog(
-            initialUrl = qrUrl,
-            title = "Подписка из QR",
+            initialUrl = prompt.url,
+            title = prompt.origin.title,
             hideServerAddresses = hideServerAddresses,
-            onDismiss = viewModel::closeQrSubscription,
-            onImport = viewModel::importQrSubscription,
+            onDismiss = viewModel::closeSubscriptionLinkPrompt,
+            onImport = viewModel::importPromptedSubscription,
         )
     }
     if (qrSourceDialogOpen) {

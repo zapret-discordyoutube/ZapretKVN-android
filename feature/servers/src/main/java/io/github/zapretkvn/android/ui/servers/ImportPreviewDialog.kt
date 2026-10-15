@@ -85,6 +85,29 @@ fun ImportPreviewDialog(
                 preview.importWarnings.forEach {
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
+                if (preview.importNotes.isNotEmpty()) {
+                    // Параметры, которые ядро не применяет, — справка, а не тревога: красный
+                    // цвет пугал новичков, хотя сервер работает (15.10.2026).
+                    var notesShown by remember(preview) { mutableStateOf(false) }
+                    TextButton(onClick = { notesShown = !notesShown }) {
+                        Text(
+                            if (notesShown) {
+                                "Скрыть технические заметки"
+                            } else {
+                                "Технические заметки (${preview.importNotes.size}) — на работу не влияют"
+                            },
+                        )
+                    }
+                    if (notesShown) {
+                        preview.importNotes.forEach {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
                 if (preview.selectionChanged) {
                     Text(
                         "Текущий server tag исчез: будет выбран первый доступный сервер.",

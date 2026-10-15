@@ -10,6 +10,8 @@ data class AppsUiState(
     val loading: Boolean = false,
     val error: String? = null,
     val warning: String? = null,
+    /** Разовое сообщение для пользователя: например, какие приложения добавлены в VPN. */
+    val message: String? = null,
 ) {
     val needsAppSelection: Boolean
         get() = initialized && when (scopeMode) {

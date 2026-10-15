@@ -53,6 +53,12 @@ import io.github.zapretkvn.android.updates.ForgejoUpdateSource
 import io.github.zapretkvn.android.updates.PackageInstallerUpdateInstaller
 import io.github.zapretkvn.android.updates.SharedUpdatePrefs
 import io.github.zapretkvn.android.updates.UpdateCheckJobService
+import io.github.zapretkvn.android.profiles.AndroidImportInput
+import io.github.zapretkvn.android.profiles.ImportService
+import io.github.zapretkvn.android.profiles.SubscriptionAutoRefresher
+import io.github.zapretkvn.android.profiles.SubscriptionRefreshJobService
+import io.github.zapretkvn.android.profiles.UiSettingsStorePort
+import io.github.zapretkvn.android.profiles.VpnControllerPort
 import io.github.zapretkvn.android.updates.UpdateController
 import io.github.zapretkvn.android.updates.UpdateDirectConnections
 import io.github.zapretkvn.android.updates.UpdateEnvironment
@@ -66,6 +72,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppContainer(
     context: Context,
@@ -200,6 +207,25 @@ class AppContainer(
         // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
         // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
         backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }
+        backgroundScope.launch { SubscriptionRefreshJobService.schedule(appContext) }
+    }
+
+    /** Фоновое обновление подписок тем же путём, что ручное «Обновить (без кэша)». */
+    internal val subscriptionAutoRefresher: SubscriptionAutoRefresher by lazy {
+        SubscriptionAutoRefresher(
+            service = ImportService(
+                store = profileStore,
+                validator = configValidator,
+                input = AndroidImportInput(importReader),
+                subscriptionFetcher = subscriptionFetcher,
+                subscriptionSourceStore = subscriptionSourceStore,
+                settings = UiSettingsStorePort(uiSettingsStore),
+                vpn = VpnControllerPort(vpnController),
+                installRuleSets = { withContext(Dispatchers.IO) { ruleSetAssetManager.ensureInstalled() } },
+            ),
+            store = profileStore,
+            subscriptionSourceStore = subscriptionSourceStore,
+        )
     }
 
     val profilesViewModelFactory: ProfilesViewModel.Factory

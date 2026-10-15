@@ -23,6 +23,8 @@ data class ManagedServer(
     val outbound: JsonObject,
     /** Параметры ссылки, которые протокол выполнить не может и которые названы в preview. */
     val importWarnings: List<String> = emptyList(),
+    /** Параметры ссылки, которые ядро не применяет, но которые работе не мешают. */
+    val importNotes: List<String> = emptyList(),
 )
 
 data class TlsSettings(

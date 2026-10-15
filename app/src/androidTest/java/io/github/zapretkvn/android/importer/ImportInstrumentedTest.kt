@@ -352,14 +352,14 @@ class ImportInstrumentedTest {
             val source = "https://subscription.example/profile?token=synthetic"
             viewModel.importQr(source)
             val formDeadline = SystemClock.uptimeMillis() + 10_000
-            while (viewModel.state.value.qrSubscriptionUrl == null && SystemClock.uptimeMillis() < formDeadline) {
+            while (viewModel.state.value.subscriptionLinkPrompt == null && SystemClock.uptimeMillis() < formDeadline) {
                 SystemClock.sleep(25)
             }
-            assertEquals(source, viewModel.state.value.qrSubscriptionUrl)
+            assertEquals(source, viewModel.state.value.subscriptionLinkPrompt?.url)
             assertEquals(0, fetchCount)
             assertEquals(null, viewModel.state.value.importPreview)
 
-            viewModel.importQrSubscription(source, SubscriptionIdentityInput())
+            viewModel.importPromptedSubscription(source, SubscriptionIdentityInput())
             val previewDeadline = SystemClock.uptimeMillis() + 10_000
             while (viewModel.state.value.importPreview == null && SystemClock.uptimeMillis() < previewDeadline) {
                 SystemClock.sleep(25)

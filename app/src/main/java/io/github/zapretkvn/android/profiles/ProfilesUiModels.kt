@@ -39,9 +39,21 @@ data class ProfilesUiState(
     val serverSummaries: Map<String, ProfileServerSummary> = emptyMap(),
     val serverPicker: ProfileServerPickerState? = null,
     val subscriptionSettings: SubscriptionSettingsState? = null,
-    val qrSubscriptionUrl: String? = null,
+    val subscriptionLinkPrompt: SubscriptionLinkPrompt? = null,
     val initialized: Boolean = false,
 )
+
+/** Откуда пришла ссылка подписки, которую надо подтвердить в форме импорта по URL. */
+enum class SubscriptionLinkOrigin(val title: String) {
+    Qr("Подписка из QR"),
+    Clipboard("Подписка из буфера"),
+}
+
+/**
+ * Ссылка подписки из QR-кода или буфера обмена ждёт формы импорта по URL: там выбирается
+ * профиль клиента и HWID. Без формы «Буфер» с `https://…` отвечал ошибкой формата (15.10.2026).
+ */
+data class SubscriptionLinkPrompt(val url: String, val origin: SubscriptionLinkOrigin)
 
 data class ProfileServerPickerState(
     val profileId: String,
@@ -84,6 +96,7 @@ data class ImportPreviewState(
     override val activityWarning: String?,
     override val appendTargets: List<ProfileMetadata>,
     override val importWarnings: List<String> = emptyList(),
+    override val importNotes: List<String> = emptyList(),
     val refreshProfileId: String? = null,
     override val refreshProfileName: String? = null,
     override val activeRefresh: Boolean = false,

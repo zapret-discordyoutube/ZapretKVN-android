@@ -266,17 +266,18 @@ class ImportParserTest {
         val shadowsocks = ShareLinkParser.parse("ss://$ssCredentials@ss.example#SS").outbound
         assertEquals("8388", (shadowsocks["server_port"] as JsonPrimitive).content)
 
-        // spx не переносится в sing-box, но и не мешает: ссылка импортируется
-        // с предупреждением, а отказ остаётся для параметров неизвестного класса.
+        // spx не переносится в sing-box, но и не мешает: ссылка импортируется с
+        // технической заметкой, а не с предупреждением (15.10.2026: красный цвет пугал).
         val degraded = ShareLinkParser.parse(
             "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&spx=%2F",
         )
-        assertTrue(degraded.importWarnings.any { it.contains("spx") })
+        assertTrue(degraded.importNotes.any { it.contains("spx") })
+        assertTrue(degraded.importWarnings.isEmpty())
 
         val unknown = ShareLinkParser.parse(
             "vless://11111111-1111-4111-8111-111111111111@one.example?security=tls&zzz=1",
         )
-        assertTrue(unknown.importWarnings.any { it.contains("zzz") })
+        assertTrue(unknown.importNotes.any { it.contains("zzz") })
     }
 
     @Test
@@ -820,7 +821,8 @@ class ImportParserTest {
         ) as ImportCandidate.Managed
 
         assertEquals(1, candidate.servers.size)
-        assertTrue(candidate.importWarnings.any { it.contains("spx") })
+        assertTrue(candidate.importNotes.any { it.contains("spx") })
+        assertTrue(candidate.importWarnings.isEmpty())
     }
 
     @Test
@@ -834,7 +836,7 @@ class ImportParserTest {
         val outbound = candidate.servers.single().outbound
         val tls = outbound["tls"] as JsonObject
         assertEquals(null, tls["utls"])
-        assertTrue(candidate.importWarnings.any { it.contains("fp") })
+        assertTrue(candidate.importNotes.any { it.contains("fp") })
     }
 
     @Test
@@ -1043,7 +1045,7 @@ class ImportParserTest {
         ) as ImportCandidate.Managed
 
         assertEquals(1, candidate.servers.size)
-        val warning = candidate.importWarnings.single { it.contains("не применены") }
+        val warning = candidate.importNotes.single { it.contains("не применены") }
         assertTrue(warning, warning.contains("fm"))
         assertTrue(warning, warning.contains("vcn"))
         assertTrue(warning, warning.contains("zzz"))
@@ -1155,8 +1157,8 @@ class ImportParserTest {
 
         links.zip(servers).forEach { (link, server) ->
             assertEquals(link, server.outbound.string("uri"))
-            assertTrue(server.importWarnings.any { it.contains("сохранены в исходной URI") })
-            assertFalse(server.importWarnings.any { it.contains("не переносятся") })
+            assertTrue(server.importNotes.any { it.contains("сохранены в исходной URI") })
+            assertFalse(server.importNotes.any { it.contains("не переносятся") })
             assertFalse(link in server.identityKey)
             assertFalse("user:pass" in server.identityKey)
             assertFalse("$pin" in server.identityKey)
@@ -1226,7 +1228,7 @@ class ImportParserTest {
     }
 
     @Test
-    fun `repeated warnings are collapsed with a count`() {
+    fun `repeated notes are collapsed with a count`() {
         val link = "vless://11111111-1111-4111-8111-111111111111@%s:443" +
             "?security=tls&sni=example.org&spx=%%2F#%s"
         val candidate = ImportParser.parse(
@@ -1236,8 +1238,8 @@ class ImportParserTest {
         ) as ImportCandidate.Managed
 
         assertEquals(3, candidate.servers.size)
-        val warning = candidate.importWarnings.single { it.contains("spx") }
-        assertTrue(warning, warning.contains("серверов: 3"))
+        val note = candidate.importNotes.single { it.contains("spx") }
+        assertTrue(note, note.contains("серверов: 3"))
     }
 
     private fun JsonObject.string(key: String): String? =
@@ -1246,4 +1248,32 @@ class ImportParserTest {
     private fun encodeURIComponent(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
+
+    @Test
+    fun `insecure links stay warnings while dropped parameters become notes`() {
+        val candidate = ImportParser.parse(
+            "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?security=tls&sni=one.example&allowInsecure=1&spx=%2F#One",
+            ProfileSource.Link,
+            "Профиль",
+        ) as ImportCandidate.Managed
+
+        assertTrue(candidate.importWarnings.any { it.contains("проверку сертификата") })
+        assertTrue(candidate.importWarnings.none { it.contains("spx") })
+        assertTrue(candidate.importNotes.any { it.contains("spx") })
+    }
+
+    @Test
+    fun `shadowsocks and tuic keep their import notes`() {
+        val ssCredentials = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("aes-128-gcm:secret".toByteArray())
+        val shadowsocks = ShareLinkParser.parse("ss://$ssCredentials@ss.example:8388?zzz=1#SS")
+        assertTrue(shadowsocks.importNotes.any { it.contains("zzz") })
+
+        val tuic = ShareLinkParser.parse(
+            "tuic://11111111-1111-4111-8111-111111111111:secret@tuic.example:443" +
+                "?sni=tuic.example&zzz=1#TUIC",
+        )
+        assertTrue(tuic.importNotes.any { it.contains("zzz") })
+    }
 }

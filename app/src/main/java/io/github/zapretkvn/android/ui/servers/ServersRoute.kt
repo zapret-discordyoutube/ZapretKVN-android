@@ -128,7 +128,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
 
     val importer = rememberProfileImporter(
         viewModel = deps.profiles,
-        qrSubscriptionUrl = state.qrSubscriptionUrl,
+        subscriptionLinkPrompt = state.subscriptionLinkPrompt,
         hideServerAddresses = state.settings.hideServerAddresses,
     )
     val actions = remember(deps, nav) {
@@ -155,7 +155,7 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
     val state by deps.profiles.state.collectAsStateWithLifecycle()
     val importer = rememberProfileImporter(
         viewModel = deps.profiles,
-        qrSubscriptionUrl = state.qrSubscriptionUrl,
+        subscriptionLinkPrompt = state.subscriptionLinkPrompt,
         hideServerAddresses = state.settings.hideServerAddresses,
     )
     var deleteTarget by remember { mutableStateOf<ProfileCardUi?>(null) }

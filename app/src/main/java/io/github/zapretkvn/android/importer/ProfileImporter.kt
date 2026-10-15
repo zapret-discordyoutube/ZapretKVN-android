@@ -47,6 +47,8 @@ sealed interface ImportCandidate {
         override val suggestedName: String,
         override val source: ProfileSource,
         val importWarnings: List<String> = emptyList(),
+        /** Технические заметки: параметры ссылки, которые ядро не применяет. Работе не мешают. */
+        val importNotes: List<String> = emptyList(),
     ) : ImportCandidate {
         fun buildJson(): String = if (servers.size == 1) {
             ManagedProfileFactory.single(servers.single())
@@ -148,6 +150,7 @@ object ImportParser {
                 ProfileSource.Subscription
             },
             importWarnings = collectWarnings(servers, extracted.unsupportedSchemes),
+            importNotes = collectNotes(servers),
         )
     }
 
@@ -163,15 +166,20 @@ object ImportParser {
         val schemes = unsupportedSchemes.takeIf(List<String>::isNotEmpty)?.let { list ->
             listOf("Пропущены неподдерживаемые схемы: ${list.joinToString { "$it://" }}.")
         }.orEmpty()
-        val perServer = servers.flatMap(ManagedServer::importWarnings)
-        val counted = perServer.groupingBy { it }.eachCount()
-        return schemes + counted.entries
-            .sortedByDescending { it.value }
-            .map { (warning, count) ->
-                if (count > 1) "$warning (серверов: $count)" else warning
-            }
-            .take(MAX_IMPORT_WARNINGS)
+        return schemes + countedLines(servers.flatMap(ManagedServer::importWarnings))
     }
+
+    /** Заметки серверов схлопываются так же, как предупреждения. */
+    private fun collectNotes(servers: List<ManagedServer>): List<String> =
+        countedLines(servers.flatMap(ManagedServer::importNotes))
+
+    private fun countedLines(lines: List<String>): List<String> = lines
+        .groupingBy { it }
+        .eachCount()
+        .entries
+        .sortedByDescending { it.value }
+        .map { (line, count) -> if (count > 1) "$line (серверов: $count)" else line }
+        .take(MAX_IMPORT_WARNINGS)
 
     /**
      * Панели (Remnawave и совместимые) сообщают об отозванной подписке, лимите
@@ -233,6 +241,7 @@ object ImportParser {
             suggestedName = if (servers.size == 1) servers.single().displayName else suggestedName,
             source = if (servers.size == 1) source else ProfileSource.Subscription,
             importWarnings = collectWarnings(servers),
+            importNotes = collectNotes(servers),
         )
     }
 
@@ -332,8 +341,8 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        val warnings = classifyParameters(query, VLESS_QUERY_KEYS, "VLESS") +
-            rejectHeaderObfuscation(query, "VLESS")
+        rejectHeaderObfuscation(query, "VLESS")
+        val notes = classifyParameters(query, VLESS_QUERY_KEYS, "VLESS")
         val name = displayName(uri, "VLESS ${index + 1}")
         val uuid = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В VLESS отсутствует UUID.")
@@ -355,7 +364,7 @@ object ShareLinkParser {
             flow = normalizeVlessFlow(query["flow"]),
             tls = tls(query, host),
             transport = transport(query),
-        ).withWarnings(warnings + insecureWarning(query))
+        ).withWarnings(insecureWarning(query)).withNotes(notes)
     }
 
     private fun normalizeVlessFlow(flow: String?): String? = when (
@@ -372,8 +381,8 @@ object ShareLinkParser {
         val uri = URI(link)
         val host = requireHost(uri)
         val query = query(uri)
-        val warnings = classifyParameters(query, TROJAN_QUERY_KEYS, "Trojan") +
-            rejectHeaderObfuscation(query, "Trojan")
+        rejectHeaderObfuscation(query, "Trojan")
+        val notes = classifyParameters(query, TROJAN_QUERY_KEYS, "Trojan")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В Trojan отсутствует пароль.")
         return ProtocolOutboundBuilders.trojan(
@@ -383,7 +392,7 @@ object ShareLinkParser {
             password = password,
             tls = tls(query, host, defaultEnabled = true),
             transport = transport(query),
-        ).withWarnings(warnings + insecureWarning(query))
+        ).withWarnings(insecureWarning(query)).withNotes(notes)
     }
 
     private fun parseVmess(link: String, index: Int): ManagedServer {
@@ -393,7 +402,7 @@ object ShareLinkParser {
         val host = data.text("add") ?: throw ImportException("В VMess отсутствует сервер.")
         val port = data.number("port") ?: 443
         val uuid = data.text("id") ?: throw ImportException("В VMess отсутствует UUID.")
-        val warnings = classifyFields(data, VMESS_FIELDS, "VMess")
+        val notes = classifyFields(data, VMESS_FIELDS, "VMess")
         val network = data.text("net").orEmpty()
         val transport = when (network) {
             "", "tcp" -> null
@@ -435,7 +444,7 @@ object ShareLinkParser {
                     .filter(String::isNotBlank),
             ),
             transport = transport,
-        ).withWarnings(warnings)
+        ).withNotes(notes)
     }
 
     private fun parseShadowsocks(link: String, index: Int): ManagedServer {
@@ -449,8 +458,8 @@ object ShareLinkParser {
         if ("plugin" in shadowQuery) {
             throw ImportException("Shadowsocks plugin в URI пока не поддерживается.")
         }
-        val warnings = classifyParameters(shadowQuery, SHADOWSOCKS_QUERY_KEYS, "Shadowsocks") +
-            rejectForeignTransport(shadowQuery, "Shadowsocks")
+        rejectForeignTransport(shadowQuery, "Shadowsocks")
+        val notes = classifyParameters(shadowQuery, SHADOWSOCKS_QUERY_KEYS, "Shadowsocks")
         val withoutFragment = beforeFragment.substringBefore('?')
         val expanded = if ('@' in withoutFragment) withoutFragment else decodeBase64(withoutFragment)
         val credentialPart = expanded.substringBeforeLast('@')
@@ -469,7 +478,7 @@ object ShareLinkParser {
             serverPort = requirePort(serverUri, 8388),
             method = method,
             password = password,
-        )
+        ).withNotes(notes)
     }
 
     private fun parseHysteria2(link: String, index: Int): ManagedServer {
@@ -477,7 +486,7 @@ object ShareLinkParser {
         val host = uri.host
         val query = uri.query
         rejectImpossibleTlsOptOut(query, "Hysteria2")
-        val warnings = classifyPreservedHysteria2Parameters(query)
+        val notes = classifyPreservedHysteria2Parameters(query)
         val password = decodeHysteria2Component(uri.rawUserInfo, "authentication")
             .takeIf(String::isNotEmpty)
             ?: query["auth"]?.takeIf(String::isNotEmpty)
@@ -534,7 +543,7 @@ object ShareLinkParser {
             certificateSha256 = certificatePin,
             obfsMinPacketSize = minPacketSize,
             obfsMaxPacketSize = maxPacketSize,
-        ).withWarnings(warnings + insecureWarning(query))
+        ).withWarnings(insecureWarning(query)).withNotes(notes)
     }
 
     private data class Hysteria2Uri(
@@ -738,8 +747,8 @@ object ShareLinkParser {
         val host = requireHost(uri)
         val query = query(uri)
         rejectImpossibleTlsOptOut(query, "TUIC")
-        val warnings = classifyParameters(query, TUIC_QUERY_KEYS, "TUIC") +
-            rejectCertificatePinning(query, "TUIC")
+        val notes = classifyParameters(query, TUIC_QUERY_KEYS, "TUIC")
+        val warnings = rejectCertificatePinning(query, "TUIC")
         val credentials = decode(uri.rawUserInfo)
         val uuid = credentials.substringBefore(':').takeIf(String::isNotBlank)
             ?: throw ImportException("В TUIC отсутствует UUID.")
@@ -763,7 +772,7 @@ object ShareLinkParser {
                     query.boolean("insecure"),
                 alpn = query.csv("alpn"),
             ),
-        )
+        ).withWarnings(warnings).withNotes(notes)
     }
 
     private fun decodeCredentials(value: String): String {
@@ -979,6 +988,9 @@ object ShareLinkParser {
 
     private fun ManagedServer.withWarnings(warnings: List<String>): ManagedServer =
         if (warnings.isEmpty()) this else copy(importWarnings = (importWarnings + warnings).distinct())
+
+    private fun ManagedServer.withNotes(notes: List<String>): ManagedServer =
+        if (notes.isEmpty()) this else copy(importNotes = (importNotes + notes).distinct())
 
     private fun Map<String, String>.boolean(key: String): Boolean =
         this[key]?.trim()?.lowercase() in setOf("1", "true", "yes", "on")

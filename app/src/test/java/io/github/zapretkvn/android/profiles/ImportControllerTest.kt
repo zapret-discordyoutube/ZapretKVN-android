@@ -35,6 +35,7 @@ class ImportControllerTest {
     private lateinit var store: ProfileStore
     private lateinit var sources: SubscriptionSourceStore
     private lateinit var controller: ImportController
+    private lateinit var service: ImportService
 
     private val one = vlessLink("one.example", "One", '1')
     private val two = vlessLink("two.example", "Two", '2')
@@ -54,7 +55,7 @@ class ImportControllerTest {
         )
         val install: suspend () -> InstalledRuleSets = { installed }
         val operations = ProfilesOperations(state, scope)
-        val service = ImportService(
+        service = ImportService(
             store = store,
             validator = JsonSyntaxValidator,
             input = object : ImportInputPort {
@@ -106,12 +107,13 @@ class ImportControllerTest {
         setUp()
 
         controller.importQr("  https://sub.example/list?token=abc  ")
-        awaitCondition { state.value.qrSubscriptionUrl != null }
+        awaitCondition { state.value.subscriptionLinkPrompt != null }
 
-        assertEquals("https://sub.example/list?token=abc", state.value.qrSubscriptionUrl)
+        assertEquals("https://sub.example/list?token=abc", state.value.subscriptionLinkPrompt?.url)
+        assertEquals(SubscriptionLinkOrigin.Qr, state.value.subscriptionLinkPrompt?.origin)
         assertNull(state.value.importPreview)
-        controller.closeQrSubscription()
-        assertNull(state.value.qrSubscriptionUrl)
+        controller.closeSubscriptionLinkPrompt()
+        assertNull(state.value.subscriptionLinkPrompt)
     }
 
     @Test
@@ -251,6 +253,61 @@ class ImportControllerTest {
         assertEquals("Подписка обновлена. Работающий VPN не изменён.", state.value.message)
         assertEquals(2, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().outbounds.size)
         assertTrue(vpn.restarts.isEmpty())
+    }
+
+    @Test
+    fun `subscription link in the clipboard opens the url form instead of a format error`() = runBlocking {
+        setUp()
+        feed = "https://sub.example/list?token=abc\n"
+
+        controller.importClipboard()
+        awaitCondition { state.value.subscriptionLinkPrompt != null }
+        idle()
+
+        assertEquals("https://sub.example/list?token=abc", state.value.subscriptionLinkPrompt?.url)
+        assertEquals(SubscriptionLinkOrigin.Clipboard, state.value.subscriptionLinkPrompt?.origin)
+        assertNull(state.value.importPreview)
+        assertNull(state.value.message)
+    }
+
+    @Test
+    fun `server link in the clipboard still opens a preview`() = runBlocking {
+        setUp()
+        feed = one
+
+        controller.importClipboard()
+        awaitCondition { state.value.importPreview != null }
+
+        assertNull(state.value.subscriptionLinkPrompt)
+    }
+
+    @Test
+    fun `background refresh applies new servers without restarting the vpn`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        vpn.connected = profile.id
+        feed = "$one\n$two"
+
+        val report = SubscriptionAutoRefresher(service, store, sources).refreshAll()
+
+        assertEquals(SubscriptionAutoRefreshReport(updated = 1, skipped = 0), report)
+        assertEquals(2, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().outbounds.size)
+        assertTrue(vpn.restarts.isEmpty())
+    }
+
+    @Test
+    fun `background refresh keeps the profile when the subscription answers garbage`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        val before = store.read(profile.id).json
+        feed = "<html>temporarily unavailable</html>"
+
+        val report = SubscriptionAutoRefresher(service, store, sources).refreshAll()
+
+        assertEquals(SubscriptionAutoRefreshReport(updated = 0, skipped = 1), report)
+        assertEquals(before, store.read(profile.id).json)
     }
 
     @Test

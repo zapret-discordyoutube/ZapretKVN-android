@@ -137,6 +137,13 @@ fun ZapretRoot(deps: AppDependencies) {
         onStopOrDispose { deps.vpn.setDiagnosticsVisible(false) }
     }
 
+    // Пока приложение было в фоне, пользователь мог поставить новый Telegram: каталог
+    // перечитывается до того, как он вернётся на Главную и нажмёт «Подключить».
+    LifecycleStartEffect(deps.apps) {
+        deps.apps.refreshIfPackagesChanged()
+        onStopOrDispose { }
+    }
+
     MessagesHost(deps, snackbarHostState)
 
     Box(Modifier.fillMaxSize()) {
@@ -268,6 +275,12 @@ private fun MessagesHost(deps: AppDependencies, snackbarHostState: SnackbarHostS
     LaunchedEffect(deps.routing) {
         deps.routing.state.map { it.message }.distinctUntilChanged().filterNotNull().collect {
             deps.routing.consumeMessage()
+            snackbarHostState.showSnackbar(it)
+        }
+    }
+    LaunchedEffect(deps.apps) {
+        deps.apps.state.map { it.message }.distinctUntilChanged().filterNotNull().collect {
+            deps.apps.consumeMessage()
             snackbarHostState.showSnackbar(it)
         }
     }

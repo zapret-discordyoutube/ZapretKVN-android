@@ -55,9 +55,9 @@ class ProfilesViewModel internal constructor(
     fun importClipboard() = imports.importClipboard()
     fun importQr(contents: String) = imports.importQr(contents)
     fun importQrImage(uri: Uri) = imports.importQrImage(uri)
-    fun closeQrSubscription() = imports.closeQrSubscription()
-    fun importQrSubscription(url: String, identity: SubscriptionIdentityInput) =
-        imports.importQrSubscription(url, identity)
+    fun closeSubscriptionLinkPrompt() = imports.closeSubscriptionLinkPrompt()
+    fun importPromptedSubscription(url: String, identity: SubscriptionIdentityInput) =
+        imports.importPromptedSubscription(url, identity)
     fun importUrl(url: String, identity: SubscriptionIdentityInput = SubscriptionIdentityInput()) =
         imports.importUrl(url, identity)
     fun refreshSubscription(profileId: String) = imports.refreshSubscription(profileId)

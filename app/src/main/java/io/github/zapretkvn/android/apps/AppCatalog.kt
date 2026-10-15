@@ -35,6 +35,14 @@ class AppCatalog(context: Context) {
     private val appContext = context.applicationContext
     private val packageManager = appContext.packageManager
 
+    /**
+     * Номер последнего изменения списка пакетов (установка, удаление, обновление) с загрузки
+     * системы. Дешёвый вопрос «менялось ли что-то», чтобы не перечитывать каталог при каждом
+     * возврате в приложение; после перезагрузки номер начинается заново.
+     */
+    internal fun packageChangeSequence(): Int =
+        packageManager.getChangedPackages(0)?.sequenceNumber ?: 0
+
     internal suspend fun load(): AppCatalogSnapshot = withContext(Dispatchers.IO) {
         val browserPackages = installedBrowserPackages()
         val telegramPackages = installedTelegramPackages()

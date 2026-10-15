@@ -19,6 +19,9 @@ interface ImportPreview {
     val activityWarning: String?
     val appendTargets: List<ProfileMetadata>
     val importWarnings: List<String>
+
+    /** Технические заметки: показываются свёрнутыми и не красным. */
+    val importNotes: List<String>
     val refreshProfileName: String?
     val activeRefresh: Boolean
     val selectionChanged: Boolean

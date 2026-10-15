@@ -42,6 +42,13 @@ internal fun ImportCandidate.importWarnings(): List<String> = when (this) {
     -> emptyList()
 }
 
+internal fun ImportCandidate.importNotes(): List<String> = when (this) {
+    is ImportCandidate.Managed -> importNotes.map(SecretRedactor::redactInline)
+    is ImportCandidate.RawJson,
+    is ImportCandidate.WireGuard,
+    -> emptyList()
+}
+
 /** Предупреждения о подозрительной активности и DNS в готовом JSON, одной строкой. */
 internal fun importActivityWarnings(json: String): String? = buildList {
     ImportedConfigActivityScanner.warning(ImportedConfigActivityScanner.scan(json))
