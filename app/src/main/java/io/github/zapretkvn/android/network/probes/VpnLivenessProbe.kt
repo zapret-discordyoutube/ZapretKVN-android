@@ -7,8 +7,11 @@ import java.io.IOException
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal sealed interface LivenessResult {
@@ -43,19 +46,28 @@ class VpnLivenessProbe(
             ?: return LivenessResult.Unknown
         if (runCatching { vpnNetworks.requireActive(network) }.isFailure) return LivenessResult.Unknown
         val failures = mutableListOf<String>()
-        val result = withTimeoutOrNull(BUDGET_MILLIS) {
-            for (endpoint in ManagedHealthProbe.endpoints.take(MAX_ATTEMPTS)) {
-                val started = System.nanoTime()
-                val outcome = withContext(Dispatchers.IO) { request(network, endpoint.url) }
-                if (outcome == null) {
-                    return@withTimeoutOrNull LivenessResult.Alive(
-                        endpoint.code,
-                        (System.nanoTime() - started) / 1_000_000,
-                    )
+        // Запросы — в отдельной области: HttpsURLConnection блокирующий, а резолв имени
+        // через мёртвый DNS узла не ограничен connectTimeout. withTimeoutOrNull не прервал
+        // бы такой вызов, и проверка растягивалась до ~27 с вместо бюджета; ожидание
+        // await() отменяемо, зависший запрос заканчивается сам по своим тайм-аутам.
+        val requests = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val result = try {
+            withTimeoutOrNull(BUDGET_MILLIS) {
+                for (endpoint in ManagedHealthProbe.endpoints.take(MAX_ATTEMPTS)) {
+                    val started = System.nanoTime()
+                    val outcome = requests.async { request(network, endpoint.url) }.await()
+                    if (outcome == null) {
+                        return@withTimeoutOrNull LivenessResult.Alive(
+                            endpoint.code,
+                            (System.nanoTime() - started) / 1_000_000,
+                        )
+                    }
+                    failures += "${endpoint.code}:$outcome"
                 }
-                failures += "${endpoint.code}:$outcome"
+                null
             }
-            null
+        } finally {
+            requests.cancel()
         }
         return result ?: LivenessResult.Dead(failures.joinToString(" ").ifBlank { "timeout" })
     }

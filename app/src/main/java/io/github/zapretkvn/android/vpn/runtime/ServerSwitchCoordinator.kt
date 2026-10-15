@@ -414,10 +414,22 @@ internal class ServerSwitchCoordinator(
      * failover с проверкой кандидата. Никаких периодических проб и веера серверов.
      */
     private fun onStallSuspected(session: CoreSession, event: StallEvent.Suspected) {
-        val plan = currentPlan(session) ?: return
         timeline("Подозрение на обрыв связи (${event.kind.name}): ${event.detail}.")
         if (ops.lifecycleBusy() || operationKind == Operation.Select || operationKind == Operation.Failover) {
             timeline("Проверка связи отложена: уже идёт другая операция над сервером.")
+            return
+        }
+        val plan = currentPlan(session)
+        if (plan == null) {
+            // Профиль без плана замены (ручной JSON без uri у серверов): переключать
+            // не на что, но та же одна проверка через текущий сервер честно покажет
+            // «Нет связи с сервером» вместо молчаливого «Подключено».
+            timeline("Проверка связи через текущий сервер (автоматической замены для этого профиля нет).")
+            runOperation(Operation.Probe) { previous ->
+                previous?.cancelAndJoin()
+                val result = container.vpnLivenessProbe.check()
+                postToActor { onStandaloneProbeDone(session, result) }
+            }
             return
         }
         val code = HysteriaFailureCode.TARGET_NETWORK_TIMEOUT
@@ -429,6 +441,21 @@ internal class ServerSwitchCoordinator(
             }
             is PathDecision.Ignore -> timeline("Проверка связи не запущена: ${decision.reason ?: "сигнал заглушён"}.")
             else -> apply(session, decision, code)
+        }
+    }
+
+    private fun onStandaloneProbeDone(session: CoreSession, result: LivenessResult) {
+        if (!isCurrent(session)) return
+        when (result) {
+            is LivenessResult.Alive -> {
+                timeline("Сервер отвечает (${result.endpoint}, ${result.elapsedMillis} мс): ложная тревога.")
+                setLinkLost(session, false, "сервер ответил на проверку")
+            }
+            LivenessResult.Unknown -> timeline("VPN-сеть Android недоступна для проверки.")
+            is LivenessResult.Dead -> {
+                timeline("Сервер не отвечает (${result.detail}); автоматической замены для этого профиля нет.")
+                setLinkLost(session, true, "сервер не отвечает, автоматической замены нет")
+            }
         }
     }
 
