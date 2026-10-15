@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
+import io.github.zapretkvn.android.vpn.ExternalIpStatus
 import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnSessionStats
 
@@ -67,15 +68,26 @@ internal class SessionTrafficAccumulator(
         return value
     }
 
+    fun beginExternalIp(generation: Long): VpnSessionStats? {
+        if (generation != this.generation) return null
+        value = value.copy(externalIpStatus = ExternalIpStatus.Loading)
+        return value
+    }
+
+    /** null — запрос не удался: прежний адрес (если был) остаётся, статус становится Failed. */
     fun updateExternalIp(generation: Long, externalIp: String?): VpnSessionStats? {
         if (generation != this.generation) return null
-        value = value.copy(externalIp = externalIp)
+        value = if (externalIp != null) {
+            value.copy(externalIp = externalIp, externalIpStatus = ExternalIpStatus.NotRequested)
+        } else {
+            value.copy(externalIpStatus = ExternalIpStatus.Failed)
+        }
         return value
     }
 
     fun clearConnectionIdentity(generation: Long): VpnSessionStats? {
         if (generation != this.generation) return null
-        value = value.copy(externalIp = null)
+        value = value.copy(externalIp = null, externalIpStatus = ExternalIpStatus.NotRequested)
         return value
     }
 }

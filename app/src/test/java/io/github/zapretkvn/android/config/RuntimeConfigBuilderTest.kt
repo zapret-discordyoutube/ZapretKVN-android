@@ -455,13 +455,147 @@ class RuntimeConfigBuilderTest {
         val routeRules = ((root["route"] as JsonObject)["rules"] as JsonArray)
 
         assertEquals(
-            listOf("zapret-android-dns", "zapret-dns-override"),
+            listOf(
+                "zapret-android-dns",
+                "zapret-node-dns-udp",
+                "zapret-node-dns-tcp",
+                "zapret-secure-dns",
+                "zapret-dns-override",
+            ),
             servers.map { (it as JsonObject).string("tag") },
         )
-        assertEquals("zapret-android-dns", (dns["final"] as JsonPrimitive).content)
+        assertEquals("zapret-secure-dns", (dns["final"] as JsonPrimitive).content)
+        assertEquals("zapret-android-dns", (root["route"] as JsonObject).string("default_domain_resolver"))
         assertTrue(routeRules.any { (it as JsonObject).string("action") == "hijack-dns" })
         assertTrue((root["unknown_dns_owner"] as JsonPrimitive).boolean)
         assertFalse("stored JSON must not be rewritten", "zapret-android-dns" in stored)
+    }
+
+    @Test
+    fun `Android DNS without node tunnelling keeps every name on the system resolver`() {
+        // Strict Private DNS и резерв Automatic: проксируемые имена остаются на Android.
+        val result = RuntimeConfigBuilder.build(
+            validConfig(),
+            options = RuntimeConfigOptions(
+                dnsMode = DnsMode.Android,
+                androidDnsProxiedViaNode = false,
+            ),
+        ) as RuntimeConfigResult.Ready
+        val dns = (JsonConfig.parse(result.json) as JsonObject)["dns"] as JsonObject
+        val tags = (dns["servers"] as JsonArray).map { (it as JsonObject).string("tag") }
+        val rules = (dns["rules"] as JsonArray).map { it as JsonObject }
+
+        assertEquals(listOf("zapret-android-dns", "zapret-dns-override"), tags)
+        assertEquals("zapret-android-dns", dns.string("final"))
+        assertTrue(rules.all { it.string("server") != "zapret-secure-dns" })
+        assertTrue(
+            rules.any {
+                it.string("server") == "zapret-android-dns" &&
+                    it["domain"]?.toString()?.contains("cp.cloudflare.com") == true
+            },
+        )
+    }
+
+    @Test
+    fun `Android DNS sends only direct domains and server names to the system resolver`() {
+        val stored = validConfig(
+            rootExtra = """,
+              "endpoints":[
+                {"type":"wireguard","tag":"wg-a","address":["10.0.0.2/32"],"peers":[{"address":"WG.example.","port":51820}]}
+              ]
+            """,
+        ).replace(
+            "{\"type\":\"direct\",\"tag\":\"server-a\"}",
+            "{\"type\":\"vless\",\"tag\":\"server-a\",\"server\":\"vpn.example\",\"server_port\":443," +
+                "\"uuid\":\"00000000-0000-4000-8000-000000000000\",\"tls\":{\"enabled\":true,\"server_name\":\"vpn.example\"}}",
+        ).replace(
+            "\"auto_detect_interface\":true,\"final\":\"zapret-proxy\"",
+            "\"auto_detect_interface\":true,\"rules\":[" +
+                "{\"rule_set\":[\"zapret-ru-domains\"],\"action\":\"route\",\"outbound\":\"direct\"}," +
+                "{\"domain_suffix\":[\".ru\"],\"action\":\"route\",\"outbound\":\"direct\"}," +
+                "{\"domain_suffix\":[\".proxy.test\"],\"action\":\"route\",\"outbound\":\"zapret-proxy\"}" +
+                "],\"final\":\"zapret-proxy\"",
+        )
+        val options = RuntimeConfigOptions(
+            dnsMode = DnsMode.Android,
+            proxyIpv4Only = true,
+            bootstrapHost = BootstrapHostOverlay("server-a", "vpn.example", listOf("203.0.113.10")),
+        )
+        val result = RuntimeConfigBuilder.build(stored, options = options) as RuntimeConfigResult.Ready
+        val dns = (JsonConfig.parse(result.json) as JsonObject)["dns"] as JsonObject
+        val servers = (dns["servers"] as JsonArray).map { it as JsonObject }
+        val rules = (dns["rules"] as JsonArray).map { it as JsonObject }
+
+        // Резолвер узла собран тем же кодом, что для «Защищённого»: detour через proxy.
+        listOf("zapret-node-dns-udp", "zapret-node-dns-tcp").forEach { tag ->
+            assertEquals("zapret-proxy", servers.single { it.string("tag") == tag }.string("detour"))
+        }
+        assertTrue(servers.any { it.string("tag") == "zapret-secure-dns" })
+        assertTrue(servers.any { it.string("tag") == "zapret-android-dns" && it.string("type") == "local" })
+
+        // Имена VPN-серверов (outbound, пир WireGuard, bootstrap) — локально и раньше любого
+        // правила на DNS узла (перед ними стоит только DNS-переопределение).
+        val serverNames = rules.first { it["domain"]?.toString()?.contains("vpn.example") == true }
+        assertTrue(
+            rules.indexOf(serverNames) < rules.indexOfFirst { it.string("server") == "zapret-secure-dns" },
+        )
+        assertEquals("zapret-android-dns", serverNames.string("server"))
+        assertEquals(
+            listOf("vpn.example", "wg.example"),
+            (serverNames["domain"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+        assertFalse("strategy" in serverNames)
+
+        // Direct-домены (rule_set и суффикс) — локальный DNS без strategy.
+        val ruSet = rules.first { it["rule_set"]?.toString()?.contains("zapret-ru-domains") == true }
+        val ruSuffix = rules.first { it["domain_suffix"]?.toString()?.contains(".ru") == true }
+        listOf(ruSet, ruSuffix).forEach { direct ->
+            assertEquals("zapret-android-dns", direct.string("server"))
+            assertFalse("strategy" in direct)
+        }
+        // Односложные имена — тоже локально.
+        assertTrue(
+            rules.any {
+                it.string("server") == "zapret-android-dns" &&
+                    it["domain_regex"]?.toString()?.contains("^[^.]+$") == true
+            },
+        )
+        // Проксируемый домен, health-хосты и catch-all — DNS узла с ipv4_only.
+        val proxied = rules.first { it["domain_suffix"]?.toString()?.contains(".proxy.test") == true }
+        val health = rules.first { it["domain"]?.toString()?.contains("cp.cloudflare.com") == true }
+        val catchAll = rules.last()
+        listOf(proxied, health, catchAll).forEach { viaNode ->
+            assertEquals("zapret-secure-dns", viaNode.string("server"))
+            assertEquals("ipv4_only", viaNode.string("strategy"))
+        }
+        assertEquals(
+            listOf("cp.cloudflare.com", "connectivitycheck.gstatic.com", "www.google.com"),
+            (health["domain"] as JsonArray).map { (it as JsonPrimitive).content },
+        )
+        assertEquals("zapret-secure-dns", dns.string("final"))
+
+        // Повторная сборка из runtime-копии даёт те же правила, без дублей.
+        val rebuilt = RuntimeConfigBuilder.build(result.json, options = options) as RuntimeConfigResult.Ready
+        val rebuiltDns = (JsonConfig.parse(rebuilt.json) as JsonObject)["dns"] as JsonObject
+        assertEquals(dns["rules"], rebuiltDns["rules"])
+        assertEquals(dns["servers"], rebuiltDns["servers"])
+        assertFalse("stored profile must stay untouched", "zapret-secure-dns" in stored)
+    }
+
+    @Test
+    fun `Android DNS keeps health hosts on the node resolver even when final is direct`() {
+        val stored = validConfig().replace("\"final\":\"zapret-proxy\"", "\"final\":\"direct\"")
+        val result = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Android, proxyIpv4Only = false),
+        ) as RuntimeConfigResult.Ready
+        val dns = (JsonConfig.parse(result.json) as JsonObject)["dns"] as JsonObject
+        val rules = (dns["rules"] as JsonArray).map { it as JsonObject }
+        val health = rules.first { it["domain"]?.toString()?.contains("cp.cloudflare.com") == true }
+
+        assertEquals("zapret-android-dns", dns.string("final"))
+        assertEquals("zapret-secure-dns", health.string("server"))
+        assertFalse("strategy" in health)
     }
 
     @Test
@@ -679,7 +813,10 @@ class RuntimeConfigBuilderTest {
         ) as RuntimeConfigResult.Ready
         val android = RuntimeConfigBuilder.build(
             secure.json,
-            options = RuntimeConfigOptions(dnsMode = DnsMode.Android),
+            options = RuntimeConfigOptions(
+                dnsMode = DnsMode.Android,
+                androidDnsProxiedViaNode = false,
+            ),
         ) as RuntimeConfigResult.Ready
         val dns = (JsonConfig.parse(android.json) as JsonObject)["dns"] as JsonObject
         val tags = (dns["servers"] as JsonArray).map { (it as JsonObject).string("tag") }
@@ -863,9 +1000,11 @@ class RuntimeConfigBuilderTest {
                     it.string("strategy") == "ipv4_only"
             },
         )
+        // final = direct: безымянные прямые имена идут на системный DNS без отдельного catch-all.
+        assertEquals("zapret-android-dns", directFinalAndroidDns.string("final"))
         assertTrue(
-            directFinalAndroidRules.last().let { rule ->
-                rule.string("server") == "zapret-android-dns" && "strategy" !in rule
+            directFinalAndroidRules.none { rule ->
+                rule.string("server") == "zapret-secure-dns" && "domain_suffix" !in rule && "domain" !in rule
             },
         )
     }
@@ -979,6 +1118,11 @@ class RuntimeConfigBuilderTest {
         )
 
         assertTrue(result is RuntimeConfigResult.Ready)
+        // Без proxy туннелировать нечего: DNS узла не создаётся, всё остаётся на Android.
+        val dns = (JsonConfig.parse((result as RuntimeConfigResult.Ready).json) as JsonObject)["dns"] as JsonObject
+        val tags = (dns["servers"] as JsonArray).map { (it as JsonObject).string("tag") }
+        assertEquals("zapret-android-dns", dns.string("final"))
+        assertFalse(tags.any { it?.startsWith("zapret-node-dns-") == true || it == "zapret-secure-dns" })
     }
 
     private fun validConfig(

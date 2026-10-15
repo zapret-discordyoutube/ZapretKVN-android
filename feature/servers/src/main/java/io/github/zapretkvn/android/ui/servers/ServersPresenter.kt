@@ -411,7 +411,7 @@ private fun currentLine(row: ServerRowUi): String = buildString {
     if (row.latency.value != DASH) append(" · ").append(row.latency.value).append(' ').append(row.latency.word)
 }
 
-/** Группы запущенного ядра: задержки живые (Relay HTTPS, ICMP — вторичен). */
+/** Группы запущенного ядра: задержки живые (Relay HTTPS через ядро). */
 fun liveServerGroups(
     groups: List<RuntimeSelectorGroup>,
     hideAddresses: Boolean,

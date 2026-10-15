@@ -232,7 +232,7 @@ class ServersPresenterTest {
             "Нажмите «Проверить все», чтобы увидеть, какой сервер быстрее",
             live(group(items)).probeLine,
         )
-        val running = LatencyProbeProgress(1, "net", relayCompleted = 12, relayTotal = 48, icmpCompleted = 0, icmpTotal = 0, running = true)
+        val running = LatencyProbeProgress(1, "net", relayCompleted = 12, relayTotal = 48, running = true)
         val g = live(group(items, progress = running))
         assertEquals("Проверено 12 из 48", g.probeLine)
         assertTrue(g.measuring)

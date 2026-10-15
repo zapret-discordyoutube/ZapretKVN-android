@@ -51,8 +51,10 @@ class ServerLatencyStoreTest {
             first.record(
                 profileId = "profile",
                 fingerprints = fingerprints,
-                relay = mapOf("tokyo" to success(42, 1_000), "paris" to success(90, 1_100)),
-                icmp = mapOf("tokyo" to LatencyProbeState.Failed(LatencyFailure.NoResponse)),
+                relay = mapOf(
+                    "tokyo" to success(42, 1_000),
+                    "paris" to LatencyProbeState.Failed(LatencyFailure.NoResponse),
+                ),
             )
             first.awaitPersisted()
             assertTrue(file.isFile)
@@ -63,11 +65,10 @@ class ServerLatencyStoreTest {
             val restored = second.forProfile("profile")
             assertEquals(42, restored.getValue("tokyo").relay?.millis)
             assertEquals(1_000L, restored.getValue("tokyo").relay?.measuredAtEpochMillis)
-            val icmp = restored.getValue("tokyo").icmp!!
-            assertNull(icmp.millis)
-            assertEquals(LatencyFailure.NoResponse, icmp.failure)
-            assertEquals("failure without its own time gets the record time", 5_000L, icmp.measuredAtEpochMillis)
-            assertEquals(90, restored.getValue("paris").relay?.millis)
+            val failed = restored.getValue("paris").relay!!
+            assertNull(failed.millis)
+            assertEquals(LatencyFailure.NoResponse, failed.failure)
+            assertEquals("failure without its own time gets the record time", 5_000L, failed.measuredAtEpochMillis)
             assertEquals(first.entries.value, second.entries.value)
         }
     }
@@ -126,6 +127,18 @@ class ServerLatencyStoreTest {
     }
 
     @Test
+    fun `icmp results from older versions are dropped and never written back`() {
+        val legacy = """{"v":1,"profiles":{"p":{
+            "relayed":{"fp":"a","relay":{"ms":42,"at":1000},"icmp":{"ms":10,"at":900}},
+            "icmpOnly":{"fp":"b","icmp":{"ms":10,"at":900}}}}}"""
+        val restored = ServerLatencyCodec.decode(legacy).getValue("p")
+
+        assertEquals(42, restored.getValue("relayed").relay?.millis)
+        assertNull("an entry that only had ICMP is not kept", restored["icmpOnly"])
+        assertFalse(ServerLatencyCodec.encode(mapOf("p" to restored)).contains("icmp"))
+    }
+
+    @Test
     fun `corrupt or foreign files are ignored`() = runBlocking {
         file.writeText("{not json")
         assertTrue(ServerLatencyCodec.decode(file.readText()).isEmpty())
@@ -141,7 +154,6 @@ class ServerLatencyStoreTest {
             "tokyo" to PersistedServerLatency(
                 fingerprint = fingerprints.getValue("tokyo"),
                 relay = PersistedProbeResult(42, null, 1_000),
-                icmp = PersistedProbeResult(null, LatencyFailure.NoResponse, 1_000),
             ),
             "paris" to PersistedServerLatency(
                 fingerprint = "someone-else",
@@ -164,7 +176,6 @@ class ServerLatencyStoreTest {
         )
         val items = ServerLatencyReducer.hydrate(groups, persisted, fingerprints).single().items
         assertEquals(42, (items[0].relay as LatencyProbeState.Success).sample.millis)
-        assertEquals(LatencyFailure.NoResponse, (items[0].icmp as LatencyProbeState.Failed).reason)
         assertEquals("address changed: no stale ping", LatencyProbeState.NotTested, items[1].relay)
         assertEquals(fresh, items[2].relay)
     }

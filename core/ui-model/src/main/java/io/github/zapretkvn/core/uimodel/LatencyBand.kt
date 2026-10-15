@@ -2,7 +2,7 @@ package io.github.zapretkvn.core.uimodel
 
 /**
  * Задержка словами. Пороги для замера через сервер (Relay HTTPS): именно его
- * чувствует пользователь, ICMP до адреса сервера — вторичен.
+ * чувствует пользователь.
  */
 enum class LatencyBand(val word: String) {
     Fast("быстро"),

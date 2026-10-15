@@ -58,9 +58,6 @@ class HomeUiInstrumentedTest {
                             tag = "Moscow",
                             type = "vless",
                             endpoint = "vpn.example:443",
-                            icmp = LatencyProbeState.Success(
-                                LatencySample(42, measuredAt, null),
-                            ),
                             relay = LatencyProbeState.Success(
                                 LatencySample(84, measuredAt, null),
                             ),
@@ -104,8 +101,7 @@ class HomeUiInstrumentedTest {
         val list = composeRule.onNodeWithTag("home-list")
         list.performScrollToNode(hasText("203.0.113.9"))
         composeRule.onNodeWithText("203.0.113.9").assertExists()
-        list.performScrollToNode(hasText("ICMP · 42 мс"))
-        composeRule.onNodeWithText("ICMP · 42 мс").assertExists()
+        composeRule.onNodeWithText("ICMP", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("Relay HTTPS · 84 мс").assertExists()
         list.performScrollToNode(hasText("↓ 8.0 КБ"))
         composeRule.onNodeWithText("↓ 8.0 КБ").assertExists()

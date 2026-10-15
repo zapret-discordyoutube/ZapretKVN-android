@@ -42,7 +42,7 @@ object ServerLatencyFingerprint {
 
 /** Для ранжирования кандидатов «умной проверки»: Relay HTTPS идёт через сам сервер. */
 internal fun PersistedServerLatency.hint(): LatencyHint? {
-    val primary = relay ?: icmp ?: return null
+    val primary = relay ?: return null
     return LatencyHint(millis = primary.millis, failed = primary.failed)
 }
 
@@ -55,24 +55,20 @@ internal object ServerLatencyReducer {
         profileId: String,
         fingerprints: Map<String, String>,
         relay: Map<String, LatencyProbeState>,
-        icmp: Map<String, LatencyProbeState>,
         nowEpochMillis: Long,
     ): ServerLatencyEntries {
         if (profileId.isBlank()) return entries
         val profile = entries[profileId].orEmpty().toMutableMap()
         var changed = false
-        (relay.keys + icmp.keys).forEach { tag ->
-            val relayResult = relay[tag]?.toPersisted(nowEpochMillis)
-            val icmpResult = icmp[tag]?.toPersisted(nowEpochMillis)
-            if (relayResult == null && icmpResult == null) return@forEach
+        relay.keys.forEach { tag ->
+            val relayResult = relay[tag]?.toPersisted(nowEpochMillis) ?: return@forEach
             val fingerprint = fingerprints[tag]
             val previous = profile[tag]?.takeIf {
                 it.fingerprint == null || fingerprint == null || it.fingerprint == fingerprint
             }
             profile[tag] = PersistedServerLatency(
                 fingerprint = fingerprint ?: previous?.fingerprint,
-                relay = relayResult?.carryPrevious(previous?.relay) ?: previous?.relay,
-                icmp = icmpResult?.carryPrevious(previous?.icmp) ?: previous?.icmp,
+                relay = relayResult.carryPrevious(previous?.relay),
             )
             changed = true
         }
@@ -120,11 +116,6 @@ internal object ServerLatencyReducer {
                         } else {
                             item.relay
                         },
-                        icmp = if (item.icmp == LatencyProbeState.NotTested) {
-                            entry.icmp?.toState() ?: item.icmp
-                        } else {
-                            item.icmp
-                        },
                     )
                 },
             )
@@ -160,10 +151,7 @@ internal object ServerLatencyReducer {
         if (size <= MAX_ENTRIES_PER_PROFILE) return this
         return entries
             .sortedByDescending { entry ->
-                maxOf(
-                    entry.value.relay?.measuredAtEpochMillis ?: 0L,
-                    entry.value.icmp?.measuredAtEpochMillis ?: 0L,
-                )
+                entry.value.relay?.measuredAtEpochMillis ?: 0L
             }
             .take(MAX_ENTRIES_PER_PROFILE)
             .associate { it.key to it.value }
@@ -203,7 +191,6 @@ internal object ServerLatencyCodec {
     private fun PersistedServerLatency.toJson(): JsonObject = buildJsonObject {
         fingerprint?.let { put("fp", it) }
         relay?.let { put("relay", it.toJson()) }
-        icmp?.let { put("icmp", it.toJson()) }
     }
 
     private fun PersistedProbeResult.toJson(): JsonObject = buildJsonObject {
@@ -216,12 +203,11 @@ internal object ServerLatencyCodec {
 
     private fun JsonObject.toEntry(): PersistedServerLatency? {
         val relay = (this["relay"] as? JsonObject)?.toResult()
-        val icmp = (this["icmp"] as? JsonObject)?.toResult()
-        if (relay == null && icmp == null) return null
+        // Ключ "icmp" из файлов прежних версий игнорируется и при следующей записи пропадает.
+        relay ?: return null
         return PersistedServerLatency(
             fingerprint = (this["fp"] as? JsonPrimitive)?.contentOrNull,
             relay = relay,
-            icmp = icmp,
         )
     }
 
@@ -297,11 +283,10 @@ class ServerLatencyStore(
         profileId: String,
         fingerprints: Map<String, String>,
         relay: Map<String, LatencyProbeState> = emptyMap(),
-        icmp: Map<String, LatencyProbeState> = emptyMap(),
     ) {
-        if (relay.isEmpty() && icmp.isEmpty()) return
+        if (relay.isEmpty()) return
         val now = clock()
-        mutate { current -> ServerLatencyReducer.record(current, profileId, fingerprints, relay, icmp, now) }
+        mutate { current -> ServerLatencyReducer.record(current, profileId, fingerprints, relay, now) }
     }
 
     /** Удаляет записи исчезнувших профилей и серверов; ждёт чтения файла. */

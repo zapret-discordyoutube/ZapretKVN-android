@@ -82,6 +82,7 @@ import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilitySt
 import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.routing.RoutingPreset
+import io.github.zapretkvn.android.vpn.ExternalIpStatus
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -113,7 +114,6 @@ data class HomeServerUi(
     val modeLabel: String?,
     val latency: LatencyBadgeUi?,
     val relay: LatencyProbeState?,
-    val icmp: LatencyProbeState?,
     val switchable: Boolean,
 )
 
@@ -140,6 +140,8 @@ class HomeCallbacks(
     val onSelectPreset: (RoutingPreset) -> Unit,
     val createDiagnosticShare: suspend () -> Intent,
     val onCheckServices: () -> Unit,
+    /** «Показать IP»: единственный запрос внешнего IP, только по нажатию. */
+    val onRequestExternalIp: () -> Unit,
 )
 
 /**
@@ -198,7 +200,7 @@ fun HomeScreen(
                 TrafficCard(stats, modifier = Modifier.animateItem())
             }
             item(key = "network", contentType = "card") {
-                NetworkCard(ui.server, stats, modifier = Modifier.animateItem())
+                NetworkCard(ui.server, stats, callbacks.onRequestExternalIp, modifier = Modifier.animateItem())
             }
         }
         item(key = "shortcuts", contentType = "shortcuts") {
@@ -817,22 +819,48 @@ private fun TrafficChart(samples: () -> List<TrafficSample>, download: Color, up
 // ---------------------------------------------------------------- network
 
 @Composable
-private fun NetworkCard(server: HomeServerUi?, stats: () -> VpnSessionStats, modifier: Modifier = Modifier) {
+private fun NetworkCard(
+    server: HomeServerUi?,
+    stats: () -> VpnSessionStats,
+    onRequestExternalIp: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val accent = ZapretColors.accent
     ZapretCard(modifier = modifier) {
         Text("Сеть", style = MaterialTheme.typography.titleMedium)
-        NetworkFact(ZapretIcons.Globe, accent.session, "IP выхода") { stats().externalIp ?: "определяем…" }
+        NetworkFact(
+            ZapretIcons.Globe,
+            accent.session,
+            "IP выхода",
+            onClick = onRequestExternalIp,
+            value = { externalIpLabel(stats()) },
+        )
         if (server != null) {
             NetworkFact(ZapretIcons.Bolt, accent.ping, "Через сервер") { "Relay HTTPS · ${formatLatency(server.relay)}" }
-            NetworkFact(ZapretIcons.Route, accent.download, "До сервера") { "ICMP · ${formatLatency(server.icmp)}" }
         }
     }
 }
 
 @Composable
-private fun NetworkFact(icon: ImageVector, color: Color, label: String, value: () -> String) {
+private fun NetworkFact(
+    icon: ImageVector,
+    color: Color,
+    label: String,
+    onClick: (() -> Unit)? = null,
+    value: () -> String,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (onClick != null) {
+                    Modifier
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button, onClick = onClick)
+                } else {
+                    Modifier
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
@@ -851,6 +879,20 @@ private fun NetworkFact(icon: ImageVector, color: Color, label: String, value: (
             modifier = Modifier.weight(1f),
         )
         Text(value(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, textAlign = TextAlign.End)
+    }
+}
+
+/**
+ * Подпись строки «IP выхода». Приложение само IP не запрашивает: пока пользователь не нажал,
+ * показывается приглашение, а известный адрес живёт до смены сервера или переподключения.
+ */
+internal fun externalIpLabel(stats: VpnSessionStats): String {
+    val address = stats.externalIp
+    return when {
+        stats.externalIpStatus == ExternalIpStatus.Loading -> "определяем…"
+        address != null -> address
+        stats.externalIpStatus == ExternalIpStatus.Failed -> "Не удалось · нажмите ещё раз"
+        else -> "Показать IP"
     }
 }
 

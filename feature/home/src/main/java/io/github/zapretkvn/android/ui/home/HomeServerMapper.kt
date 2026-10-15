@@ -35,9 +35,8 @@ fun onlineServer(
         protocol = protocolLabel(item.type),
         monogram = protocolMonogram(item.type),
         modeLabel = groupModeLabel(group.type),
-        latency = latencyBadge(item.relay) ?: latencyBadge(item.icmp),
+        latency = latencyBadge(item.relay),
         relay = item.relay,
-        icmp = item.icmp,
         switchable = group.items.size > 1,
     )
 }
@@ -65,7 +64,6 @@ fun offlineServer(
         modeLabel = if (summary.switchable) "Серверов в профиле: ${summary.serverCount}" else "Единственный сервер",
         latency = latencyBadge(saved),
         relay = null,
-        icmp = null,
         switchable = summary.switchable,
     )
 }

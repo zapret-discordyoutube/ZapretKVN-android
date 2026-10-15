@@ -18,20 +18,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 
@@ -39,15 +34,10 @@ internal class LatencyProbeCoordinator(
     private val generation: Long,
     private val scope: CoroutineScope,
     private val networkMonitor: DefaultNetworkMonitor,
-    private val targetResolver: ServerPingTargetResolver,
-    private val icmpProbe: IcmpPingProbe,
     private val controller: VpnController,
     private val probeLane: ProbeLane = controller.probeLane,
     /** Готовые результаты (успех или отказ) для сохранения между запусками. */
-    private val onResults: (
-        relay: Map<String, LatencyProbeState>,
-        icmp: Map<String, LatencyProbeState>,
-    ) -> Unit = { _, _ -> },
+    private val onResults: (relay: Map<String, LatencyProbeState>) -> Unit = {},
 ) : AutoCloseable {
     private val lock = Any()
     private val nextRequestId = AtomicLong(0)
@@ -59,20 +49,17 @@ internal class LatencyProbeCoordinator(
         if (synchronized(lock) { active } != null) return
         if (closed.get() || group.items.isEmpty()) return
         val underlying = networkMonitor.current
-        val network = underlying.network
         val networkIdentity = underlying.identity
-        if (network == null || networkIdentity == null) {
+        if (underlying.network == null || networkIdentity == null) {
             controller.publishMessage(generation, "Основная сеть Android недоступна.")
             return
         }
-        val targets = targetResolver.group(group.tag, listOf(group))
         val requestId = nextRequestId.incrementAndGet()
         if (!controller.beginLatencyProbe(
                 generation = generation,
                 requestId = requestId,
                 groupTag = group.tag,
                 networkIdentity = networkIdentity,
-                icmpTargets = targets.mapTo(mutableSetOf(), ServerPingTarget::outboundTag),
             )
         ) {
             return
@@ -81,8 +68,6 @@ internal class LatencyProbeCoordinator(
             requestId = requestId,
             group = group,
             networkIdentity = networkIdentity,
-            network = network,
-            targets = targets,
         )
         val job = scope.launch(start = CoroutineStart.LAZY) { run(probe) }
         probe.job = job
@@ -126,12 +111,7 @@ internal class LatencyProbeCoordinator(
                 cancel(probe, stale = false)
                 controller.publishMessage(generation, "Проверка задержек прервана: идёт подключение.")
             }
-            val summaries = coroutineScope {
-                listOf(
-                    async { runRelay(probe) },
-                    async { runIcmp(probe) },
-                ).awaitAll()
-            }
+            val summary = runRelay(probe)
             ensureSameNetwork(probe)
             controller.completeLatencyProbe(
                 generation,
@@ -139,7 +119,7 @@ internal class LatencyProbeCoordinator(
                 probe.group.tag,
                 probe.networkIdentity,
             )
-            controller.publishMessage(generation, completionMessage(summaries))
+            controller.publishMessage(generation, completionMessage(summary))
         } catch (changed: ProbeNetworkChangedException) {
             probe.staleOnCancel = true
             controller.markLatencyStale(generation)
@@ -192,7 +172,7 @@ internal class LatencyProbeCoordinator(
                         networkIdentity = probe.networkIdentity,
                         relay = batch,
                     )
-                    onResults(batch, emptyMap())
+                    onResults(batch)
                 }
             }
             try {
@@ -221,76 +201,6 @@ internal class LatencyProbeCoordinator(
             publisher.join()
         }
         return ProbeSummary("Relay", success, failed, unsupported)
-    }
-
-    /**
-     * ICMP идёт открытым текстом мимо туннеля, поэтому проба бережная: один
-     * Echo на адрес (а не на каждый сервер с этим адресом), случайный порядок и
-     * случайная задержка перед каждым. Скользящее окно из [ICMP_CONCURRENCY]
-     * проб не ждёт самого медленного сервера, как ждали бы пачки.
-     */
-    private suspend fun runIcmp(probe: ActiveProbe): ProbeSummary {
-        var success = 0
-        var failed = 0
-        val unsupported = probe.group.items.size - probe.targets.size
-        val previousByTag = probe.group.items.associate { it.tag to it.icmp.lastSample() }
-        val hosts = probe.targets.groupedByHost()
-        val queue = Channel<List<ServerPingTarget>>(Channel.UNLIMITED)
-        hosts.forEach { queue.trySend(it) }
-        queue.close()
-        val results = Channel<Map<String, LatencyProbeState>>(Channel.UNLIMITED)
-
-        coroutineScope {
-            val workers = List(minOf(ICMP_CONCURRENCY, hosts.size)) {
-                launch {
-                    for (sameHost in queue) {
-                        ensureSameNetwork(probe)
-                        delay(Random.nextLong(ICMP_START_JITTER_MILLIS + 1))
-                        val outcome = measureIcmp(probe, sameHost.first())
-                        results.send(
-                            sameHost.associate { target ->
-                                target.outboundTag to outcome.toState(
-                                    probe.networkIdentity,
-                                    previousByTag[target.outboundTag],
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-            launch {
-                workers.joinAll()
-                results.close()
-            }
-            results.collectBatched(PUBLISH_WINDOW_MILLIS) { batch ->
-                ensureSameNetwork(probe)
-                val succeeded = batch.values.count { it is LatencyProbeState.Success }
-                success += succeeded
-                failed += batch.size - succeeded
-                controller.publishLatencyBatch(
-                    generation = generation,
-                    requestId = probe.requestId,
-                    groupTag = probe.group.tag,
-                    networkIdentity = probe.networkIdentity,
-                    icmp = batch,
-                )
-                onResults(emptyMap(), batch)
-            }
-        }
-        return ProbeSummary("ICMP", success, failed, unsupported)
-    }
-
-    private suspend fun measureIcmp(probe: ActiveProbe, target: ServerPingTarget): IcmpOutcome = try {
-        val millis = icmpProbe.measure(probe.network, target)
-            .coerceIn(0L, Int.MAX_VALUE.toLong())
-            .toInt()
-        IcmpOutcome(millis, System.currentTimeMillis(), null)
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: IcmpProbeException) {
-        IcmpOutcome(null, 0L, error.failure)
-    } catch (_: Throwable) {
-        IcmpOutcome(null, 0L, LatencyFailure.Failed)
     }
 
     private suspend fun callRelay(
@@ -334,16 +244,14 @@ internal class LatencyProbeCoordinator(
         )
     }
 
-    private fun completionMessage(summaries: List<ProbeSummary>): String = summaries.joinToString("; ") {
-        "${it.label}: успешно ${it.success}, ошибок ${it.failed}, не поддерживается ${it.unsupported}"
-    }
+    private fun completionMessage(summary: ProbeSummary): String =
+        "${summary.label}: успешно ${summary.success}, ошибок ${summary.failed}, " +
+            "не поддерживается ${summary.unsupported}"
 
     private class ActiveProbe(
         val requestId: Long,
         val group: RuntimeSelectorGroup,
         val networkIdentity: String,
-        val network: android.net.Network,
-        val targets: List<ServerPingTarget>,
     ) {
         @Volatile var relayClient: CommandClient? = null
         @Volatile var job: Job? = null
@@ -357,25 +265,9 @@ internal class LatencyProbeCoordinator(
         val unsupported: Int,
     )
 
-    /** Итог одной ICMP-пробы адреса; в состояние превращается для каждого сервера с этим адресом. */
-    private class IcmpOutcome(
-        val millis: Int?,
-        val measuredAtEpochMillis: Long,
-        val failure: LatencyFailure?,
-    ) {
-        fun toState(networkIdentity: String, previous: LatencySample?): LatencyProbeState =
-            if (millis != null) {
-                LatencyProbeState.Success(LatencySample(millis, measuredAtEpochMillis, networkIdentity))
-            } else {
-                LatencyProbeState.Failed(failure ?: LatencyFailure.Failed, previous)
-            }
-    }
-
     private class ProbeNetworkChangedException : Exception()
 
     private companion object {
-        const val ICMP_CONCURRENCY = 4
-        const val ICMP_START_JITTER_MILLIS = 150L
         const val PUBLISH_WINDOW_MILLIS = 200L
     }
 }

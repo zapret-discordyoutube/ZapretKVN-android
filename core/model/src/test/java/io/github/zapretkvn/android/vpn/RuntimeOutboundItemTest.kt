@@ -6,19 +6,16 @@ import org.junit.Test
 
 class RuntimeOutboundItemTest {
     @Test
-    fun `relay result is stored separately from ICMP measurement`() {
-        val icmpSample = LatencySample(42, 10_000, "wifi")
+    fun `sing box history becomes the relay result`() {
         val item = RuntimeOutboundItem(
             tag = "proxy",
             type = "vless",
             endpoint = "vpn.example:443",
-            icmp = LatencyProbeState.Success(icmpSample),
         ).withRelayHistory(
             testedAtEpochSeconds = 20,
             delayMillis = 84,
         )
 
-        assertEquals(LatencyProbeState.Success(icmpSample), item.icmp)
         assertEquals(
             LatencyProbeState.Success(LatencySample(84, 20_000, null)),
             item.relay,
@@ -26,22 +23,17 @@ class RuntimeOutboundItemTest {
     }
 
     @Test
-    fun `missing sing box history clears only relay result`() {
+    fun `missing sing box history clears the relay result`() {
         val item = RuntimeOutboundItem(
             tag = "proxy",
             type = "vless",
             endpoint = "vpn.example:443",
-            icmp = LatencyProbeState.Success(LatencySample(42, 10_000, "wifi")),
             relay = LatencyProbeState.Success(LatencySample(84, 20_000, null)),
         ).withRelayHistory(
             testedAtEpochSeconds = 0,
             delayMillis = 0,
         )
 
-        assertEquals(
-            LatencyProbeState.Success(LatencySample(42, 10_000, "wifi")),
-            item.icmp,
-        )
         assertEquals(LatencyProbeState.NotTested, item.relay)
     }
 

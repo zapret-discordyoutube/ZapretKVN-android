@@ -57,7 +57,7 @@ internal class ServerSwitchCoordinator(
     private val switcher: ServerSwitcher,
     private val supervisor: PathSupervisor,
     private val log: RuntimeTimeline,
-    private val startIdentityProbe: (CoreSession) -> Unit,
+    private val onExitChanged: (CoreSession) -> Unit,
     private val postToActor: (() -> Unit) -> Unit,
     private val clock: () -> Long,
 ) {
@@ -148,7 +148,7 @@ internal class ServerSwitchCoordinator(
             SwitchOutcome.Committed -> {
                 host.showForeground(ForegroundState.Connected)
                 controller.clearConnectionIdentity(session.generation)
-                startIdentityProbe(session)
+                onExitChanged(session)
             }
             is SwitchOutcome.RolledBack -> {
                 controller.publishMessage(VpnFailureStates.from(outcome.error).message)
@@ -299,7 +299,7 @@ internal class ServerSwitchCoordinator(
                 )
                 session.resetThroughputWindow()
                 controller.clearConnectionIdentity(session.generation)
-                startIdentityProbe(session)
+                onExitChanged(session)
             }
             is SwitchOutcome.RolledBack -> {
                 supervisor.onSwitchResult(episode, committed = false)
@@ -427,7 +427,7 @@ internal class ServerSwitchCoordinator(
 
         override suspend fun onCommitted(session: CoreSession) = ask {
             controller.clearConnectionIdentity(session.generation)
-            startIdentityProbe(session)
+            onExitChanged(session)
         }
 
         override fun announce(session: CoreSession, message: String, notificationDetail: String) {

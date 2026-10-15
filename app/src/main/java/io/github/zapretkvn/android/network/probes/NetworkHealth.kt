@@ -575,6 +575,10 @@ class VpnHealthPipeline internal constructor(
             )
             return
         }
+        // Запрос идёт через resolver VPN-сети, то есть входит в TUN. В «DNS Android» с
+        // проксируемыми именами через узел health-хост по DNS-правилам runtime-конфига
+        // разрешает DNS узла внутри туннеля (путь пользователя к проксируемым сайтам);
+        // при strict Private DNS и в резерве Auto — системный DNS Android.
         onStageStarted(VpnHealthStage.DnsAndroidProbe)
         try {
             val addresses = resolver.resolve(

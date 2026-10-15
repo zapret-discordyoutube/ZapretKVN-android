@@ -4,7 +4,7 @@ import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencySample
 
-/** Последний результат одной пробы (Relay HTTPS или ICMP). */
+/** Последний результат одной пробы (Relay HTTPS через ядро). */
 data class PersistedProbeResult(
     /** null — проба не удалась, см. [failure]. */
     val millis: Int?,
@@ -43,10 +43,9 @@ data class PersistedProbeResult(
 data class PersistedServerLatency(
     val fingerprint: String?,
     val relay: PersistedProbeResult? = null,
-    val icmp: PersistedProbeResult? = null,
 ) {
-    /** Что показать в списке серверов без подключения: Relay, иначе ICMP. */
-    fun displayState(): LatencyProbeState? = (relay ?: icmp)?.toState()
+    /** Что показать в списке серверов без подключения. */
+    fun displayState(): LatencyProbeState? = relay?.toState()
 }
 
 /** profileId → tag → последний пинг. */

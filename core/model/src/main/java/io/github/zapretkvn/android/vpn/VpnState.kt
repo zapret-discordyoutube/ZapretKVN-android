@@ -56,9 +56,7 @@ data class RuntimeOutboundItem(
     val tag: String,
     val type: String,
     val endpoint: String?,
-    /** ICMP Echo RTT до адреса endpoint по основной сети Android. */
-    val icmp: LatencyProbeState = LatencyProbeState.NotTested,
-    /** HTTPS HEAD через outbound; не является ICMP до адреса сервера. */
+    /** HTTPS HEAD через outbound (замер ядра); до адреса сервера напрямую ничего не отправляется. */
     val relay: LatencyProbeState = LatencyProbeState.NotTested,
 )
 
@@ -98,8 +96,6 @@ data class LatencyProbeProgress(
     val networkIdentity: String,
     val relayCompleted: Int,
     val relayTotal: Int,
-    val icmpCompleted: Int,
-    val icmpTotal: Int,
     val running: Boolean,
 )
 
@@ -122,8 +118,8 @@ fun LatencyProbeState.markStale(): LatencyProbeState =
     }
 
 /**
- * Порядок «быстрые сверху»: сначала серверы с известной задержкой (Relay HTTPS,
- * иначе ICMP) по возрастанию, затем остальные в исходном порядке.
+ * Порядок «быстрые сверху»: сначала серверы с известной задержкой (Relay HTTPS)
+ * по возрастанию, затем остальные в исходном порядке.
  */
 fun List<RuntimeOutboundItem>.sortedByLatency(): List<RuntimeOutboundItem> =
     sortedWith(
@@ -137,7 +133,7 @@ fun List<RuntimeOutboundItem>.inOrderOf(tags: List<String>): List<RuntimeOutboun
     return sortedBy { position[it.tag] ?: Int.MAX_VALUE }
 }
 
-private fun RuntimeOutboundItem.latencyRank(): Int? = relay.knownMillis() ?: icmp.knownMillis()
+private fun RuntimeOutboundItem.latencyRank(): Int? = relay.knownMillis()
 
 private fun LatencyProbeState.knownMillis(): Int? = when (this) {
     is LatencyProbeState.Success -> sample.millis
@@ -192,10 +188,19 @@ data class TrafficSample(
     val downloadBytesPerSecond: Long,
 )
 
+/** Ход ручного запроса внешнего IP; сам по себе приложение его не запрашивает. */
+enum class ExternalIpStatus {
+    NotRequested,
+    Loading,
+    Failed,
+}
+
 data class VpnSessionStats(
     val profileId: String? = null,
     val connectedAtEpochMillis: Long? = null,
+    /** Только по явному запросу пользователя; сбрасывается при переподключении и смене сервера. */
     val externalIp: String? = null,
+    val externalIpStatus: ExternalIpStatus = ExternalIpStatus.NotRequested,
     val uploadTotalBytes: Long = 0,
     val downloadTotalBytes: Long = 0,
     val samples: List<TrafficSample> = emptyList(),

@@ -4856,8 +4856,6 @@ Lio/github/zapretkvn/android/network/geo/ServerCountryStore$ensureLoaded$stored$
 Lio/github/zapretkvn/android/network/geo/ServerCountryStore$refresh$1;
 Lio/github/zapretkvn/android/network/geo/ServerCountryStore$request$1$1;
 Lio/github/zapretkvn/android/network/geo/ServerCountryStore;
-Lio/github/zapretkvn/android/network/probes/IcmpPingProbe$Companion;
-Lio/github/zapretkvn/android/network/probes/IcmpPingProbe;
 Lio/github/zapretkvn/android/network/probes/PersistedServerLatency;
 Lio/github/zapretkvn/android/network/probes/ProbeLane$Companion;
 Lio/github/zapretkvn/android/network/probes/ProbeLane;
@@ -27235,11 +27233,6 @@ SPLio/github/zapretkvn/android/network/geo/ServerCountryStore;->publish()V
 SPLio/github/zapretkvn/android/network/geo/ServerCountryStore;->readFile()Lkotlin/Pair;
 SPLio/github/zapretkvn/android/network/geo/ServerCountryStore;->refresh(Ljava/util/Set;Ljava/util/Set;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 SPLio/github/zapretkvn/android/network/geo/ServerCountryStore;->request(Ljava/util/Collection;Ljava/util/Collection;)V
-SPLio/github/zapretkvn/android/network/probes/IcmpPingProbe$Companion;-><init>()V
-SPLio/github/zapretkvn/android/network/probes/IcmpPingProbe$Companion;-><init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-SPLio/github/zapretkvn/android/network/probes/IcmpPingProbe;-><clinit>()V
-SPLio/github/zapretkvn/android/network/probes/IcmpPingProbe;-><init>(I)V
-SPLio/github/zapretkvn/android/network/probes/IcmpPingProbe;-><init>(IILkotlin/jvm/internal/DefaultConstructorMarker;)V
 SPLio/github/zapretkvn/android/network/probes/ProbeLane$Companion;-><init>()V
 SPLio/github/zapretkvn/android/network/probes/ProbeLane$Companion;-><init>(Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 SPLio/github/zapretkvn/android/network/probes/ProbeLane;-><clinit>()V

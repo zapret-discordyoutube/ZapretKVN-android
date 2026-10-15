@@ -76,8 +76,10 @@ object BootstrapConfig {
         return serverHostnames(config)
     }
 
-    fun serverHostnames(config: ParsedConfig): Set<String> {
-        val root = config.root ?: return emptySet()
+    fun serverHostnames(config: ParsedConfig): Set<String> =
+        serverHostnames(config.root ?: return emptySet())
+
+    fun serverHostnames(root: JsonObject): Set<String> {
         val names = LinkedHashSet<String>()
         fun add(value: String?) {
             val host = value?.trim()?.trimEnd('.')?.lowercase()?.takeIf(String::isNotEmpty) ?: return

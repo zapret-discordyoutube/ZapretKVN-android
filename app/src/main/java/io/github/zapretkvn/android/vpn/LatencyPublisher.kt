@@ -25,7 +25,6 @@ internal class LatencyPublisher(
                     items = incoming.items.map { item ->
                         val previous = priorItems[item.tag] ?: return@map item
                         item.copy(
-                            icmp = previous.icmp,
                             relay = when {
                                 prior?.probeProgress?.running == true -> previous.relay
                                 item.relay.lastSample()?.measuredAtEpochMillis
@@ -48,18 +47,11 @@ internal class LatencyPublisher(
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-        icmpTargets: Set<String>,
     ): Boolean {
         var started = false
         mutable.update { groups ->
             if (generation != currentGeneration()) return@update groups
-            val result = LatencyProbeReducer.begin(
-                groups,
-                requestId,
-                groupTag,
-                networkIdentity,
-                icmpTargets,
-            )
+            val result = LatencyProbeReducer.begin(groups, requestId, groupTag, networkIdentity)
             started = result.started
             result.groups
         }
@@ -72,9 +64,8 @@ internal class LatencyPublisher(
         groupTag: String,
         networkIdentity: String,
         relay: Map<String, LatencyProbeState> = emptyMap(),
-        icmp: Map<String, LatencyProbeState> = emptyMap(),
     ) {
-        if (relay.isEmpty() && icmp.isEmpty()) return
+        if (relay.isEmpty()) return
         mutable.update { groups ->
             if (generation != currentGeneration()) return@update groups
             LatencyProbeReducer.publishBatch(
@@ -83,7 +74,6 @@ internal class LatencyPublisher(
                 groupTag,
                 networkIdentity,
                 relay,
-                icmp,
             )
         }
     }
@@ -116,28 +106,6 @@ internal class LatencyPublisher(
         mutable.update { groups ->
             if (generation != currentGeneration()) return@update groups
             LatencyProbeReducer.markStale(groups)
-        }
-    }
-
-    internal fun publishBackgroundIcmp(
-        generation: Long,
-        outboundTag: String,
-        state: LatencyProbeState,
-    ) {
-        if (generation != currentGeneration() || outboundTag.isBlank()) return
-        mutable.update { groups ->
-            if (generation != currentGeneration()) return@update groups
-            groups.map { group ->
-                group.copy(
-                    items = group.items.map { item ->
-                        if (item.tag == outboundTag && item.icmp !is LatencyProbeState.Running) {
-                            item.copy(icmp = state)
-                        } else {
-                            item
-                        }
-                    },
-                )
-            }
         }
     }
 

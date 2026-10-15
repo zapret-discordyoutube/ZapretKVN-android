@@ -111,7 +111,7 @@ internal class VpnRuntime(
         switcher = switcher,
         supervisor = supervisor,
         log = log,
-        startIdentityProbe = { session -> starter.startIdentityProbe(session) },
+        onExitChanged = { session -> starter.onExitChanged(session) },
         postToActor = ::postCall,
         clock = { monotonicNow() },
     )

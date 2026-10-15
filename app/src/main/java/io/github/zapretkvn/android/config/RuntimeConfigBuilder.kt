@@ -68,6 +68,17 @@ data class RuntimeConfigOptions(
      */
     val standingUpdaterPackageName: String? = null,
     val blockedPackages: Set<String> = emptySet(),
+    /**
+     * Режим «DNS Android»: имена проксируемых сайтов разрешает DNS узла внутри
+     * туннеля (как в «Защищённом»), а провайдеру открытым DNS не уходят. Direct-
+     * домены и имена самих VPN-серверов остаются на системном resolver Android.
+     *
+     * Выключать нужно там, где проксируемые имена обязаны остаться на системном
+     * DNS: strict Private DNS (шифрованный DoT выбранного пользователем резолвера)
+     * и последний резерв «Автоматического» режима (DNS узла к этому моменту уже
+     * отказал). Без выбранного proxy флаг ничего не меняет.
+     */
+    val androidDnsProxiedViaNode: Boolean = true,
 )
 
 sealed interface RuntimeConfigResult {
@@ -251,6 +262,7 @@ object RuntimeConfigBuilder {
             bootstrapHost = options.bootstrapHost,
             healthCheckPackageName = options.healthCheckPackageName,
             blockedPackages = blockedPackages,
+            androidDnsProxiedViaNode = options.androidDnsProxiedViaNode,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         return dnsOverlay as RuntimeConfigResult.Ready
@@ -319,7 +331,13 @@ object RuntimeConfigBuilder {
         bootstrapHost: BootstrapHostOverlay?,
         healthCheckPackageName: String?,
         blockedPackages: Set<String>,
+        androidDnsProxiedViaNode: Boolean,
     ): RuntimeConfigResult {
+        // «DNS Android» с выбранным proxy отправляет проксируемые имена к DNS узла;
+        // без proxy (или с отключённым флагом) все имена остаются на системном DNS.
+        val androidViaNode = mode == DnsMode.Android &&
+            androidDnsProxiedViaNode &&
+            selectedProxyTag != null
         val next = root.toMutableMap()
         var dns = (root["dns"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
         val profileServers = (dns["servers"] as? JsonArray)?.toList().orEmpty()
@@ -342,7 +360,7 @@ object RuntimeConfigBuilder {
                 null
             }
             servers = servers + androidDnsServer()
-            if (mode != DnsMode.Android) {
+            if (mode != DnsMode.Android || androidViaNode) {
                 val proxy = checkNotNull(selectedProxyTag)
                 servers = servers + secureDnsServers(proxy)
             }
@@ -356,11 +374,16 @@ object RuntimeConfigBuilder {
             val rejectRules = existingRules.filter(::isRejectRule)
             val otherRules = existingRules.filterNot(::isRejectRule)
             val generated = when (mode) {
-                DnsMode.Android -> androidDnsRules(
-                    root,
-                    selectedProxyTag,
-                    proxyIpv4Only,
-                )
+                DnsMode.Android -> if (androidViaNode) {
+                    androidTunnelDnsRules(
+                        root,
+                        checkNotNull(selectedProxyTag),
+                        proxyIpv4Only,
+                        bootstrapHost,
+                    )
+                } else {
+                    androidDnsRules(root, selectedProxyTag, proxyIpv4Only)
+                }
                 DnsMode.Secure -> listOf(
                     catchAllDnsRule(SECURE_DNS_TAG, ipv4Only = proxyIpv4Only),
                 )
@@ -381,7 +404,11 @@ object RuntimeConfigBuilder {
             )
             dns["final"] = JsonPrimitive(
                 when (mode) {
-                    DnsMode.Android -> ANDROID_DNS_TAG
+                    DnsMode.Android -> if (androidViaNode) {
+                        automaticFinal(root, checkNotNull(selectedProxyTag))
+                    } else {
+                        ANDROID_DNS_TAG
+                    }
                     DnsMode.Secure -> SECURE_DNS_TAG
                     DnsMode.Automatic -> automaticFinal(root, checkNotNull(selectedProxyTag))
                     DnsMode.FromJson -> error("unreachable")
@@ -562,10 +589,43 @@ object RuntimeConfigBuilder {
             put("detour", proxyTag)
         }
 
+    /**
+     * Режим «DNS Android» при проксируемых именах через узел: тот же набор правил,
+     * что в «Автоматически», но с явным правилом имён VPN-серверов и health-хостов.
+     *
+     * Имена серверов (outbound-ы, пиры WireGuard, bootstrap-хост) обязаны
+     * разрешаться системным resolver Android: DNS узла живёт внутри туннеля, который
+     * без адреса сервера не поднять. Обычно их и так разрешает
+     * `route.default_domain_resolver`, но явное правило не даёт им уйти через detour
+     * при любом пути разрешения.
+     */
+    private fun androidTunnelDnsRules(
+        root: JsonObject,
+        selectedProxyTag: String,
+        proxyIpv4Only: Boolean,
+        bootstrapHost: BootstrapHostOverlay?,
+    ): List<JsonElement> {
+        val serverNames = (
+            BootstrapConfig.serverHostnames(root) +
+                listOfNotNull(bootstrapHost?.hostname?.trim()?.trimEnd('.')?.lowercase()?.takeIf(String::isNotEmpty))
+            ).toSortedSet()
+        val result = mutableListOf<JsonElement>()
+        if (serverNames.isNotEmpty()) {
+            result += buildJsonObject {
+                put("domain", JsonArray(serverNames.map(::JsonPrimitive)))
+                put("action", "route")
+                put("server", ANDROID_DNS_TAG)
+            }
+        }
+        result += automaticDnsRules(root, selectedProxyTag, proxyIpv4Only, healthHostsViaNode = true)
+        return result
+    }
+
     private fun automaticDnsRules(
         root: JsonObject,
         selectedProxyTag: String,
         proxyIpv4Only: Boolean,
+        healthHostsViaNode: Boolean = false,
     ): List<JsonElement> {
         val result = mutableListOf<JsonElement>()
         result += buildJsonObject {
@@ -582,9 +642,23 @@ object RuntimeConfigBuilder {
             put("action", "route")
             put("server", ANDROID_DNS_TAG)
         }
+        if (healthHostsViaNode) {
+            // Health-хосты route-правилом идут через выбранный proxy, поэтому и имя
+            // обязано разрешаться по пути пользователя (DNS узла), даже когда
+            // route.final = direct и catch-all правило ведёт на системный DNS.
+            result += buildJsonObject {
+                put("domain", JsonArray(ManagedHealthProbe.hosts.map(::JsonPrimitive)))
+                put("action", "route")
+                put("server", SECURE_DNS_TAG)
+                if (proxyIpv4Only) put("strategy", IPV4_ONLY_STRATEGY)
+            }
+        }
         val routeRules = ((root["route"] as? JsonObject)?.get("rules") as? JsonArray).orEmpty()
         routeRules.mapNotNullTo(result) { element ->
             val rule = element as? JsonObject ?: return@mapNotNullTo null
+            // Сгенерированное прошлой сборкой health-правило (runtime-копия на входе) — не
+            // пользовательская политика: его DNS-часть строится отдельно, дублей быть не должно.
+            if (isGeneratedRouteRule(rule)) return@mapNotNullTo null
             if (rule.string("action") != "route") return@mapNotNullTo null
             val outbound = rule.string("outbound") ?: return@mapNotNullTo null
             val match = domainMatchForDns(root, rule)

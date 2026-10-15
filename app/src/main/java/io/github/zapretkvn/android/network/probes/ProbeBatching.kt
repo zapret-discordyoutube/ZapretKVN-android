@@ -44,13 +44,3 @@ internal suspend fun <K, V> ReceiveChannel<Map<K, V>>.collectBatched(
         if (!open) return
     }
 }
-
-/**
- * Серверы с одним и тем же адресом — одна проба на всех: в подписках один хост
- * повторяется под разными портами и именами. Порядок групп случайный, чтобы
- * проверка не повторяла порядок списка.
- */
-internal fun List<ServerPingTarget>.groupedByHost(
-    shuffle: (List<List<ServerPingTarget>>) -> List<List<ServerPingTarget>> = { it.shuffled() },
-): List<List<ServerPingTarget>> =
-    shuffle(groupBy { it.hostname.trim().lowercase() }.values.toList())

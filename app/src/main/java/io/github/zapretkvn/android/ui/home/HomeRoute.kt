@@ -89,6 +89,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
                 if (deps.vpn.state.value is VpnConnectionState.Stopped) deps.checkServicesDirect()
                 else deps.vpn.checkServices()
             },
+            onRequestExternalIp = deps.vpn::requestExternalIp,
         )
     }
     HomeScreen(

@@ -380,6 +380,12 @@ internal class SessionStarter(
                     updaterPackageName = service.packageName.takeIf { updaterRouting },
                     standingUpdaterPackageName = service.packageName,
                     blockedPackages = appSelection.blockedPackages,
+                    // Явный «DNS Android»: проксируемые имена идут к DNS узла, а не
+                    // провайдеру открытым DNS. Strict Private DNS (шифрованный DoT
+                    // выбранного пользователем резолвера) и резерв «Автоматического»
+                    // режима, где DNS узла уже отказал, остаются целиком на Android.
+                    androidDnsProxiedViaNode = configuredDnsMode == DnsMode.Android &&
+                        underlying.privateDnsMode != PrivateDnsMode.Strict,
                 ),
             )
         ) {
@@ -432,7 +438,7 @@ internal class SessionStarter(
             updaterRouting = updaterRouting,
             controller = controller,
             scope = scope,
-            icmpPingProbe = container.icmpPingProbe,
+            externalIpProbe = container.vpnExternalIpProbe,
             serviceProbePaths = container.serviceProbePaths,
             latencyStore = container.serverLatencyStore,
         )
@@ -527,7 +533,7 @@ internal class SessionStarter(
             session.requireRuntimeErrorClient()
             session.attachNetworkObserver(monitor.observe { state -> events.onUnderlyingNetwork(session, state) })
             events.onSessionActivated(session)
-            if (verified.health.externalIpProbeAllowed) startIdentityProbe(session)
+            if (verified.health.externalIpProbeAllowed) onExitChanged(session)
             // Кандидат замены сохраняется только после готовности конфигурации,
             // ядра, TUN, DNS/HTTPS и всех наблюдателей сессии. Если проверку
             // прошёл не он, а резервный, профиль уже сохранён переключением.
@@ -715,15 +721,16 @@ internal class SessionStarter(
         return null
     }
 
-    /** Внешний IP через туннель — для главного экрана; не влияет на подключение. */
-    fun startIdentityProbe(session: CoreSession) {
-        // Сменился сервер или выход: прежние выводы о сервисах относились к другому узлу.
+    /**
+     * Выход сессии определён или сменился (подключение, переключение сервера). Внешний IP здесь
+     * НЕ запрашивается: сервис IP вызывается только по явному нажатию пользователя
+     * ([CoreSession.requestExternalIp]), чтобы проверки не выдавали серверы провайдеру.
+     */
+    fun onExitChanged(session: CoreSession) {
+        // Сменился сервер или выход: прежние выводы о сервисах и прежний IP относились к другому узлу.
         session.markServicesStale()
+        session.cancelExternalIpRequest()
         session.replaceIdentityJob(scope.launch {
-            val externalIp = runCatching { container.vpnExternalIpProbe.fetch() }.getOrNull()
-            if (externalIp != null && sessions.active() === session) {
-                controller.publishExternalIp(session.generation, externalIp)
-            }
             if (sessions.active() === session) session.scheduleServiceCheck()
         })
     }

@@ -247,9 +247,6 @@ expected = [
     # только после импорта/обновления профиля или при запуске; повторов и циклов нет.
     ("app/src/main/java/io/github/zapretkvn/android/network/geo/ServerCountryStore.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
-    # Разовый случайный сдвиг старта ICMP-замера (ICMP_START_JITTER_MILLIS):
-    # воркеры не шлют эхо-запросы одним залпом. Не повтор и не цикл ожидания.
-    ("app/src/main/java/io/github/zapretkvn/android/network/probes/LatencyProbeCoordinator.kt", 1),
     # Проверка доступности сервисов: единственная пауза probeSleep(). Ею делаются случайный сдвиг
     # старта запросов (0-400 мс), единственный повтор основного запроса через туннель (1,5-3 с)
     # и разовая пауза автозапуска после подключения (4-12 с). Внутри одного запуска, без цикла и
@@ -288,6 +285,60 @@ print(
     "service-check pauses, card age label, update queue listener pauses, "
     "network debounce, bounded recovery backoff and bootstrap settle."
 )
+PY
+
+# Проверки не должны выдавать VPN-серверы провайдеру (решение владельца 15.10.2026):
+# ни ICMP-пинга серверов напрямую, ни автоматического запроса внешнего IP.
+python3 - "$PROJECT_ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+sources = [
+    path
+    for base in (
+        root / "app/src/main/java",
+        root / "app-updater/src/main/java",
+        root / "network-bootstrap/src/main/java",
+        *sorted(root.glob("core/*/src/main/java")),
+        *sorted(root.glob("feature/*/src/main/java")),
+    )
+    for path in base.rglob("*.kt")
+]
+for path in sources:
+    text = path.read_text()
+    if re.search(r"IPPROTO_ICMP|IcmpPing|IcmpEcho|ServerPingTarget", text):
+        raise SystemExit(f"ICMP ping of VPN servers is forbidden: {path.relative_to(root)}")
+ip_probe = "app/src/main/java/io/github/zapretkvn/android/network/probes/VpnExternalIpProbe.kt"
+core_session = "app/src/main/java/io/github/zapretkvn/android/vpn/runtime/CoreSession.kt"
+for path in sources:
+    relative = str(path.relative_to(root))
+    text = path.read_text()
+    if "ipify" in text and relative != ip_probe:
+        raise SystemExit(f"The external IP service is only called from VpnExternalIpProbe: {relative}")
+    if re.search(r"[eE]xternalIpProbe\.fetch\(", text) and relative != core_session:
+        raise SystemExit(f"External IP is fetched only on demand from CoreSession.requestExternalIp: {relative}")
+session = (root / core_session).read_text()
+if len(re.findall(r"[eE]xternalIpProbe\.fetch\(", session)) != 1:
+    raise SystemExit("CoreSession must fetch the external IP in exactly one place: requestExternalIp")
+callers = sorted(
+    str(path.relative_to(root))
+    for path in sources
+    if any(
+        re.search(r"\brequestExternalIp\b", line)
+        for line in path.read_text().splitlines()
+        if not line.lstrip().startswith(("*", "//", "/*"))
+    )
+)
+expected_callers = [
+    "app/src/main/java/io/github/zapretkvn/android/ui/home/HomeRoute.kt",
+    "app/src/main/java/io/github/zapretkvn/android/vpn/VpnController.kt",
+    "app/src/main/java/io/github/zapretkvn/android/vpn/runtime/CoreSession.kt",
+]
+if callers != expected_callers:
+    raise SystemExit(f"Unexpected external IP request surface (user action only): {callers!r}")
+print("VPN servers are never pinged over ICMP and the external IP is requested only by a user tap.")
 PY
 
 python3 - "$MANIFEST" "$PROJECT_ROOT/app/src/main/res/xml/diagnostic_file_paths.xml" <<'PY'

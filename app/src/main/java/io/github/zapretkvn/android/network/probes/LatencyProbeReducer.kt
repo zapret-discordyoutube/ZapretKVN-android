@@ -19,7 +19,6 @@ internal object LatencyProbeReducer {
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-        icmpTargets: Set<String>,
     ): BeginResult {
         if (groups.any { it.probeProgress?.running == true }) return BeginResult(groups, false)
         var started = false
@@ -27,7 +26,6 @@ internal object LatencyProbeReducer {
             if (group.tag != groupTag || group.items.isEmpty()) return@map group
             val nestedTypes = setOf("selector", "urltest")
             val relayUnsupported = group.items.count { it.type.lowercase() in nestedTypes }
-            val icmpUnsupported = group.items.count { it.tag !in icmpTargets }
             started = true
             group.copy(
                 probeProgress = LatencyProbeProgress(
@@ -35,8 +33,6 @@ internal object LatencyProbeReducer {
                     networkIdentity = networkIdentity,
                     relayCompleted = relayUnsupported,
                     relayTotal = group.items.size,
-                    icmpCompleted = icmpUnsupported,
-                    icmpTotal = group.items.size,
                     running = true,
                 ),
                 items = group.items.map { item ->
@@ -46,12 +42,6 @@ internal object LatencyProbeReducer {
                             LatencyProbeState.Unsupported(LatencyUnsupportedReason.NestedGroup)
                         } else {
                             LatencyProbeState.Running(item.relay.lastSample())
-                        },
-                        icmp = when {
-                            nested -> LatencyProbeState.Unsupported(LatencyUnsupportedReason.NestedGroup)
-                            item.tag !in icmpTargets ->
-                                LatencyProbeState.Unsupported(LatencyUnsupportedReason.MissingEndpoint)
-                            else -> LatencyProbeState.Running(item.icmp.lastSample())
                         },
                     )
                 },
@@ -66,7 +56,6 @@ internal object LatencyProbeReducer {
         groupTag: String,
         networkIdentity: String,
         relay: Map<String, LatencyProbeState>,
-        icmp: Map<String, LatencyProbeState>,
     ): List<RuntimeSelectorGroup> = groups.map { group ->
         val progress = group.probeProgress
         if (!progress.matches(group, requestId, groupTag, networkIdentity, requireRunning = true)) {
@@ -74,21 +63,14 @@ internal object LatencyProbeReducer {
         }
         checkNotNull(progress)
         var relayCompleted = progress.relayCompleted
-        var icmpCompleted = progress.icmpCompleted
         group.copy(
             items = group.items.map { item ->
                 val relayState = relay[item.tag]
-                val icmpState = icmp[item.tag]
                 if (relayState != null && item.relay is LatencyProbeState.Running) relayCompleted++
-                if (icmpState != null && item.icmp is LatencyProbeState.Running) icmpCompleted++
-                item.copy(
-                    relay = relayState ?: item.relay,
-                    icmp = icmpState ?: item.icmp,
-                )
+                item.copy(relay = relayState ?: item.relay)
             },
             probeProgress = progress.copy(
                 relayCompleted = relayCompleted.coerceAtMost(progress.relayTotal),
-                icmpCompleted = icmpCompleted.coerceAtMost(progress.icmpTotal),
             ),
         )
     }
@@ -120,10 +102,7 @@ internal object LatencyProbeReducer {
         group.copy(
             probeProgress = null,
             items = group.items.map { item ->
-                item.copy(
-                    relay = item.relay.restoreAfterCancellation(),
-                    icmp = item.icmp.restoreAfterCancellation(),
-                )
+                item.copy(relay = item.relay.restoreAfterCancellation())
             },
         )
     }
@@ -132,7 +111,7 @@ internal object LatencyProbeReducer {
         group.copy(
             probeProgress = null,
             items = group.items.map { item ->
-                item.copy(relay = item.relay.markStale(), icmp = item.icmp.markStale())
+                item.copy(relay = item.relay.markStale())
             },
         )
     }

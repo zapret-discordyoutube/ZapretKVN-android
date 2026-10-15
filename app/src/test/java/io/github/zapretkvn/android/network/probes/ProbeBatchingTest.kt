@@ -81,31 +81,4 @@ class ProbeBatchingTest {
 
         assertEquals(0, published)
     }
-
-    @Test
-    fun `servers sharing a host are probed once`() {
-        val targets = listOf(
-            ServerPingTarget("a", "vpn.example.com"),
-            ServerPingTarget("b", "VPN.example.com"),
-            ServerPingTarget("c", "other.example.com"),
-            ServerPingTarget("d", "vpn.example.com "),
-        )
-
-        val groups = targets.groupedByHost(shuffle = { it })
-
-        assertEquals(
-            listOf(listOf("a", "b", "d"), listOf("c")),
-            groups.map { group -> group.map(ServerPingTarget::outboundTag) },
-        )
-    }
-
-    @Test
-    fun `probe order does not follow the list order`() {
-        val targets = List(40) { ServerPingTarget("s$it", "host$it.example.com") }
-
-        val orders = List(5) { targets.groupedByHost().map { it.single().outboundTag } }
-
-        assertTrue(orders.all { it.sorted() == targets.map(ServerPingTarget::outboundTag).sorted() })
-        assertTrue(orders.any { it != targets.map(ServerPingTarget::outboundTag) })
-    }
 }

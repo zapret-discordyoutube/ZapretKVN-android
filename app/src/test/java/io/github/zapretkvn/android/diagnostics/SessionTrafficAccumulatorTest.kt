@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
+import io.github.zapretkvn.android.vpn.ExternalIpStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -48,5 +49,40 @@ class SessionTrafficAccumulatorTest {
         assertNull(accumulator.updateTraffic(9, 1, 2, 3, 4))
         assertTrue(accumulator.value.samples.isEmpty())
         assertNull(accumulator.value.externalIp)
+    }
+
+    @Test
+    fun `external IP is empty after start and only an explicit request fills it`() {
+        val accumulator = SessionTrafficAccumulator()
+        accumulator.start(5, "profile", 100)
+        assertNull(accumulator.value.externalIp)
+        assertEquals(ExternalIpStatus.NotRequested, accumulator.value.externalIpStatus)
+
+        assertEquals(ExternalIpStatus.Loading, accumulator.beginExternalIp(5)?.externalIpStatus)
+        accumulator.updateExternalIp(5, "203.0.113.1")
+        assertEquals("203.0.113.1", accumulator.value.externalIp)
+        assertEquals(ExternalIpStatus.NotRequested, accumulator.value.externalIpStatus)
+
+        // Неудачное обновление не стирает известный адрес.
+        accumulator.beginExternalIp(5)
+        accumulator.updateExternalIp(5, null)
+        assertEquals("203.0.113.1", accumulator.value.externalIp)
+        assertEquals(ExternalIpStatus.Failed, accumulator.value.externalIpStatus)
+    }
+
+    @Test
+    fun `server switch and reconnect forget the cached external IP`() {
+        val accumulator = SessionTrafficAccumulator()
+        accumulator.start(5, "profile", 100)
+        accumulator.updateExternalIp(5, "203.0.113.1")
+
+        accumulator.clearConnectionIdentity(5)
+        assertNull(accumulator.value.externalIp)
+        assertEquals(ExternalIpStatus.NotRequested, accumulator.value.externalIpStatus)
+
+        accumulator.updateExternalIp(5, "203.0.113.2")
+        accumulator.start(6, "profile", 200)
+        assertNull(accumulator.value.externalIp)
+        assertNull(accumulator.beginExternalIp(5))
     }
 }

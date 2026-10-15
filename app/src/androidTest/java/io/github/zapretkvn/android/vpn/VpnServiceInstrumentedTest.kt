@@ -323,10 +323,43 @@ class VpnServiceInstrumentedTest {
             assertEquals("server-only", completed.selected)
             assertFalse(completed.items.single().relay is LatencyProbeState.Running)
             assertTrue(completed.items.single().relay != LatencyProbeState.NotTested)
-            assertEquals(
-                LatencyProbeState.Unsupported(LatencyUnsupportedReason.MissingEndpoint),
-                completed.items.single().icmp,
-            )
+        } finally {
+            stopIfNeeded(container.vpnController, context)
+            container.profileStore.delete(profile.id)
+            denyVpn(packageName)
+        }
+    }
+
+    @Test
+    fun externalIpIsNotRequestedOnConnectAndOnlyOnUserTap() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val container = (context.applicationContext as ZapretApplication).container
+        val packageName = context.packageName
+        allowVpn(packageName)
+        container.profileStore.initialize()
+        val profile = container.profileStore.create(
+            name = "External IP on demand",
+            rawJson = SINGLE_SERVER_DIRECT_CONFIG,
+            source = ProfileSource.RawJson,
+        )
+        try {
+            container.appSelectionStore.replaceAllowlist(setOf("com.android.settings"))
+            val connected = connectResult(container.vpnController, profile.id)
+            assertTrue("VPN failed: $connected", connected is VpnConnectionState.Connected)
+            // Раньше адрес запрашивался сразу после подключения; теперь только по нажатию.
+            delay(EXTERNAL_IP_QUIET_MILLIS)
+            val idle = container.vpnController.sessionStats.value
+            assertEquals(null, idle.externalIp)
+            assertEquals(ExternalIpStatus.NotRequested, idle.externalIpStatus)
+
+            container.vpnController.requestExternalIp()
+            val answered = withTimeout(20_000) {
+                container.vpnController.sessionStats.first {
+                    it.externalIp != null || it.externalIpStatus == ExternalIpStatus.Failed
+                }
+            }
+            assertTrue(answered.externalIp != null || answered.externalIpStatus == ExternalIpStatus.Failed)
         } finally {
             stopIfNeeded(container.vpnController, context)
             container.profileStore.delete(profile.id)
@@ -2224,6 +2257,7 @@ class VpnServiceInstrumentedTest {
         const val RU_IPV4 = "5.255.255.5"
         const val RU_IPV6 = "2a02:6b8::feed:0ff"
         const val NON_RU_IPV4 = "1.1.1.1"
+        const val EXTERNAL_IP_QUIET_MILLIS = 6_000L
         const val NON_RU_IPV6 = "2606:4700:4700::1111"
         const val PRIVATE_IPV4 = "192.168.77.7"
         const val PERF_FLOW_COUNT = 40

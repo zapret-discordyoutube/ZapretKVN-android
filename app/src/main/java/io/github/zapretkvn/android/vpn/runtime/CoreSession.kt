@@ -11,12 +11,11 @@ import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.engines.failover.SlowThroughputDetector
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.network.UnderlyingPolicyKey
-import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.LatencyProbeCoordinator
 import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyReducer
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
-import io.github.zapretkvn.android.network.probes.ServerPingTargetResolver
+import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
 import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCoordinator
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
@@ -42,7 +41,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -71,8 +72,8 @@ internal class CoreSession(
     val runtimeDnsMode: DnsMode,
     val updaterRouting: Boolean,
     private val controller: VpnController,
-    scope: CoroutineScope,
-    icmpPingProbe: IcmpPingProbe,
+    private val scope: CoroutineScope,
+    private val externalIpProbe: VpnExternalIpProbe,
     private val latencyStore: ServerLatencyStore,
     serviceProbePaths: AndroidServiceProbePaths,
 ) : AutoCloseable {
@@ -92,6 +93,7 @@ internal class CoreSession(
     private var statusObserver: Job? = null
     private var diagnosticsObserver: Job? = null
     private var identityJob: Job? = null
+    private var externalIpJob: Job? = null
     private var statusClient: CommandClient? = null
     private var statusClientCounted = false
     /** Отдельный поток CommandLog диагностики: нужен, только когда общий поток [runtimeErrorClient] её не питает. */
@@ -128,21 +130,12 @@ internal class CoreSession(
 
     /** Отпечатки адресов серверов профиля: ключ сохранённого пинга. */
     val serverFingerprints: Map<String, String> = ServerLatencyFingerprint.of(outboundDescriptions)
-    private val pingTargetResolver = ServerPingTargetResolver(
-        outboundDescriptions,
-        selectorGroups,
-        primaryGroupTag,
-    )
     private val latencyProbeCoordinator = LatencyProbeCoordinator(
         generation = generation,
         scope = scope,
         networkMonitor = networkMonitor,
-        targetResolver = pingTargetResolver,
-        icmpProbe = icmpPingProbe,
         controller = controller,
-        onResults = { relay, icmp ->
-            latencyStore.record(profileId, serverFingerprints, relay, icmp)
-        },
+        onResults = { relay -> latencyStore.record(profileId, serverFingerprints, relay) },
     )
     private val serviceAvailabilityCoordinator = ServiceAvailabilityCoordinator(
         generation = generation,
@@ -156,6 +149,7 @@ internal class CoreSession(
 
     init {
         controller.registerServiceCheckHandler(generation, serviceAvailabilityCoordinator::requestCheck)
+        controller.registerExternalIpHandler(generation, ::requestExternalIp)
         VpnRuntimeMetrics.sessionOpened()
         selectorGroups.forEach { group -> group.default?.let { runtimeSelection[group.tag] = it } }
     }
@@ -193,6 +187,30 @@ internal class CoreSession(
 
     /** Выход определён: после подключения один раз сама запустится проверка сервисов. */
     fun scheduleServiceCheck() = serviceAvailabilityCoordinator.scheduleAutoCheck()
+
+    /**
+     * Ручной запрос внешнего IP (кнопка на главном экране). Один запрос за раз;
+     * автоматически, при подключении или переключении сервера, не вызывается.
+     */
+    fun requestExternalIp() {
+        val job = synchronized(resourceLock) {
+            if (closing.get() || externalIpJob?.isActive == true) return
+            scope.launch(start = CoroutineStart.LAZY) {
+                controller.publishExternalIpLoading(generation)
+                val address = runCatching { externalIpProbe.fetch() }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrNull()
+                controller.publishExternalIp(generation, address)
+            }.also { externalIpJob = it }
+        }
+        job.start()
+    }
+
+    /** Сервер сменился: идущий запрос относится к прежнему выходу, его ответ не нужен. */
+    fun cancelExternalIpRequest() {
+        val job = synchronized(resourceLock) { externalIpJob.also { externalIpJob = null } }
+        job?.cancel()
+    }
 
     fun onNetworkChanged() {
         latencyProbeCoordinator.onNetworkChanged()
@@ -535,10 +553,11 @@ internal class CoreSession(
             closeTun()
             timedStopStage("close_observers", "Остановка callback и фоновых задач") {
                 val jobs = synchronized(resourceLock) {
-                    listOfNotNull(statusObserver, diagnosticsObserver, identityJob).also {
+                    listOfNotNull(statusObserver, diagnosticsObserver, identityJob, externalIpJob).also {
                         statusObserver = null
                         diagnosticsObserver = null
                         identityJob = null
+                        externalIpJob = null
                     }
                 }
                 jobs.forEach(Job::cancel)

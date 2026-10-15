@@ -58,6 +58,8 @@ class VpnController(
     private val mutableEnabledServices = MutableStateFlow(ServiceCatalog.defaultIds)
     @Volatile
     private var serviceCheckHandler: Pair<Long, () -> Unit>? = null
+    @Volatile
+    private var externalIpHandler: Pair<Long, () -> Unit>? = null
     private val trafficAccumulator = SessionTrafficAccumulator()
     private val mutableSessionStats = MutableStateFlow(trafficAccumulator.value)
     private val trafficLock = Any()
@@ -173,6 +175,20 @@ class VpnController(
         if (mutableState.value !is VpnConnectionState.Connected) return
         val handler = serviceCheckHandler ?: return
         if (handler.first == currentGeneration()) handler.second()
+    }
+
+    /**
+     * Нажатие «Показать IP» на главном экране: единственный путь, которым приложение
+     * обращается к сервису внешнего IP. Без подключённого VPN ничего не делает.
+     */
+    fun requestExternalIp() {
+        if (mutableState.value !is VpnConnectionState.Connected) return
+        val handler = externalIpHandler ?: return
+        if (handler.first == currentGeneration()) handler.second()
+    }
+
+    internal fun registerExternalIpHandler(generation: Long, handler: (() -> Unit)?) {
+        externalIpHandler = handler?.let { generation to it }
     }
 
     internal fun setEnabledServices(ids: Set<ServiceId>) {
@@ -407,8 +423,7 @@ class VpnController(
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-        icmpTargets: Set<String>,
-    ): Boolean = latencyPublisher.beginLatencyProbe(generation, requestId, groupTag, networkIdentity, icmpTargets)
+    ): Boolean = latencyPublisher.beginLatencyProbe(generation, requestId, groupTag, networkIdentity)
 
     internal fun publishLatencyBatch(
         generation: Long,
@@ -416,8 +431,7 @@ class VpnController(
         groupTag: String,
         networkIdentity: String,
         relay: Map<String, LatencyProbeState> = emptyMap(),
-        icmp: Map<String, LatencyProbeState> = emptyMap(),
-    ) = latencyPublisher.publishLatencyBatch(generation, requestId, groupTag, networkIdentity, relay, icmp)
+    ) = latencyPublisher.publishLatencyBatch(generation, requestId, groupTag, networkIdentity, relay)
 
     internal fun completeLatencyProbe(
         generation: Long,
@@ -434,9 +448,6 @@ class VpnController(
     ) = latencyPublisher.cancelLatencyProbe(generation, requestId, groupTag, networkIdentity)
 
     internal fun markLatencyStale(generation: Long) = latencyPublisher.markLatencyStale(generation)
-
-    internal fun publishBackgroundIcmp(generation: Long, outboundTag: String, state: LatencyProbeState) =
-        latencyPublisher.publishBackgroundIcmp(generation, outboundTag, state)
 
     internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) =
         latencyPublisher.publishSelection(generation, groupTag, outboundTag)
@@ -466,6 +477,12 @@ class VpnController(
                 uploadTotal,
                 downloadTotal,
             )?.let { mutableSessionStats.value = it }
+        }
+    }
+
+    internal fun publishExternalIpLoading(generation: Long) {
+        synchronized(trafficLock) {
+            trafficAccumulator.beginExternalIp(generation)?.let { mutableSessionStats.value = it }
         }
     }
 

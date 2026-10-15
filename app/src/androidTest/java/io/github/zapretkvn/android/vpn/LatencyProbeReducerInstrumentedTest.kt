@@ -29,7 +29,7 @@ class LatencyProbeReducerInstrumentedTest {
                             tag = "leaf",
                             type = "vless",
                             endpoint = "vpn.example:443",
-                            icmp = LatencyProbeState.Success(previous),
+                            relay = LatencyProbeState.Success(previous),
                         ),
                         RuntimeOutboundItem("nested", "selector", null),
                     ),
@@ -37,11 +37,10 @@ class LatencyProbeReducerInstrumentedTest {
             ),
         )
 
-        assertTrue(controller.beginLatencyProbe(generation, 7, "root", "wifi", setOf("leaf")))
+        assertTrue(controller.beginLatencyProbe(generation, 7, "root", "wifi"))
         val running = controller.selectorGroups.value.single()
         assertEquals(1, running.probeProgress?.relayCompleted)
-        assertEquals(1, running.probeProgress?.icmpCompleted)
-        assertTrue(running.items.first().icmp is LatencyProbeState.Running)
+        assertEquals(LatencyProbeState.Running(previous), running.items.first().relay)
         assertTrue(running.items.last().relay is LatencyProbeState.Unsupported)
 
         controller.publishLatencyBatch(
@@ -64,7 +63,6 @@ class LatencyProbeReducerInstrumentedTest {
 
         controller.cancelLatencyProbe(generation, 7, "root", "wifi")
         val cancelled = controller.selectorGroups.value.single()
-        assertEquals(LatencyProbeState.Success(previous), cancelled.items.first().icmp)
         assertTrue(cancelled.items.first().relay is LatencyProbeState.Success)
         assertFalse(cancelled.probeProgress?.running == true)
     }
@@ -91,7 +89,7 @@ class LatencyProbeReducerInstrumentedTest {
             ),
         )
 
-        assertFalse(controller.beginLatencyProbe(oldGeneration, 1, "root", "wifi", setOf("leaf")))
+        assertFalse(controller.beginLatencyProbe(oldGeneration, 1, "root", "wifi"))
         assertEquals(LatencyProbeState.NotTested, controller.selectorGroups.value.single().items.single().relay)
     }
 }

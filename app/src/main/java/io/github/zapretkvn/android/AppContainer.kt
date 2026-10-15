@@ -27,7 +27,6 @@ import io.github.zapretkvn.android.network.VpnNetworkProvider
 import io.github.zapretkvn.android.network.geo.DohHostAddressResolver
 import io.github.zapretkvn.android.network.geo.GeoIpCountry
 import io.github.zapretkvn.android.network.geo.ServerCountryStore
-import io.github.zapretkvn.android.network.probes.IcmpPingProbe
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
@@ -170,7 +169,6 @@ class AppContainer(
     val vpnExternalIpProbe = VpnExternalIpProbe(vpnNetworkProvider)
     val vpnThroughputProbe = VpnThroughputProbe(vpnNetworkProvider, vpnController.probeLane)
     val vpnLivenessProbe = VpnLivenessProbe(vpnNetworkProvider)
-    val icmpPingProbe = IcmpPingProbe()
     internal val serviceProbePaths = AndroidServiceProbePaths(vpnNetworkProvider)
 
     /** Фоновые записи хранилищ, живущие вместе с процессом. */
