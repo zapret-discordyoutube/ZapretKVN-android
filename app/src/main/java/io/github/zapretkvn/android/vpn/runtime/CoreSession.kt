@@ -81,15 +81,24 @@ internal class CoreSession(
     @Volatile private var platform: AndroidPlatformAdapter? = null
     @Volatile private var server: CommandServer? = null
     @Volatile private var groupClient: CommandClient? = null
-    @Volatile private var selectorClient: CommandClient? = null
     private var networkObserver: AutoCloseable? = null
     private var statusObserver: Job? = null
     private var diagnosticsObserver: Job? = null
     private var identityJob: Job? = null
     private var statusClient: CommandClient? = null
     private var statusClientCounted = false
+    /** Отдельный поток CommandLog диагностики: нужен, только когда общий поток [runtimeErrorClient] её не питает. */
     private var logClient: CommandClient? = null
+
+    /** Потребитель core-лога диагностики учтён в [VpnRuntimeMetrics] (отдельный поток или общий). */
     private var logClientCounted = false
+
+    /**
+     * Приёмник диагностики на общем потоке [runtimeErrorClient]: на старте оба
+     * потребителя читают один CommandLog, отдельный поток открывается только при
+     * повторном включении диагностики (ему нужен свежий backlog).
+     */
+    private val diagnosticLogTap = DiagnosticLogTap(controller, generation)
     private var speedMonitorClient: CommandClient? = null
     private var runtimeErrorClient: CommandClient? = null
     private val runtimeErrorClientAvailable = AtomicBoolean(false)
@@ -288,21 +297,12 @@ internal class CoreSession(
         }
     }
 
-    fun attachSelectorClient(candidate: CommandClient) {
-        val accepted = synchronized(resourceLock) {
-            if (closing.get()) false else {
-                check(selectorClient == null)
-                selectorClient = candidate
-                true
-            }
-        }
-        if (!accepted) {
-            runCatching { candidate.disconnect() }
-            throw CancellationException("Клиент управления selector отменён.")
-        }
-    }
-
-    fun selectorClient(): CommandClient? = selectorClient
+    /**
+     * Клиент группы: его стрим CommandGroup читает состояние, а команды
+     * (`selectOutbound`) идут по тому же соединению. Отдельный клиент под команды
+     * не нужен.
+     */
+    fun groupClient(): CommandClient? = groupClient
 
     fun attachNetworkObserver(candidate: AutoCloseable) {
         val accepted = synchronized(resourceLock) {
@@ -403,7 +403,7 @@ internal class CoreSession(
 
     @Synchronized
     fun openLogClient() {
-        if (closing.get() || logClient != null) return
+        if (closing.get() || logClient != null || diagnosticLogTap.enabled) return
         val candidate = Libbox.newCommandClient(
             DiagnosticLogClientHandler(controller, generation),
             CommandClientOptions().apply { addCommand(Libbox.CommandLog) },
@@ -428,6 +428,7 @@ internal class CoreSession(
     fun closeLogClient() {
         val current = logClient
         logClient = null
+        diagnosticLogTap.enabled = false
         runCatching { current?.disconnect() }
         if (logClientCounted) {
             logClientCounted = false
@@ -439,16 +440,23 @@ internal class CoreSession(
     /**
      * Постоянный наблюдатель ошибок ядра. Без него сессия не публикуется как
      * подключённая: отказы серверов иначе некому было бы увидеть.
+     *
+     * [mirrorDiagnostics] — тот же стрим питает и журнал диагностики (вместо
+     * второго CommandLog-клиента). Открывать нужно до запуска сервиса: так
+     * диагностика получает стартовые строки с первой.
      */
     @Synchronized
     fun openRuntimeErrorClient(
         onLogs: (Long, List<String>) -> Unit,
         onUnavailable: (Long, String) -> Unit,
+        mirrorDiagnostics: Boolean = false,
     ) {
         if (closing.get() || runtimeErrorClient != null) return
         if (VpnTestHooks.consumeHysteriaFailureObserverConnectFailure()) {
             throw RuntimeErrorObserverUnavailableException()
         }
+        val mirror = mirrorDiagnostics && logClient == null && !diagnosticLogTap.enabled
+        if (mirror) diagnosticLogTap.enabled = true
         runtimeErrorClientUnavailableCallback = { message -> onUnavailable(generation, message) }
         val closeRequested = AtomicBoolean(false)
         val candidate = Libbox.newCommandClient(
@@ -464,6 +472,7 @@ internal class CoreSession(
                     val wasAvailable = runtimeErrorClientAvailable.getAndSet(false)
                     if (wasAvailable && !expectedClose) runtimeErrorClientUnavailableCallback?.invoke(message)
                 },
+                diagnostics = diagnosticLogTap,
             ),
             CommandClientOptions().apply { addCommand(Libbox.CommandLog) },
         )
@@ -475,8 +484,14 @@ internal class CoreSession(
             }
             if (!runtimeErrorClientAvailable.get()) throw RuntimeErrorObserverUnavailableException()
             runtimeErrorClient = candidate
+            if (mirror) {
+                logClientCounted = true
+                VpnRuntimeMetrics.logClientOpened()
+                controller.publishDiagnosticLogStream(generation, true)
+            }
         } catch (error: Throwable) {
             closeRequested.set(true)
+            if (mirror) diagnosticLogTap.enabled = false
             runtimeErrorClientAvailable.set(false)
             runCatching { candidate.disconnect() }
             if (error is CancellationException) throw error
@@ -533,8 +548,6 @@ internal class CoreSession(
                 runCatching { failureClient?.disconnect() }
                 val groups = synchronized(resourceLock) { groupClient.also { groupClient = null } }
                 runCatching { groups?.disconnect() }
-                val selector = synchronized(resourceLock) { selectorClient.also { selectorClient = null } }
-                runCatching { selector?.disconnect() }
             }
             timedStopStage("close_libbox_service", "Остановка сервиса libbox") {
                 runCatching { server?.closeService() }.getOrThrow()
@@ -642,26 +655,46 @@ private class SpeedMonitorClientHandler(
     }
 }
 
-private class DiagnosticLogClientHandler(
+/** Публикация строк core-лога в диагностику; общая для отдельного и для общего потока CommandLog. */
+internal class DiagnosticLogTap(
     private val controller: VpnController,
     private val generation: Long,
-) : BaseClientHandler() {
-    override fun disconnected(message: String) {
-        controller.publishDiagnosticLogStream(generation, false)
+    @Volatile var enabled: Boolean = false,
+) {
+    fun clearLogs() {
+        if (enabled) controller.clearCoreDiagnosticLogs(generation)
     }
 
-    override fun clearLogs() {
-        controller.clearCoreDiagnosticLogs(generation)
+    /** Сборщик пачки строк или `null`, если диагностика сейчас не читает лог. */
+    fun newBatch(): CoreDiagnosticBatchCollector? = if (enabled) CoreDiagnosticBatchCollector() else null
+
+    fun publish(collector: CoreDiagnosticBatchCollector) {
+        val batch = collector.result()
+        controller.publishCoreDiagnosticLogs(generation, batch.entries, batch.droppedLines)
     }
+
+    fun disconnected() {
+        if (enabled) controller.publishDiagnosticLogStream(generation, false)
+    }
+}
+
+private class DiagnosticLogClientHandler(
+    controller: VpnController,
+    generation: Long,
+) : BaseClientHandler() {
+    private val tap = DiagnosticLogTap(controller, generation, enabled = true)
+
+    override fun disconnected(message: String) = tap.disconnected()
+
+    override fun clearLogs() = tap.clearLogs()
 
     override fun writeLogs(messageList: LogIterator) {
-        val collector = CoreDiagnosticBatchCollector()
+        val collector = tap.newBatch() ?: return
         while (messageList.hasNext()) {
             val entry = messageList.next()
             collector.add(entry.level, entry.message)
         }
-        val batch = collector.result()
-        controller.publishCoreDiagnosticLogs(generation, batch.entries, batch.droppedLines)
+        tap.publish(collector)
     }
 }
 
@@ -672,17 +705,26 @@ internal class RuntimeErrorLogClientHandler(
     private val onEntry: (Int, String) -> Unit,
     private val onConnected: () -> Unit,
     private val onDisconnected: (String) -> Unit,
+    /** Тот же стрим питает журнал диагностики, пока приёмник включён. */
+    private val diagnostics: DiagnosticLogTap? = null,
 ) : BaseClientHandler() {
     override fun connected() = onConnected()
 
     override fun disconnected(message: String) {
         onDisconnected(message)
+        diagnostics?.disconnected()
+    }
+
+    override fun clearLogs() {
+        diagnostics?.clearLogs()
     }
 
     override fun writeLogs(messageList: LogIterator) {
         val messages = ArrayList<String>(CoreSession.MAX_FAILURE_LOG_BATCH_LINES)
+        val batch = diagnostics?.newBatch()
         while (messageList.hasNext()) {
             val entry = messageList.next()
+            batch?.add(entry.level, entry.message)
             onEntry(entry.level, entry.message)
             messages += entry.message
             if (messages.size == CoreSession.MAX_FAILURE_LOG_BATCH_LINES) {
@@ -691,6 +733,7 @@ internal class RuntimeErrorLogClientHandler(
             }
         }
         if (messages.isNotEmpty()) onLogs(generation, messages)
+        if (batch != null) diagnostics?.publish(batch)
     }
 }
 

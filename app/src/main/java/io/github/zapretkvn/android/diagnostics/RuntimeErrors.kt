@@ -85,21 +85,44 @@ internal object RuntimeErrors {
         )
     }
 
-    fun bestEvidence(records: List<RecordedRuntimeFailure>): RuntimeFailure? = records
+    /**
+     * [hasTypedFailure]: у ошибки запуска уже есть собственный код (NET-/DNS-/VPN-).
+     * Неклассифицированная строка ядра без целевого сервера (`targetId`) не может
+     * претендовать на причину отказа: это общий шум, а не отказ конкретного target.
+     */
+    fun bestEvidence(
+        records: List<RecordedRuntimeFailure>,
+        hasTypedFailure: Boolean = false,
+    ): RuntimeFailure? = records
         .filter { it.failure.action != "record_only" }
         .filter { it.failure.code != "CORE_UNCLASSIFIED" || it.failure.level <= 2 }
+        .filterNot {
+            hasTypedFailure && it.failure.code == "CORE_UNCLASSIFIED" && it.failure.targetId.isBlank()
+        }
         .maxWithOrNull(compareBy<RecordedRuntimeFailure> {
             if (it.failure.code.startsWith("TARGET_TLS_") ||
                 it.failure.code in setOf("TARGET_PIN_MISMATCH", "TARGET_AUTH_REJECTED", "TARGET_OBFS_REJECTED")
             ) 1 else 0
         }.thenBy { it.lastSeenEpochMillis })?.failure
 
-    fun startupEvidence(error: Throwable, records: List<RecordedRuntimeFailure>): RuntimeFailure? {
+    fun startupEvidence(
+        error: Throwable,
+        records: List<RecordedRuntimeFailure>,
+        hasTypedFailure: Boolean = false,
+    ): RuntimeFailure? {
         val captured = generateSequence(error) { it.cause }
             .filterIsInstance<RuntimeStartupFailure>().firstOrNull()
         // A captured null is meaningful: cleanup cannot supply the original cause.
-        return if (captured != null) captured.evidence else bestEvidence(records)
+        if (captured == null) return bestEvidence(records, hasTypedFailure)
+        return captured.evidence?.takeUnless {
+            hasTypedFailure && it.code == "CORE_UNCLASSIFIED" && it.targetId.isBlank()
+        }
     }
+
+    /** Нормальная отмена QUIC-потока ядром: не ошибка, в журнал runtime_errors не пишется. */
+    fun isBenignStreamCancel(failure: RuntimeFailure): Boolean = failure.code == BENIGN_STREAM_CANCEL_CODE
+
+    const val BENIGN_STREAM_CANCEL_CODE = "CORE_STREAM_CANCELED"
 
     fun commandLogFailure(generation: Long, message: String, expectedClose: Boolean): RuntimeFailure? {
         if (expectedClose) return null

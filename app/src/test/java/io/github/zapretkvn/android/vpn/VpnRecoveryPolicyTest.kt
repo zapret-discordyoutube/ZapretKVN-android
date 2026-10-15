@@ -42,6 +42,30 @@ class VpnRecoveryPolicyTest {
     }
 
     @Test
+    fun `vpn dns probe failure retries but stays bounded`() {
+        assertEquals(
+            VpnRecoveryDecision.RetryAfter(1_000L),
+            VpnRecoveryPolicy.decide(failureCode = "DNS-200", attempt = 0),
+        )
+        assertEquals(
+            VpnRecoveryDecision.RetryAfter(4_000L),
+            VpnRecoveryPolicy.decide(failureCode = "DNS-200", attempt = 2),
+        )
+        assertEquals(
+            VpnRecoveryDecision.Terminal,
+            VpnRecoveryPolicy.decide(failureCode = "DNS-200", attempt = VpnRecoveryPolicy.MAX_ATTEMPTS),
+        )
+        assertEquals(
+            VpnRecoveryDecision.Terminal,
+            VpnRecoveryPolicy.decide(
+                failureCode = "DNS-200",
+                attempt = 0,
+                totalAttempts = VpnRecoveryPolicy.MAX_TOTAL_ATTEMPTS,
+            ),
+        )
+    }
+
+    @Test
     fun `backoff never exceeds the ceiling`() {
         assertEquals(VpnRecoveryPolicy.MAX_DELAY_MILLIS, VpnRecoveryPolicy.backoffMillis(10))
         assertEquals(VpnRecoveryPolicy.MAX_DELAY_MILLIS, VpnRecoveryPolicy.backoffMillis(64))
@@ -50,7 +74,7 @@ class VpnRecoveryPolicyTest {
 
     @Test
     fun `failures that need the user stay terminal`() {
-        listOf("DNS-102", "DNS-110", "DNS-200", "VPN-120", "VPN-200", "NET-110", "").forEach { code ->
+        listOf("DNS-102", "DNS-110", "VPN-120", "VPN-200", "NET-110", "").forEach { code ->
             assertEquals(
                 "код $code не должен переподключаться сам",
                 VpnRecoveryDecision.Terminal,

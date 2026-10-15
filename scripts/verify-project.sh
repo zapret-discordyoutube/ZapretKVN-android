@@ -269,6 +269,11 @@ expected = [
     # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка
     # на экране. Только текст: сетевых запросов и запуска проверок не создаёт.
     ("feature/home/src/main/java/io/github/zapretkvn/android/ui/home/ServicesCard.kt", 1),
+    # Подстраховка одного DNS-вопроса: если ответа нет за hedgeAfterMillis (800 мс), уходит
+    # ровно один повтор того же запроса, первый ответ побеждает. Не больше двух запросов на
+    # вопрос, без цикла и без периодического таймера; спасает от 5-секундного тайм-аута netd
+    # при потере одного UDP-пакета.
+    ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/HedgedQuery.kt", 1),
     ("network-bootstrap/src/main/java/io/github/zapretkvn/networkbootstrap/UnderlyingNetworkMonitor.kt", 1),
 ]
 if delays != expected:

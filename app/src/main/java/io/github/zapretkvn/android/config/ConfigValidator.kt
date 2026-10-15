@@ -1,7 +1,6 @@
 package io.github.zapretkvn.android.config
 
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
-import io.nekohasekai.libbox.Libbox
 import kotlinx.serialization.SerializationException
 
 sealed interface ConfigValidationResult {
@@ -25,7 +24,7 @@ class LibboxConfigValidator : ConfigValidator {
         }
 
         return try {
-            Libbox.checkConfig(config)
+            CoreConfigCheck.check(config)
             ConfigValidationResult.Valid
         } catch (error: Exception) {
             ConfigValidationResult.Invalid(formatCoreError(error.message))

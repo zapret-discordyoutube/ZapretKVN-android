@@ -1,9 +1,9 @@
 package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.config.ConfigAnalyzer
+import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.profiles.ProfileStore
 import io.github.zapretkvn.android.vpn.VpnController
-import io.nekohasekai.libbox.Libbox
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -76,8 +76,8 @@ internal class ServerSwitcher(
         val previous = session.runtimeSelections()[groupTag]
             ?: ConfigAnalyzer.selectorGroups(stored.json).firstOrNull { it.tag == groupTag }?.default
         val candidate = ConfigAnalyzer.selectServer(stored.json, groupTag, outboundTag)
-        withContext(Dispatchers.Default) { Libbox.checkConfig(candidate) }
-        val client = session.selectorClient()
+        withContext(Dispatchers.Default) { CoreConfigCheck.check(candidate) }
+        val client = session.groupClient()
             ?: return@withLock SwitchOutcome.CoreUnreachable(
                 RuntimeSwitchException(IllegalStateException("Клиент управления selector уже закрыт.")),
             )
@@ -110,7 +110,7 @@ internal class ServerSwitcher(
 
     private suspend fun rollback(session: CoreSession, groupTag: String, previousTag: String?): Throwable? {
         if (previousTag.isNullOrBlank()) return null
-        val client = session.selectorClient()
+        val client = session.groupClient()
             ?: return IllegalStateException("Клиент управления selector уже закрыт; откат невозможен.")
         return withContext(NonCancellable + Dispatchers.IO) {
             runCatching { client.selectOutbound(groupTag, previousTag) }

@@ -39,14 +39,20 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLException
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -99,12 +105,22 @@ data class PreparedBootstrap(
     val addresses: List<InetAddress>,
     val resolvedAtEpochMillis: Long,
     val overlay: BootstrapHostOverlay? = null,
+    /** Адреса взяты из свежего LKG-кэша без ожидания резолва; кэш обновляет фоновая задача. */
+    val fromCache: Boolean = false,
 )
 
 class ProxyBootstrapper(
     private val resolver: BootstrapResolver,
     private val cache: BootstrapCache,
+    /**
+     * Область фонового обновления кэша (stale-while-revalidate). Задача ограничена
+     * тайм-аутами резолва и сокетов, поэтому после остановки VPN не живёт дольше
+     * нескольких секунд; новая подготовка того же профиля отменяет предыдущую.
+     */
+    private val refreshScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
+    private val refreshJobs = ConcurrentHashMap<String, Job>()
+
     suspend fun prepare(
         profileId: String,
         rawJson: String,
@@ -122,6 +138,33 @@ class ProxyBootstrapper(
             return PreparedBootstrap(target, literal, now)
         }
         val lkg = cache.find(profileId, target.hostname, now)
+        // Stale-while-revalidate: свежий (до 24 ч) адрес из кэша берём сразу, если сервер
+        // отвечает на TCP-preflight и подмена исключена TLS-аутентификацией
+        // (staleAddressAllowed). Резолв (DoH + система, до 3 с) уходит в фон и обновляет
+        // кэш. Для UDP-транспортов (Hysteria2, TUIC) preflight невозможен, поэтому без
+        // ожидания берём только совсем недавний ответ (UDP_CACHE_FAST_PATH_MILLIS):
+        // повторное подключение в течение часа не платит за резолв.
+        // noCacheLookup — явная просьба о свежем ответе: кэш тогда не используется.
+        val fastPathEligible = lkg != null && if (target.tcpPreflightSupported) {
+            lkg.isFreshAt(now)
+        } else {
+            lkg.ageAt(now) <= UDP_CACHE_FAST_PATH_MILLIS
+        }
+        if (!noCacheLookup && target.staleAddressAllowed && fastPathEligible) {
+            val cached = numericAddresses(lkg!!.addresses)
+            val reachable = cached.isNotEmpty() &&
+                (!target.tcpPreflightSupported || firstReachable(underlying, target, cached) != null)
+            if (reachable) {
+                scheduleRefresh(profileId, target, underlying, cached)
+                return PreparedBootstrap(
+                    target,
+                    cached,
+                    lkg.resolvedAtEpochMillis,
+                    lkg.overlay(target),
+                    fromCache = true,
+                )
+            }
+        }
         val resolved = try {
             Result.success(resolver.resolve(underlying, target.hostname, noCacheLookup))
         } catch (cancelled: CancellationException) {
@@ -155,12 +198,50 @@ class ProxyBootstrapper(
     suspend fun recordSuccess(profileId: String, prepared: PreparedBootstrap) {
         val target = prepared.target ?: return
         if (!target.staleAddressAllowed || prepared.addresses.isEmpty()) return
+        // Кэш-адреса не перезаписываем: фоновое обновление могло уже записать новее.
+        if (prepared.fromCache) return
         cache.recordSuccess(
             profileId = profileId,
             hostname = target.hostname,
             addresses = prepared.addresses,
             resolvedAtEpochMillis = prepared.resolvedAtEpochMillis,
         )
+    }
+
+    private fun scheduleRefresh(
+        profileId: String,
+        target: ProxyBootstrapTarget,
+        underlying: Network,
+        used: List<InetAddress>,
+    ) {
+        refreshJobs.remove(profileId)?.cancel()
+        val job = refreshScope.launch {
+            try {
+                val addresses = resolver.resolve(underlying, target.hostname)
+                if (addresses.isEmpty()) return@launch
+                val sameSet = addresses.mapNotNull(InetAddress::getHostAddress).toSet() ==
+                    used.mapNotNull(InetAddress::getHostAddress).toSet()
+                // Новые адреса попадают в кэш, только если сервер на них отвечает;
+                // совпавший набор уже проверен preflight и лишней проверки не требует.
+                // Для UDP-транспортов TCP-проверка невозможна: свежий ответ DNS пишем сразу
+                // (подмену исключает TLS сервера), чтобы повтор после отказа не взял старый IP.
+                if (!sameSet && target.tcpPreflightSupported &&
+                    firstReachable(underlying, target, addresses) == null
+                ) return@launch
+                cache.recordSuccess(
+                    profileId = profileId,
+                    hostname = target.hostname,
+                    addresses = addresses,
+                    resolvedAtEpochMillis = System.currentTimeMillis(),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Фоновое обновление best-effort: подключение уже идёт на кэш-адресах.
+            }
+        }
+        refreshJobs[profileId] = job
+        job.invokeOnCompletion { refreshJobs.remove(profileId, job) }
     }
 
     private suspend fun firstReachable(
@@ -195,6 +276,8 @@ class ProxyBootstrapper(
     )
 
     private companion object {
+        /** Без проверки достижимости (UDP) кэш берётся без ожидания резолва только такой давности. */
+        const val UDP_CACHE_FAST_PATH_MILLIS = 60L * 60 * 1_000
         const val SOCKET_TIMEOUT_MILLIS = 1_500
         const val MAX_SOCKET_CANDIDATES = 3
         val IPV4 = Regex("(?:\\d{1,3}\\.){3}\\d{1,3}")
@@ -210,12 +293,22 @@ class VpnHealthPipeline internal constructor(
 
     // Резолв внутри туннеля должен падать быстрее bootstrap (8 с): при мёртвом
     // DNS каждый лишний тайм-аут задерживает fallback на следующий DNS-режим.
-    private val resolver = BootstrapResolver(HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS)
+    // Только системный резолв через VPN-сеть: доверенный DoH по IP ушёл бы в туннель
+    // (медленно и запрещено политикой узла), он нужен лишь bootstrap на физической сети.
+    private val resolver = BootstrapResolver(
+        timeoutMillis = HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS,
+        trustedDoh = false,
+        hedgeAfterMillis = HEALTH_DNS_HEDGE_MILLIS,
+    )
 
     // Спасательная проба медленного туннеля: полезный трафик может ходить, не
     // укладываясь в короткие таймауты основной гонки. Резолв ограничен 5 с,
     // сокет 8 с, чтобы худший провал уложился в общий 20-секундный deadline.
-    private val rescueResolver = BootstrapResolver(HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS)
+    private val rescueResolver = BootstrapResolver(
+        timeoutMillis = HEALTH_RESCUE_RESOLVE_TIMEOUT_MILLIS,
+        trustedDoh = false,
+        hedgeAfterMillis = HEALTH_DNS_HEDGE_MILLIS,
+    )
 
     /**
      * Проверка подключения занимает общую полосу проб: идущая проверка сервисов или серверов
@@ -333,6 +426,72 @@ class VpnHealthPipeline internal constructor(
                     "DNS через VPN не отвечает: тестовый внутренний DNS недоступен.",
                 )
         }
+        return coroutineScope {
+            // DNS-проба и HTTPS-проба идут параллельно: HTTPS сам резолвит хост через
+            // ту же VPN-сеть, поэтому его успех доказывает и DNS. Вердикт «здоров» —
+            // по HTTPS; DNS-проба при этом отменяется и не влияет на исход.
+            val runningDnsStage = AtomicReference<VpnHealthStage?>(null)
+            val dnsStarted: (VpnHealthStage) -> Unit = { stage ->
+                runningDnsStage.set(stage)
+                onStageStarted(stage)
+            }
+            val dnsFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit = { stage, outcome, detail ->
+                runningDnsStage.compareAndSet(stage, null)
+                onStageFinished(stage, outcome, detail)
+            }
+            val dnsFailed = AtomicBoolean(false)
+            val dns = async {
+                try {
+                    dnsProbe(vpnNetwork, mode, internalDnsServer, dnsStarted, dnsFinished)
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    dnsFailed.set(true)
+                    error
+                }
+            }
+            val httpsError = try {
+                httpsStage(
+                    vpnNetwork = vpnNetwork,
+                    proxyIpFamily = proxyIpFamily,
+                    deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
+                    // Если DNS уже провален, долгую спасательную пробу не ждём:
+                    // быстрый отказ нужен для перехода на следующий DNS-режим.
+                    rescueAllowed = { !dnsFailed.get() },
+                    onStageStarted = onStageStarted,
+                    onStageFinished = onStageFinished,
+                )
+                null
+            } catch (cancelled: CancellationException) {
+                dns.cancel()
+                throw cancelled
+            } catch (error: Throwable) {
+                error
+            }
+            if (httpsError == null) {
+                if (dns.isActive) {
+                    dns.cancelAndJoin()
+                    runningDnsStage.getAndSet(null)?.let { stage ->
+                        onStageFinished(stage, VpnHealthStageOutcome.Success, "superseded=https_ok")
+                    }
+                }
+                return@coroutineScope HealthCheckResult(externalIpProbeAllowed = true)
+            }
+            // HTTPS не прошёл: причину определяет DNS-проба (классификация DNS-200
+            // нужна AutomaticDnsFallbackPolicy), иначе остаётся ошибка HTTPS.
+            val dnsError = dns.await()
+            throw dnsError ?: httpsError
+        }
+    }
+
+    private suspend fun dnsProbe(
+        vpnNetwork: Network,
+        mode: DnsMode,
+        internalDnsServer: String,
+        onStageStarted: (VpnHealthStage) -> Unit,
+        onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
+    ) {
         if (mode == DnsMode.Automatic || mode == DnsMode.Secure) {
             rawDnsProbe(
                 internalDnsServer,
@@ -340,29 +499,39 @@ class VpnHealthPipeline internal constructor(
                 onStageStarted,
                 onStageFinished,
             )
-        } else {
-                onStageStarted(VpnHealthStage.DnsAndroidProbe)
-                try {
-                    val addresses = resolver.resolve(
-                        vpnNetwork,
-                        ManagedHealthProbe.endpoints.first().host,
-                    )
-                    onStageFinished(
-                        VpnHealthStage.DnsAndroidProbe,
-                        VpnHealthStageOutcome.Success,
-                        "answers=${addresses.size}",
-                    )
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Throwable) {
-                    onStageFinished(
-                        VpnHealthStage.DnsAndroidProbe,
-                        VpnHealthStageOutcome.Failed,
-                        rootCauseName(error),
-                    )
-                    throw dnsFailure(error)
-                }
+            return
         }
+        onStageStarted(VpnHealthStage.DnsAndroidProbe)
+        try {
+            val addresses = resolver.resolve(
+                vpnNetwork,
+                ManagedHealthProbe.endpoints.first().host,
+            )
+            onStageFinished(
+                VpnHealthStage.DnsAndroidProbe,
+                VpnHealthStageOutcome.Success,
+                "answers=${addresses.size}",
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            onStageFinished(
+                VpnHealthStage.DnsAndroidProbe,
+                VpnHealthStageOutcome.Failed,
+                rootCauseName(error),
+            )
+            throw dnsFailure(error)
+        }
+    }
+
+    private suspend fun httpsStage(
+        vpnNetwork: Network,
+        proxyIpFamily: ProxyIpFamily,
+        deadlineElapsedRealtimeMillis: Long,
+        rescueAllowed: () -> Boolean,
+        onStageStarted: (VpnHealthStage) -> Unit,
+        onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
+    ) {
         onStageStarted(VpnHealthStage.HttpsProbe)
         if (VpnTestHooks.consumeHttpsProbeFailure()) {
             onStageFinished(
@@ -373,7 +542,7 @@ class VpnHealthPipeline internal constructor(
             error("HTTPS-проверка через VPN не прошла: тестовый endpoint недоступен.")
         }
         try {
-            val result = httpsProbe(vpnNetwork, proxyIpFamily, deadlineElapsedRealtimeMillis)
+            val result = httpsProbe(vpnNetwork, proxyIpFamily, deadlineElapsedRealtimeMillis, rescueAllowed)
             onStageFinished(
                 VpnHealthStage.HttpsProbe,
                 if (result.rescued) VpnHealthStageOutcome.Recovered else VpnHealthStageOutcome.Success,
@@ -381,6 +550,8 @@ class VpnHealthPipeline internal constructor(
                     "family=${result.addressFamily.diagnosticName}" +
                     if (result.rescued) " recovered=slow_tunnel" else "",
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Throwable) {
             onStageFinished(
                 VpnHealthStage.HttpsProbe,
@@ -389,7 +560,6 @@ class VpnHealthPipeline internal constructor(
             )
             throw error
         }
-        return HealthCheckResult(externalIpProbeAllowed = true)
     }
 
     private suspend fun rawDnsProbe(
@@ -519,6 +689,7 @@ class VpnHealthPipeline internal constructor(
         vpnNetwork: Network,
         proxyIpFamily: ProxyIpFamily,
         deadlineElapsedRealtimeMillis: Long,
+        rescueAllowed: () -> Boolean = { true },
     ): HttpsProbeResult {
         // Время до отказа отделяет «ждали весь тайм-аут» от «сразу отказ».
         val failedAfterMillis = ConcurrentHashMap<String, Long>()
@@ -552,6 +723,7 @@ class VpnHealthPipeline internal constructor(
                         ProbeFailure(endpoint, error, failedAfterMillis[endpoint.code])
                     },
                     deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
+                    rescueAllowed = rescueAllowed,
                 )
             }
         }
@@ -567,10 +739,11 @@ class VpnHealthPipeline internal constructor(
         proxyIpFamily: ProxyIpFamily,
         failures: List<ProbeFailure>,
         deadlineElapsedRealtimeMillis: Long,
+        rescueAllowed: () -> Boolean = { true },
     ): HttpsProbeResult {
         val budget = HttpsRescueBudget.of(
             deadlineElapsedRealtimeMillis - SystemClock.elapsedRealtime(),
-        ) ?: throw httpsProbeFailure(failures, null)
+        )?.takeIf { rescueAllowed() } ?: throw httpsProbeFailure(failures, null)
         val rescueEndpoint = ManagedHealthProbe.endpoints.first()
         // Собственный лимит пробы короче общего deadline: иначе его отмена
         // закрывает сокет пробы, и в отчёт уходит ложное «Socket closed».
@@ -894,6 +1067,9 @@ class VpnHealthPipeline internal constructor(
         /** Потолок одной проверки; им же запуск меряет бюджет на резервный сервер. */
         const val HEALTH_TIMEOUT_MILLIS = 20_000L
         const val HEALTH_DNS_RESOLVE_TIMEOUT_MILLIS = 3_000L
+
+        /** Один повтор системного запроса, если ответа нет за это время (потеря UDP-пакета). */
+        const val HEALTH_DNS_HEDGE_MILLIS = 800L
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
         const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L

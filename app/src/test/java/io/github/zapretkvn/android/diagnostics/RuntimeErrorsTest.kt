@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.diagnostics
 
 import io.github.zapretkvn.android.vpn.runtime.RuntimeErrorLogClientHandler
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureClassifier
+import io.github.zapretkvn.android.vpn.runtime.hasTypedFailureCode
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -167,5 +168,62 @@ class RuntimeErrorsTest {
         journal.record(RuntimeErrors.capture("sing-box", "runtime", "context canceled", 8), 120)
         assertNull(RuntimeErrors.startupEvidence(failure, journal.forGeneration(8)))
         assertEquals(original.message, RuntimeErrors.describe(failure))
+    }
+
+    @Test
+    fun `quic stream cancellation with error code 0 is record only noise`() {
+        val esc = "\u001B"
+        for (message in listOf(
+            "connection: connection download closed: stream 4 canceled by local with error code 0",
+            "connection: connection upload closed: stream 12 canceled by remote with error code 0",
+            "$esc[31mERROR$esc[0m[0123] [sing-box][dns_android] connection: connection download closed: " +
+                "stream 4 canceled by local with error code 0$esc[0m",
+            "connection: connection upload closed",
+        )) {
+            val failure = RuntimeErrors.capture("sing-box", "runtime", message)
+            assertEquals(message, "CORE_STREAM_CANCELED", failure.code)
+            assertEquals(message, "record_only", failure.action)
+            assertTrue(message, RuntimeErrors.isBenignStreamCancel(failure))
+            assertNull(message, RuntimeErrors.classifyForRecovery(message))
+            val journal = RuntimeErrorJournal()
+            journal.record(failure, 100)
+            assertNull(message, RuntimeErrors.bestEvidence(journal.forGeneration(0)))
+            assertNull(message, RuntimeErrors.bestEvidence(journal.forGeneration(0), hasTypedFailure = true))
+        }
+        // Closure with a real cause or non-zero code is still a genuine signal.
+        for (message in listOf(
+            "connection: connection download closed: stream 4 canceled by remote with error code 268",
+            "connection: connection upload closed: write: i/o timeout",
+        )) {
+            assertFalse(message, RuntimeErrors.isBenignStreamCancel(RuntimeErrors.capture("sing-box", "runtime", message)))
+        }
+    }
+
+    @Test
+    fun `unclassified core noise without target never replaces a typed startup failure`() {
+        val noise = RuntimeErrors.capture(
+            "sing-box", "health", "unrecognized core line 17", sessionGeneration = 5, level = 2,
+        )
+        val journal = RuntimeErrorJournal()
+        journal.record(noise, 100)
+        val typed = io.github.zapretkvn.android.network.probes.VpnDnsHealthException("DNS-проба не прошла")
+        // Without a typed code the unknown ERROR line stays visible as before.
+        assertEquals(noise, RuntimeErrors.bestEvidence(journal.forGeneration(5)))
+        assertNull(RuntimeErrors.bestEvidence(journal.forGeneration(5), hasTypedFailure = true))
+        assertNull(RuntimeErrors.startupEvidence(typed, journal.forGeneration(5), hasTypedFailure = true))
+        assertEquals(noise, RuntimeErrors.startupEvidence(typed, journal.forGeneration(5)))
+        // A target-tagged or classified failure may still serve as reference evidence.
+        val tls = RuntimeErrors.capture("sing-box", "tls", "tls: bad certificate", 5, targetId = "hy")
+        journal.record(tls, 200)
+        assertEquals(tls, RuntimeErrors.bestEvidence(journal.forGeneration(5), hasTypedFailure = true))
+    }
+
+    @Test
+    fun `dns 200 keeps its code and message when core evidence exists`() {
+        val error = io.github.zapretkvn.android.network.probes.VpnDnsHealthException("DNS-проба через VPN не ответила")
+        val state = VpnFailureStates.from(error)
+        assertEquals("DNS-200", state.code)
+        assertEquals("DNS-проба через VPN не ответила", state.message)
+        assertTrue(error.hasTypedFailureCode())
     }
 }

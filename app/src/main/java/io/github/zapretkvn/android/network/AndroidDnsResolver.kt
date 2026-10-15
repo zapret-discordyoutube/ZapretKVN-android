@@ -11,6 +11,7 @@ import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.networkbootstrap.AndroidBootstrapDnsResolver
 import io.github.zapretkvn.networkbootstrap.DnsResponseClassifier
 import io.github.zapretkvn.networkbootstrap.DnsWire
+import io.github.zapretkvn.networkbootstrap.HedgedQuery
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import io.github.zapretkvn.networkbootstrap.TrustedDnsOutcome
 import io.github.zapretkvn.networkbootstrap.TrustedDohResolver
@@ -22,17 +23,30 @@ import io.nekohasekai.libbox.LocalDNSTransport
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.TimeoutException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.asExecutor
 
+/**
+ * [trustedDoh] = false — только системный резолв на переданной сети. Нужен пробам
+ * внутри VPN-сети: DoH по IP ходил бы через туннель, что медленно и запрещено
+ * политикой узла. Доверенный DoH остаётся для bootstrap на физической сети.
+ * [hedgeAfterMillis] > 0 — один повтор запроса при потере пакета ([HedgedQuery]).
+ */
 class BootstrapResolver(
     timeoutMillis: Long = AndroidBootstrapDnsResolver.DEFAULT_TIMEOUT_MILLIS,
+    trustedDoh: Boolean = true,
+    hedgeAfterMillis: Long = 0,
 ) {
-    private val delegate = AndroidBootstrapDnsResolver(timeoutMillis)
+    private val delegate = AndroidBootstrapDnsResolver(
+        timeoutMillis = timeoutMillis,
+        trusted = if (trustedDoh) TrustedDohResolver() else null,
+        hedgeAfterMillis = hedgeAfterMillis,
+    )
 
     suspend fun resolve(
         network: Network,
@@ -74,48 +88,30 @@ internal class AndroidLocalDnsTransport(
                 return
             }
         }
-        val completed = AtomicBoolean(false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val cancellation = CancellationSignal()
-            val latch = CountDownLatch(1)
-            context.onCancel(
-                Func {
-                    if (completed.compareAndSet(false, true)) {
-                        cancellation.cancel()
-                        latch.countDown()
-                    }
-                },
-            )
             val type = if (network == "ip4") DnsResolver.TYPE_A else DnsResolver.TYPE_AAAA
-            DnsResolver.getInstance().query(
-                underlying,
-                domain,
-                type,
-                DnsResolver.FLAG_NO_RETRY,
-                DNS_EXECUTOR,
-                cancellation,
-                object : DnsResolver.Callback<List<InetAddress>> {
-                    override fun onAnswer(answer: List<InetAddress>, rcode: Int) {
-                        if (!completed.compareAndSet(false, true)) return
-                        try {
-                            if (rcode != 0) context.errorCode(rcode)
-                            else context.success(answer.joinToString("\n") { it.hostAddress.orEmpty() })
-                        } finally {
-                            latch.countDown()
-                        }
-                    }
+            val outcome = hedgedBlocking<List<InetAddress>>(context) { attempt ->
+                val cancellation = CancellationSignal()
+                DnsResolver.getInstance().query(
+                    underlying,
+                    domain,
+                    type,
+                    DnsResolver.FLAG_NO_RETRY,
+                    DNS_EXECUTOR,
+                    cancellation,
+                    object : DnsResolver.Callback<List<InetAddress>> {
+                        override fun onAnswer(answer: List<InetAddress>, rcode: Int) =
+                            attempt.succeed(DnsAnswer(answer, rcode))
 
-                    override fun onError(error: DnsResolver.DnsException) {
-                        if (!completed.compareAndSet(false, true)) return
-                        try {
-                            context.errnoCode((error.cause as? ErrnoException)?.errno ?: OsConstants.EIO)
-                        } finally {
-                            latch.countDown()
-                        }
-                    }
-                },
-            )
-            awaitDnsCallback(latch, completed, cancellation, context)
+                        override fun onError(error: DnsResolver.DnsException) = attempt.fail(error)
+                    },
+                )
+                val cancel: () -> Unit = { cancellation.cancel() }
+                cancel
+            } ?: return
+            reportOutcome(context, outcome) { answer ->
+                context.success(answer.joinToString("\n") { it.hostAddress.orEmpty() })
+            }
         } else {
             val addresses = underlying.getAllByName(domain).filter { address ->
                 (network == "ip4" && address is Inet4Address) ||
@@ -140,70 +136,84 @@ internal class AndroidLocalDnsTransport(
                 return
             }
         }
-        val cancellation = CancellationSignal()
-        val completed = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        context.onCancel(
-            Func {
-                if (completed.compareAndSet(false, true)) {
-                    cancellation.cancel()
-                    latch.countDown()
-                }
-            },
-        )
-        DnsResolver.getInstance().rawQuery(
-            underlying,
-            message,
-            DnsResolver.FLAG_NO_RETRY,
-            DNS_EXECUTOR,
-            cancellation,
-            object : DnsResolver.Callback<ByteArray> {
-                override fun onAnswer(answer: ByteArray, rcode: Int) {
-                    if (!completed.compareAndSet(false, true)) return
-                    try {
-                        if (rcode != 0) context.errorCode(rcode) else context.rawSuccess(answer)
-                    } finally {
-                        latch.countDown()
-                    }
-                }
+        val outcome = hedgedBlocking<ByteArray>(context) { attempt ->
+            val cancellation = CancellationSignal()
+            DnsResolver.getInstance().rawQuery(
+                underlying,
+                message,
+                DnsResolver.FLAG_NO_RETRY,
+                DNS_EXECUTOR,
+                cancellation,
+                object : DnsResolver.Callback<ByteArray> {
+                    override fun onAnswer(answer: ByteArray, rcode: Int) = attempt.succeed(DnsAnswer(answer, rcode))
 
-                override fun onError(error: DnsResolver.DnsException) {
-                    if (!completed.compareAndSet(false, true)) return
-                    try {
-                        context.errnoCode((error.cause as? ErrnoException)?.errno ?: OsConstants.EIO)
-                    } finally {
-                        latch.countDown()
-                    }
-                }
-            },
-        )
-        awaitDnsCallback(latch, completed, cancellation, context)
+                    override fun onError(error: DnsResolver.DnsException) = attempt.fail(error)
+                },
+            )
+            val cancel: () -> Unit = { cancellation.cancel() }
+            cancel
+        } ?: return
+        reportOutcome(context, outcome) { answer -> context.rawSuccess(answer) }
     }
 
-    private fun awaitDnsCallback(
-        latch: CountDownLatch,
-        completed: AtomicBoolean,
-        cancellation: CancellationSignal,
+    private class DnsAnswer<T>(val value: T, val rcode: Int)
+
+    /**
+     * Блокирует поток вызова ядра до первого ответа с одним подстраховочным
+     * повтором через [HEDGE_AFTER_MILLIS] (потеря единственного UDP-пакета
+     * иначе стоит ~5 с тайм-аута netd). null — запрос отменён ядром или поток
+     * прерван; тогда [ExchangeContext] уже не трогаем, как и раньше.
+     * Итог: ответ, либо исключение (ошибка DnsResolver или тайм-аут).
+     */
+    @TargetApi(Build.VERSION_CODES.Q)
+    private fun <T> hedgedBlocking(
         context: ExchangeContext,
-    ) {
-        val completedInTime = try {
-            latch.await(DNS_CALLBACK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            if (completed.compareAndSet(false, true)) {
-                cancellation.cancel()
-                context.errnoCode(OsConstants.EINTR)
+        start: (HedgedQuery.Attempt<DnsAnswer<T>>) -> (() -> Unit),
+    ): Result<DnsAnswer<T>>? {
+        val job = Job()
+        context.onCancel(Func { job.cancel() })
+        return try {
+            runBlocking(job) {
+                val answer = withTimeoutOrNull(DNS_CALLBACK_TIMEOUT_MILLIS) {
+                    HedgedQuery.run(HEDGE_AFTER_MILLIS, start)
+                } ?: return@runBlocking Result.failure(TimeoutException("dns_timeout"))
+                Result.success(answer)
             }
+        } catch (_: CancellationException) {
+            null
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            Result.failure(error)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    @TargetApi(Build.VERSION_CODES.Q)
+    private fun <T> reportOutcome(
+        context: ExchangeContext,
+        outcome: Result<DnsAnswer<T>>,
+        onSuccess: (T) -> Unit,
+    ) {
+        val answer = outcome.getOrNull()
+        if (answer != null) {
+            if (answer.rcode != 0) context.errorCode(answer.rcode) else onSuccess(answer.value)
             return
         }
-        if (!completedInTime && completed.compareAndSet(false, true)) {
-            cancellation.cancel()
-            context.errnoCode(OsConstants.ETIMEDOUT)
+        when (val error = outcome.exceptionOrNull()) {
+            is TimeoutException -> context.errnoCode(OsConstants.ETIMEDOUT)
+            is InterruptedException -> context.errnoCode(OsConstants.EINTR)
+            is DnsResolver.DnsException ->
+                context.errnoCode((error.cause as? ErrnoException)?.errno ?: OsConstants.EIO)
+            else -> context.errnoCode(OsConstants.EIO)
         }
     }
 
     private companion object {
         val DNS_EXECUTOR = Dispatchers.IO.asExecutor()
-        const val DNS_CALLBACK_TIMEOUT_SECONDS = 10L
+        const val DNS_CALLBACK_TIMEOUT_MILLIS = 10_000L
+
+        /** Типичный ответ укладывается в 100-600 мс; повтор нужен только при потере пакета. */
+        const val HEDGE_AFTER_MILLIS = 800L
     }
 }

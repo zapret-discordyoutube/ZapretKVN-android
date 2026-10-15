@@ -9,21 +9,20 @@ import android.system.ErrnoException
 import java.net.InetAddress
 import java.net.UnknownHostException
 import java.util.concurrent.Executor
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 class AndroidBootstrapDnsResolver(
     private val timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
     private val trusted: TrustedDohResolver? = TrustedDohResolver(),
+    /** > 0: системный запрос повторяется один раз, если ответа нет за это время (см. [HedgedQuery]). */
+    private val hedgeAfterMillis: Long = 0,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -123,49 +122,50 @@ class AndroidBootstrapDnsResolver(
         network: Network,
         hostname: String,
         noCacheLookup: Boolean,
-    ): List<InetAddress> = suspendCancellableCoroutine { continuation ->
-        val cancellation = CancellationSignal()
+    ): List<InetAddress> {
         val flags = if (noCacheLookup) DnsResolver.FLAG_NO_CACHE_LOOKUP else DnsResolver.FLAG_EMPTY
-        DnsResolver.getInstance().query(
-            network,
-            hostname,
-            flags,
-            DIRECT_EXECUTOR,
-            cancellation,
-            object : DnsResolver.Callback<List<InetAddress>> {
-                override fun onAnswer(answer: List<InetAddress>, rcode: Int) {
-                    if (!continuation.isActive) return
-                    val unique = answer.distinctBy(InetAddress::getHostAddress)
-                    val failure = DnsResponseClassifier.classify(rcode, unique.size)
-                    if (failure == null) {
-                        continuation.resume(unique)
-                    } else {
-                        continuation.resumeWithException(
+        return HedgedQuery.run<List<InetAddress>>(hedgeAfterMillis) { attempt ->
+            val cancellation = CancellationSignal()
+            DnsResolver.getInstance().query(
+                network,
+                hostname,
+                flags,
+                DIRECT_EXECUTOR,
+                cancellation,
+                object : DnsResolver.Callback<List<InetAddress>> {
+                    override fun onAnswer(answer: List<InetAddress>, rcode: Int) {
+                        val unique = answer.distinctBy(InetAddress::getHostAddress)
+                        val failure = DnsResponseClassifier.classify(rcode, unique.size)
+                        if (failure == null) {
+                            attempt.succeed(unique)
+                        } else {
+                            attempt.fail(
+                                BootstrapFailureException(
+                                    failure,
+                                    technicalDetail = "rcode=$rcode,answers=${unique.size}",
+                                ),
+                            )
+                        }
+                    }
+
+                    override fun onError(error: DnsResolver.DnsException) {
+                        val errno = (error.cause as? ErrnoException)?.errno
+                        attempt.fail(
                             BootstrapFailureException(
-                                failure,
-                                technicalDetail = "rcode=$rcode,answers=${unique.size}",
+                                BootstrapFailureCode.DnsSystem,
+                                technicalDetail = listOfNotNull(
+                                    "dns_error=${error.code}",
+                                    errno?.let { "errno=$it" },
+                                ).joinToString(","),
+                                cause = error,
                             ),
                         )
                     }
-                }
-
-                override fun onError(error: DnsResolver.DnsException) {
-                    if (!continuation.isActive) return
-                    val errno = (error.cause as? ErrnoException)?.errno
-                    continuation.resumeWithException(
-                        BootstrapFailureException(
-                            BootstrapFailureCode.DnsSystem,
-                            technicalDetail = listOfNotNull(
-                                "dns_error=${error.code}",
-                                errno?.let { "errno=$it" },
-                            ).joinToString(","),
-                            cause = error,
-                        ),
-                    )
-                }
-            },
-        )
-        continuation.invokeOnCancellation { cancellation.cancel() }
+                },
+            )
+            val cancel: () -> Unit = { cancellation.cancel() }
+            cancel
+        }
     }
 
     companion object {

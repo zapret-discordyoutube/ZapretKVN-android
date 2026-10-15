@@ -39,6 +39,7 @@ import io.github.zapretkvn.android.diagnostics.appendPrioritizedBounded
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.UnderlyingNetworkState
 import io.github.zapretkvn.android.network.probes.LatencyProbeReducer
+import io.github.zapretkvn.android.network.probes.VpnHealthStage
 import io.github.zapretkvn.android.platform.VpnSystemPolicy
 import java.util.concurrent.atomic.AtomicLong
 import io.github.zapretkvn.android.network.probes.ProbeLane
@@ -371,9 +372,12 @@ class VpnController(
             val attempt = current.connectionAttempt
                 ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
                 ?: return@update current
+            // HTTPS-проба идёт параллельно DNS-пробе: её старт не закрывает DNS-этап,
+            // тот завершается своим отчётом, чтобы длительность каждого была честной.
             val completed = attempt.stages.completeRunningStage(
                 elapsed = elapsed,
                 status = DiagnosticStageStatus.Success,
+                keepRunning = { running -> key == HTTPS_PROBE_STAGE_KEY && running.key in PARALLEL_DNS_STAGE_KEYS },
             )
             val stage = DiagnosticStageTiming(
                 key = key.take(48),
@@ -386,6 +390,50 @@ class VpnController(
             current.copy(
                 connectionAttempt = attempt.copy(
                     stages = (completed + stage).takeLast(MAX_DIAGNOSTIC_STAGES),
+                ),
+            )
+        }
+    }
+
+    /**
+     * Записывает уже завершённую стадию, которая шла параллельно другим
+     * (например, проверка конфигурации ядром рядом с созданием TUN-адаптера):
+     * последовательная [startConnectionDiagnosticStage] закрыла бы её досрочно.
+     * Стадия встаёт в список по времени начала.
+     */
+    internal fun recordConnectionDiagnosticStage(
+        generation: Long,
+        key: String,
+        label: String,
+        startedAtElapsedRealtimeMillis: Long,
+        startedAtEpochMillis: Long,
+        durationMillis: Long,
+        status: DiagnosticStageStatus,
+        detail: String? = null,
+    ) {
+        val safeDetail = detail
+            ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
+            ?.takeIf(String::isNotBlank)
+        mutableDiagnostics.update { current ->
+            val attempt = current.connectionAttempt
+                ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
+                ?: return@update current
+            val stage = DiagnosticStageTiming(
+                key = key.take(48),
+                label = label.take(80),
+                startedAtEpochMillis = startedAtEpochMillis,
+                startedAtElapsedRealtimeMillis = startedAtElapsedRealtimeMillis,
+                durationMillis = durationMillis.coerceAtLeast(0L),
+                status = status,
+                detail = safeDetail,
+                attempt = generation,
+                target = diagnosticRuntimeMap?.resolve("") ?: attempt.target,
+            )
+            val before = attempt.stages.takeWhile { it.startedAtElapsedRealtimeMillis <= startedAtElapsedRealtimeMillis }
+            val after = attempt.stages.drop(before.size)
+            current.copy(
+                connectionAttempt = attempt.copy(
+                    stages = (before + stage + after).takeLast(MAX_DIAGNOSTIC_STAGES),
                 ),
             )
         }
@@ -795,14 +843,17 @@ class VpnController(
         val stage = mutableDiagnostics.value.connectionAttempt
             ?.takeIf { it.generation == generation }
             ?.stages?.lastOrNull { it.status == DiagnosticStageStatus.Running }?.key ?: "runtime"
-        runtimeErrors.record(RuntimeErrors.capture(
+        val failure = RuntimeErrors.capture(
             component = component,
             stage = stage,
             message = message,
             sessionGeneration = generation,
             targetId = tagged?.groupValues?.get(2).orEmpty(),
             level = level,
-        ))
+        )
+        // Отмена QUIC-потока (error code 0) — штатное закрытие; строка остаётся в журнале ядра.
+        if (RuntimeErrors.isBenignStreamCancel(failure)) return
+        runtimeErrors.record(failure)
         mutableDiagnostics.update { it.copy(runtimeErrors = runtimeErrors.entries.value) }
     }
 
@@ -1075,8 +1126,9 @@ class VpnController(
     private fun List<DiagnosticStageTiming>.completeRunningStage(
         elapsed: Long,
         status: DiagnosticStageStatus,
+        keepRunning: (DiagnosticStageTiming) -> Boolean = { false },
     ): List<DiagnosticStageTiming> = map { stage ->
-        if (stage.status == DiagnosticStageStatus.Running) {
+        if (stage.status == DiagnosticStageStatus.Running && !keepRunning(stage)) {
             stage.copy(
                 durationMillis = (elapsed - stage.startedAtElapsedRealtimeMillis).coerceAtLeast(0L),
                 status = status,
@@ -1141,6 +1193,14 @@ class VpnController(
 
     private companion object {
         const val MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS = 160
+        val HTTPS_PROBE_STAGE_KEY = VpnHealthStage.HttpsProbe.diagnosticKey
+
+        /** DNS-этапы проверки, идущие параллельно HTTPS-пробе (см. VpnHealthPipeline). */
+        val PARALLEL_DNS_STAGE_KEYS = setOf(
+            VpnHealthStage.DnsUdpProbe.diagnosticKey,
+            VpnHealthStage.DnsTcpProbe.diagnosticKey,
+            VpnHealthStage.DnsAndroidProbe.diagnosticKey,
+        )
         val ANSI_ESCAPE = Regex("\u001B(?:\\[[0-?]*[ -/]*[@-~]|[@-_])")
         val NEW_LINES = Regex("[\\r\\n]+")
     }

@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.config.ConfigAnalyzer
+import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
@@ -33,7 +34,6 @@ import io.github.zapretkvn.android.vpn.VpnRecoveryDecision
 import io.github.zapretkvn.android.vpn.VpnRecoveryPolicy
 import io.github.zapretkvn.android.vpn.ZapretVpnService
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
-import io.nekohasekai.libbox.Libbox
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -643,13 +643,28 @@ internal class VpnRuntime(
         error: Throwable,
     ) {
         cancelDebounce()
-        val evidence = RuntimeErrors.startupEvidence(error, controller.runtimeErrors.forGeneration(token))
+        val typed = error.hasTypedFailureCode()
+        val evidence = RuntimeErrors.startupEvidence(
+            error,
+            controller.runtimeErrors.forGeneration(token),
+            hasTypedFailure = typed,
+        )
         val baseFailure = VpnFailureStates.from(error).let { fallback ->
-            if (evidence == null) fallback else fallback.copy(
-                message = "[${evidence.component}][${evidence.stage}] ${evidence.message}",
-                code = evidence.code,
-                technicalDetail = evidence.message,
-            )
+            when {
+                evidence == null -> fallback
+                // Типизированный код и сообщение остаются: свидетельство ядра только справка.
+                typed -> fallback.copy(
+                    technicalDetail = listOfNotNull(
+                        fallback.technicalDetail,
+                        "core_evidence=${evidence.code}: ${evidence.message}".take(400),
+                    ).joinToString("; "),
+                )
+                else -> fallback.copy(
+                    message = "[${evidence.component}][${evidence.stage}] ${evidence.message}",
+                    code = evidence.code,
+                    technicalDetail = evidence.message,
+                )
+            }
         }
         val stored = runCatching { container.profileStore.read(profileId) }.getOrNull()
         val plan = stored?.let { FailoverPlanner.plan(it.json, emptyMap(), primaryGroupTag = null) }
@@ -662,7 +677,9 @@ internal class VpnRuntime(
                 ConfigAnalyzer.outboundDescriptions(profile.json)[failedReplacement.targetTag]?.type
             } == PathSupervisor.HYSTERIA_TYPE
             if (replacementWasHysteria) {
-                val code = HysteriaFailureClassifier.classify(baseFailure.message) ?: HysteriaFailureCode.CORE_UNCLASSIFIED
+                val code = HysteriaFailureClassifier.classify(baseFailure.message)
+                    ?: evidence?.let { HysteriaFailureClassifier.classify(it.message) }
+                    ?: HysteriaFailureCode.CORE_UNCLASSIFIED
                 publishTerminalFailure(token, baseFailure.copy(code = code.name))
                 stopService(startId)
                 return
@@ -728,7 +745,7 @@ internal class VpnRuntime(
         val candidate = supervisor.candidates(plan, latencyHints(profileId)).firstOrNull() ?: return false
         val candidateJson = try {
             ConfigAnalyzer.selectServer(stored.json, plan.groupTag, candidate.id).also { json ->
-                withContext(Dispatchers.Default) { Libbox.checkConfig(json) }
+                withContext(Dispatchers.Default) { CoreConfigCheck.check(json) }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

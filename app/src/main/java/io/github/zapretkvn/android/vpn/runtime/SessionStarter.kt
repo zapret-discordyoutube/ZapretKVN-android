@@ -10,6 +10,7 @@ import io.github.zapretkvn.android.apps.VpnAppScopeResult
 import io.github.zapretkvn.android.apps.selectedPackagesForTunBoundary
 import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.ConfigAnalyzer
+import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
@@ -49,6 +50,7 @@ import io.nekohasekai.libbox.CommandClientOptions
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.OverrideOptions
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -228,10 +230,11 @@ internal class SessionStarter(
         controller.publishVpnSystemPolicy(token, systemPolicy)
         systemPolicy.blockingMessage?.let(::error)
         container.libboxRuntime.initialize().getOrThrow()
-        container.profileStore.initialize()
+        // profileStore.initialize() уже выполнен в startWithDeadline перед перебором DNS-кандидатов.
         var profile = container.profileStore.read(profileId)
+        // Один вызов на попытку: он нужен и для переподвязки путей, и для итогового routing.
+        val installed = container.ruleSetAssetManager.ensureInstalled()
         if (RoutingConfigEditor.usesManagedLocalRuleSets(profile.json)) {
-            val installed = container.ruleSetAssetManager.ensureInstalled()
             val rebound = RoutingConfigEditor.rebindManagedRuleSetPaths(profile.json, installed)
             if (rebound != profile.json) {
                 container.profileStore.update(profileId, rebound)
@@ -245,7 +248,6 @@ internal class SessionStarter(
         val policy = container.routingPolicyStore.getOrInitialize(
             GlobalRoutingPolicy(preset = storedRouting.preset, rules = storedRouting.rules),
         )
-        val installed = container.ruleSetAssetManager.ensureInstalled()
         val effectiveRouting = withContext(Dispatchers.Default) {
             RoutingConfigEditor.apply(profile.json, policy.preset, policy.rules, installed).json
         }
@@ -366,11 +368,14 @@ internal class SessionStarter(
             is RuntimeConfigResult.Invalid -> error(runtime.message)
         }
         controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeJson, dnsMode))
-        controller.startConnectionDiagnosticStage(token, "check_config", "Проверка конфигурации ядром")
-        controller.publish(token, VpnConnectionState.Starting(profileId, "Проверка sing-box", updaterRouting))
-        foreground(ForegroundState.ValidatingCore)
-        Libbox.checkConfig(runtimeJson)
-        checkCurrent(token)
+        // Проверка ядром не зависит от adapter и command server и идёт рядом с ними;
+        // результат нужен строго перед startOrReloadService (awaitConfigCheck).
+        val configCheck = CoreConfigCheckRun.launch(
+            check = CoreConfigCheck.shared,
+            runtimeJson = runtimeJson,
+            elapsedRealtime = SystemClock::elapsedRealtime,
+            epochMillis = System::currentTimeMillis,
+        )
 
         controller.startConnectionDiagnosticStage(token, "platform_adapter", "Подготовка Android VPN adapter")
         controller.publish(token, VpnConnectionState.Starting(profileId, "Создание TUN", updaterRouting))
@@ -415,6 +420,9 @@ internal class SessionStarter(
             throw CancellationException("Запуск отменён.")
         }
         val verified: VerifiedServer
+        // Отказ проверки конфигурации уходит наружу как есть, без RuntimeStartupFailure:
+        // так он классифицировался, когда проверка шла до создания сессии.
+        var configFailure: Throwable? = null
         try {
             session.attachPlatform(
                 AndroidPlatformAdapter(
@@ -434,10 +442,15 @@ internal class SessionStarter(
             )
             session.attachServer(commandServer)
             commandServer.start()
+            // Тот же стрим CommandLog питает и журнал диагностики: он открыт до запуска
+            // сервиса, поэтому стартовые строки доходят до обоих потребителей с первой.
             session.openRuntimeErrorClient(
                 onLogs = events::onCoreLogs,
                 onUnavailable = events::onObserverUnavailable,
+                mirrorDiagnostics = true,
             )
+            configFailure = awaitConfigCheck(token, profileId, updaterRouting, configCheck)
+            configFailure?.let { throw it }
             controller.startConnectionDiagnosticStage(token, "core_service", "Запуск sing-box и создание TUN")
             // Имена серверов группы: локальный DNS-транспорт спрашивает их
             // сначала доверенным путём, а не системным резолвером.
@@ -457,11 +470,9 @@ internal class SessionStarter(
             session.markLibboxStarted()
             checkCurrent(token)
 
-            // Подписка до любой стартовой пробы: command server хранит ограниченный
-            // backlog, и ошибки рукопожатия/транспорта/DNS остаются доступны, даже
-            // если health-check провалится и сессия сразу закроется.
-            controller.startConnectionDiagnosticStage(token, "core_log", "Снимок bounded core-лога")
-            session.openLogClient()
+            // Подписки на core-лог (ошибки и диагностика) уже открыты до запуска сервиса:
+            // ошибки рукопожатия/транспорта/DNS остаются доступны, даже если
+            // health-check провалится и сессия сразу закроется.
             controller.startConnectionDiagnosticStage(token, "group_client", "Чтение selector-групп")
             val groupClient = Libbox.newCommandClient(
                 GroupClientHandler(
@@ -475,12 +486,6 @@ internal class SessionStarter(
             )
             session.attachGroupClient(groupClient)
             groupClient.connect()
-            val selectorClient = Libbox.newCommandClient(
-                object : BaseClientHandler() {},
-                CommandClientOptions().apply { addCommand(Libbox.CommandGroup) },
-            )
-            session.attachSelectorClient(selectorClient)
-            selectorClient.connect()
             checkCurrent(token)
             reconcileSelectorSelection(session, groupClient, runtimeJson)
             checkCurrent(token)
@@ -509,8 +514,8 @@ internal class SessionStarter(
                 ?.takeIf { it.profileId == profileId && !verified.switched }
                 ?.let { pending -> container.profileStore.update(profileId, pending.candidateJson) }
         } catch (error: Throwable) {
-            val startupFailure = when (error) {
-                is CancellationException, is RuntimeStartupFailure -> error
+            val startupFailure = when {
+                error === configFailure || error is CancellationException || error is RuntimeStartupFailure -> error
                 else -> RuntimeStartupFailure(
                     error,
                     RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token)),
@@ -544,6 +549,45 @@ internal class SessionStarter(
             VpnTestHooks.consumeHysteriaFailure()?.let { code -> events.onInjectedFailure(session, code) }
             VpnTestHooks.consumeCoreHint()?.let { code -> events.onInjectedHint(session, code) }
         }
+    }
+
+    /**
+     * Дожидается проверки конфигурации ядром и записывает стадию `check_config`
+     * (длительность настоящей проверки; при пропуске по кэшу `detail="cached"`).
+     *
+     * @return отказ ядра — тогда стадия остаётся текущей, как и раньше, а вызывающий
+     * бросает его; `null` — конфигурация принята.
+     */
+    private suspend fun awaitConfigCheck(
+        token: Long,
+        profileId: String,
+        updaterRouting: Boolean,
+        check: Deferred<CoreConfigCheckRun>,
+    ): Throwable? {
+        val waiting = !check.isCompleted
+        if (waiting) {
+            controller.publish(token, VpnConnectionState.Starting(profileId, "Проверка sing-box", updaterRouting))
+            foreground(ForegroundState.ValidatingCore)
+        }
+        val run = check.await()
+        if (waiting) foreground(ForegroundState.CreatingTun)
+        val failure = run.failure
+        if (failure != null) {
+            controller.startConnectionDiagnosticStage(token, CONFIG_CHECK_STAGE, CONFIG_CHECK_LABEL)
+            return failure
+        }
+        controller.recordConnectionDiagnosticStage(
+            generation = token,
+            key = CONFIG_CHECK_STAGE,
+            label = CONFIG_CHECK_LABEL,
+            startedAtElapsedRealtimeMillis = run.startedAtElapsedMillis,
+            startedAtEpochMillis = run.startedAtEpochMillis,
+            durationMillis = run.durationMillis,
+            status = DiagnosticStageStatus.Success,
+            detail = if (run.cached) "cached" else null,
+        )
+        checkCurrent(token)
+        return null
     }
 
     private class VerifiedServer(val health: HealthCheckResult, val switched: Boolean)
@@ -713,6 +757,9 @@ internal class SessionStarter(
 
     internal companion object {
         const val CONNECTION_START_TIMEOUT_MILLIS = 45_000L
+
+        private const val CONFIG_CHECK_STAGE = "check_config"
+        private const val CONFIG_CHECK_LABEL = "Проверка конфигурации ядром"
 
         /** Ожидание зрелой сети перед попыткой; в бюджет подключения не входит. */
         const val NETWORK_SETTLE_WAIT_MILLIS = 10_000L
