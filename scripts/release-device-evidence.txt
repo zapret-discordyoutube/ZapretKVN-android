@@ -1,0 +1,7 @@
+# ADB/device checks actually run for one release (create-release-bundle.sh).
+# The first non-comment line must be "tag: vX.Y.Z" of the release being built;
+# for any other tag the notes fall back to "ADB device tests not verified".
+# Never claim a check that did not run.
+tag: v0.5.7
+Release attestation: host-verified; Android emulator (API 36, x86_64) ADB-verified; physical device not verified.
+Эмулятор zapret_api36: VpnServiceInstrumentedTest, HysteriaTransitionInstrumentedTest, PathSupervisionInstrumentedTest, HomeUi и LatencyProbeReducer пройдены; боевые Hysteria2-профили подключены в режимах DNS Secure и «DNS Android». Физическое устройство и Gecko на реальной сети не проверялись.

@@ -9,6 +9,10 @@ RELEASE_ABIS=(arm64-v8a armeabi-v7a x86_64)
 # Single source of truth for the user-facing changelog, shared with the Telegram
 # announcement in publish-local-stable.sh.
 RELEASE_CHANGES_FILE="${ZAPRET_RELEASE_CHANGES_FILE:-$PROJECT_ROOT/scripts/release-changes.txt}"
+# Optional record of the ADB/device checks actually run for THIS tag. Its lines are used
+# only when the first non-comment line is exactly "tag: <TAG>"; otherwise (absent file or
+# a stale tag) the notes keep the default "ADB device tests not verified" attestation.
+RELEASE_DEVICE_EVIDENCE_FILE="${ZAPRET_RELEASE_DEVICE_EVIDENCE_FILE:-$PROJECT_ROOT/scripts/release-device-evidence.txt}"
 [[ -f "$RELEASE_CHANGES_FILE" ]] || {
     echo "Missing changelog source: $RELEASE_CHANGES_FILE" >&2
     exit 1
@@ -168,9 +172,21 @@ jq -n \
         '' \
         '### Проверка релиза' \
         '' \
-        '- Пройдены host/unit/integration-проверки, общий WG/AWG JSON/UAPI golden-набор и проверки UDP для обеих версий sing-box; Android instrumentation APK собран.' \
-        '- Release attestation: host-verified; Android ADB device tests not verified.' \
-        '- Эмулятор и физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялись; этот дополнительный ADB-gate необязателен.' \
+        '- Пройдены host/unit/integration-проверки, общий WG/AWG JSON/UAPI golden-набор и проверки UDP для обеих версий sing-box; Android instrumentation APK собран.'
+    device_evidence=()
+    if [[ -f "$RELEASE_DEVICE_EVIDENCE_FILE" ]]; then
+        mapfile -t device_evidence < <(grep -v '^[[:space:]]*\(#\|$\)' "$RELEASE_DEVICE_EVIDENCE_FILE" || true)
+    fi
+    if (( ${#device_evidence[@]} > 1 )) && [[ "${device_evidence[0]}" == "tag: $TAG" ]]; then
+        for evidence_line in "${device_evidence[@]:1}"; do
+            printf -- '- %s\n' "$evidence_line"
+        done
+    else
+        printf '%s\n' \
+            '- Release attestation: host-verified; Android ADB device tests not verified.' \
+            '- Эмулятор и физическое Android-устройство, включая Gecko на реальной сети, для этого релиза не проверялись; этот дополнительный ADB-gate необязателен.'
+    fi
+    printf '%s\n' \
         '' \
         'Каждый APK содержит только одну архитектуру и встроенный libbox; отдельная динамическая загрузка ядра не используется.' \
         '' \
