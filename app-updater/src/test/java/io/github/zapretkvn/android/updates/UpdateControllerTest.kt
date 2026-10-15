@@ -408,6 +408,65 @@ class UpdateControllerTest {
     }
 
     @Test
+    fun `server grant downloads at once and the attempt is remembered for the report`() {
+        val setup = controller(bytes, unattended = true, foreground = false)
+        setup.controller.onServerGrant("2.0.0", now = 5_000)
+        runBlocking { withTimeout(15_000) { while (setup.installs.isEmpty()) kotlinx.coroutines.yield() } }
+
+        assertEquals(listOf(true), setup.silentFlags)
+        assertEquals("1.0.0", setup.prefs.attemptFromVersion)
+        assertEquals(5_000L, setup.prefs.attemptGrantedAtMillis)
+        assertEquals(UpdateController.VIA_FULL, setup.prefs.attemptVia)
+        assertEquals((bytes.size + 1023L) / 1024, setup.prefs.attemptDownloadedKib)
+        assertTrue("до перезапуска сообщать нечего", setup.controller.pendingServerReport().isEmpty())
+    }
+
+    @Test
+    fun `new version reports where it came from and how long it took, once`() {
+        val prefs = InMemoryUpdatePrefs().apply {
+            installingVersionCode = 1; installingVersionName = "1.0.0"
+            attemptFromVersion = "0.9.0"; attemptGrantedAtMillis = System.currentTimeMillis() - 42_000
+            attemptVia = UpdateController.VIA_DELTA; attemptDownloadedKib = 190
+        }
+        val controller = controller(bytes, prefs = prefs).controller
+
+        val report = controller.pendingServerReport()
+        assertEquals("0.9.0", report["prev"])
+        assertTrue(report["took"]!!.toInt() in 42..60)
+        assertEquals("parts", report["via"])
+        assertEquals("190", report["dl"])
+        assertNull(prefs.attemptFromVersion)
+
+        controller.serverReportDelivered(report)
+        assertTrue(controller.pendingServerReport().isEmpty())
+    }
+
+    @Test
+    fun `failed handoff and android refusal are reported, a user cancel is not`() {
+        val setup = controller(bytes, installerThrows = true)
+        setup.controller.checkOnce(UpdateChannel.Stable)
+        setup.await { it is UpdateState.Ready }
+        setup.controller.install()
+        setup.await { it is UpdateState.Failure }
+        assertEquals(mapOf("fail" to "2.0.0", "why" to "handoff"), setup.controller.pendingServerReport())
+
+        setup.prefs.pendingReport = null
+        setup.controller.onInstallResult(UpdateInstallResult.Failed("Отменено.", "status=3: aborted"))
+        assertTrue(setup.controller.pendingServerReport().isEmpty())
+
+        setup.controller.onInstallResult(UpdateInstallResult.Failed("Мало места.", "status=6: storage"))
+        assertEquals(mapOf("fail" to "2.0.0", "why" to "storage"), setup.controller.pendingServerReport())
+    }
+
+    @Test
+    fun `android install status maps to a short reason code`() {
+        assertEquals("conflict", UpdateController.installFailureCode("status=5: INSTALL_FAILED_UPDATE_INCOMPATIBLE"))
+        assertEquals("incompat", UpdateController.installFailureCode("status=7: x"))
+        assertEquals("other", UpdateController.installFailureCode("status=1: x"))
+        assertEquals("other", UpdateController.installFailureCode(null))
+    }
+
+    @Test
     fun `banner dismissal is remembered per version`() {
         val setup = controller(bytes)
         assertEquals(0L, setup.controller.bannerDismissedVersionCode.value)

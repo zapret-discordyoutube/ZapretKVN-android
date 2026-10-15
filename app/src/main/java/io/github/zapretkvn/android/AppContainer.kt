@@ -51,7 +51,9 @@ import io.github.zapretkvn.android.updates.AppUpdateVpnFallback
 import io.github.zapretkvn.android.updates.ForgejoHttpsClient
 import io.github.zapretkvn.android.updates.ForgejoUpdateSource
 import io.github.zapretkvn.android.updates.PackageInstallerUpdateInstaller
+import io.github.zapretkvn.android.updates.ReleaseWaitClient
 import io.github.zapretkvn.android.updates.SharedUpdatePrefs
+import io.github.zapretkvn.android.updates.UpdateChannel
 import io.github.zapretkvn.android.updates.UpdateCheckJobService
 import io.github.zapretkvn.android.profiles.AndroidImportInput
 import io.github.zapretkvn.android.profiles.ImportService
@@ -64,14 +66,21 @@ import io.github.zapretkvn.android.updates.UpdateEnvironment
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 import java.io.File
+import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 class AppContainer(
     context: Context,
@@ -206,7 +215,73 @@ class AppContainer(
         // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
         // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
         backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }
+        // Слушатель службы очереди: пока VPN включён (процесс точно жив) и выбран канал Stable, новая
+        // версия приходит за секунды после выхода, а не со следующей суточной проверкой.
+        backgroundScope.launch {
+            combine(
+                vpnController.state.map { it is VpnConnectionState.Connected },
+                uiSettingsStore.settings.map { it.updateChannel == UpdateChannel.Stable },
+            ) { connected, stable -> connected && stable && STABLE_VERSION.matches(BuildConfig.VERSION_NAME) }
+                .distinctUntilChanged()
+                .collectLatest { listen -> if (listen) releaseWaitClient().run() }
+        }
     }
+
+    private fun releaseWaitClient() = ReleaseWaitClient(
+        currentVersion = BuildConfig.VERSION_NAME,
+        http = { url, readTimeout -> releaseWaitGet(url, readTimeout) },
+        report = updateController::pendingServerReport,
+        reportDelivered = updateController::serverReportDelivered,
+        onGrant = { version -> updateController.onServerGrant(version) },
+    )
+
+    /**
+     * Вопрос службе очереди напрямую, мимо VPN (как и все запросы обновлений). Если прямой путь не
+     * сработал (у телефона бывает несколько сетей, и выбранная может не отвечать) — тот же крошечный
+     * вопрос обычным путём. Служба держит ответ минутами, поэтому отмена закрывает соединение сразу.
+     */
+    private suspend fun releaseWaitGet(url: String, readTimeoutMillis: Int): String = withContext(Dispatchers.IO) {
+        val target = URL(url)
+        val direct = nonVpnNetwork(appContext)
+        if (direct != null) {
+            try {
+                return@withContext releaseWaitRead(direct.openConnection(target) as HttpURLConnection, readTimeoutMillis)
+            } catch (failure: IOException) {
+                ensureActive()
+                if (failure is ReleaseWaitAnswerException) throw failure
+            }
+        }
+        releaseWaitRead(target.openConnection() as HttpURLConnection, readTimeoutMillis)
+    }
+
+    private suspend fun releaseWaitRead(connection: HttpURLConnection, readTimeoutMillis: Int): String {
+        val closeOnCancel = coroutineContext.job.invokeOnCompletion { connection.disconnect() }
+        try {
+            connection.connectTimeout = RELEASE_WAIT_CONNECT_MILLIS
+            connection.readTimeout = readTimeoutMillis
+            connection.useCaches = false
+            connection.setRequestProperty("User-Agent", "ZapretKVN-Android/${BuildConfig.VERSION_NAME}")
+            val code = connection.responseCode
+            if (code != HttpURLConnection.HTTP_OK) throw ReleaseWaitAnswerException("HTTP $code")
+            connection.inputStream.use { stream ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(4096)
+                while (true) {
+                    val read = stream.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                    if (buffer.size() > RELEASE_WAIT_MAX_BYTES) throw ReleaseWaitAnswerException("ответ службы слишком большой")
+                }
+                return buffer.toString(Charsets.UTF_8.name())
+            }
+        } finally {
+            closeOnCancel.dispose()
+            connection.disconnect()
+        }
+    }
+
+    /** Служба ответила, но не так: другим путём спрашивать бессмысленно. */
+    private class ReleaseWaitAnswerException(message: String) : IOException(message)
 
     /** Обновление подписок суточным заданием [UpdateCheckJobService] тем же путём, что ручное «Обновить (без кэша)». */
     internal val subscriptionAutoRefresher: SubscriptionAutoRefresher by lazy {
@@ -224,6 +299,13 @@ class AppContainer(
             store = profileStore,
             subscriptionSourceStore = subscriptionSourceStore,
         )
+    }
+
+    private companion object {
+        /** Служба очереди знает только Stable-версии вида 0.5.5; у Beta суффикс, их она не раздаёт. */
+        val STABLE_VERSION = Regex("""^\d+\.\d+\.\d+$""")
+        const val RELEASE_WAIT_CONNECT_MILLIS = 15_000
+        const val RELEASE_WAIT_MAX_BYTES = 16 * 1024
     }
 
     val profilesViewModelFactory: ProfilesViewModel.Factory

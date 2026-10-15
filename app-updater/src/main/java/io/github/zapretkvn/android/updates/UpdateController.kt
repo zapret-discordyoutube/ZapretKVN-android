@@ -67,6 +67,14 @@ class UpdateController(
     private val automaticCheckStarted = AtomicBoolean(false)
     private val keepPartialOnCancel = AtomicBoolean(false)
 
+    /** Версия, которую разрешила служба очереди, и когда (мс): для отчёта «дошла за столько-то». */
+    @Volatile
+    private var serverGrant: Pair<String, Long>? = null
+
+    /** Каким путём (`parts` — дельта, `setup` — APK целиком) и сколько байт скачано в этот раз. */
+    @Volatile
+    private var lastDownload: Pair<String, Long>? = null
+
     /** Последняя техническая причина сбоя: для журнала и диагностики, пользователю не показывается. */
     @Volatile
     var lastTechnicalDetail: String? = null
@@ -102,6 +110,23 @@ class UpdateController(
         val job = scope.launch { runCheck(channelProvider(), automatic = true, background = true) }
         operation = job
         return job
+    }
+
+    /**
+     * Служба очереди разрешила обновиться до [version] (слушатель [ReleaseWaitClient]): та же фоновая
+     * проверка и загрузка, что из суточного задания, только сразу. Null — уже что-то выполняется.
+     */
+    fun onServerGrant(version: String, now: Long = System.currentTimeMillis()): Job? {
+        serverGrant = version to now
+        return startBackground { UpdateChannel.Stable }
+    }
+
+    /** Что сказать службе очереди об исходе прошлого обновления (один раз); пусто — нечего. */
+    fun pendingServerReport(): Map<String, String> = decodeReport(prefs.pendingReport)
+
+    /** Служба получила отчёт: второй раз его не шлём. */
+    fun serverReportDelivered(report: Map<String, String>) {
+        if (report.isNotEmpty() && decodeReport(prefs.pendingReport) == report) prefs.pendingReport = null
     }
 
     /** Система остановила фоновое задание: прерываем работу, недокачанный файл оставляем для докачки. */
@@ -189,6 +214,10 @@ class UpdateController(
                 if (name != null && !shownNow) notifier?.confirmationNeeded(name, result.intent)
             }
             is UpdateInstallResult.Failed -> {
+                val name = candidate?.metadata?.versionName ?: prefs.installingVersionName
+                // Отказ самого пользователя — не поломка версии: службе о нём не сообщаем.
+                val why = installFailureCode(result.detail)
+                if (name != null && why != WHY_ABORTED) noteFailure(name, why) else clearAttempt()
                 prefs.installingVersionCode = 0
                 resetInstallRequest()
                 lastTechnicalDetail = result.detail
@@ -346,6 +375,7 @@ class UpdateController(
             return DownloadOutcome.Deferred
         }
         var lastPublishedAt = 0L
+        var networkBytes = plan.networkBytes
         publishDownloading(candidate, 0, plan.networkBytes, plan.savedBytes)
         downloader.download(
             client = client,
@@ -355,6 +385,7 @@ class UpdateController(
             plan = plan,
             partial = partial,
             progress = { downloaded, total, saved ->
+                networkBytes = total
                 val now = System.nanoTime()
                 if (downloaded >= total || now - lastPublishedAt >= PROGRESS_INTERVAL_NANOS) {
                     lastPublishedAt = now
@@ -362,6 +393,8 @@ class UpdateController(
                 }
             },
         )
+        // Дельта может откатиться к APK целиком: путь считаем по тому, сколько скачано на самом деле.
+        lastDownload = (if (networkBytes < metadata.apkSize) VIA_DELTA else VIA_FULL) to networkBytes
         return DownloadOutcome.Completed
     }
 
@@ -410,6 +443,7 @@ class UpdateController(
             coroutineContext.ensureActive()
             prefs.installingVersionCode = candidate.metadata.versionCode
             prefs.installingVersionName = candidate.metadata.versionName
+            rememberAttempt(candidate.metadata.versionName)
             confirmationLaunchRequested.set(userInitiated)
             // Тихо — только фоновая установка: приложение на экране Android без подтверждения не обновляет.
             installer.install(file, candidate.metadata.apkSha256, candidate, silent = !userInitiated)
@@ -419,6 +453,9 @@ class UpdateController(
             throw cancelled
         } catch (error: Throwable) {
             cleanupFiles()
+            if (prefs.installingVersionCode == candidate.metadata.versionCode) {
+                noteFailure(candidate.metadata.versionName, WHY_HANDOFF)
+            }
             prefs.installingVersionCode = 0
             lastTechnicalDetail = technicalDetail(error)
             mutableState.value = UpdateState.Failure(userMessage(error, INSTALL_FAILED), candidate, lastTechnicalDetail)
@@ -458,7 +495,45 @@ class UpdateController(
         if (code <= 0 || code > currentVersionCode) return
         prefs.installingVersionCode = 0
         prefs.installingVersionName = null
+        noteArrived()
         notifier?.installed(currentVersionName)
+    }
+
+    // ---- отчёт службе очереди ----
+
+    /** Перед передачей в установщик: запоминаем, с какой версии, когда разрешили и как скачали. */
+    private fun rememberAttempt(version: String) {
+        val grant = serverGrant?.takeIf { it.first == version }
+        val download = lastDownload
+        prefs.attemptFromVersion = currentVersionName
+        prefs.attemptGrantedAtMillis = grant?.second ?: 0
+        prefs.attemptVia = download?.first
+        prefs.attemptDownloadedKib = download?.second?.let { (it + 1023) / 1024 } ?: 0
+    }
+
+    /** Новая версия запустилась: готовим «дошла» — с какой версии, за сколько секунд, каким путём. */
+    private fun noteArrived(now: Long = System.currentTimeMillis()) {
+        val from = prefs.attemptFromVersion ?: return
+        val report = linkedMapOf("prev" to from)
+        val grantedAt = prefs.attemptGrantedAtMillis
+        if (grantedAt in 1..now) report["took"] = ((now - grantedAt) / 1000).toString()
+        prefs.attemptVia?.let { report["via"] = it }
+        prefs.attemptDownloadedKib.takeIf { it > 0 }?.let { report["dl"] = it.toString() }
+        prefs.pendingReport = encodeReport(report)
+        clearAttempt()
+    }
+
+    /** Установка не удалась: служба остановит раздачу версии, если таких отчётов много. */
+    private fun noteFailure(version: String, why: String) {
+        prefs.pendingReport = encodeReport(linkedMapOf("fail" to version, "why" to why))
+        clearAttempt()
+    }
+
+    private fun clearAttempt() {
+        prefs.attemptFromVersion = null
+        prefs.attemptGrantedAtMillis = 0
+        prefs.attemptVia = null
+        prefs.attemptDownloadedKib = 0
     }
 
     private fun userMessage(error: Throwable, fallback: String): String =
@@ -473,7 +548,38 @@ class UpdateController(
         else -> listOfNotNull(error.javaClass.simpleName, error.message).joinToString(": ")
     }
 
-    private companion object {
+    internal companion object {
+        const val VIA_DELTA = "parts"
+        const val VIA_FULL = "setup"
+        const val WHY_HANDOFF = "handoff"
+        const val WHY_ABORTED = "abort"
+
+        /** Код причины для службы по ответу установщика Android (`status=N: …`). */
+        fun installFailureCode(detail: String?): String {
+            val status = detail?.substringAfter("status=", "")?.takeWhile { it.isDigit() || it == '-' }?.toIntOrNull()
+            return when (status) {
+                3 -> WHY_ABORTED
+                2 -> "blocked"
+                5 -> "conflict"
+                7 -> "incompat"
+                4 -> "invalid"
+                6 -> "storage"
+                else -> "other"
+            }
+        }
+
+        fun encodeReport(report: Map<String, String>): String =
+            report.entries.joinToString("&") { (key, value) -> "$key=$value" }
+
+        fun decodeReport(raw: String?): Map<String, String> {
+            if (raw.isNullOrBlank()) return emptyMap()
+            return raw.split('&').mapNotNull { pair ->
+                val key = pair.substringBefore('=', "")
+                val value = pair.substringAfter('=', "")
+                if (key.isEmpty() || value.isEmpty()) null else key to value
+            }.toMap(LinkedHashMap())
+        }
+
         const val PROGRESS_INTERVAL_NANOS = 250_000_000L
         const val CHECK_FAILED = "Не удалось проверить обновления. Проверим позже."
         const val DOWNLOAD_FAILED = "Не удалось загрузить обновление. Попробуем позже."

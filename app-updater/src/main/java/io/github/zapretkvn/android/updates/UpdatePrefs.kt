@@ -29,6 +29,19 @@ interface UpdatePrefs {
      * пользователю надо показать «готово — нажмите, чтобы установить».
      */
     var silentAttemptVersionCode: Long
+
+    /**
+     * Попытка обновления для отчёта службе очереди: с какой версии, когда служба разрешила (мс, 0 —
+     * без разрешения), каким путём скачано (`parts` — дельта к установленному APK, `setup` — APK
+     * целиком) и сколько КиБ. Новая версия сообщает это один раз — «дошла».
+     */
+    var attemptFromVersion: String?
+    var attemptGrantedAtMillis: Long
+    var attemptVia: String?
+    var attemptDownloadedKib: Long
+
+    /** Неотправленный отчёт службе очереди (`prev=…&took=…` или `fail=…&why=…`); null — нечего. */
+    var pendingReport: String?
 }
 
 class InMemoryUpdatePrefs : UpdatePrefs {
@@ -49,6 +62,21 @@ class InMemoryUpdatePrefs : UpdatePrefs {
 
     @Volatile
     override var silentAttemptVersionCode: Long = 0
+
+    @Volatile
+    override var attemptFromVersion: String? = null
+
+    @Volatile
+    override var attemptGrantedAtMillis: Long = 0
+
+    @Volatile
+    override var attemptVia: String? = null
+
+    @Volatile
+    override var attemptDownloadedKib: Long = 0
+
+    @Volatile
+    override var pendingReport: String? = null
 }
 
 class SharedUpdatePrefs(context: Context) : UpdatePrefs {
@@ -93,6 +121,34 @@ class SharedUpdatePrefs(context: Context) : UpdatePrefs {
             prefs.edit().putLong(KEY_SILENT_ATTEMPT, value).apply()
         }
 
+    override var attemptFromVersion: String?
+        get() = prefs.getString(KEY_ATTEMPT_FROM, null)
+        set(value) = putString(KEY_ATTEMPT_FROM, value)
+
+    override var attemptGrantedAtMillis: Long
+        get() = prefs.getLong(KEY_ATTEMPT_GRANTED, 0)
+        set(value) {
+            prefs.edit().putLong(KEY_ATTEMPT_GRANTED, value).apply()
+        }
+
+    override var attemptVia: String?
+        get() = prefs.getString(KEY_ATTEMPT_VIA, null)
+        set(value) = putString(KEY_ATTEMPT_VIA, value)
+
+    override var attemptDownloadedKib: Long
+        get() = prefs.getLong(KEY_ATTEMPT_KIB, 0)
+        set(value) {
+            prefs.edit().putLong(KEY_ATTEMPT_KIB, value).apply()
+        }
+
+    override var pendingReport: String?
+        get() = prefs.getString(KEY_PENDING_REPORT, null)
+        set(value) = putString(KEY_PENDING_REPORT, value)
+
+    private fun putString(key: String, value: String?) {
+        prefs.edit().apply { if (value == null) remove(key) else putString(key, value) }.apply()
+    }
+
     private companion object {
         const val FILE = "updater_prefs"
         const val KEY_SILENT_ATTEMPT = "silent_attempt_version_code"
@@ -101,5 +157,10 @@ class SharedUpdatePrefs(context: Context) : UpdatePrefs {
         const val KEY_DISMISSED = "banner_dismissed_version_code"
         const val KEY_INSTALLING_CODE = "installing_version_code"
         const val KEY_INSTALLING_NAME = "installing_version_name"
+        const val KEY_ATTEMPT_FROM = "attempt_from_version"
+        const val KEY_ATTEMPT_GRANTED = "attempt_granted_at"
+        const val KEY_ATTEMPT_VIA = "attempt_via"
+        const val KEY_ATTEMPT_KIB = "attempt_downloaded_kib"
+        const val KEY_PENDING_REPORT = "pending_report"
     }
 }
