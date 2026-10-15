@@ -375,7 +375,7 @@ index 00000000..103c1df1
 +	}
 +}
 diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
-index 3ea82556..5ed84300 100644
+index 3ea82556..e4620a60 100644
 --- a/protocol/hysteria2/outbound.go
 +++ b/protocol/hysteria2/outbound.go
 @@ -51,12 +51,14 @@ var (
@@ -413,20 +413,32 @@ index 3ea82556..5ed84300 100644
  		return nil, err
  	}
  	h.client = client
-@@ -180,7 +185,11 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+@@ -163,6 +168,11 @@ func (h *Outbound) clientConfig() (*hyclient.Config, error) {
+ 		ServerAddr:  serverAddr,
+ 		Auth:        h.options.Password,
+ 		TLSConfig:   tlsConfig,
++		// Without FastOpen every TCP() waits for the server's response, which costs
++		// an extra RTT plus the server's own dial to the target for each connection.
++		// With it the response is parsed on the first Read(); a refusal surfaces
++		// there as a hysteria DialError.
++		FastOpen: true,
+ 		BandwidthConfig: hyclient.BandwidthConfig{
+ 			MaxTx: uint64(max(h.options.UpMbps, 0)) * megabitBytesPerSecond,
+ 			MaxRx: uint64(max(h.options.DownMbps, 0)) * megabitBytesPerSecond,
+@@ -180,7 +190,11 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
  	switch N.NetworkName(network) {
  	case N.NetworkTCP:
  		h.logger.InfoContext(ctx, "outbound connection to ", destination)
 -		return h.currentClient().TCP(destination.String())
-+		conn, err := h.currentClient().TCP(destination.String())
-+		if err != nil {
++		conn, err := dialTCP(ctx, h.currentClient(), destination.String())
++		if err != nil && ctx.Err() == nil {
 +			h.logger.ErrorContext(ctx, err)
 +		}
 +		return conn, err
  	case N.NetworkUDP:
  		conn, err := h.ListenPacket(ctx, destination)
  		if err != nil {
-@@ -196,6 +205,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
+@@ -196,6 +210,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
  	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
  	conn, err := h.currentClient().UDP()
  	if err != nil {
@@ -434,7 +446,7 @@ index 3ea82556..5ed84300 100644
  		return nil, err
  	}
  	return &hyPacketConn{conn: conn}, nil
-@@ -211,6 +221,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+@@ -211,6 +226,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
  		return
  	}
  	h.access.Lock()
@@ -446,7 +458,7 @@ index 3ea82556..5ed84300 100644
  	oldClient := h.client
  	h.client = client
  	h.access.Unlock()
-@@ -218,7 +233,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+@@ -218,7 +238,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
  }
  
  func (h *Outbound) Close() error {
@@ -458,7 +470,7 @@ index 3ea82556..5ed84300 100644
  	client := h.client
  	h.client = closedClient{}
  	h.access.Unlock()
-@@ -300,10 +319,14 @@ func (f *protectedConnFactory) New(net.Addr) (net.PacketConn, error) {
+@@ -300,10 +324,14 @@ func (f *protectedConnFactory) New(net.Addr) (net.PacketConn, error) {
  			conn := f.firstConn
  			f.firstConn = nil
  			f.access.Unlock()
@@ -475,7 +487,7 @@ index 3ea82556..5ed84300 100644
  	}
  	var (
  		conn net.PacketConn
-@@ -363,6 +386,20 @@ func (f *protectedConnFactory) Close() error {
+@@ -363,6 +391,20 @@ func (f *protectedConnFactory) Close() error {
  
  type packetConnOnly struct{ net.PacketConn }
  
@@ -496,6 +508,24 @@ index 3ea82556..5ed84300 100644
  func validateObfs(obfsOptions *option.Hysteria2Obfs) error {
  	if obfsOptions == nil {
  		return nil
+@@ -507,7 +549,7 @@ type hyPacketConn struct {
+ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+ 	payload, address, err := c.conn.Receive()
+ 	if err != nil {
+-		return 0, nil, err
++		return 0, nil, normalizeCloseError(err)
+ 	}
+ 	n := copy(buffer, payload)
+ 	return n, M.ParseSocksaddr(address), nil
+@@ -516,7 +558,7 @@ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+ func (c *hyPacketConn) WriteTo(buffer []byte, address net.Addr) (int, error) {
+ 	err := c.conn.Send(buffer, M.SocksaddrFromNet(address).String())
+ 	if err != nil {
+-		return 0, err
++		return 0, normalizeCloseError(err)
+ 	}
+ 	return len(buffer), nil
+ }
 diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
 index 6b964ba0..cbbce0e0 100644
 --- a/protocol/hysteria2/outbound_test.go
@@ -511,6 +541,388 @@ index 6b964ba0..cbbce0e0 100644
  		Obfs:          obfsOptions,
  	})
  	if err != nil {
+diff --git a/protocol/hysteria2/tcp_conn.go b/protocol/hysteria2/tcp_conn.go
+new file mode 100644
+index 00000000..53c3874e
+--- /dev/null
++++ b/protocol/hysteria2/tcp_conn.go
+@@ -0,0 +1,88 @@
++package hysteria2
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++
++	hyclient "github.com/apernet/hysteria/core/v2/client"
++	"github.com/apernet/quic-go"
++)
++
++// HTTP/3 H3_NO_ERROR, the code the official client uses when closing its QUIC
++// connection (Client.Close and reconnects).
++const connectionCloseOK quic.ApplicationErrorCode = 0x100
++
++// dialTCP opens a Hysteria2 TCP stream without letting a stalled handshake or
++// stream open outlive ctx. The official client API takes no context, so the call
++// runs in its own goroutine; when ctx wins, a connection that is established
++// later is closed instead of leaked.
++func dialTCP(ctx context.Context, client hyclient.Client, address string) (net.Conn, error) {
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	type result struct {
++		conn net.Conn
++		err  error
++	}
++	done := make(chan result, 1)
++	go func() {
++		conn, err := client.TCP(address)
++		done <- result{conn, err}
++	}()
++	select {
++	case r := <-done:
++		if r.err != nil {
++			return nil, r.err
++		}
++		return &tcpConn{Conn: r.conn}, nil
++	case <-ctx.Done():
++		go func() {
++			if r := <-done; r.conn != nil {
++				_ = r.conn.Close()
++			}
++		}()
++		return nil, ctx.Err()
++	}
++}
++
++// tcpConn maps the benign teardown errors of QUIC streams to net.ErrClosed so
++// sing-box (E.IsClosedOrCanceled) treats them as an ordinary close instead of
++// logging "connection download closed: stream N canceled by local with error
++// code 0". The official QStream.Close() calls CancelRead(0), which fails a
++// concurrent Read with a local StreamError.
++//
++// The official connection implements only net.Conn (no ReadWaiter, EarlyConn or
++// Upstream), so this wrapper loses no zero-copy path. It deliberately has no
++// Upstream() either, so sing-box cannot unwrap it and bypass the mapping.
++type tcpConn struct{ net.Conn }
++
++func (c *tcpConn) Read(buffer []byte) (int, error) {
++	n, err := c.Conn.Read(buffer)
++	return n, normalizeCloseError(err)
++}
++
++func (c *tcpConn) Write(buffer []byte) (int, error) {
++	n, err := c.Conn.Write(buffer)
++	return n, normalizeCloseError(err)
++}
++
++// normalizeCloseError reports errors that only mean "the stream or the QUIC
++// connection was closed on purpose" as net.ErrClosed, keeping the original as a
++// second wrapped cause. Types are matched with errors.As, never by message.
++func normalizeCloseError(err error) error {
++	if err == nil || errors.Is(err, net.ErrClosed) {
++		return err
++	}
++	var streamError *quic.StreamError
++	if errors.As(err, &streamError) && streamError.ErrorCode == 0 {
++		return fmt.Errorf("%w: %w", net.ErrClosed, err)
++	}
++	var applicationError *quic.ApplicationError
++	if errors.As(err, &applicationError) &&
++		(!applicationError.Remote || applicationError.ErrorCode == 0 || applicationError.ErrorCode == connectionCloseOK) {
++		return fmt.Errorf("%w: %w", net.ErrClosed, err)
++	}
++	return err
++}
+diff --git a/protocol/hysteria2/tcp_conn_test.go b/protocol/hysteria2/tcp_conn_test.go
+new file mode 100644
+index 00000000..29b86f40
+--- /dev/null
++++ b/protocol/hysteria2/tcp_conn_test.go
+@@ -0,0 +1,282 @@
++package hysteria2
++
++import (
++	"context"
++	"crypto/tls"
++	"errors"
++	"io"
++	"net"
++	"net/netip"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	coreErrs "github.com/apernet/hysteria/core/v2/errors"
++	hyserver "github.com/apernet/hysteria/core/v2/server"
++	"github.com/apernet/quic-go"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++)
++
++func TestClientConfigEnablesFastOpen(t *testing.T) {
++	outbound := &Outbound{
++		ctx:    context.Background(),
++		logger: log.NewNOPFactory().Logger(),
++		dialer: &stubDialer{packetConn: &stubPacketConn{}, address: netip.MustParseAddr("192.0.2.10")},
++		options: option.Hysteria2OutboundOptions{
++			ServerOptions:               option.ServerOptions{Server: "192.0.2.10", ServerPort: 443},
++			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true}},
++		},
++	}
++	config, err := outbound.clientConfig()
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer config.ConnFactory.(*protectedConnFactory).Close()
++	if !config.FastOpen {
++		t.Fatal("official Hysteria2 client must run with FastOpen to skip the per-connection response wait")
++	}
++}
++
++func TestNormalizeCloseErrorTreatsBenignTeardownAsClosed(t *testing.T) {
++	closed := []error{
++		&quic.StreamError{StreamID: 4, ErrorCode: 0, Remote: false},
++		&quic.StreamError{StreamID: 4, ErrorCode: 0, Remote: true},
++		E.Cause(&quic.StreamError{StreamID: 4, ErrorCode: 0}, "read response"),
++		&quic.ApplicationError{ErrorCode: 0, Remote: true},
++		&quic.ApplicationError{ErrorCode: connectionCloseOK, Remote: true},
++		&quic.ApplicationError{ErrorCode: connectionCloseOK, Remote: false},
++		&quic.ApplicationError{ErrorCode: 0x101, Remote: false},
++	}
++	for _, err := range closed {
++		got := normalizeCloseError(err)
++		if !errors.Is(got, net.ErrClosed) || !E.IsClosedOrCanceled(got) {
++			t.Errorf("%v was not mapped to a closed error: %v", err, got)
++		}
++		var original *quic.StreamError
++		var application *quic.ApplicationError
++		if !errors.As(got, &original) && !errors.As(got, &application) {
++			t.Errorf("%v lost its original cause: %v", err, got)
++		}
++	}
++	kept := []error{
++		nil,
++		io.EOF,
++		&quic.StreamError{StreamID: 4, ErrorCode: 1, Remote: true},
++		&quic.ApplicationError{ErrorCode: 0x101, Remote: true},
++		coreErrs.DialError{Message: "refused"},
++	}
++	for _, err := range kept {
++		if got := normalizeCloseError(err); got != err {
++			t.Errorf("%v must pass through unchanged, got %v", err, got)
++		}
++	}
++}
++
++type probeConn struct {
++	net.Conn
++	closed atomic.Bool
++}
++
++func (c *probeConn) Close() error { c.closed.Store(true); return nil }
++
++type blockingClient struct {
++	stubClient
++	started chan struct{}
++	release chan struct{}
++	conn    *probeConn
++	calls   atomic.Int32
++}
++
++func (c *blockingClient) TCP(string) (net.Conn, error) {
++	c.calls.Add(1)
++	close(c.started)
++	<-c.release
++	return c.conn, nil
++}
++
++func TestDialTCPCancellationReturnsImmediatelyAndClosesLateConnection(t *testing.T) {
++	client := &blockingClient{started: make(chan struct{}), release: make(chan struct{}), conn: &probeConn{}}
++	ctx, cancel := context.WithCancel(context.Background())
++	type outcome struct {
++		conn net.Conn
++		err  error
++	}
++	result := make(chan outcome, 1)
++	go func() {
++		conn, err := dialTCP(ctx, client, "example.com:443")
++		result <- outcome{conn, err}
++	}()
++	<-client.started
++	cancel()
++	select {
++	case got := <-result:
++		if got.conn != nil || !errors.Is(got.err, context.Canceled) {
++			t.Fatalf("canceled dial returned conn=%v err=%v", got.conn, got.err)
++		}
++	case <-time.After(2 * time.Second):
++		t.Fatal("dialTCP did not return while the handshake was stalled")
++	}
++	if client.conn.closed.Load() {
++		t.Fatal("connection closed before the stalled handshake finished")
++	}
++	close(client.release)
++	deadline := time.Now().Add(2 * time.Second)
++	for !client.conn.closed.Load() && time.Now().Before(deadline) {
++		time.Sleep(5 * time.Millisecond)
++	}
++	if !client.conn.closed.Load() {
++		t.Fatal("connection established after cancellation leaked")
++	}
++}
++
++func TestDialTCPDoesNotStartWithCanceledContext(t *testing.T) {
++	client := &blockingClient{started: make(chan struct{}), release: make(chan struct{}), conn: &probeConn{}}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	if _, err := dialTCP(ctx, client, "example.com:443"); !errors.Is(err, context.Canceled) {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if client.calls.Load() != 0 {
++		t.Fatal("dial started although the context was already canceled")
++	}
++}
++
++type scriptedServerOutbound struct {
++	tcp func(string) (net.Conn, error)
++}
++
++func (o scriptedServerOutbound) TCP(address string) (net.Conn, error) { return o.tcp(address) }
++func (scriptedServerOutbound) UDP(string) (hyserver.UDPConn, error) {
++	return nil, errors.New("unsupported")
++}
++func (scriptedServerOutbound) CheckUDP(string) error { return errors.New("unsupported") }
++
++// startFastOpenOutbound runs an upstream Hysteria2 server with a scripted target
++// dialer and returns the production Outbound connected to it.
++func startFastOpenOutbound(t *testing.T, target func(string) (net.Conn, error)) *Outbound {
++	t.Helper()
++	serverSocket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	server, err := hyserver.NewServer(&hyserver.Config{
++		TLSConfig:     hyserver.TLSConfig{Certificates: []tls.Certificate{syntheticCertificate(t)}},
++		Conn:          serverSocket,
++		Authenticator: allowSyntheticAuth{},
++		Outbound:      scriptedServerOutbound{tcp: target},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = server.Close() })
++	go func() { _ = server.Serve() }()
++	ctx, cancel := context.WithCancel(context.Background())
++	outbound := &Outbound{
++		ctx:    ctx,
++		cancel: cancel,
++		logger: log.NewNOPFactory().Logger(),
++		dialer: realPacketDialer{},
++		options: option.Hysteria2OutboundOptions{
++			ServerOptions:               option.ServerOptions{Server: "127.0.0.1", ServerPort: uint16(serverSocket.LocalAddr().(*net.UDPAddr).Port)},
++			Password:                    "synthetic-auth",
++			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true}},
++		},
++	}
++	client, err := outbound.newClient()
++	if err != nil {
++		t.Fatal(err)
++	}
++	outbound.client = client
++	t.Cleanup(func() { _ = outbound.Close() })
++	return outbound
++}
++
++func TestFastOpenDoesNotWaitForServerDial(t *testing.T) {
++	echo, err := net.Listen("tcp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer echo.Close()
++	go func() {
++		conn, acceptErr := echo.Accept()
++		if acceptErr == nil {
++			_, _ = io.Copy(conn, conn)
++			_ = conn.Close()
++		}
++	}()
++	release := make(chan struct{})
++	outbound := startFastOpenOutbound(t, func(address string) (net.Conn, error) {
++		<-release
++		return net.Dial("tcp4", echo.Addr().String())
++	})
++	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	// The server is still "dialing" the target; without FastOpen this call blocks.
++	conn, err := outbound.DialContext(ctx, "tcp", M.ParseSocksaddr("203.0.113.7:443"))
++	if err != nil {
++		t.Fatalf("dial must not wait for the server-side target dial: %v", err)
++	}
++	defer conn.Close()
++	payload := []byte("early data before the server response")
++	if _, err = conn.Write(payload); err != nil {
++		t.Fatal(err)
++	}
++	close(release)
++	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
++	received := make([]byte, len(payload))
++	if _, err = io.ReadFull(conn, received); err != nil || string(received) != string(payload) {
++		t.Fatalf("early write was not delivered: %q %v", received, err)
++	}
++}
++
++func TestFastOpenServerRefusalSurfacesFromRead(t *testing.T) {
++	outbound := startFastOpenOutbound(t, func(string) (net.Conn, error) {
++		return nil, errors.New("synthetic refusal")
++	})
++	conn, err := outbound.DialContext(context.Background(), "tcp", M.ParseSocksaddr("203.0.113.7:443"))
++	if err != nil {
++		t.Fatalf("FastOpen dial reports success before the server answers: %v", err)
++	}
++	defer conn.Close()
++	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
++	_, err = conn.Read(make([]byte, 16))
++	var dialError coreErrs.DialError
++	if !errors.As(err, &dialError) || dialError.Message == "" {
++		t.Fatalf("server refusal did not surface as DialError from Read: %v", err)
++	}
++	if E.IsClosedOrCanceled(err) {
++		t.Fatalf("refusal must stay a real error, got %v", err)
++	}
++}
++
++func TestLocalCloseDuringReadIsReportedAsClosed(t *testing.T) {
++	serverSide, targetSide := net.Pipe()
++	defer targetSide.Close()
++	outbound := startFastOpenOutbound(t, func(string) (net.Conn, error) { return serverSide, nil })
++	conn, err := outbound.DialContext(context.Background(), "tcp", M.ParseSocksaddr("203.0.113.7:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	readResult := make(chan error, 1)
++	go func() {
++		_, readErr := conn.Read(make([]byte, 16))
++		readResult <- readErr
++	}()
++	time.Sleep(200 * time.Millisecond)
++	_ = conn.Close()
++	select {
++	case err = <-readResult:
++	case <-time.After(5 * time.Second):
++		t.Fatal("blocked Read was not released by Close")
++	}
++	var streamError *quic.StreamError
++	if !errors.As(err, &streamError) {
++		t.Fatalf("expected the original quic stream cancellation to stay reachable, got %v", err)
++	}
++	if !errors.Is(err, net.ErrClosed) || !E.IsClosedOrCanceled(err) {
++		t.Fatalf("local stream cancellation must look like a normal close to sing-box: %v", err)
++	}
++}
 diff --git a/protocol/vless/outbound.go b/protocol/vless/outbound.go
 deleted file mode 100644
 index fca1995c..00000000
