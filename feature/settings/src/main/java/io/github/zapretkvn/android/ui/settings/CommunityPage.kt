@@ -18,11 +18,14 @@ import io.github.zapretkvn.core.designsystem.ZapretIcons
 /** Официальные ссылки сообщества. Других мест, где они записаны, в приложении нет. */
 data class CommunityLink(val title: String, val subtitle: String, val url: String)
 
+/** Рекламная метка deep-link бота: источник kvnand + место community. */
+const val BOT_COMMUNITY_URL = "https://t.me/zapretvpns_bot?start=kvnand_community"
+
 object CommunityLinks {
     val all: List<CommunityLink> = listOf(
         CommunityLink("Zapret KVN", "Telegram-канал", "https://t.me/bypassblock"),
         CommunityLink("VPN Discord YouTube", "Telegram-сообщество", "https://t.me/vpndiscordyooutube"),
-        CommunityLink("Zapret VPN bot", "Telegram-бот", "https://t.me/zapretvpns_bot"),
+        CommunityLink("Zapret VPN bot", "Telegram-бот", BOT_COMMUNITY_URL),
     )
 }
 
