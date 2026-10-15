@@ -45,7 +45,6 @@ make_sandbox() {
         "$root/scripts/"
     printf 'fake patch\n' > "$root/core-patches/0001-test.patch"
     cp "$SCRIPT_DIR/../core-patches/sing-udp.json" \
-        "$SCRIPT_DIR/../core-patches/sing-udp-v8.patch" \
         "$SCRIPT_DIR/../core-patches/sing-udp-v9.patch" \
         "$SCRIPT_DIR/../core-patches/sing_udp_buffer_test.go" "$root/core-patches/"
     (cd "$root" && sha256sum core-patches/0001-test.patch > core-patches/series.sha256)
@@ -168,7 +167,7 @@ expect_check "$SANDBOX" 2 "check: AAR without the UDP patch fingerprint is stale
 
 SANDBOX="$WORK_DIR/tampered-udp-patch"
 make_sandbox "$SANDBOX"
-printf 'tampered\n' >> "$SANDBOX/core-patches/sing-udp-v8.patch"
+printf 'tampered\n' >> "$SANDBOX/core-patches/sing-udp-v9.patch"
 expect_check "$SANDBOX" 3 "check: changed UDP patch cannot reuse a recorded pin"
 
 SANDBOX="$WORK_DIR/missing-aar"
