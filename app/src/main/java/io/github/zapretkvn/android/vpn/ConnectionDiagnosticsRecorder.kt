@@ -152,12 +152,16 @@ internal class ConnectionDiagnosticsRecorder(
             val attempt = current.connectionAttempt
                 ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
                 ?: return@update current
-            // HTTPS-проба идёт параллельно DNS-пробе: её старт не закрывает DNS-этап,
-            // тот завершается своим отчётом, чтобы длительность каждого была честной.
+            // HTTPS-проба идёт параллельно DNS-пробе: старт одной не закрывает другую
+            // (в т.ч. переход dns_udp → dns_tcp не закрывает идущий https_probe как
+            // «успешный»), каждая завершается своим отчётом с честной длительностью.
             val completed = attempt.stages.completeRunningStage(
                 elapsed = elapsed,
                 status = DiagnosticStageStatus.Success,
-                keepRunning = { running -> key == HTTPS_PROBE_STAGE_KEY && running.key in PARALLEL_DNS_STAGE_KEYS },
+                keepRunning = { running ->
+                    (key == HTTPS_PROBE_STAGE_KEY && running.key in PARALLEL_DNS_STAGE_KEYS) ||
+                        (key in PARALLEL_DNS_STAGE_KEYS && running.key == HTTPS_PROBE_STAGE_KEY)
+                },
             )
             val stage = DiagnosticStageTiming(
                 key = key.take(48),
