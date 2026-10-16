@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.ui.home
 
 import io.github.zapretkvn.android.apps.AppScopeMode
+import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -72,21 +73,40 @@ class HomePresenterTest {
     @Test
     fun `link lost replaces the connected headline and status only while connected`() {
         val connected = VpnConnectionState.Connected("p", "Daily", 0L)
-        val lost = HomeInput(connected, true, 3, 0, AppScopeMode.Include, "Amsterdam-2", linkLost = true)
+        val lost = HomeInput(connected, true, 3, 0, AppScopeMode.Include, "Amsterdam-2", pathStatus = PathStatus.Lost)
         val headline = homeHeadline(HomeStage.Connected, lost)
         assertEquals("Нет связи с сервером", headline.title)
         assertTrue(headline.hint!!.contains("Перезапустите"))
         assertTrue(headline.hint.contains("смените сервер"))
-        assertEquals("Нет связи с сервером", statusLabel(connected, linkLost = true))
-        assertEquals(io.github.zapretkvn.core.designsystem.Tone.Warning, statusTone(connected, linkLost = true))
+        assertEquals("Нет связи с сервером", statusLabel(connected, PathStatus.Lost))
+        assertEquals(io.github.zapretkvn.core.designsystem.Tone.Warning, statusTone(connected, PathStatus.Lost))
         // Перезапуск остаётся вторым действием главного экрана.
         assertEquals(HomeAction.Restart, homeActions(HomeStage.Connected, AppScopeMode.Include).second)
 
         // Без флага и вне «Подключено» ничего не меняется.
         assertEquals("VPN подключён", statusLabel(connected))
-        assertEquals("VPN выключен", statusLabel(VpnConnectionState.Stopped, linkLost = true))
+        assertEquals("VPN выключен", statusLabel(VpnConnectionState.Stopped, PathStatus.Lost))
         val stoppedLost = lost.copy(vpnState = VpnConnectionState.Stopped)
         assertEquals(false, stoppedLost.isLinkLost())
-        assertEquals("Всё работает", homeHeadline(HomeStage.Connected, lost.copy(linkLost = false)).title)
+        assertEquals("Всё работает", homeHeadline(HomeStage.Connected, lost.copy(pathStatus = PathStatus.Ok)).title)
+    }
+
+    @Test
+    fun `checking and switching are visible instead of all good`() {
+        val connected = VpnConnectionState.Connected("p", "Подписка", 1L)
+        val base = HomeInput(connected, true, 3, 0, AppScopeMode.Include, "Amsterdam-2")
+        assertEquals("Проверяем связь", statusLabel(connected, PathStatus.Checking))
+        assertEquals("Переключение сервера", statusLabel(connected, PathStatus.Switching))
+        assertEquals(
+            "Проверяем связь",
+            homeHeadline(HomeStage.Connected, base.copy(pathStatus = PathStatus.Checking)).title,
+        )
+        assertEquals(
+            "Переключаемся на другой сервер",
+            homeHeadline(HomeStage.Connected, base.copy(pathStatus = PathStatus.Switching)).title,
+        )
+        assertEquals("Всё работает", homeHeadline(HomeStage.Connected, base).title)
+        // Вне «Подключено» состояние пути не показывается.
+        assertEquals("VPN выключен", statusLabel(VpnConnectionState.Stopped, PathStatus.Switching))
     }
 }

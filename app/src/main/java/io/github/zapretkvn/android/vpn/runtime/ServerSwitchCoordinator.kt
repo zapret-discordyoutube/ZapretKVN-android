@@ -11,6 +11,7 @@ import io.github.zapretkvn.android.engines.failover.SlowSwitchGate
 import io.github.zapretkvn.android.engines.failover.SlowSwitchSnapshot
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
+import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -77,7 +78,7 @@ internal class ServerSwitchCoordinator(
     private var trafficJob: Job? = null
 
     /** «Нет связи с сервером» показано пользователю (только в акторе). */
-    private var linkLost = false
+    private var pathStatus = PathStatus.Ok
 
     // Читаются из потоков libbox/Android: только volatile-флаги.
     @Volatile private var smartSwitchEnabled = true
@@ -139,6 +140,7 @@ internal class ServerSwitchCoordinator(
         // Ручной выбор фиксируется на 30 минут; failover это не затрагивает.
         smartPolicy.onManualSelection()
         timeline("Сервер выбран вручную: ${server(outboundTag)}.")
+        setPathStatus(session, PathStatus.Switching, "сервер выбран вручную")
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
             // Та же проверка связи, что у failover: недоступный сервер не остаётся выбранным.
@@ -156,11 +158,14 @@ internal class ServerSwitchCoordinator(
         if (sessions.active() !== session || session.generation != controller.currentGeneration()) return
         when (outcome) {
             SwitchOutcome.Committed -> {
+                setPathStatus(session, PathStatus.Ok, "выбранный сервер подключён")
                 host.showForeground(ForegroundState.Connected)
                 controller.clearConnectionIdentity(session.generation)
                 onExitChanged(session)
             }
             is SwitchOutcome.RolledBack -> {
+                // Прежний сервер возвращён: путь тот же, что был до выбора.
+                setPathStatus(session, PathStatus.Ok, "прежний сервер возвращён")
                 val failure = VpnFailureStates.from(outcome.error)
                 timeline("Выбранный ${server(outboundTag)} не прошёл проверку связи (${failure.code}): прежний сервер возвращён.")
                 controller.publishMessage(
@@ -199,6 +204,7 @@ internal class ServerSwitchCoordinator(
 
     /** Одна проба через текущий сервер: единственная активная проверка, которую запускает надзор. */
     private fun startProbe(session: CoreSession, decision: PathDecision.Probe, code: HysteriaFailureCode) {
+        if (pathStatus == PathStatus.Ok) setPathStatus(session, PathStatus.Checking, "проверка связи")
         probeCode = code
         runOperation(Operation.Probe) { previous ->
             previous?.cancelAndJoin()
@@ -225,7 +231,10 @@ internal class ServerSwitchCoordinator(
                 )
                 setLinkLost(session, false, "сервер ответил на проверку")
             }
-            LivenessResult.Unknown -> timeline("VPN-сеть Android недоступна для проверки; переключения нет.")
+            LivenessResult.Unknown -> {
+                timeline("VPN-сеть Android недоступна для проверки; переключения нет.")
+                if (pathStatus == PathStatus.Checking) setPathStatus(session, PathStatus.Ok, "проверка не выполнена")
+            }
             is LivenessResult.Dead -> if (decision is PathDecision.Ignore) {
                 timeline("Сервер не отвечает (${result.detail}); подходящей замены нет, остаёмся.")
                 // Сервер подтверждённо мёртв, а автоматике действовать нечем: статус не «Подключено».
@@ -276,6 +285,7 @@ internal class ServerSwitchCoordinator(
             is PathDecision.Ignore, is PathDecision.Probe -> Unit
             is PathDecision.Terminate -> ops.terminateSession(session, decision.code, decision.message)
             is PathDecision.Switch -> {
+                setPathStatus(session, PathStatus.Switching, "переключение сервера")
                 timeline(
                     "${server(decision.fromId)} не отвечает${detail?.let { " ($it)" }.orEmpty()}: " +
                         "переключение на ${server(decision.toId)}.",
@@ -416,6 +426,7 @@ internal class ServerSwitchCoordinator(
             // не на что, но та же одна проверка через текущий сервер честно покажет
             // «Нет связи с сервером» вместо молчаливого «Подключено».
             timeline("Проверка связи через текущий сервер (автоматической замены для этого профиля нет).")
+            if (pathStatus == PathStatus.Ok) setPathStatus(session, PathStatus.Checking, "проверка связи")
             runOperation(Operation.Probe) { previous ->
                 previous?.cancelAndJoin()
                 val result = container.vpnLivenessProbe.check()
@@ -442,7 +453,10 @@ internal class ServerSwitchCoordinator(
                 timeline("Сервер отвечает (${result.endpoint}, ${result.elapsedMillis} мс): ложная тревога.")
                 setLinkLost(session, false, "сервер ответил на проверку")
             }
-            LivenessResult.Unknown -> timeline("VPN-сеть Android недоступна для проверки.")
+            LivenessResult.Unknown -> {
+                timeline("VPN-сеть Android недоступна для проверки.")
+                if (pathStatus == PathStatus.Checking) setPathStatus(session, PathStatus.Ok, "проверка не выполнена")
+            }
             is LivenessResult.Dead -> {
                 timeline("Сервер не отвечает (${result.detail}); автоматической замены для этого профиля нет.")
                 setLinkLost(session, true, "сервер не отвечает, автоматической замены нет")
@@ -450,19 +464,36 @@ internal class ServerSwitchCoordinator(
         }
     }
 
+    /** «Нет связи с сервером» поднимается или снимается; см. [setPathStatus]. */
+    private fun setLinkLost(session: CoreSession, lost: Boolean, reason: String) =
+        setPathStatus(session, if (lost) PathStatus.Lost else PathStatus.Ok, reason)
+
     /**
-     * Показать или снять «Нет связи с сервером»: флаг для главного экрана и текст
-     * foreground-уведомления. Снимается ростом входящего трафика, ответом сервера
-     * на проверку, успешной сменой сервера и новой сессией.
+     * Единственный владелец состояния пути поверх «Подключено»: проверка, замена,
+     * «нет связи». Экран и уведомление получают его отсюда, поэтому во время
+     * проверки или замены сервера нельзя увидеть «Всё работает».
      */
-    private fun setLinkLost(session: CoreSession, lost: Boolean, reason: String) {
-        if (linkLost == lost || !isCurrent(session)) return
-        linkLost = lost
-        controller.publishLinkLost(session.generation, lost)
-        host.showForeground(if (lost) ForegroundState.LinkLost else ForegroundState.Connected)
-        val text = if (lost) "Нет связи с сервером: $reason." else "Связь с сервером восстановилась: $reason."
-        timeline(text)
-        controller.recordKeyEvent(session.generation, text)
+    private fun setPathStatus(session: CoreSession, status: PathStatus, reason: String) {
+        if (pathStatus == status || !isCurrent(session)) return
+        val previous = pathStatus
+        pathStatus = status
+        controller.publishPathStatus(session.generation, status)
+        host.showForeground(
+            when (status) {
+                PathStatus.Lost -> ForegroundState.LinkLost
+                PathStatus.Switching -> ForegroundState.SwitchingServer
+                PathStatus.Ok, PathStatus.Checking -> ForegroundState.Connected
+            },
+        )
+        val text = when (status) {
+            PathStatus.Lost -> "Нет связи с сервером: $reason."
+            PathStatus.Ok -> if (previous == PathStatus.Lost) "Связь с сервером восстановилась: $reason." else null
+            PathStatus.Checking, PathStatus.Switching -> null
+        }
+        text?.let {
+            timeline(it)
+            controller.recordKeyEvent(session.generation, it)
+        }
     }
 
     // ---- «Умная проверка» скорости ----
@@ -490,7 +521,7 @@ internal class ServerSwitchCoordinator(
         smartPolicy.bindProfile(session.profileId)
         // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
         stallDetector.reset(keepCooldown = false)
-        linkLost = false
+        pathStatus = PathStatus.Ok
         // Единый поток трафика сессии (CoreSession.trafficSamples) — единственный вход детектора.
         // Подписка живёт, пока сессия не сменится; отсчёты чужих сессий отсекает isCurrent.
         trafficJob?.cancel()

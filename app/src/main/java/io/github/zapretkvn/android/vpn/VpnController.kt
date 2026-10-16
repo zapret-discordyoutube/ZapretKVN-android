@@ -51,7 +51,7 @@ class VpnController(
     private val mutableState = MutableStateFlow<VpnConnectionState>(VpnConnectionState.Stopped)
     private val mutableGroups = MutableStateFlow<List<RuntimeSelectorGroup>>(emptyList())
     private val mutableMessage = MutableStateFlow<String?>(null)
-    private val mutableLinkLost = MutableStateFlow(false)
+    private val mutablePathStatus = MutableStateFlow(PathStatus.Ok)
     private val mutableHomeVisible = MutableStateFlow(false)
     private val mutableDiagnosticsVisible = MutableStateFlow(false)
     private val latestGeneration = AtomicLong(0)
@@ -83,7 +83,7 @@ class VpnController(
      * заменить его автоматика не смогла. Только при [VpnConnectionState.Connected];
      * любая смена состояния и новое поколение сессии сбрасывают флаг.
      */
-    val linkLost: StateFlow<Boolean> = mutableLinkLost.asStateFlow()
+    val pathStatus: StateFlow<PathStatus> = mutablePathStatus.asStateFlow()
     val sessionStats: StateFlow<VpnSessionStats> = mutableSessionStats.asStateFlow()
     val diagnostics: StateFlow<DiagnosticState> = diagnosticsRecorder.diagnostics
 
@@ -265,7 +265,7 @@ class VpnController(
         // the state write and terminal states must already have a terminal attempt.
         diagnosticsRecorder.updateDiagnosticConnectionState(generation, safeState)
         sessionHistory.onState(generation, safeState)
-        mutableLinkLost.value = false
+        mutablePathStatus.value = PathStatus.Ok
         mutableState.value = safeState
         synchronized(trafficLock) {
             when (safeState) {
@@ -304,15 +304,18 @@ class VpnController(
     internal fun publishRecoverableFailure(generation: Long, failure: VpnConnectionState.Error) =
         diagnosticsRecorder.recordRecoverableFailure(generation, failure)
 
-    /** Поднять или снять «Нет связи с сервером»; устаревшее поколение и не-Connected игнорируются. */
-    internal fun publishLinkLost(generation: Long, lost: Boolean) {
+    /**
+     * Опубликовать состояние пути, которое ведёт надзор за путём в акторе (единственный
+     * владелец); устаревшее поколение игнорируется, вне «Подключено» путь всегда Ok.
+     */
+    internal fun publishPathStatus(generation: Long, status: PathStatus) {
         if (generation != currentGeneration()) return
-        mutableLinkLost.value = lost && mutableState.value is VpnConnectionState.Connected
+        mutablePathStatus.value = if (mutableState.value is VpnConnectionState.Connected) status else PathStatus.Ok
     }
 
     internal fun nextGeneration(): Long {
         val generation = latestGeneration.incrementAndGet()
-        mutableLinkLost.value = false
+        mutablePathStatus.value = PathStatus.Ok
         diagnosticsRecorder.resetRuntimeMap()
         // Clear the previous session once, before callbacks can publish data for
         // this generation. Repeated Starting progress updates must not erase the

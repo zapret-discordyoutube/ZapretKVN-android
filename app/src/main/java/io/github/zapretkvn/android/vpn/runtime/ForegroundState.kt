@@ -12,6 +12,7 @@ internal enum class ForegroundState(val text: String) {
 
     /** Сервер подтверждённо не отвечает, замены нет: статус не должен оставаться «Подключено». */
     LinkLost("Нет связи с сервером"),
+    SwitchingServer("Переключение сервера"),
     Paused("VPN на паузе по правилу сети"),
     Restarting("Перезапуск VPN"),
     AwaitingNetwork("Ожидание сети Android"),

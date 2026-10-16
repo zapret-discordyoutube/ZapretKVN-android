@@ -85,6 +85,7 @@ import io.github.zapretkvn.android.routing.RoutingPreset
 import io.github.zapretkvn.android.vpn.ExternalIpStatus
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.TrafficSample
+import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
 import io.github.zapretkvn.core.designsystem.DiagnosticShareButton
@@ -131,8 +132,8 @@ data class HomeUi(
     val appVersion: String,
     /** Сервисы, выбранные в настройках: карточка показывает и проверяет только их. */
     val services: List<ServiceId> = ServiceCatalog.defaults.map { it.id },
-    /** Подключено, но сервер не отвечает: подпись «Нет связи с сервером» и кнопка смены сервера. */
-    val linkLost: Boolean = false,
+    /** Состояние пути поверх «Подключено»: проверка, замена, «нет связи» (кнопка смены сервера). */
+    val pathStatus: PathStatus = PathStatus.Ok,
 )
 
 class HomeCallbacks(
@@ -226,12 +227,13 @@ fun HomeScreen(
 
 @Composable
 private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
-    val linkLost = ui.linkLost && ui.vpnState is VpnConnectionState.Connected
-    val tone = statusTone(ui.vpnState, linkLost)
+    val path = if (ui.vpnState is VpnConnectionState.Connected) ui.pathStatus else PathStatus.Ok
+    val linkLost = path == PathStatus.Lost
+    val tone = statusTone(ui.vpnState, path)
     val accent = ZapretColors.accent
     val glow by animateColorAsState(
         when (ui.stage) {
-            HomeStage.Connected -> if (linkLost) accent.connecting else accent.heroEnd
+            HomeStage.Connected -> if (path != PathStatus.Ok) accent.connecting else accent.heroEnd
             HomeStage.Starting, HomeStage.Reconnecting, HomeStage.Stopping -> accent.connecting
             HomeStage.Error -> MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.primary
@@ -260,7 +262,7 @@ private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
         verticalArrangement = Arrangement.spacedBy(Spacing.m),
     ) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            StatusPill(statusLabel(ui.vpnState, linkLost), tone)
+            StatusPill(statusLabel(ui.vpnState, path), tone)
             Box(Modifier.weight(1f))
             (ui.vpnState as? VpnConnectionState.Connected)?.let {
                 ElapsedTime(sinceEpochMillis = it.connectedAtEpochMillis)

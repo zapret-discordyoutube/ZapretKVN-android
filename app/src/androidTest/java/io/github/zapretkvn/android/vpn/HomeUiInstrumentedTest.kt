@@ -159,7 +159,7 @@ class HomeUiInstrumentedTest {
         composeRule.onNodeWithText("Отключить").assertExists()
 
         // Сервер не отвечает, замены нет: поверх «Подключено» подпись, перезапуск и смена сервера.
-        container.vpnController.publishLinkLost(generation, true)
+        container.vpnController.publishPathStatus(generation, PathStatus.Lost)
         composeRule.waitUntil(10_000) {
             composeRule.onAllNodesWithText("Нет связи с сервером").fetchSemanticsNodes().isNotEmpty()
         }
