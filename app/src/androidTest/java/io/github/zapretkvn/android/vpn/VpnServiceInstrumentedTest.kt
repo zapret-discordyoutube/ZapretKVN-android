@@ -2297,6 +2297,7 @@ class VpnServiceInstrumentedTest {
                 {
                   "type":"hysteria2","tag":"dead-proxy","server":"$serverAddress","server_port":$serverPort,
                   "up_mbps":10,"down_mbps":10,"password":"dead-proxy",
+                  "certificate_sha256":"${"ab".repeat(32)}",
                   "tls":{"enabled":true,"server_name":"dead.invalid","insecure":true}
                 },
                 {"type":"selector","tag":"zapret-proxy","outbounds":["dead-proxy"],"default":"dead-proxy"},
