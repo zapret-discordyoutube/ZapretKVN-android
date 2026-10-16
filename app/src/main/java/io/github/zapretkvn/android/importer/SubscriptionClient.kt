@@ -43,6 +43,9 @@ class HttpSubscriptionFetcher(
     // Connection explicitly bound to the running VPN network, or null when the
     // tunnel is down. Plain http:// links travel only this way.
     private val tunnelConnection: (url: URL) -> HttpURLConnection? = { null },
+    // Direct path through the browser transport (Chrome on the wire); null result —
+    // the transport is unavailable in this build and HttpURLConnection is used.
+    private val browserDirect: ((url: String, headers: Map<String, String>) -> Reply?)? = null,
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
         // Ссылка без шифрования: токен в адресе и список серверов в ответе провайдер
@@ -74,74 +77,84 @@ class HttpSubscriptionFetcher(
         var current = validatedUrl(source.url)
         val origin = URI(current).host.orEmpty()
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
-            val connection = open(URL(current), path)
-                ?: throw ImportException("URL подписки не является HTTP(S).")
-            try {
-                connection.instanceFollowRedirects = false
-                connection.connectTimeout = TIMEOUT_MILLIS
-                connection.readTimeout = TIMEOUT_MILLIS
-                // Subscription snapshots and HTTP validators are intentionally not cached.
-                // Every user refresh is an unconditional fetch, so a parser/runtime revision can
-                // never strand an old partially parsed body behind a newly stored ETag.
-                connection.useCaches = false
-                // Идентификатор устройства принадлежит только исходному провайдеру:
-                // на редиректе к чужому хосту он снимается, как браузеры снимают Authorization.
-                val sameOrigin = URI(current).host.orEmpty().equals(origin, ignoreCase = true)
-                val effective = if (sameOrigin) source else source.copy(sendHwid = false, hwid = "")
-                SubscriptionIdentity.requestHeaders(effective, device, appVersion)
-                    .forEach { (name, value) -> connection.setRequestProperty(name, value) }
-                val status = connection.responseCode
-                if (status in REDIRECT_CODES) {
-                    if (redirectIndex == MAX_REDIRECTS) {
-                        throw ImportException("Слишком много перенаправлений подписки.")
+            // Идентификатор устройства принадлежит только исходному провайдеру:
+            // на редиректе к чужому хосту он снимается, как браузеры снимают Authorization.
+            val sameOrigin = URI(current).host.orEmpty().equals(origin, ignoreCase = true)
+            val effective = if (sameOrigin) source else source.copy(sendHwid = false, hwid = "")
+            val headers = SubscriptionIdentity.requestHeaders(effective, device, appVersion)
+            val reply = exchange(current, path, headers)
+            if (reply.status in REDIRECT_CODES) {
+                if (redirectIndex == MAX_REDIRECTS) {
+                    throw ImportException("Слишком много перенаправлений подписки.")
+                }
+                val location = reply.location
+                    ?: throw ImportException("Сервер вернул перенаправление без адреса.")
+                val next = runCatching { URI(current).resolve(location).toString() }
+                    .map(::validatedUrl)
+                    .getOrElse {
+                        throw ImportException("Сервер вернул некорректный адрес перенаправления.")
                     }
-                    val location = connection.getHeaderField("Location")
-                        ?: throw ImportException("Сервер вернул перенаправление без адреса.")
-                    val next = runCatching { URI(current).resolve(location).toString() }
-                        .map(::validatedUrl)
-                        .getOrElse {
-                            throw ImportException("Сервер вернул некорректный адрес перенаправления.")
-                        }
-                    if (current.startsWith("https://", true) && next.startsWith("http://", true)) {
-                        throw ImportException("Переход подписки с HTTPS на HTTP запрещён.")
-                    }
-                    current = next
-                    return@repeat
+                if (current.startsWith("https://", true) && next.startsWith("http://", true)) {
+                    throw ImportException("Переход подписки с HTTPS на HTTP запрещён.")
                 }
-                if (status !in 200..299) {
-                    throw ImportException(
-                        SubscriptionIdentity.describeHttpFailure(
-                            status,
-                            connection.headerFields.orEmpty().keys,
-                        ),
-                    )
-                }
-                SubscriptionIdentity.describeHwidRefusal(
-                    status,
-                    connection.headerFields.orEmpty().keys,
-                )?.let { throw ImportException(it) }
-                val declaredLength = connection.contentLengthLong
-                if (declaredLength > MAX_IMPORT_BYTES) {
-                    throw ImportException("Подписка больше 4 МБ.")
-                }
-                connection.inputStream.use { input ->
-                    val output = ByteArrayOutputStream()
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    var total = 0
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        total += count
-                        if (total > MAX_IMPORT_BYTES) throw ImportException("Подписка больше 4 МБ.")
-                        output.write(buffer, 0, count)
-                    }
-                    return output.toString(Charsets.UTF_8.name())
-                }
-            } finally {
-                connection.disconnect()
+                current = next
+                return@repeat
             }
+            if (reply.status !in 200..299) {
+                throw ImportException(SubscriptionIdentity.describeHttpFailure(reply.status, reply.headerNames))
+            }
+            SubscriptionIdentity.describeHwidRefusal(reply.status, reply.headerNames)
+                ?.let { throw ImportException(it) }
+            val body = reply.body ?: throw ImportException("Подписка больше 4 МБ.")
+            return body.toString(Charsets.UTF_8)
         }
         throw ImportException("Не удалось получить подписку.")
+    }
+
+    /** Один ответ сервера подписки, каким бы путём он ни пришёл. [body] null — больше лимита. */
+    class Reply(
+        val status: Int,
+        val headerNames: Set<String>,
+        val location: String?,
+        val body: ByteArray?,
+    )
+
+    /**
+     * Прямой путь — браузерным транспортом, если он есть: ClientHello и HTTP/2 как у
+     * Chrome. Иначе, и для туннеля, — HttpURLConnection на выбранной сети.
+     */
+    private fun exchange(url: String, path: Path, headers: Map<String, String>): Reply {
+        if (path == Path.Direct) browserDirect?.invoke(url, headers)?.let { return it }
+        val connection = open(URL(url), path) ?: throw ImportException("URL подписки не является HTTP(S).")
+        try {
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = TIMEOUT_MILLIS
+            connection.readTimeout = TIMEOUT_MILLIS
+            // Subscription snapshots and HTTP validators are intentionally not cached.
+            // Every user refresh is an unconditional fetch, so a parser/runtime revision can
+            // never strand an old partially parsed body behind a newly stored ETag.
+            connection.useCaches = false
+            headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+            val status = connection.responseCode
+            val names = connection.headerFields.orEmpty().keys.filterNotNull().toSet()
+            if (status !in 200..299) return Reply(status, names, connection.getHeaderField("Location"), null)
+            if (connection.contentLengthLong > MAX_IMPORT_BYTES) return Reply(status, names, null, null)
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > MAX_IMPORT_BYTES) return Reply(status, names, null, null)
+                    output.write(buffer, 0, count)
+                }
+                return Reply(status, names, null, output.toByteArray())
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     companion object {
@@ -172,7 +185,7 @@ class HttpSubscriptionFetcher(
 
         private const val TIMEOUT_MILLIS = 15_000
         private const val MAX_REDIRECTS = 3
-        private const val MAX_IMPORT_BYTES = 4 * 1024 * 1024
+        const val MAX_IMPORT_BYTES = 4 * 1024 * 1024
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
     }
 }

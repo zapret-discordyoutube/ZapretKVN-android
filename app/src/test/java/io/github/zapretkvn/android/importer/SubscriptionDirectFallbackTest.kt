@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -143,5 +144,46 @@ class SubscriptionDirectFallbackTest {
         assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("https://sub.example.net/a"))
         assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("http://127.0.0.1:8080/a"))
         assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("http://[::1]:8080/a"))
+    }
+
+    @Test
+    fun `direct path goes through the browser transport and follows its redirects`() {
+        val asked = mutableListOf<String>()
+        var plainOpened = false
+        val fetcher = HttpSubscriptionFetcher(
+            openConnection = { _, _ ->
+                plainOpened = true
+                null
+            },
+            directAvailable = { true },
+            browserDirect = { url, headers ->
+                asked += url
+                assertTrue(headers.keys.any { it.equals("User-Agent", ignoreCase = true) })
+                if (url.endsWith("/start")) {
+                    HttpSubscriptionFetcher.Reply(302, setOf("location"), "/final", null)
+                } else {
+                    HttpSubscriptionFetcher.Reply(200, setOf("content-type"), null, "BROWSER-BODY".toByteArray())
+                }
+            },
+        )
+        assertEquals("BROWSER-BODY", fetcher.fetch(SubscriptionSource("https://sub.example.net/start")))
+        assertEquals(listOf("https://sub.example.net/start", "https://sub.example.net/final"), asked)
+        assertFalse(plainOpened)
+    }
+
+    @Test
+    fun `without the browser transport the plain direct connection is used`() {
+        val (directServer, directHits) = serve(200, "PLAIN-DIRECT")
+        try {
+            val fetcher = HttpSubscriptionFetcher(
+                openConnection = { requestUrl, _ -> requestUrl.openConnection() as? HttpURLConnection },
+                directAvailable = { true },
+                browserDirect = { _, _ -> null },
+            )
+            assertEquals("PLAIN-DIRECT", fetcher.fetch(SubscriptionSource(url(directServer))))
+            assertEquals(1, directHits.get())
+        } finally {
+            directServer.stop(0)
+        }
     }
 }

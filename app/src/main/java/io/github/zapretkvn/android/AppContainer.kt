@@ -23,6 +23,7 @@ import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
 import io.github.zapretkvn.android.network.BootstrapCache
 import io.github.zapretkvn.android.network.BootstrapResolver
+import io.github.zapretkvn.android.network.BrowserTransport
 import io.github.zapretkvn.android.network.VpnNetworkProvider
 import io.github.zapretkvn.android.network.geo.DohHostAddressResolver
 import io.github.zapretkvn.android.network.geo.GeoIpCountry
@@ -121,6 +122,8 @@ class AppContainer(
         },
         directAvailable = { nonVpnNetwork(appContext) != null },
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
+        // Напрямую — стеком Chromium: провайдер видит обычный Chrome, а не Conscrypt.
+        browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
     )
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
@@ -352,6 +355,27 @@ class AppContainer(
  */
 @Suppress("DEPRECATION") // allNetworks is the only synchronous way to see the
 // underlying physical transports while a VPN holds the default network.
+/** Ответ подписки через браузерный транспорт; null — транспорта в сборке нет. */
+private fun browserSubscriptionReply(url: String, headers: Map<String, String>): HttpSubscriptionFetcher.Reply? {
+    val limit = HttpSubscriptionFetcher.MAX_IMPORT_BYTES
+    val response = try {
+        BrowserTransport.fetch(
+            url = url,
+            headers = headers.toList(),
+            timeoutMillis = 15_000,
+            maxBytes = limit + 1L,
+        )
+    } catch (_: BrowserTransport.UnavailableException) {
+        return null
+    }
+    return HttpSubscriptionFetcher.Reply(
+        status = response.status,
+        headerNames = response.headers.mapTo(mutableSetOf()) { it.first },
+        location = response.redirectLocation ?: response.header("location"),
+        body = response.body.takeIf { !response.truncated && it.size <= limit },
+    )
+}
+
 /** Поднятая VPN-сеть: соединение, привязанное к ней, идёт через туннель при любом выборе приложений. */
 private fun vpnNetwork(context: Context): Network? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
