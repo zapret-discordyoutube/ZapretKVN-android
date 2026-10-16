@@ -1396,14 +1396,16 @@ index fca1995c..00000000
 -}
 diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
 new file mode 100644
-index 00000000..58dc3d74
+index 00000000..94bea8cc
 --- /dev/null
 +++ b/protocol/xraycore/config.go
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,348 @@
 +package xraycore
 +
 +import (
++	"crypto/sha256"
 +	"encoding/base64"
++	"encoding/hex"
 +	"encoding/json"
 +	"fmt"
 +	"net/url"
@@ -1504,14 +1506,21 @@ index 00000000..58dc3d74
 +				}
 +			}
 +		} else {
-+			for _, key := range []string{"allowInsecure", "insecure"} {
-+				if q.Has(key) {
-+					insecure, parseErr := strconv.ParseBool(q.Get(key))
-+					if parseErr != nil {
-+						return nil, fmt.Errorf("invalid VLESS TLS boolean: %s", key)
-+					}
-+					tls["allowInsecure"] = insecure
++			// Xray removed allowInsecure on 2026-06-01 and refuses any config that
++			// still sets it. Its replacement is the certificate pin (pcs) and the
++			// name list (vcn): with either one Xray skips the CA chain itself and
++			// checks the pin or the names instead, which is exactly what a link with
++			// allowInsecure=1 next to pcs means. Without them the server certificate
++			// is verified as usual, so allowInsecure is never passed on.
++			if raw := queryValue(q, "pcs", "pinnedPeerCertSha256"); raw != "" {
++				pins, pinErr := certificatePins(raw)
++				if pinErr != nil {
++					return nil, pinErr
 +				}
++				tls["pinnedPeerCertSha256"] = pins
++			}
++			if names := queryValue(q, "vcn", "verifyPeerCertByName"); names != "" {
++				tls["verifyPeerCertByName"] = names
 +			}
 +		}
 +		stream[security+"Settings"] = tls
@@ -1576,6 +1585,52 @@ index 00000000..58dc3d74
 +	return vlessOutbound(u.Hostname(), port, user, stream), nil
 +}
 +
++// queryValue reads a share-link parameter by any of its spellings. Panels write
++// the same name as pcs, pinnedPeerCertSha256 or pinned_peer_cert_sha256, so the
++// comparison ignores case, '-' and '_'.
++func queryValue(q url.Values, names ...string) string {
++	fold := func(name string) string {
++		return strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(name))
++	}
++	for _, name := range names {
++		for key, values := range q {
++			if fold(key) == fold(name) && strings.TrimSpace(values[0]) != "" {
++				return strings.TrimSpace(values[0])
++			}
++		}
++	}
++	return ""
++}
++
++// certificatePins returns pcs in the form Xray parses: comma-separated SHA-256
++// hashes of the whole certificate in hex. Hex with OpenSSL colons is taken as
++// is; a 32-byte base64 value, which some panels emit, is converted to hex.
++func certificatePins(raw string) (string, error) {
++	var pins []string
++	for _, item := range strings.Split(raw, ",") {
++		item = strings.TrimSpace(item)
++		if item == "" {
++			continue
++		}
++		digest, err := hex.DecodeString(strings.ReplaceAll(item, ":", ""))
++		if err != nil {
++			for _, decoder := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
++				if digest, err = decoder.DecodeString(item); err == nil {
++					break
++				}
++			}
++		}
++		if err != nil || len(digest) != sha256.Size {
++			return "", fmt.Errorf("VLESS pcs must be SHA-256 certificate hashes: %q", item)
++		}
++		pins = append(pins, hex.EncodeToString(digest))
++	}
++	if len(pins) == 0 {
++		return "", fmt.Errorf("VLESS pcs contains no certificate hash")
++	}
++	return strings.Join(pins, ","), nil
++}
++
 +// xrayHeaders converts sing-box transport headers (name -> list of values) to
 +// Xray's shape. Xray reads headers as map[string]string and takes the virtual
 +// host from the separate "host" field: "Host" inside ws headers is deprecated
@@ -1608,7 +1663,12 @@ index 00000000..58dc3d74
 +		return nil, fmt.Errorf("legacy sing-box multiplex is not an Xray protocol; reimport the original VLESS link")
 +	}
 +	if t := o.TLS; t != nil && t.Enabled {
-+		tls := object{"serverName": t.ServerName, "allowInsecure": t.Insecure, "alpn": t.ALPN}
++		// Xray no longer accepts allowInsecure (see outboundFromURI), and a saved
++		// sing-box JSON carries no certificate pin to replace it with.
++		if t.Insecure {
++			return nil, fmt.Errorf("legacy VLESS insecure TLS was removed from Xray; reimport the original VLESS link")
++		}
++		tls := object{"serverName": t.ServerName, "alpn": t.ALPN}
 +		if t.UTLS != nil && t.UTLS.Enabled {
 +			tls["fingerprint"] = t.UTLS.Fingerprint
 +		}
@@ -1690,17 +1750,21 @@ index 00000000..58dc3d74
 +}
 diff --git a/protocol/xraycore/config_test.go b/protocol/xraycore/config_test.go
 new file mode 100644
-index 00000000..c851ba6f
+index 00000000..a1a84944
 --- /dev/null
 +++ b/protocol/xraycore/config_test.go
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,257 @@
 +package xraycore
 +
 +import (
 +	"bytes"
 +	"context"
++	"encoding/base64"
++	"encoding/hex"
 +	"encoding/json"
++	"net/url"
 +	"reflect"
++	"strings"
 +	"testing"
 +
 +	"github.com/sagernet/sing-box/option"
@@ -1878,6 +1942,73 @@ index 00000000..c851ba6f
 +	_, _, sender := xrayStream(t, option.VLESSOutboundOptions{URI: "vless://" + id + "@example.net:443?type=ws&security=none&path=/ws&host=cdn.example.com"})
 +	if ws := transportSettings(t, sender, "websocket").(*websocket.Config); ws.Host != "cdn.example.com" {
 +		t.Fatalf("Xray websocket host from URI: %q", ws.Host)
++	}
++}
++
++// A link that disables CA verification and carries the certificate hash is the
++// form panels emit since Xray removed allowInsecure: the pin must reach Xray in
++// its native field, and allowInsecure must not, or Xray refuses the config.
++func TestURICertificatePinReplacesAllowInsecure(t *testing.T) {
++	const id = "b831381d-6324-4d53-ad4f-8cda48b30811"
++	const pin = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
++	colons := strings.ToUpper(pin[:2])
++	for i := 2; i < len(pin); i += 2 {
++		colons += ":" + strings.ToUpper(pin[i:i+2])
++	}
++	raw, _ := hex.DecodeString(pin)
++	cases := map[string]string{
++		"hex":          "allowInsecure=1&pcs=" + pin,
++		"openssl":      "allowInsecure=1&pcs=" + url.QueryEscape(colons),
++		"base64":       "allowInsecure=1&pcs=" + url.QueryEscape(base64.StdEncoding.EncodeToString(raw)),
++		"long name":    "allow_insecure=true&pinnedPeerCertSha256=" + pin,
++		"insecure key": "insecure=1&PCS=" + pin,
++	}
++	for name, query := range cases {
++		options := option.VLESSOutboundOptions{URI: "vless://" + id + "@example.net:443?type=tcp&security=tls&sni=example.net&" + query}
++		stream, config, _ := xrayStream(t, options)
++		tls := stream["tlsSettings"].(map[string]any)
++		if _, ok := tls["allowInsecure"]; ok {
++			t.Fatalf("%s: allowInsecure reached Xray: %v", name, tls)
++		}
++		if tls["pinnedPeerCertSha256"] != pin {
++			t.Fatalf("%s: pinnedPeerCertSha256 = %v", name, tls["pinnedPeerCertSha256"])
++		}
++		if config == nil {
++			t.Fatalf("%s: Xray built no config", name)
++		}
++	}
++}
++
++func TestURIVerifyNamesAndPlainInsecure(t *testing.T) {
++	const id = "b831381d-6324-4d53-ad4f-8cda48b30811"
++	base := "vless://" + id + "@example.net:443?type=ws&security=tls&path=/ws&host=cdn.example.com&"
++	stream, _, _ := xrayStream(t, option.VLESSOutboundOptions{URI: base + "allowInsecure=1&vcn=cdn.example.com,example.net"})
++	tls := stream["tlsSettings"].(map[string]any)
++	if tls["verifyPeerCertByName"] != "cdn.example.com,example.net" || tls["allowInsecure"] != nil {
++		t.Fatalf("vcn link TLS = %v", tls)
++	}
++	// Without a pin Xray has nothing to replace allowInsecure with: the server
++	// certificate is verified as usual instead of the config being refused.
++	stream, _, _ = xrayStream(t, option.VLESSOutboundOptions{URI: base + "allowInsecure=1"})
++	if tls := stream["tlsSettings"].(map[string]any); tls["allowInsecure"] != nil || tls["pinnedPeerCertSha256"] != nil {
++		t.Fatalf("plain allowInsecure TLS = %v", tls)
++	}
++}
++
++func TestURIRejectsMalformedCertificatePin(t *testing.T) {
++	const id = "b831381d-6324-4d53-ad4f-8cda48b30811"
++	for _, pin := range []string{"abcd", "zz", ","} {
++		options := option.VLESSOutboundOptions{URI: "vless://" + id + "@example.net:443?security=tls&pcs=" + url.QueryEscape(pin)}
++		if _, err := buildConfig(options, "test-dialer"); err == nil {
++			t.Fatalf("pcs %q was accepted", pin)
++		}
++	}
++}
++
++func TestLegacyInsecureTLSAsksForTheLink(t *testing.T) {
++	options := legacyOptions(t, legacyVLESS+`"tls":{"enabled":true,"server_name":"example.net","insecure":true}}`)
++	if _, err := buildConfig(options, "test-dialer"); err == nil || !strings.Contains(err.Error(), "reimport") {
++		t.Fatalf("legacy insecure TLS: %v", err)
 +	}
 +}
 diff --git a/protocol/xraycore/logger.patch b/protocol/xraycore/logger.patch

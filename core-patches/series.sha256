@@ -1,5 +1,5 @@
 21e211d9f847b3a9eec88e517bf5c469440504e785f56dd686bd3ba9ffc2d9f7  core-patches/0001-android-wireguard-data-plane.patch
 8ee0a8b0944aaf01e200a8d71cd45eca146500e3f02ec277096de39bfebd5e22  core-patches/0002-read-only-relay-delay-probe.patch
 f3059604eeb4d48d461bf8562711b57f3b620adde688d456955051e80bc617c0  core-patches/0003-official-hysteria2-core.patch
-93d271cd47abfcd1720694569faba83661690600a3eb83e20caad0ef11475960  core-patches/0004-protocol-runtime-modules.patch
+a1b586a4249a00216070d1c18d143dbc27d7c721463bc8b2e8bb7abd10f497b0  core-patches/0004-protocol-runtime-modules.patch
 e788a9d18e11c3484fa6375d02f1b31e22c6d44abce9fa1762d7d1e99280d898  core-patches/0005-official-amnezia-wg-unified.patch

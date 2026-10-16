@@ -1026,14 +1026,51 @@ class ImportParserTest {
 
         val tls = candidate.servers.single().outbound["tls"] as JsonObject
         assertEquals("example.org", (tls["server_name"] as JsonPrimitive).content)
-        assertEquals("true", (tls["insecure"] as JsonPrimitive).content)
+        // Xray-core больше не умеет отключать проверку: без pcs она остаётся.
+        assertFalse("insecure" in tls)
         assertTrue(candidate.importWarnings.any { it.contains("проверку сертификата") })
     }
 
     /**
+     * Ссылка из панели после удаления `allowInsecure` из Xray: проверка цепочки
+     * отключена, а сервер подтверждается отпечатком `pcs`. Её надо принять без
+     * предупреждения и передать ядру исходную ссылку с отпечатком.
+     */
+    @Test
+    fun `vless allowInsecure next to certificate pin imports cleanly`() {
+        val pin = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        val colons = pin.chunked(2).joinToString(":") { it.uppercase() }
+        for (pcs in listOf(pin, URLEncoder.encode(colons, StandardCharsets.UTF_8))) {
+            val link = "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                "?type=tcp&security=tls&sni=one.example&allowInsecure=1&pcs=$pcs&vcn=one.example#One"
+            val candidate = ImportParser.parse(link, ProfileSource.Link, "Профиль") as ImportCandidate.Managed
+            val server = candidate.servers.single()
+            val tls = server.outbound["tls"] as JsonObject
+            assertFalse("insecure" in tls)
+            assertEquals(link, (server.outbound["uri"] as JsonPrimitive).content)
+            assertTrue(candidate.importWarnings.none { it.contains("сертификат") })
+            assertTrue(candidate.importNotes.none { it.contains("pcs") || it.contains("vcn") })
+        }
+    }
+
+    @Test
+    fun `vless malformed certificate pin is refused`() {
+        val error = assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "vless://11111111-1111-4111-8111-111111111111@one.example:443" +
+                    "?security=tls&allowInsecure=1&pcs=abcd#One",
+                ProfileSource.Link,
+                "Профиль",
+            )
+        }
+        assertTrue(error.message.orEmpty().contains("pcs"))
+    }
+
+    /**
      * Панели добавляют собственные параметры быстрее, чем их можно перечислить:
-     * fm и vcn у 3x-ui появились после spx. Незнакомое имя теряется с
-     * предупреждением, а отказ остаётся за проверками, названными поимённо.
+     * fm у 3x-ui появился после spx. Незнакомое имя теряется с предупреждением,
+     * а отказ остаётся за проверками, названными поимённо. `vcn` — штатное имя
+     * Xray (`verifyPeerCertByName`): оно исполняется ядром и в заметку не попадает.
      */
     @Test
     fun `vendor specific parameters do not block the import`() {
@@ -1047,7 +1084,7 @@ class ImportParserTest {
         assertEquals(1, candidate.servers.size)
         val warning = candidate.importNotes.single { it.contains("не применены") }
         assertTrue(warning, warning.contains("fm"))
-        assertTrue(warning, warning.contains("vcn"))
+        assertFalse(warning, warning.contains("vcn"))
         assertTrue(warning, warning.contains("zzz"))
     }
 

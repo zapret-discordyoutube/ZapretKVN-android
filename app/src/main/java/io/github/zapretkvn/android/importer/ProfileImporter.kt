@@ -362,10 +362,56 @@ object ShareLinkParser {
             uuid = uuid,
             encryption = query["encryption"]?.takeIf(String::isNotBlank) ?: "none",
             flow = normalizeVlessFlow(query["flow"]),
-            tls = tls(query, host),
+            tls = vlessTls(query, host),
             transport = transport(query),
-        ).withWarnings(insecureWarning(query)).withNotes(notes)
+        ).withWarnings(vlessCertificateWarning(query)).withNotes(notes)
     }
+
+    /**
+     * Xray-core удалил `allowInsecure` 1 июня 2026 года и отвергает конфигурацию,
+     * где он включён. Замена — отпечаток сертификата `pcs` и список имён `vcn`:
+     * с ними ядро само не проверяет цепочку, а сверяет отпечаток или имена, — это и
+     * есть смысл ссылки `allowInsecure=1&pcs=…`. Без них сертификат проверяется
+     * обычным образом. Поэтому у VLESS проверка не отключается никогда; исходная
+     * ссылка с `pcs` и `vcn` уходит в ядро как есть.
+     */
+    private fun vlessTls(query: Map<String, String>, host: String): TlsSettings {
+        query["pcs"]?.takeIf(String::isNotBlank)?.let(::requireVlessCertificatePins)
+        return tls(query, host).copy(insecure = false)
+    }
+
+    private fun requireVlessCertificatePins(value: String) {
+        val pins = value.split(',').map(String::trim).filter(String::isNotEmpty)
+        val valid = pins.isNotEmpty() && pins.all { pin ->
+            val hex = pin.replace(":", "")
+            val hexOk = hex.length == 64 && hex.all { it in "0123456789abcdefABCDEF" }
+            hexOk || runCatching { Base64.getDecoder().decode(pin) }
+                .recoverCatching { Base64.getUrlDecoder().decode(pin) }
+                .getOrNull()?.size == 32
+        }
+        if (!valid) {
+            throw ImportException(
+                "VLESS pcs должен содержать SHA-256 сертификата сервера " +
+                    "(64 шестнадцатеричных знака, можно через двоеточия).",
+            )
+        }
+    }
+
+    private fun vlessCertificateWarning(query: Map<String, String>): List<String> =
+        if (
+            query.boolean("insecure") &&
+            query["security"]?.lowercase() == "tls" &&
+            query["pcs"].isNullOrBlank() &&
+            query["vcn"].isNullOrBlank()
+        ) {
+            listOf(
+                "Ссылка просит отключить проверку сертификата, но Xray-core это больше не " +
+                    "поддерживает: без отпечатка (pcs) сертификат сервера проверяется как обычно. " +
+                    "Если сервер не подключится, попросите у провайдера ссылку с pcs.",
+            )
+        } else {
+            emptyList()
+        }
 
     private fun normalizeVlessFlow(flow: String?): String? = when (
         val normalized = flow?.trim()?.lowercase().orEmpty()
@@ -857,7 +903,7 @@ object ShareLinkParser {
      * доверие или вид трафика на проводе.
      *
      * Отказ по незнакомому имени пробовался и не работает: панели постоянно
-     * добавляют собственные параметры (`spx`, `fm`, `vcn`, `pcs`), каждый из них
+     * добавляют собственные параметры (`spx`, `fm`), каждый из них
      * ломал импорт рабочей ссылки, а перечислить их заранее нельзя. Ни один
      * эталонный клиент так не делает, и спецификация Hysteria2 прямо разрешает
      * чужие параметры, требуя лишь не полагаться на них.
@@ -1049,6 +1095,8 @@ object ShareLinkParser {
         "fastopen" to "tfo",
         "mport" to "ports",
         "pinsha256" to "pinsha256",
+        "pinnedpeercertsha256" to "pcs",
+        "verifypeercertbyname" to "vcn",
     )
 
     private val KNOWN_SECURITY_MODES = setOf("none", "tls", "reality")
@@ -1060,7 +1108,7 @@ object ShareLinkParser {
     )
 
     private val VLESS_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS +
-        setOf("flow", "encryption", "headertype")
+        setOf("flow", "encryption", "headertype", "pcs", "vcn")
     private val TROJAN_QUERY_KEYS = TRANSPORT_QUERY_KEYS + TLS_QUERY_KEYS + setOf("headertype")
     private val SHADOWSOCKS_QUERY_KEYS = setOf("type")
     private val HYSTERIA2_QUERY_KEYS = setOf(
