@@ -96,7 +96,7 @@ sealed interface RuntimeConfigResult {
 
         internal fun withConfig(config: ParsedConfig): Ready = apply { parsed = config }
     }
-    data class Invalid(val message: String) : RuntimeConfigResult
+    data class Invalid(val message: String, val code: String? = null) : RuntimeConfigResult
 }
 
 /**
@@ -136,6 +136,11 @@ object RuntimeConfigBuilder {
 
         findForbiddenField(root)?.let { field ->
             return invalid("Поле '$field' несовместимо с Android VPN и запрещено в MVP.")
+        }
+        // Отключённая проверка сертификата без отпечатка: сервер может подменить любой
+        // посредник. Уже сохранённые профили и сырой JSON не запускаются (CFG-120).
+        if (TlsVerificationPolicy.violatingTags(root).isNotEmpty()) {
+            return RuntimeConfigResult.Invalid(TlsVerificationPolicy.RUNTIME_MESSAGE, TlsVerificationPolicy.FAILURE_CODE)
         }
 
         val inbounds = root["inbounds"] as? JsonArray

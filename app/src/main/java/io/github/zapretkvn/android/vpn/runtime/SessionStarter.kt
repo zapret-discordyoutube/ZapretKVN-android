@@ -390,7 +390,9 @@ internal class SessionStarter(
             )
         ) {
             is RuntimeConfigResult.Ready -> runtime
-            is RuntimeConfigResult.Invalid -> error(runtime.message)
+            is RuntimeConfigResult.Invalid -> runtime.code
+                ?.let { code -> throw RuntimeConfigRejectedException(runtime.message, code) }
+                ?: error(runtime.message)
         }
         val runtimeJson = runtimeReady.json
         val runtimeConfig = runtimeReady.config

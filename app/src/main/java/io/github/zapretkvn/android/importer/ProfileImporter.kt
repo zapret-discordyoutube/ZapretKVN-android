@@ -17,6 +17,7 @@ import io.github.zapretkvn.android.profiles.ProtocolOutboundBuilders
 import io.github.zapretkvn.android.profiles.TlsSettings
 import io.github.zapretkvn.android.profiles.TransportSettings
 import io.github.zapretkvn.wireguardimport.WireGuardConfigParser
+import io.github.zapretkvn.android.config.TlsVerificationPolicy
 import io.github.zapretkvn.wireguardimport.WireGuardImportException
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -66,7 +67,10 @@ sealed interface ImportCandidate {
     ) : ImportCandidate
 }
 
-class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+/** Сервер отключает проверку сертификата без отпечатка: одиночная ссылка отвергается, в подписке пропускается. */
+class InsecureTlsImportException : ImportException(TlsVerificationPolicy.IMPORT_MESSAGE)
 
 /** Больше предупреждений пользователь всё равно не прочитает перед подтверждением. */
 private const val MAX_IMPORT_WARNINGS = 8
@@ -135,7 +139,21 @@ object ImportParser {
                 if (it.links.isEmpty()) throw noSupportedLinks(it.unsupportedSchemes)
             }
         }
-        val servers = extracted.links.mapIndexed { index, link -> ShareLinkParser.parse(link, index) }
+        var insecureSkipped = 0
+        var firstInsecure: InsecureTlsImportException? = null
+        val servers = extracted.links.mapIndexedNotNull { index, link ->
+            try {
+                ShareLinkParser.parse(link, index)
+            } catch (insecure: InsecureTlsImportException) {
+                // В подписке такой сервер пропускается, остальные добавляются;
+                // одиночная ссылка отвергается целиком с объяснением.
+                if (extracted.links.size == 1) throw insecure
+                insecureSkipped += 1
+                if (firstInsecure == null) firstInsecure = insecure
+                null
+            }
+        }
+        if (servers.isEmpty()) firstInsecure?.let { throw it }
         rejectProviderNotice(servers)
         return ImportCandidate.Managed(
             servers = servers,
@@ -149,7 +167,9 @@ object ImportParser {
             } else {
                 ProfileSource.Subscription
             },
-            importWarnings = collectWarnings(servers, extracted.unsupportedSchemes),
+            importWarnings = listOfNotNull(
+                insecureSkipped.takeIf { it > 0 }?.let(TlsVerificationPolicy::skippedServersWarning),
+            ) + collectWarnings(servers, extracted.unsupportedSchemes),
             importNotes = collectNotes(servers),
         )
     }
@@ -321,6 +341,16 @@ object ImportParser {
 
 object ShareLinkParser {
     fun parse(link: String, index: Int = 0): ManagedServer = try {
+        parseUnchecked(link, index).also { server ->
+            if (TlsVerificationPolicy.violates(server.outbound)) throw InsecureTlsImportException()
+        }
+    } catch (error: ImportException) {
+        throw error
+    } catch (error: Exception) {
+        throw ImportException("Не удалось разобрать ссылку №${index + 1}.", error)
+    }
+
+    private fun parseUnchecked(link: String, index: Int): ManagedServer = try {
         when {
             link.startsWith("vless://", ignoreCase = true) -> parseVless(link, index)
             link.startsWith("vmess://", ignoreCase = true) -> parseVmess(link, index)
