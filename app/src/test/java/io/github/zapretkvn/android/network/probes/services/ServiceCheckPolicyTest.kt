@@ -24,19 +24,7 @@ class ServiceCheckPolicyTest {
         assertTrue(policy.tapAllowed())
     }
 
-    @Test
-    fun autoRunIsClaimedOncePerSession() {
-        val policy = ServiceCheckPolicy { 0L }
-        assertTrue(policy.claimAutoRun())
-        assertFalse(policy.claimAutoRun())
-        assertTrue(ServiceCheckPolicy { 0L }.claimAutoRun())
-    }
 
-    @Test
-    fun autoDelayIsAFewSecondsAndNotAPeriod() {
-        assertTrue(ServiceCheckPolicy.AUTO_DELAY_MIN_MILLIS in 3_000..5_000)
-        assertTrue(ServiceCheckPolicy.AUTO_DELAY_MAX_MILLIS in 10_000..15_000)
-    }
 }
 
 class ProbeLaneTest {

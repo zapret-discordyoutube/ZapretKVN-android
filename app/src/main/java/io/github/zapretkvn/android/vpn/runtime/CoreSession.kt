@@ -209,7 +209,6 @@ internal class CoreSession(
     fun markServicesStale() = serviceAvailabilityCoordinator.markStale()
 
     /** Выход определён: после подключения один раз сама запустится проверка сервисов. */
-    fun scheduleServiceCheck() = serviceAvailabilityCoordinator.scheduleAutoCheck()
 
     /**
      * Ручной запрос внешнего IP (кнопка на главном экране). Один запрос за раз;

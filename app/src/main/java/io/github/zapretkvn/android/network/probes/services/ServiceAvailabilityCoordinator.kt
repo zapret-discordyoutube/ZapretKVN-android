@@ -3,9 +3,7 @@ package io.github.zapretkvn.android.network.probes.services
 import android.os.SystemClock
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.network.probes.ProbeLane
-import io.github.zapretkvn.android.network.probes.acquireSettled
 import io.github.zapretkvn.android.vpn.VpnController
-import kotlin.random.Random
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -34,8 +32,6 @@ internal class ServiceAvailabilityCoordinator(
     /** Только выбранные в настройках сервисы: чем их меньше, тем меньше запросов. */
     private val definitions: () -> List<ServiceDefinition> = { ServiceCatalog.resolve(controller.enabledServices.value) },
     private val elapsed: () -> Long = SystemClock::elapsedRealtime,
-    private val random: Random = Random.Default,
-    private val sleep: suspend (Long) -> Unit = ::probeSleep,
 ) : AutoCloseable {
     private class Active(val requestId: Long, val networkIdentity: String) {
         @Volatile var job: Job? = null
@@ -48,7 +44,6 @@ internal class ServiceAvailabilityCoordinator(
     private var active: Active? = null
     private var reserved = false
     private var closed = false
-    private var autoJob: Job? = null
 
     /** Полосу потребовали раньше, чем запуск успел зарегистрироваться: он отменяется сразу после старта. */
     private val preemptPending = AtomicBoolean(false)
@@ -73,36 +68,6 @@ internal class ServiceAvailabilityCoordinator(
         if (!startRun(ServiceCheckTrigger.Tap, lease)) lease.release()
     }
 
-    /** Один автозапуск за сессию: ждёт, пока Главная видна, затем случайная пауза. */
-    fun scheduleAutoCheck() {
-        if (!policy.claimAutoRun()) return
-        val job = scope.launch {
-            while (true) {
-                controller.homeVisible.first { it }
-                sleep(random.nextLong(ServiceCheckPolicy.AUTO_DELAY_MIN_MILLIS, ServiceCheckPolicy.AUTO_DELAY_MAX_MILLIS + 1))
-                if (!controller.homeVisible.value) continue
-                // Пользователь уже нажал сам, или проверка идёт: автозапуск не нужен.
-                if (hasResultsOrRunning()) return@launch
-                preemptPending.set(false)
-                // Пауза держит полосу: подключение или замер скорости может потребовать её раньше.
-                // Уступили: автозапуск пробует снова после следующей паузы.
-                val lease = lane.acquireSettled(ProbeLane.Owner.Services, ::preempt) {
-                    sleep(random.nextLong(ServiceCheckPolicy.LANE_JITTER_MIN_MILLIS, ServiceCheckPolicy.LANE_JITTER_MAX_MILLIS + 1))
-                } ?: continue
-                var handedOver = false
-                try {
-                    if (!controller.homeVisible.value || closedNow()) continue
-                    if (hasResultsOrRunning()) return@launch
-                    handedOver = startRun(ServiceCheckTrigger.Auto, lease)
-                    return@launch
-                } finally {
-                    if (!handedOver) lease.release()
-                }
-            }
-        }
-        synchronized(lock) { autoJob = job }
-    }
-
     /** Сеть или сервер сменились: идущий запуск отменяется, результаты устаревают. */
     fun markStale() {
         val running = synchronized(lock) { active }
@@ -114,19 +79,11 @@ internal class ServiceAvailabilityCoordinator(
     }
 
     override fun close() {
-        val (running, auto) = synchronized(lock) {
+        val running = synchronized(lock) {
             closed = true
-            active to autoJob
+            active
         }
-        auto?.cancel()
         running?.job?.cancel(CancellationException("Service check closed"))
-    }
-
-    private fun closedNow() = synchronized(lock) { closed }
-
-    private fun hasResultsOrRunning(): Boolean {
-        val state = controller.serviceAvailability.value
-        return state.running || state.items.values.any { it.snapshotOrNull() != null }
     }
 
     private fun ServiceAvailability.snapshotOrNull() = when (this) {

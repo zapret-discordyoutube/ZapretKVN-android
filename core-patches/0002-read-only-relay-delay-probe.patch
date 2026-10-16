@@ -1,16 +1,17 @@
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 5e8c7998..72842ab6 100644
+index 5e8c7998..6a3724b2 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
-@@ -2,6 +2,7 @@ package daemon
+@@ -2,6 +2,8 @@ package daemon
  
  import (
  	"context"
 +	"errors"
++	"math/rand/v2"
  	"net/netip"
  	"os"
  	"runtime"
-@@ -21,6 +22,7 @@ import (
+@@ -21,6 +23,7 @@ import (
  	"github.com/sagernet/sing-box/log"
  	"github.com/sagernet/sing-box/protocol/group"
  	"github.com/sagernet/sing/common"
@@ -18,11 +19,21 @@ index 5e8c7998..72842ab6 100644
  	"github.com/sagernet/sing/common/memory"
  	"github.com/sagernet/sing/common/observable"
  	"github.com/sagernet/sing/service"
-@@ -743,6 +745,156 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
+@@ -743,6 +746,175 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
  	return &emptypb.Empty{}, nil
  }
  
-+const relayDelayProbeConcurrency = 10
++// Relay-замер идёт по одному серверу за раз со случайной паузой между ними:
++// веер одновременных рукопожатий ко всем серверам подписки выдаёт их
++// оборудованию провайдера одним характерным всплеском.
++const relayDelayProbeConcurrency = 1
++
++// relayDelayProbeGap — пауза перед следующим сервером (1,5–4 с, без ровного ритма).
++// Переменная, чтобы тесты могли обнулить её.
++var relayDelayProbeGap = func() time.Duration {
++	return 1500*time.Millisecond + time.Duration(rand.Int64N(int64(2500*time.Millisecond)))
++}
++
 +const relayDelayProbeURL = "https://www.gstatic.com/generate_204"
 +
 +type relayDelayProbeTarget struct {
@@ -118,9 +129,18 @@ index 5e8c7998..72842ab6 100644
 +	}
 +	go func() {
 +		defer close(jobs)
-+		for _, target := range targets {
++		for index, target := range targets {
 +			if workerContext.Err() != nil {
 +				return
++			}
++			if index > 0 {
++				gap := time.NewTimer(relayDelayProbeGap())
++				select {
++				case <-gap.C:
++				case <-workerContext.Done():
++					gap.Stop()
++					return
++				}
 +			}
 +			select {
 +			case jobs <- target:
@@ -3781,16 +3801,17 @@ index 1ce890b3..810142b9 100644
  			Handler:       _StartedService_SubscribeConnections_Handler,
 diff --git a/daemon/started_service_relay_probe_test.go b/daemon/started_service_relay_probe_test.go
 new file mode 100644
-index 00000000..5faeaeba
+index 00000000..8fe9be2f
 --- /dev/null
 +++ b/daemon/started_service_relay_probe_test.go
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,194 @@
 +package daemon
 +
 +import (
 +	"context"
 +	"errors"
 +	"fmt"
++	"math/rand/v2"
 +	"sync/atomic"
 +	"testing"
 +	"time"
@@ -3858,6 +3879,42 @@ index 00000000..5faeaeba
 +	}
 +}
 +
++func init() {
++	relayDelayProbeGap = func() time.Duration { return 0 }
++}
++
++func TestStreamRelayDelayProbeResultsWaitsBetweenTargets(t *testing.T) {
++	previous := relayDelayProbeGap
++	relayDelayProbeGap = func() time.Duration { return 30 * time.Millisecond }
++	defer func() { relayDelayProbeGap = previous }()
++	targets := make([]relayDelayProbeTarget, 3)
++	started := time.Now()
++	err := streamRelayDelayProbeResults(
++		context.Background(),
++		targets,
++		func(*RelayDelayProbeResult) error { return nil },
++		func(context.Context, relayDelayProbeTarget) *RelayDelayProbeResult { return &RelayDelayProbeResult{} },
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if elapsed := time.Since(started); elapsed < 60*time.Millisecond {
++		t.Fatalf("three targets finished in %v, want at least two gaps", elapsed)
++	}
++}
++
++func TestRelayDelayProbeGapHasJitterWithinBounds(t *testing.T) {
++	gap := func() time.Duration {
++		return 1500*time.Millisecond + time.Duration(rand.Int64N(int64(2500*time.Millisecond)))
++	}
++	for range 100 {
++		value := gap()
++		if value < 1500*time.Millisecond || value >= 4*time.Second {
++			t.Fatalf("gap %v outside 1.5–4 s", value)
++		}
++	}
++}
++
 +func TestStreamRelayDelayProbeResultsLimitsConcurrencyAndStreamsEveryTarget(t *testing.T) {
 +	targets := make([]relayDelayProbeTarget, 25)
 +	for index := range targets {
@@ -3897,7 +3954,7 @@ index 00000000..5faeaeba
 +	}
 +	select {
 +	case <-entered:
-+		t.Fatal("more than ten probes entered before a worker was released")
++		t.Fatal("more probes entered than the concurrency limit before a worker was released")
 +	case <-time.After(25 * time.Millisecond):
 +	}
 +	for range targets {

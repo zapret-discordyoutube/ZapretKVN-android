@@ -732,9 +732,8 @@ internal class SessionStarter(
         // Сменился сервер или выход: прежние выводы о сервисах и прежний IP относились к другому узлу.
         session.markServicesStale()
         session.cancelExternalIpRequest()
-        session.replaceIdentityJob(scope.launch {
-            if (sessions.active() === session) session.scheduleServiceCheck()
-        })
+        // Проверка доступности сервисов после подключения больше не запускается сама:
+        // всплеск запросов при каждом подключении — заметный ритм. Только по нажатию.
     }
 
     /**
