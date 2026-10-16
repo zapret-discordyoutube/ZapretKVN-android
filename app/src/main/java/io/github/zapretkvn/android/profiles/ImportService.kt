@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.profiles
 import android.net.Uri
 import io.github.zapretkvn.android.config.ConfigValidationResult
 import io.github.zapretkvn.android.config.ConfigValidator
+import io.github.zapretkvn.android.config.QuietOutbounds
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.importer.AndroidImportReader
 import io.github.zapretkvn.android.importer.ImportCandidate
@@ -155,11 +156,12 @@ internal class ImportService(
             ImportParser.parse(request.raw, request.source, request.suggestedName)
         }
         val baseJson = candidate.toJson()
+        val quiet = quietRawJson(candidate, baseJson)
         val json = if (candidate is ImportCandidate.Managed) {
             val installed = installRuleSets()
             withContext(defaultDispatcher) { withDefaultRouting(baseJson, installed) }
         } else {
-            baseJson
+            quiet.json
         }
         requireValid(json)
         val appendTargets = if (candidate is ImportCandidate.Managed && candidate.servers.size == 1) {
@@ -174,7 +176,8 @@ internal class ImportService(
             serverLabels = candidate.serverLabels(),
             activityWarning = importActivityWarnings(json),
             appendTargets = appendTargets,
-            importWarnings = candidate.importWarnings(),
+            // Замена urltest меняет поведение — это предупреждение, а не «техническая заметка».
+            importWarnings = candidate.importWarnings() + quiet.notes,
             importNotes = candidate.importNotes(),
             candidate = candidate,
             preparedJson = json,
@@ -207,7 +210,8 @@ internal class ImportService(
         if (binding.isSplit) {
             return splitRefreshPreview(profileId, binding, subscription, candidate, profiles)
         }
-        val candidateJson = candidate.toJson()
+        val quiet = quietRawJson(candidate, candidate.toJson())
+        val candidateJson = quiet.json
         val update = when {
             candidate is ImportCandidate.Managed && ManagedProfileEditor.isManaged(stored.json) ->
                 ManagedProfileEditor.refreshServers(stored.json, candidate.servers)
@@ -223,7 +227,8 @@ internal class ImportService(
             serverLabels = candidate.serverLabels(),
             activityWarning = importActivityWarnings(update.json),
             appendTargets = emptyList(),
-            importWarnings = candidate.importWarnings(),
+            // Замена urltest меняет поведение — это предупреждение, а не «техническая заметка».
+            importWarnings = candidate.importWarnings() + quiet.notes,
             importNotes = candidate.importNotes(),
             refreshProfileId = profileId,
             refreshProfileName = stored.metadata.name,
@@ -287,6 +292,14 @@ internal class ImportService(
 
     private suspend fun fetch(subscription: SubscriptionSource): String =
         withContext(ioDispatcher) { subscriptionFetcher.fetch(subscription) }
+
+    /** Сырой JSON без urltest и multiplex (аудит незаметности); ссылки приложение собирает само. */
+    private suspend fun quietRawJson(candidate: ImportCandidate, json: String): QuietOutbounds.JsonResult =
+        if (candidate is ImportCandidate.RawJson) {
+            withContext(defaultDispatcher) { QuietOutbounds.applyToJson(json) }
+        } else {
+            QuietOutbounds.JsonResult(json, emptyList())
+        }
 
     private fun withDefaultRouting(json: String, installed: InstalledRuleSets): String =
         RoutingConfigEditor.apply(json, RoutingPreset.RussiaDirect, emptyList(), installed).json

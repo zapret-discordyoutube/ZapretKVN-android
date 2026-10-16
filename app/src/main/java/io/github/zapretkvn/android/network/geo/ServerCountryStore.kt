@@ -201,6 +201,9 @@ class ServerCountryStore(
             }
             entries[host] = recomputed
         }
+        // Сохранённое видно сразу, кто бы ни загрузил первым: запуск из init мог ещё
+        // не выполниться, а refresh без новых хостов сам ничего не публикует.
+        publish()
     }
 
     private fun publish() {

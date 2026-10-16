@@ -9,7 +9,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 enum class ImportedActivityFlag(val label: String) {
-    UrlTest("автоматические urltest-проверки"),
     Ntp("сетевой NTP"),
     RemoteRuleSet("загрузка remote rule-set"),
     ClashController("внешний Clash controller/UI"),
@@ -21,11 +20,6 @@ object ImportedConfigActivityScanner {
     fun scan(rawJson: String): Set<ImportedActivityFlag> {
         val root = JsonConfig.parse(rawJson) as? JsonObject ?: return emptySet()
         return buildSet {
-            val outbounds = root["outbounds"] as? JsonArray
-            if (outbounds.orEmpty().any { it.objectString("type") == "urltest" }) {
-                add(ImportedActivityFlag.UrlTest)
-            }
-
             val ntp = root["ntp"] as? JsonObject
             if (ntp != null && ntp["enabled"].let { it == null || (it as? JsonPrimitive)?.booleanOrNull != false }) {
                 add(ImportedActivityFlag.Ntp)
@@ -72,7 +66,7 @@ object ImportedConfigActivityScanner {
         ?.joinToString(
             prefix = "Конфигурация может выполнять внешнюю или фоновую активность: ",
             separator = ", ",
-            postfix = ". JSON не будет изменён.",
+            postfix = ". Эти настройки оставлены как есть.",
         ) { it.label }
 
     private fun JsonElement.objectString(key: String): String? =

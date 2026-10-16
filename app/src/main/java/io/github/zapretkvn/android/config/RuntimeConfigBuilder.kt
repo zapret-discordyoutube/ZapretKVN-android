@@ -228,7 +228,10 @@ object RuntimeConfigBuilder {
         if (options.dnsMode in MANAGED_DNS_MODES && hasFakeIp(root)) {
             return invalid("FakeIP найден в JSON. Для него выберите режим «Из JSON».")
         }
-        var runtimeOutbounds = storedOutbounds?.let(::enableManagedInterrupt)?.let(::applyDefaultUtls)
+        var runtimeOutbounds = storedOutbounds
+            ?.let { QuietOutbounds.apply(it).outbounds }
+            ?.let(::enableManagedInterrupt)
+            ?.let(::applyDefaultUtls)
         var runtimeEndpoints = root["endpoints"] as? JsonArray
         options.bootstrapHost?.let { overlay ->
             val outboundMatch = runtimeOutbounds?.hasTaggedEntry(overlay.outboundTag) == true

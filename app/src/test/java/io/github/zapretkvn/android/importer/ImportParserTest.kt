@@ -748,7 +748,6 @@ class ImportParserTest {
             {
               "log": {"level": "debug"},
               "ntp": {"enabled": true, "server": "time.example"},
-              "outbounds": [{"type": "urltest", "tag": "auto", "outbounds": ["direct"]}],
               "route": {"rule_set": [{"type": "remote", "tag": "remote", "url": "https://rules.example/a.srs"}]},
               "experimental": {"clash_api": {"external_controller": "127.0.0.1:9090"}},
               "heartbeat": "10s"
@@ -758,7 +757,7 @@ class ImportParserTest {
         val flags = ImportedConfigActivityScanner.scan(raw)
 
         assertEquals(ImportedActivityFlag.entries.toSet(), flags)
-        assertTrue(ImportedConfigActivityScanner.warning(flags)!!.endsWith("JSON не будет изменён."))
+        assertTrue(ImportedConfigActivityScanner.warning(flags)!!.endsWith("Эти настройки оставлены как есть."))
     }
 
     @Test
