@@ -122,6 +122,7 @@ internal class SessionStarter(
 ) {
     private val controller get() = container.vpnController
     private val healthVerifier = SessionHealthVerifier(container)
+    private val fallbackAllowance = StartupFallbackAllowance(SystemClock::elapsedRealtime)
 
     /**
      * Ожидание физической сети вынесено за пределы бюджета подключения: он не
@@ -680,7 +681,7 @@ internal class SessionStarter(
             plan,
             container.serverLatencyStore.failoverHints(session.profileId),
             excluded = setOfNotNull(failedBefore),
-        )
+        ).take(StartupFallbackPolicy.MAX_CANDIDATES_PER_START)
         val verifyMillis = VpnHealthPipeline.HEALTH_TIMEOUT_MILLIS
         val switched = budget.apart(StartupFallbackPolicy.budgetMillis(verifyMillis)) {
             fallbackTo(candidates, session, plan, dnsServer, budget, verifyMillis, dead)
@@ -705,6 +706,7 @@ internal class SessionStarter(
         val token = session.generation
         for (candidate in candidates) {
             if (!StartupFallbackPolicy.fitsBudget(budget.remainingMillis(), verifyMillis)) break
+            if (!fallbackAllowance.tryTake()) break
             checkCurrent(token)
             controller.startConnectionDiagnosticStage(token, "server_fallback", "Переключение на резервный сервер")
             controller.publish(

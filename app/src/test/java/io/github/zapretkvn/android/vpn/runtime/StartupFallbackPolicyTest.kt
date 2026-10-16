@@ -154,4 +154,21 @@ class StartupFallbackPolicyTest {
         assertNull(expired)
         assertTrue(cleaned)
     }
+
+    @Test
+    fun `fallback allowance caps candidate checks across restarts and recovers after the window`() {
+        var now = 0L
+        val allowance = StartupFallbackAllowance(now = { now }, limit = 3, windowMillis = 1_000)
+
+        assertTrue(allowance.tryTake())
+        now = 400
+        assertTrue(allowance.tryTake())
+        assertTrue(allowance.tryTake())
+        now = 999
+        assertFalse("a restart inside the window must not start another sweep", allowance.tryTake())
+        now = 1_000
+        // Вышла из окна только отметка из 0: освободилось одно место.
+        assertTrue(allowance.tryTake())
+        assertFalse(allowance.tryTake())
+    }
 }

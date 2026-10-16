@@ -28,10 +28,10 @@ index 5e8c7998..6a3724b2 100644
 +// оборудованию провайдера одним характерным всплеском.
 +const relayDelayProbeConcurrency = 1
 +
-+// relayDelayProbeGap — пауза перед следующим сервером (1,5–4 с, без ровного ритма).
++// relayDelayProbeGap — пауза перед следующим сервером (10–20 с, без ровного ритма).
 +// Переменная, чтобы тесты могли обнулить её.
 +var relayDelayProbeGap = func() time.Duration {
-+	return 1500*time.Millisecond + time.Duration(rand.Int64N(int64(2500*time.Millisecond)))
++	return 10*time.Second + time.Duration(rand.Int64N(int64(10*time.Second)))
 +}
 +
 +const relayDelayProbeURL = "https://www.gstatic.com/generate_204"
@@ -3905,12 +3905,12 @@ index 00000000..8fe9be2f
 +
 +func TestRelayDelayProbeGapHasJitterWithinBounds(t *testing.T) {
 +	gap := func() time.Duration {
-+		return 1500*time.Millisecond + time.Duration(rand.Int64N(int64(2500*time.Millisecond)))
++		return 10*time.Second + time.Duration(rand.Int64N(int64(10*time.Second)))
 +	}
 +	for range 100 {
 +		value := gap()
-+		if value < 1500*time.Millisecond || value >= 4*time.Second {
-+			t.Fatalf("gap %v outside 1.5–4 s", value)
++		if value < 10*time.Second || value >= 20*time.Second {
++			t.Fatalf("gap %v outside 10–20 s", value)
 +		}
 +	}
 +}

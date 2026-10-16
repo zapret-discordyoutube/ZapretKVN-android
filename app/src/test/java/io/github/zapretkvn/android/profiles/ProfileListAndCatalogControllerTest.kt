@@ -204,6 +204,29 @@ class ProfileListAndCatalogControllerTest {
         assertEquals(setOf("a", "b"), ServerCatalogController.fingerprintsOf(summary).keys)
     }
 
+    @Test
+    fun `country lookup resolves only selected names and every ip literal is offline`() {
+        val summary = ProfileServerSummary(
+            listOf(
+                ProfileServerGroup(
+                    "g", "b",
+                    listOf(
+                        ProfileServerOption("a", "vless", "a.example:443"),
+                        ProfileServerOption("b", "vless", "b.example:443"),
+                        ProfileServerOption("c", "vless", "203.0.113.7:443"),
+                    ),
+                ),
+                ProfileServerGroup("h", null, listOf(ProfileServerOption("d", "trojan", "d.example:443"))),
+            ),
+        )
+
+        assertEquals(setOf("b.example", "d.example"), ServerCatalogController.selectedHostKeys(summary))
+        assertEquals(
+            setOf("203.0.113.7"),
+            ServerCatalogController.hostKeys(summary).filter(ServerCatalogController::isIpLiteral).toSet(),
+        )
+    }
+
     private companion object {
         const val SELECTOR_JSON = """{"outbounds":[
             {"type":"vless","tag":"a","server":"a.example","server_port":443},

@@ -390,7 +390,8 @@ private fun probeLine(rows: List<ServerRowUi>, progress: LatencyProbeProgress?, 
     if (!live) return "Проверка доступна после подключения"
     if (progress?.running == true) {
         val total = progress.relayTotal.takeIf { it > 0 } ?: rows.size
-        return "Проверено ${progress.relayCompleted.coerceAtMost(total)} из $total"
+        val done = progress.relayCompleted.coerceAtMost(total)
+        return "Проверено $done из $total · ${remainingProbeTime(total - done)}"
     }
     val tested = rows.filter { it.latency.tested }
     if (tested.isNotEmpty() && tested.all { it.latency.failed }) {
@@ -403,6 +404,21 @@ private fun probeLine(rows: List<ServerRowUi>, progress: LatencyProbeProgress?, 
         else -> "Проверено ${tested.size} из ${rows.size}"
     }
 }
+
+/**
+ * Ядро проверяет серверы по одному с паузой 10–20 с (патч 0002): проверка всех
+ * сразу выдавала бы серверы провайдеру. Без оценки долгая проверка выглядит зависшей.
+ */
+internal fun remainingProbeTime(remaining: Int): String {
+    val minutes = (remaining * AVERAGE_PROBE_STEP_SECONDS + 59) / 60
+    return when {
+        remaining <= 1 -> "по одному, с паузами"
+        minutes <= 1 -> "по одному, с паузами, ещё около минуты"
+        else -> "по одному, с паузами, ещё около $minutes мин"
+    }
+}
+
+private const val AVERAGE_PROBE_STEP_SECONDS = 16
 
 private fun currentLine(row: ServerRowUi): String = buildString {
     append("Сейчас: ")

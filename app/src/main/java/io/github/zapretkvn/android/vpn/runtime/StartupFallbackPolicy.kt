@@ -64,7 +64,41 @@ internal object StartupFallbackPolicy {
     /** Проверка конфигурации, команда селектора, откат и сохранение профиля вокруг одной проверки. */
     const val SWITCH_OVERHEAD_MILLIS = 3_000L
 
+    /**
+     * Кандидатов за один запуск: быстрые отказы иначе укладывали бы в бюджет
+     * времени перебор всего пула — череда подключений к серверам подряд.
+     */
+    const val MAX_CANDIDATES_PER_START = 3
+
     private const val MAX_FULL_CHECKS = 2
+}
+
+/**
+ * Общий счёт проверок резервных серверов на все перезапуски сервиса: смена сети
+ * и восстановление снова запускают перебор, и без общего потолка частые
+ * перезапуски перебирали бы пул раз за разом.
+ */
+internal class StartupFallbackAllowance(
+    private val now: () -> Long,
+    private val limit: Int = MAX_CHECKS_PER_WINDOW,
+    private val windowMillis: Long = WINDOW_MILLIS,
+) {
+    private val taken = ArrayDeque<Long>()
+
+    /** @return true, если проверку ещё одного кандидата можно сделать, и она засчитана. */
+    @Synchronized
+    fun tryTake(): Boolean {
+        val at = now()
+        while (taken.isNotEmpty() && at - taken.first() >= windowMillis) taken.removeFirst()
+        if (taken.size >= limit) return false
+        taken.addLast(at)
+        return true
+    }
+
+    companion object {
+        const val MAX_CHECKS_PER_WINDOW = 6
+        const val WINDOW_MILLIS = 10L * 60 * 1_000
+    }
 }
 
 /**

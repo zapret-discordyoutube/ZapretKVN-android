@@ -234,7 +234,9 @@ class ServersPresenterTest {
         )
         val running = LatencyProbeProgress(1, "net", relayCompleted = 12, relayTotal = 48, running = true)
         val g = live(group(items, progress = running))
-        assertEquals("Проверено 12 из 48", g.probeLine)
+        assertEquals("Проверено 12 из 48 · по одному, с паузами, ещё около 10 мин", g.probeLine)
+        assertEquals("по одному, с паузами, ещё около минуты", remainingProbeTime(2))
+        assertEquals("по одному, с паузами", remainingProbeTime(1))
         assertTrue(g.measuring)
         assertEquals(0.25f, g.progressFraction)
 

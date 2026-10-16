@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.profiles
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.importer.ImportException
+import io.github.zapretkvn.android.network.geo.IpLiteral
 import io.github.zapretkvn.android.network.geo.ServerCountryStore
 import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
@@ -111,6 +112,7 @@ internal class ServerCatalogController(
                 serverSummaries = current.serverSummaries + (profileId to ProfileServerSummary(groups)),
             )
         }
+        requestCountry(picker.groups.firstOrNull { it.tag == groupTag }?.options?.firstOrNull { it.tag == serverTag }?.endpoint)
         val label = SecretRedactor.redactInline(serverTag)
         operations.showMessage(
             if (live) {
@@ -121,20 +123,40 @@ internal class ServerCatalogController(
         )
     }
 
-    /** Страны серверов: запускается при старте и когда профили изменились (импорт, обновление подписки). */
+    /**
+     * Страны серверов: при старте и когда профили изменились (импорт, обновление
+     * подписки). IP-адреса всех профилей определяются по встроенной таблице без
+     * сети; имена разрешаются только у выбранных серверов активного профиля —
+     * разрешение всех имён пула разом само по себе узнаваемый всплеск. Остальные
+     * имена — из кэша или когда пользователь выбирает сервер ([selectServer]).
+     */
     private fun requestCountries(summaries: Map<String, ProfileServerSummary>) {
         val countries = serverCountryStore ?: return
         val activeId = state.value.settings.activeProfileId
-        countries.request(
-            hosts = summaries.values.flatMapTo(mutableSetOf()) { hostKeys(it) },
-            priority = hostKeys(summaries[activeId]),
-        )
+        val literals = summaries.values.flatMapTo(mutableSetOf()) { hostKeys(it) }.filterTo(mutableSetOf(), ::isIpLiteral)
+        val selected = selectedHostKeys(summaries[activeId])
+        countries.request(hosts = literals + selected, priority = selected)
+    }
+
+    private fun requestCountry(endpoint: String?) {
+        val host = endpointHostKey(endpoint) ?: return
+        serverCountryStore?.request(hosts = setOf(host), priority = setOf(host))
     }
 
     internal companion object {
         fun hostKeys(summary: ProfileServerSummary?): Set<String> = summary?.groups.orEmpty()
             .flatMap { group -> group.options.mapNotNull { endpointHostKey(it.endpoint) } }
             .toSet()
+
+        /** Хосты выбранных серверов каждой группы (без выбора — первый). */
+        fun selectedHostKeys(summary: ProfileServerSummary?): Set<String> = summary?.groups.orEmpty()
+            .mapNotNull { group ->
+                val option = group.options.firstOrNull { it.tag == group.selected } ?: group.options.firstOrNull()
+                endpointHostKey(option?.endpoint)
+            }
+            .toSet()
+
+        fun isIpLiteral(host: String): Boolean = IpLiteral.parse(host) != null
 
         /** Тег сервера -> отпечаток (тип и адрес) для привязки сохранённого пинга. */
         fun fingerprintsOf(summary: ProfileServerSummary): Map<String, String> = summary.groups

@@ -18,6 +18,7 @@ import io.github.zapretkvn.android.network.BootstrapResolver
 import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.network.VpnNetworkProvider
 import io.github.zapretkvn.android.network.userMessage
+import io.github.zapretkvn.android.network.probes.services.NetworkServiceProbeTransport
 import io.github.zapretkvn.networkbootstrap.CodedFailure
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -1062,7 +1063,8 @@ class VpnHealthPipeline internal constructor(
                     (
                         "GET $path HTTP/1.1\r\n" +
                             "Host: ${endpoint.host}\r\n" +
-                            "User-Agent: ZapretKVN-health\r\n" +
+                            // Как у браузера: имя приложения в заголовке выделяло бы пробу.
+                            "User-Agent: ${NetworkServiceProbeTransport.USER_AGENT}\r\n" +
                             "Accept: */*\r\n" +
                             "Connection: close\r\n\r\n"
                         ).toByteArray(StandardCharsets.US_ASCII),
