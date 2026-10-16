@@ -5,6 +5,6 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Импортируются VLESS-ссылки с allowInsecure=1 и отпечатком сертификата (pcs): сервер проверяется по отпечатку, ошибка «allowInsecure has been removed» больше не появляется
-Поддержан параметр vcn — проверка сертификата по списку имён, как в Xray
-Ссылка с allowInsecure=1 без отпечатка тоже импортируется: сертификат проверяется обычным образом, в preview — предупреждение
+Ключи Trojan, VMess и TUIC, которые отключают проверку сертификата без отпечатка, больше не добавляются: такой сервер может подменить посредник
+В подписке такие серверы пропускаются, остальные добавляются, а уже сохранённые не запускаются и объясняют почему
+VLESS с отпечатком сертификата (pcs) и Hysteria2 с pinSHA256 работают как раньше
