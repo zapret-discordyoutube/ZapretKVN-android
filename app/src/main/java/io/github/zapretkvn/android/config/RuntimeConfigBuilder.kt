@@ -228,7 +228,7 @@ object RuntimeConfigBuilder {
         if (options.dnsMode in MANAGED_DNS_MODES && hasFakeIp(root)) {
             return invalid("FakeIP найден в JSON. Для него выберите режим «Из JSON».")
         }
-        var runtimeOutbounds = storedOutbounds?.let(::enableManagedInterrupt)
+        var runtimeOutbounds = storedOutbounds?.let(::enableManagedInterrupt)?.let(::applyDefaultUtls)
         var runtimeEndpoints = root["endpoints"] as? JsonArray
         options.bootstrapHost?.let { overlay ->
             val outboundMatch = runtimeOutbounds?.hasTaggedEntry(overlay.outboundTag) == true
@@ -1034,6 +1034,32 @@ object RuntimeConfigBuilder {
         },
     )
 
+    /**
+     * TLS поверх TCP без uTLS отправляет ClientHello Go crypto/tls — по нему клиент
+     * узнаётся среди браузеров. Где фингерпринт не задан, ставится Chrome; явный
+     * блок utls (в том числе enabled=false) остаётся решением автора JSON. Список
+     * типов закрытый: QUIC-протоколы и транспорт quic uTLS исполнить не могут.
+     */
+    private fun applyDefaultUtls(outbounds: JsonArray): JsonArray = JsonArray(
+        outbounds.map { element ->
+            val outbound = element as? JsonObject ?: return@map element
+            val tls = outbound["tls"] as? JsonObject ?: return@map element
+            val transport = (outbound["transport"] as? JsonObject)?.string("type")
+            if (outbound.string("type") !in UTLS_CAPABLE_TYPES ||
+                tls.boolean("enabled") != true ||
+                "utls" in tls ||
+                transport == "quic"
+            ) {
+                return@map element
+            }
+            val utls = buildJsonObject {
+                put("enabled", true)
+                put("fingerprint", DEFAULT_UTLS_FINGERPRINT)
+            }
+            JsonObject(outbound + ("tls" to JsonObject(tls + ("utls" to utls))))
+        },
+    )
+
     /** Enables the in-process traffic manager without opening a Clash HTTP controller. */
     private fun runtimeExperimental(stored: JsonElement?): JsonObject {
         val experimental = (stored as? JsonObject)?.toMutableMap() ?: mutableMapOf()
@@ -1089,6 +1115,8 @@ object RuntimeConfigBuilder {
         "inet4_route_address_set",
         "inet6_route_address_set",
     )
+    private val UTLS_CAPABLE_TYPES = setOf("vless", "vmess", "trojan", "anytls", "shadowtls", "http")
+    private const val DEFAULT_UTLS_FINGERPRINT = "chrome"
     private val FORBIDDEN_FIELDS = setOf(
         "default_interface",
         "default_mark",

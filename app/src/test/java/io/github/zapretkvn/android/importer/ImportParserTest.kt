@@ -387,6 +387,27 @@ class ImportParserTest {
     }
 
     @Test
+    fun `links without fp get chrome utls and explicit fp is kept`() {
+        fun utlsOf(link: String): JsonObject? {
+            val outbound = (ImportParser.parse(link, ProfileSource.Clipboard) as ImportCandidate.Managed)
+                .servers.single().outbound
+            return (outbound["tls"] as JsonObject)["utls"] as? JsonObject
+        }
+        val reality = utlsOf(
+            "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +
+                "?security=reality&sni=cdn.example" +
+                "&pbk=nDCKIlAlRIBhaDNs04SMghv0qbjQhfQrXyocJriGRg4&sid=abcd#NoFp",
+        )
+        assertEquals("chrome", reality?.string("fingerprint"))
+        assertEquals("chrome", utlsOf("trojan://secret@trojan.example:443?sni=trojan.example#Tls")?.string("fingerprint"))
+        assertEquals(
+            "firefox",
+            utlsOf("trojan://secret@trojan.example:443?sni=trojan.example&fp=firefox#Fx")?.string("fingerprint"),
+        )
+        assertEquals(null, utlsOf("hysteria2://secret@hy.example:443?sni=hy.example#Hy"))
+    }
+
+    @Test
     fun `vless xray udp443 flow alias maps to sing box vision`() {
         val candidate = ImportParser.parse(
             "vless://11111111-1111-4111-8111-111111111111@vision.example:443" +

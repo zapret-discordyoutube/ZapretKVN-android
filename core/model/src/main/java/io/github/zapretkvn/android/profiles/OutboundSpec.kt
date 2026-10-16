@@ -249,6 +249,8 @@ sealed interface OutboundSpec {
  * затем рвёт каждое соединение с "unsupported usage for uTLS", поэтому поля
  * не доходят до QUIC-аутбаундов физически, а не только по договорённости.
  */
+private const val DEFAULT_UTLS_FINGERPRINT = "chrome"
+
 private fun JsonObjectBuilder.putTls(
     settings: TlsSettings,
     allowTcpOnlyTlsFeatures: Boolean = true,
@@ -260,8 +262,10 @@ private fun JsonObjectBuilder.putTls(
             put("enabled", true)
             settings.serverName?.takeIf(String::isNotBlank)?.let { put("server_name", it) }
             if (settings.insecure) put("insecure", true)
-            settings.utlsFingerprint
-                ?.takeIf { allowTcpOnlyTlsFeatures && it.isNotBlank() }
+            // Без fp в ссылке — Chrome: ClientHello Go выдаёт клиента, а REALITY без uTLS
+            // ядро не запускает вовсе.
+            (settings.utlsFingerprint?.takeIf(String::isNotBlank) ?: DEFAULT_UTLS_FINGERPRINT)
+                .takeIf { allowTcpOnlyTlsFeatures }
                 ?.let { fingerprint ->
                     put(
                         "utls",
