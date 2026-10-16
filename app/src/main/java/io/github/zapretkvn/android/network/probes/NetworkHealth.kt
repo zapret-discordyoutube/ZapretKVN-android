@@ -349,6 +349,12 @@ class VpnHealthPipeline internal constructor(
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily = ProxyIpFamily.Unspecified,
         strictPrivateDns: Boolean = false,
+        /**
+         * Пришёл ли через сервер хоть один байт. Пока нет, транспорт ещё поднимается
+         * (первое рукопожатие QUIC/TLS бывает долгим), и отказ DNS — не вина режима
+         * DNS: проба повторяется до общего срока, ядро не разрушается.
+         */
+        transportWarm: () -> Boolean = { true },
         onNetworkLease: (Long) -> Unit = {},
         onNetworkLost: () -> Unit = {},
         onStageStarted: (VpnHealthStage) -> Unit = {},
@@ -357,7 +363,7 @@ class VpnHealthPipeline internal constructor(
         val lease = lane?.acquireOrNull(ProbeLane.Owner.Connect, ProbeLane.CONNECT_WAIT_MILLIS)
         try {
             return verifyOnLane(
-                mode, internalDnsServer, proxyIpFamily, strictPrivateDns,
+                mode, internalDnsServer, proxyIpFamily, strictPrivateDns, transportWarm,
                 onNetworkLease, onNetworkLost, onStageStarted, onStageFinished,
             )
         } finally {
@@ -370,6 +376,7 @@ class VpnHealthPipeline internal constructor(
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily,
         strictPrivateDns: Boolean,
+        transportWarm: () -> Boolean,
         onNetworkLease: (Long) -> Unit,
         onNetworkLost: () -> Unit,
         onStageStarted: (VpnHealthStage) -> Unit,
@@ -424,6 +431,7 @@ class VpnHealthPipeline internal constructor(
                             internalDnsServer = internalDnsServer,
                             proxyIpFamily = proxyIpFamily,
                             strictPrivateDns = strictPrivateDns,
+                            transportWarm = transportWarm,
                             deadlineElapsedRealtimeMillis = healthDeadline,
                             onStageStarted = onStageStarted,
                             onStageFinished = onStageFinished,
@@ -443,6 +451,7 @@ class VpnHealthPipeline internal constructor(
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily,
         strictPrivateDns: Boolean,
+        transportWarm: () -> Boolean,
         deadlineElapsedRealtimeMillis: Long,
         onStageStarted: (VpnHealthStage) -> Unit,
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
@@ -479,6 +488,8 @@ class VpnHealthPipeline internal constructor(
                     mode,
                     internalDnsServer,
                     strictPrivateDns,
+                    transportWarm,
+                    deadlineElapsedRealtimeMillis,
                     { stage ->
                         if (!decided.get()) {
                             runningDnsStage.set(stage)
@@ -592,16 +603,24 @@ class VpnHealthPipeline internal constructor(
         mode: DnsMode,
         internalDnsServer: String,
         strictPrivateDns: Boolean,
+        transportWarm: () -> Boolean,
+        deadlineElapsedRealtimeMillis: Long,
         onStageStarted: (VpnHealthStage) -> Unit,
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
     ) {
+        // Холодный транспорт: повтор до общего срока (с запасом на вердикт), а не отказ.
+        val coldBudget = (deadlineElapsedRealtimeMillis - SystemClock.elapsedRealtime() - COLD_RETRY_MARGIN_MILLIS)
+            .coerceAtLeast(0L)
+        val retryWhileCold: (Throwable) -> Boolean = { !transportWarm() }
         if (mode == DnsMode.Automatic || mode == DnsMode.Secure) {
-            rawDnsProbe(
-                internalDnsServer,
-                ManagedHealthProbe.endpoints.first().host,
-                onStageStarted,
-                onStageFinished,
-            )
+            StrictPrivateDnsProbe.resolve(budgetMillis = coldBudget, retryWhen = retryWhileCold) {
+                rawDnsProbe(
+                    internalDnsServer,
+                    ManagedHealthProbe.endpoints.first().host,
+                    onStageStarted,
+                    onStageFinished,
+                )
+            }
             return
         }
         // Запрос идёт через resolver VPN-сети, то есть входит в TUN. В «DNS Android» с
@@ -618,7 +637,11 @@ class VpnHealthPipeline internal constructor(
                     onAttempt = { attempts = it },
                 ) { resolver.resolve(vpnNetwork, host) }
             } else {
-                resolver.resolve(vpnNetwork, host)
+                StrictPrivateDnsProbe.resolve(
+                    budgetMillis = coldBudget,
+                    onAttempt = { attempts = it },
+                    retryWhen = retryWhileCold,
+                ) { resolver.resolve(vpnNetwork, host) }
             }
             onStageFinished(
                 VpnHealthStage.DnsAndroidProbe,
@@ -1187,6 +1210,9 @@ class VpnHealthPipeline internal constructor(
 
         /** Фора HTTPS-пробе после окончательного провала DNS-пробы. */
         const val HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS = 1_500L
+
+        /** Запас до общего срока: последняя DNS-проба холодного транспорта успевает дать вердикт. */
+        const val COLD_RETRY_MARGIN_MILLIS = 1_500L
 
         /**
          * Strict Private DNS: Android проверяет резолвер заново на каждой новой

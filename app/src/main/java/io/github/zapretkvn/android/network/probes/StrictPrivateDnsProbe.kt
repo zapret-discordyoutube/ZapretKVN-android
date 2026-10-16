@@ -23,6 +23,8 @@ internal object StrictPrivateDnsProbe {
         random: Random = Random.Default,
         pause: suspend (Long) -> Unit = { delay(it) },
         onAttempt: (Int) -> Unit = {},
+        /** Повторять ли после этой ошибки; false — она уходит наружу сразу. */
+        retryWhen: (Throwable) -> Boolean = { true },
         attempt: suspend () -> T,
     ): T {
         val deadline = clock() + budgetMillis
@@ -35,6 +37,7 @@ internal object StrictPrivateDnsProbe {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
+                if (!retryWhen(error)) throw error
                 val wait = random.nextLong(MIN_PAUSE_MILLIS, MAX_PAUSE_MILLIS + 1)
                 if (clock() + wait >= deadline) throw error
                 pause(wait)

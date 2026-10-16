@@ -27,6 +27,7 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
             internalDnsServer = dnsServer,
             proxyIpFamily = BootstrapConfig.selectedProxyIpFamily(config),
             strictPrivateDns = session.networkPolicyKey.strictPrivateDns,
+            transportWarm = session::proxyTrafficSeen,
             onNetworkLease = { identity -> controller.recordConnectionVpnNetwork(token, identity.toString()) },
             onNetworkLost = { controller.recordConnectionVpnNetwork(token, lost = true) },
             onStageStarted = { stage ->

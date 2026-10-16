@@ -82,4 +82,40 @@ class StrictPrivateDnsProbeTest {
         assertEquals(1, value)
         assertEquals(1, attempts)
     }
+
+    @Test
+    fun `cold transport is waited for and a warm one fails fast`() = runBlocking {
+        val clock = Clock()
+        var warm = false
+        var calls = 0
+        // Первое рукопожатие с сервером долгое: два DNS-тайм-аута, потом трафик пошёл.
+        val result = StrictPrivateDnsProbe.resolve(
+            budgetMillis = 12_000,
+            clock = { clock.now },
+            random = Random(3),
+            pause = { clock.now += it },
+            retryWhen = { !warm },
+        ) {
+            calls += 1
+            if (calls == 3) warm = true
+            clock.now += 3_000
+            if (calls < 3) throw IOException("DNS-101") else listOf("answer")
+        }
+        assertEquals(listOf("answer"), result)
+        assertEquals(3, calls)
+
+        // Транспорт уже живой, а DNS молчит — это беда режима DNS: без повторов.
+        var warmCalls = 0
+        val failure = IOException("DNS-101")
+        try {
+            StrictPrivateDnsProbe.resolve(budgetMillis = 10_500, retryWhen = { false }) {
+                warmCalls += 1
+                throw failure
+            }
+            fail("expected the warm failure to propagate")
+        } catch (error: IOException) {
+            assertSame(failure, error)
+        }
+        assertEquals(1, warmCalls)
+    }
 }

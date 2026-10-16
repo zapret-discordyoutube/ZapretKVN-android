@@ -279,6 +279,15 @@ internal class CoreSession(
      * Принять отсчёт от любого из двух клиентов. [throttle] - источник чаще, чем раз в
      * 5 с (status главной): лишние отсчёты отбрасываются.
      */
+    /**
+     * Пришёл ли через сервер хоть один байт этой сессии (итоги ядра, патч 0006). Пока
+     * нет, транспорт ещё поднимается. Без итогов ядра — true: прежнее поведение.
+     */
+    fun proxyTrafficSeen(): Boolean {
+        val totals = runCatching { server?.proxyTraffic() }.getOrNull()?.takeIf { it.available } ?: return true
+        return totals.downlinkTotal > 0
+    }
+
     private fun acceptTraffic(uplinkTotal: Long, downlinkTotal: Long, connections: Int, throttle: Boolean) {
         if (closing.get()) return
         val now = android.os.SystemClock.elapsedRealtime()
