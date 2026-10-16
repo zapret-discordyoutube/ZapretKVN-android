@@ -36,6 +36,12 @@ internal data class SessionRecordSnapshot(
     val sampleCount: Int,
     val events: List<SessionKeyEvent>,
     val eventsDropped: Int,
+    /** Только через сервер (патч ядра 0006); null — ядро итогов не дало. */
+    val proxyUplinkBytes: Long? = null,
+    val proxyDownlinkBytes: Long? = null,
+    val proxyConnections: Int? = null,
+    /** Секунд от последнего роста downlink через сервер; прямой трафик его не сдвигает. */
+    val secondsSinceLastProxyDownlink: Long? = null,
 ) {
     val active: Boolean get() = endedAtEpochMillis == null
 }
@@ -77,6 +83,10 @@ internal class SessionHistory(
         var lastSampleAtEpochMillis: Long? = null
         var lastSampleElapsed: Long? = null
         var sampleCount = 0
+        var proxyUplink: Long? = null
+        var proxyDownlink: Long? = null
+        var proxyConnections: Int? = null
+        var lastProxyDownlinkElapsed: Long? = null
         val events = ArrayList<SessionKeyEvent>()
         val eventKeys = ArrayList<String>()
         var eventsDropped = 0
@@ -121,6 +131,9 @@ internal class SessionHistory(
         elapsedRealtimeMillis: Long,
         uplinkTotal: Long,
         downlinkTotal: Long,
+        proxyUplinkTotal: Long? = null,
+        proxyDownlinkTotal: Long? = null,
+        proxyConnections: Int? = null,
     ) {
         synchronized(lock) {
             val record = records.lastOrNull { it.generation == generation && it.endedAtEpochMillis == null }
@@ -140,6 +153,16 @@ internal class SessionHistory(
             if (down > previousDown || (previousElapsed == null && down > 0L)) {
                 record.lastDownlinkAtEpochMillis = now
                 record.lastDownlinkElapsed = elapsedRealtimeMillis
+            }
+            if (proxyDownlinkTotal != null) {
+                val proxyDown = proxyDownlinkTotal.coerceAtLeast(0L)
+                val before = record.proxyDownlink
+                if ((before == null && proxyDown > 0L) || (before != null && proxyDown > before)) {
+                    record.lastProxyDownlinkElapsed = elapsedRealtimeMillis
+                }
+                record.proxyDownlink = proxyDown
+                record.proxyUplink = proxyUplinkTotal?.coerceAtLeast(0L)
+                record.proxyConnections = proxyConnections
             }
             record.uplink = up
             record.downlink = down
@@ -292,6 +315,10 @@ internal class SessionHistory(
         sampleCount = sampleCount,
         events = events.toList(),
         eventsDropped = eventsDropped,
+        proxyUplinkBytes = proxyUplink,
+        proxyDownlinkBytes = proxyDownlink,
+        proxyConnections = proxyConnections,
+        secondsSinceLastProxyDownlink = lastProxyDownlinkElapsed?.let { ((elapsedNow - it) / 1000L).coerceAtLeast(0L) },
     )
 
     companion object {

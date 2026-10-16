@@ -300,7 +300,15 @@ internal class CoreSession(
                 proxyConnections = proxy?.connections,
             ),
         )
-        controller.recordSessionTraffic(generation, now, uplinkTotal, downlinkTotal)
+        controller.recordSessionTraffic(
+            generation,
+            now,
+            uplinkTotal,
+            downlinkTotal,
+            proxy?.uplinkTotal,
+            proxy?.downlinkTotal,
+            proxy?.connections,
+        )
         speedConsumer?.invoke(downlinkTotal, connections)
     }
 

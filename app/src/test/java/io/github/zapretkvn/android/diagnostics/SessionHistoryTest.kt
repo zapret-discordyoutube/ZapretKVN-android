@@ -122,6 +122,32 @@ class SessionHistoryTest {
     }
 
     @Test
+    fun `proxy traffic shows a stalled server behind growing direct traffic`() {
+        open(1)
+        history.markConnected(1, epoch)
+        history.recordTraffic(1, elapsed, 100, 1_000, proxyUplinkTotal = 50, proxyDownlinkTotal = 500, proxyConnections = 2)
+        elapsed += 30_000
+        // Прямые RU-сайты качают, через сервер — ничего нового.
+        history.recordTraffic(1, elapsed, 400, 90_000, proxyUplinkTotal = 300, proxyDownlinkTotal = 500, proxyConnections = 3)
+
+        val session = history.snapshot().single()
+        assertEquals(0L, session.secondsSinceLastDownlink)
+        assertEquals(30L, session.secondsSinceLastProxyDownlink)
+        assertEquals(300L, session.proxyUplinkBytes)
+        assertEquals(500L, session.proxyDownlinkBytes)
+        assertEquals(3, session.proxyConnections)
+    }
+
+    @Test
+    fun `without proxy totals the proxy fields stay unknown`() {
+        open(1)
+        history.recordTraffic(1, elapsed, 1, 1)
+        val session = history.snapshot().single()
+        assertNull(session.proxyDownlinkBytes)
+        assertNull(session.secondsSinceLastProxyDownlink)
+    }
+
+    @Test
     fun `traffic tracks totals, peak and the last downlink growth`() {
         open(1)
         history.markConnected(1, epoch)

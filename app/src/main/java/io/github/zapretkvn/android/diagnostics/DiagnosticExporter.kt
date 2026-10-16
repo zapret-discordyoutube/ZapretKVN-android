@@ -317,6 +317,18 @@ class DiagnosticExporter(
         put("seconds_since_last_downlink", session.secondsSinceLastDownlink?.let(::JsonPrimitive) ?: JsonNull)
         put("seconds_since_last_sample", session.secondsSinceLastSample?.let(::JsonPrimitive) ?: JsonNull)
         put("samples", session.sampleCount)
+        putProxyTraffic(session)
+    }
+
+    /** Трафик только через сервер: прямые соединения (RU-сайты) его не маскируют. */
+    private fun JsonObjectBuilder.putProxyTraffic(session: SessionRecordSnapshot) {
+        put("proxy_uplink_bytes", session.proxyUplinkBytes?.let(::JsonPrimitive) ?: JsonNull)
+        put("proxy_downlink_bytes", session.proxyDownlinkBytes?.let(::JsonPrimitive) ?: JsonNull)
+        put("proxy_connections", session.proxyConnections?.let(::JsonPrimitive) ?: JsonNull)
+        put(
+            "seconds_since_last_proxy_downlink",
+            session.secondsSinceLastProxyDownlink?.let(::JsonPrimitive) ?: JsonNull,
+        )
     }
 
     /** Последние сессии: итог, причина конца, трафик и ключевые события. Адресов серверов здесь нет. */
@@ -339,6 +351,7 @@ class DiagnosticExporter(
         put("seconds_since_last_downlink", session.secondsSinceLastDownlink?.let(::JsonPrimitive) ?: JsonNull)
         put("last_sample_epoch_ms", session.lastSampleAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
         put("samples", session.sampleCount)
+        putProxyTraffic(session)
         put("key_events_dropped", session.eventsDropped)
         put(
             "key_events",

@@ -447,7 +447,18 @@ class VpnController(
         elapsedRealtimeMillis: Long,
         uplinkTotal: Long,
         downlinkTotal: Long,
-    ) = sessionHistory.recordTraffic(generation, elapsedRealtimeMillis, uplinkTotal, downlinkTotal)
+        proxyUplinkTotal: Long? = null,
+        proxyDownlinkTotal: Long? = null,
+        proxyConnections: Int? = null,
+    ) = sessionHistory.recordTraffic(
+        generation,
+        elapsedRealtimeMillis,
+        uplinkTotal,
+        downlinkTotal,
+        proxyUplinkTotal,
+        proxyDownlinkTotal,
+        proxyConnections,
+    )
 
     /** Строка core-лога: важные (уровень <= WARN и маркеры обрыва) копятся всегда, при любом экране. */
     internal fun recordCoreLine(generation: Long, level: Int, message: String) =
