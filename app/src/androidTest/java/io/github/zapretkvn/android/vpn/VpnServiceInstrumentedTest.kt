@@ -1675,7 +1675,8 @@ class VpnServiceInstrumentedTest {
         .mapNotNull { task ->
             runCatching { task.resolve("comm").readText().trim() }.getOrNull()
         }
-        .filterNot { it.startsWith("Binder:") }
+        // Пул binder растёт по требованию системы (до ~16); на API 37 имена в нижнем регистре.
+        .filterNot { it.startsWith("binder:", ignoreCase = true) }
         .sorted()
 
     @Test
