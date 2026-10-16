@@ -40,11 +40,19 @@ object ServerLatencyFingerprint {
         descriptions.mapValues { (_, description) -> of(description) }
 }
 
-/** Для ранжирования кандидатов «умной проверки»: Relay HTTPS идёт через сам сервер. */
-internal fun PersistedServerLatency.hint(): LatencyHint? {
+/**
+ * Для ранжирования кандидатов замены: Relay HTTPS идёт через сам сервер. Провал
+ * исключает сервер из кандидатов, только пока он свежий: старый провал не должен
+ * навсегда выключать сервер из автоматики.
+ */
+internal fun PersistedServerLatency.hint(nowEpochMillis: Long = System.currentTimeMillis()): LatencyHint? {
     val primary = relay ?: return null
-    return LatencyHint(millis = primary.millis, failed = primary.failed)
+    val failedRecently = primary.failed && nowEpochMillis - primary.measuredAtEpochMillis <= FAILOVER_FAILURE_TTL_MILLIS
+    return LatencyHint(millis = primary.millis, failed = failedRecently)
 }
+
+/** Сколько провал замера исключает сервер из кандидатов замены. */
+internal const val FAILOVER_FAILURE_TTL_MILLIS = 10 * 60 * 1_000L
 
 /** Чистые преобразования записей; хранилище только применяет их к своему состоянию. */
 internal object ServerLatencyReducer {

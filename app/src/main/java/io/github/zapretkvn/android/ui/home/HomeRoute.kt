@@ -34,7 +34,12 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val hide = state.settings.hideServerAddresses
     val server = remember(vpnState is VpnConnectionState.Connected, selectorGroups, summary, latency, hide, hostCountries) {
         if (vpnState is VpnConnectionState.Connected) {
-            onlineServer(selectorGroups, hide, hostCountries)
+            onlineServer(
+                selectorGroups,
+                hide,
+                hostCountries,
+                connectedAtEpochMillis = (vpnState as VpnConnectionState.Connected).connectedAtEpochMillis,
+            )
         } else {
             offlineServer(summary, latency, hide, hostCountries)
         }

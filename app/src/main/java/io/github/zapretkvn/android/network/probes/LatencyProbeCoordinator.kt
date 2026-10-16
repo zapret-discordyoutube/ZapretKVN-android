@@ -194,7 +194,11 @@ internal class LatencyProbeCoordinator(
                 probe.relayClient = null
             }
             val missing = testable.filter { seen.add(it.tag) }.associate { item ->
-                item.tag to LatencyProbeState.Failed(LatencyFailure.Failed, item.relay.lastSample())
+                item.tag to LatencyProbeState.Failed(
+                    LatencyFailure.Failed,
+                    item.relay.lastSample(),
+                    failedAtEpochMillis = System.currentTimeMillis(),
+                )
             }
             if (missing.isNotEmpty()) results.trySend(missing)
             results.close()
@@ -287,8 +291,11 @@ private fun RelayDelayProbeResult.toState(
             networkIdentity = networkIdentity,
         ),
     )
-    Libbox.RelayDelayOutcomeTimeout -> LatencyProbeState.Failed(LatencyFailure.NoResponse, previous)
+    Libbox.RelayDelayOutcomeTimeout -> LatencyProbeState.Failed(LatencyFailure.NoResponse, previous, testedAt())
     Libbox.RelayDelayOutcomeUnsupported ->
         LatencyProbeState.Unsupported(LatencyUnsupportedReason.NestedGroup)
-    else -> LatencyProbeState.Failed(LatencyFailure.Failed, previous)
+    else -> LatencyProbeState.Failed(LatencyFailure.Failed, previous, testedAt())
 }
+
+private fun RelayDelayProbeResult.testedAt(): Long =
+    testedAtUnixMillis.takeIf { it > 0L } ?: System.currentTimeMillis()

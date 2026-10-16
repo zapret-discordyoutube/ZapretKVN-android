@@ -109,6 +109,22 @@ fun LatencyProbeState.lastSample(): LatencySample? = when (this) {
     is LatencyProbeState.Stale -> sample
 }
 
+/**
+ * Провал замера задержки — вердикт «не отвечает», только пока он свежий
+ * ([LATENCY_FRESHNESS_MILLIS]) и не старше [notBeforeEpochMillis] (начала текущего
+ * подключения: туннель, подтверждённый при старте, перекрывает старый провал).
+ * Иначе остаётся прошлый удачный замер как «давно» или «не проверялся» — без
+ * красного «не отвечает» рядом с «Всё работает».
+ */
+fun LatencyProbeState.currentVerdict(nowEpochMillis: Long, notBeforeEpochMillis: Long? = null): LatencyProbeState {
+    if (this !is LatencyProbeState.Failed) return this
+    val at = failedAtEpochMillis
+    val current = at != null &&
+        (notBeforeEpochMillis == null || at >= notBeforeEpochMillis) &&
+        nowEpochMillis - at <= LATENCY_FRESHNESS_MILLIS
+    return if (current) this else previous?.let(LatencyProbeState::Stale) ?: LatencyProbeState.NotTested
+}
+
 fun LatencyProbeState.markStale(): LatencyProbeState =
     lastSample()?.let(LatencyProbeState::Stale) ?: when (this) {
         // Проба оборвана сменой сети, прежнего замера нет: без этого строка

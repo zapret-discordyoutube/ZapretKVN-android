@@ -5,6 +5,7 @@ import io.github.zapretkvn.android.network.probes.PersistedServerLatency
 import io.github.zapretkvn.android.network.probes.primaryGroup
 import io.github.zapretkvn.android.profiles.ProfileServerSummary
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
+import io.github.zapretkvn.android.vpn.currentVerdict
 import io.github.zapretkvn.core.uimodel.CountryGuess
 import io.github.zapretkvn.core.uimodel.ScreenshotPrivacy
 import io.github.zapretkvn.core.uimodel.ServerName
@@ -21,9 +22,13 @@ fun onlineServer(
     groups: List<RuntimeSelectorGroup>,
     hide: Boolean,
     hostCountries: Map<String, String>,
+    nowEpochMillis: Long = System.currentTimeMillis(),
+    connectedAtEpochMillis: Long? = null,
 ): HomeServerUi? {
     val group = groups.primaryGroup() ?: return null
     val item = group.items.firstOrNull { it.tag == group.selected } ?: return null
+    // Провал замера, старше текущего подключения или давний, — не вердикт «не отвечает».
+    val relay = item.relay.currentVerdict(nowEpochMillis, connectedAtEpochMillis)
     val name = ServerName.parse(item.tag)
     val hint = inferCountries(
         groups.flatMap { g -> g.items.map { it.tag to it.endpoint } }.distinctBy { it.first },
@@ -35,8 +40,8 @@ fun onlineServer(
         protocol = protocolLabel(item.type),
         monogram = protocolMonogram(item.type),
         modeLabel = groupModeLabel(group.type),
-        latency = latencyBadge(item.relay),
-        relay = item.relay,
+        latency = latencyBadge(relay),
+        relay = relay,
         switchable = group.items.size > 1,
     )
 }
@@ -51,7 +56,7 @@ fun offlineServer(
     val label = summary.selectedLabel ?: return null
     val option = summary.primaryGroup?.options?.firstOrNull { it.tag == label }
     val name = ServerName.parse(label)
-    val saved = latency[label]?.displayState()
+    val saved = latency[label]?.displayState()?.currentVerdict(System.currentTimeMillis())
     val hint = inferCountries(
         summary.groups.flatMap { g -> g.options.map { it.tag to it.endpoint } }.distinctBy { it.first },
         hostCountries,
