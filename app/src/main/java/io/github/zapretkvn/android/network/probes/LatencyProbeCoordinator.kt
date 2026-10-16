@@ -44,8 +44,11 @@ internal class LatencyProbeCoordinator(
     private val closed = AtomicBoolean(false)
     private var active: ActiveProbe? = null
 
-    /** Запускает проверку группы; повторный запуск во время проверки ничего не делает. */
-    fun start(group: RuntimeSelectorGroup) {
+    /**
+     * Запускает проверку группы — всей или только [only] (страна, результаты поиска);
+     * повторный запуск во время проверки ничего не делает.
+     */
+    fun start(group: RuntimeSelectorGroup, only: Set<String>? = null) {
         if (synchronized(lock) { active } != null) return
         if (closed.get() || group.items.isEmpty()) return
         val underlying = networkMonitor.current
@@ -60,6 +63,7 @@ internal class LatencyProbeCoordinator(
                 requestId = requestId,
                 groupTag = group.tag,
                 networkIdentity = networkIdentity,
+                only = only,
             )
         ) {
             return
@@ -68,6 +72,7 @@ internal class LatencyProbeCoordinator(
             requestId = requestId,
             group = group,
             networkIdentity = networkIdentity,
+            only = only,
         )
         val job = scope.launch(start = CoroutineStart.LAZY) { run(probe) }
         probe.job = job
@@ -143,14 +148,15 @@ internal class LatencyProbeCoordinator(
     }
 
     private suspend fun runRelay(probe: ActiveProbe): ProbeSummary {
-        val testable = probe.group.items.filterNot(RuntimeOutboundItem::isNestedGroup)
+        val probed = probe.group.items.filter { probe.only == null || it.tag in probe.only }
+        val testable = probed.filterNot(RuntimeOutboundItem::isNestedGroup)
         val testableTags = testable.mapTo(mutableSetOf(), RuntimeOutboundItem::tag)
         val previousByTag = testable.associate { it.tag to it.relay.lastSample() }
         // Ядро зовёт обработчик из своих потоков.
         val seen = ConcurrentHashMap.newKeySet<String>()
         var success = 0
         var failed = 0
-        var unsupported = probe.group.items.size - testable.size
+        var unsupported = probed.size - testable.size
         val client = Libbox.newStandaloneCommandClient()
         probe.relayClient = client
         val results = Channel<Map<String, LatencyProbeState>>(Channel.UNLIMITED)
@@ -176,7 +182,9 @@ internal class LatencyProbeCoordinator(
                 }
             }
             try {
-                callRelay(client, probe.group.tag) { result ->
+                // Подмножество уходит в ядро списком: остальные серверы группы не трогаются вовсе.
+                val only = probe.only?.let { testable.joinToString("\n", transform = RuntimeOutboundItem::tag) }
+                callRelay(client, probe.group.tag, only) { result ->
                     if (result.outboundTag !in testableTags || !seen.add(result.outboundTag)) {
                         return@callRelay
                     }
@@ -210,11 +218,17 @@ internal class LatencyProbeCoordinator(
     private suspend fun callRelay(
         client: CommandClient,
         groupTag: String,
+        only: String?,
         onResult: (RelayDelayProbeResult) -> Unit,
     ) = suspendCancellableCoroutine { continuation ->
         val worker = scope.launch(Dispatchers.IO) {
             try {
-                client.probeOutboundRelayDelays(groupTag, RelayDelayProbeHandler(onResult))
+                val handler = RelayDelayProbeHandler(onResult)
+                if (only == null) {
+                    client.probeOutboundRelayDelays(groupTag, handler)
+                } else {
+                    client.probeOutboundRelayDelaysOf(groupTag, only, handler)
+                }
                 if (continuation.isActive) continuation.resume(Unit)
             } catch (error: Throwable) {
                 if (continuation.isActive) continuation.resumeWithException(error)
@@ -256,6 +270,7 @@ internal class LatencyProbeCoordinator(
         val requestId: Long,
         val group: RuntimeSelectorGroup,
         val networkIdentity: String,
+        val only: Set<String>?,
     ) {
         @Volatile var relayClient: CommandClient? = null
         @Volatile var job: Job? = null

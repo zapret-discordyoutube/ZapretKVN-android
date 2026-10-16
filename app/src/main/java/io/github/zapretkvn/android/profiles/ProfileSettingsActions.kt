@@ -31,6 +31,11 @@ class ProfileSettingsActions internal constructor(
 
     fun setHideServerAddresses(enabled: Boolean) = apply { settingsStore.setHideServerAddresses(enabled) }
 
+    fun setSubscriptionAutoUpdateHours(hours: Int) = apply { settingsStore.setSubscriptionAutoUpdateHours(hours) }
+
+    fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) =
+        apply { settingsStore.setFavoriteServer(profileId, tag, favorite) }
+
     fun setSlowServerSwitch(enabled: Boolean) = apply { settingsStore.setSlowServerSwitch(enabled) }
 
     fun setServiceCheck(id: ServiceId, enabled: Boolean) = apply { settingsStore.setServiceCheck(id, enabled) }

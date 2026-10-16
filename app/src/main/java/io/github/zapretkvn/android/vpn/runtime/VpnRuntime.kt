@@ -199,8 +199,13 @@ internal class VpnRuntime(
     fun select(profileId: String, groupTag: String, outboundTag: String, startId: Int) =
         post(Message.Select(profileId, groupTag, outboundTag, startId))
 
-    fun pingGroup(profileId: String, groupTag: String, startId: Int, stop: Boolean = false) =
-        post(Message.PingGroup(profileId, groupTag, startId, stop))
+    fun pingGroup(
+        profileId: String,
+        groupTag: String,
+        startId: Int,
+        stop: Boolean = false,
+        only: List<String> = emptyList(),
+    ) = post(Message.PingGroup(profileId, groupTag, startId, stop, only))
 
     fun clearDnsCache(startId: Int) = post(Message.ClearDnsCache(startId))
 
@@ -301,6 +306,8 @@ internal class VpnRuntime(
             val groupTag: String,
             val startId: Int,
             val stop: Boolean = false,
+            /** Только эти серверы группы; пусто — вся группа. */
+            val only: List<String> = emptyList(),
         ) : Message
         data class ClearDnsCache(val startId: Int) : Message
         data class ClearDnsCacheDone(val startId: Int, val expectedGeneration: Long) : Message
@@ -822,7 +829,12 @@ internal class VpnRuntime(
             controller.publishMessage(session.generation, "Группа серверов не найдена в sing-box.")
             return
         }
-        session.startLatencyProbe(group)
+        val only = message.only.toSet().takeIf(Set<String>::isNotEmpty)
+        if (only != null && group.items.none { it.tag in only }) {
+            controller.publishMessage(session.generation, "Этих серверов уже нет в группе: список обновился.")
+            return
+        }
+        session.startLatencyProbe(group, only)
     }
 
     private fun onClearDnsCache(message: Message.ClearDnsCache) {

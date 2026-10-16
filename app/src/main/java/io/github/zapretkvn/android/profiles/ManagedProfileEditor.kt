@@ -34,7 +34,7 @@ object ManagedProfileEditor {
         val baseTag = ManagedProfileFactory.taggedServers(listOf(server)).single().tag
         var tag = baseTag
         var suffix = 2
-        while (tag in usedTags) tag = "$baseTag-${suffix++}"
+        while (tag in usedTags) tag = "$baseTag · ${suffix++}"
         val tagged = JsonObject(
             ManagedProfileFactory.taggedServers(listOf(server)).single().outbound
                 .toMutableMap()
@@ -68,7 +68,12 @@ object ManagedProfileEditor {
         val oldSelected = selector.string("default")
         val fresh = ManagedProfileFactory.taggedServers(servers)
         val freshTags = fresh.map(ManagedProfileFactory.TaggedServer::tag)
-        val selected = oldSelected?.takeIf(freshTags::contains) ?: freshTags.first()
+        val oldSelectedOutbound = oldSelected?.let { tag ->
+            outbounds.firstNotNullOfOrNull { (it as? JsonObject)?.takeIf { outbound -> outbound.string("tag") == tag } }
+        }
+        // Тот же сервер под новым тегом — это не смена выбора: VPN не нужно предупреждать.
+        val carried = oldSelected?.let { carrySelection(it, oldSelectedOutbound, servers, fresh) }
+        val selected = carried ?: freshTags.first()
         val updatedSelector = selector.withValues(
             mapOf(
                 "outbounds" to JsonArray(freshTags.map(::JsonPrimitive)),
@@ -96,8 +101,30 @@ object ManagedProfileEditor {
         return ManagedProfileUpdate(
             json = JsonConfig.format(root.withValues(mapOf("outbounds" to JsonArray(rebuilt)))),
             selectedTag = selected,
-            selectionChanged = oldSelected != null && oldSelected != selected,
+            selectionChanged = oldSelected != null && carried == null,
         )
+    }
+
+    /**
+     * Прежний выбор в обновлённом списке: тот же тег; иначе тот же сервер под тегом до 0.5.15
+     * (слаг); иначе тот же адрес и протокол — подписка переименовала сервер. Ничего не нашлось — null.
+     */
+    private fun carrySelection(
+        oldSelected: String,
+        oldOutbound: JsonObject?,
+        servers: List<ManagedServer>,
+        fresh: List<ManagedProfileFactory.TaggedServer>,
+    ): String? {
+        fresh.firstOrNull { it.tag == oldSelected }?.let { return it.tag }
+        val legacy = ManagedProfileFactory.legacyStableTags(servers).indexOf(oldSelected)
+        if (legacy >= 0) return fresh[legacy].tag
+        val address = oldOutbound?.serverAddress() ?: return null
+        return fresh.singleOrNull { it.outbound.serverAddress() == address }?.tag
+    }
+
+    private fun JsonObject.serverAddress(): String? {
+        val server = string("server")?.takeIf(String::isNotBlank) ?: return null
+        return "${string("type")}|${server.lowercase()}|${string("server_port")}"
     }
 
     fun preserveSelectorDefaults(oldJson: String, newJson: String): ManagedProfileUpdate {

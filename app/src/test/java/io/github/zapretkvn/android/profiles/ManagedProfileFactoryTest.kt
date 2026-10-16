@@ -46,8 +46,7 @@ class ManagedProfileFactoryTest {
         val second = ManagedProfileFactory.stableTags(servers)
 
         assertEquals(first, second)
-        assertEquals(2, first.distinct().size)
-        assertTrue(first.all { it.startsWith("same-name-") })
+        assertEquals(listOf("Same name", "Same name · 2"), first)
         assertFalse(first.any { secretUuid in it })
 
         val raw = ManagedProfileFactory.subscription(servers)
@@ -61,7 +60,7 @@ class ManagedProfileFactoryTest {
         val uuid = "11111111-1111-4111-8111-111111111111"
         val tags = ManagedProfileFactory.stableTags(listOf(vless(uuid, uuid = uuid)))
 
-        assertEquals(listOf("server"), tags)
+        assertEquals(listOf("Сервер"), tags)
         assertFalse(uuid in tags.single())
     }
 
@@ -218,12 +217,37 @@ class ManagedProfileFactoryTest {
     }
 
     @Test
-    fun `non-latin display names stay readable in server tags`() {
+    fun `server tag is the subscription name with its flag`() {
         val tags = ManagedProfileFactory.stableTags(
-            listOf(vless("🇳🇱 Нидерланды #1", "nl.example"), vless("Германия", "de.example")),
+            listOf(
+                vless("🇳🇱 Нидерланды #1", "nl.example"),
+                vless("Германия", "de.example"),
+                vless("🇱🇻 Hiprig · VLESS WS · TLS", "lv.example"),
+            ),
         )
 
-        assertEquals(listOf("нидерланды-1", "германия"), tags)
+        // 16.10.2026: тег был слагом «hiprig-vless-ws-tls» — флаг пропадал, страна угадывалась по адресу входа.
+        assertEquals(listOf("🇳🇱 Нидерланды #1", "Германия", "🇱🇻 Hiprig · VLESS WS · TLS"), tags)
+    }
+
+    @Test
+    fun `server tag drops control characters, brackets and direction overrides`() {
+        assertEquals("Amsterdam (2) fast", ManagedProfileFactory.serverTag("  Amsterdam\t[2]\n fast  "))
+        assertEquals("Riga", ManagedProfileFactory.serverTag("\u202ERiga"))
+        assertEquals("Сервер", ManagedProfileFactory.serverTag(" -- "))
+        assertEquals("🇩🇪", ManagedProfileFactory.serverTag("🇩🇪"))
+        val long = "🇳🇱" + "a".repeat(100)
+        val tag = ManagedProfileFactory.serverTag(long)
+        assertEquals(64, tag.codePointCount(0, tag.length))
+        assertTrue(tag.startsWith("🇳🇱"))
+    }
+
+    @Test
+    fun `legacy slug tags are still computed for migration`() {
+        assertEquals(
+            listOf("hiprig-vless-ws-tls"),
+            ManagedProfileFactory.legacyStableTags(listOf(vless("🇱🇻 Hiprig · VLESS WS · TLS", "lv.example"))),
+        )
     }
 
     @Test

@@ -247,7 +247,59 @@ object ManagedProfileFactory {
         )
     }
 
+    /**
+     * Тег сервера — его имя из подписки как есть: с флагом, регистром и пробелами
+     * («🇱🇻 Hiprig · VLESS WS · TLS»). По тегу экран находит флаг и страну, уведомление
+     * показывает сервер, ядро выбирает его в группе.
+     *
+     * До 0.5.15 тег был слагом (`hiprig-vless-ws-tls`): флаг пропадал, страна угадывалась
+     * по адресу входа, и сервер за фронтом в другой стране попадал не в ту группу (16.10.2026).
+     * Повтор имени получает « · 2», « · 3» по порядку подписки; выбор при обновлении
+     * переносится по старому слагу и по адресу сервера ([ManagedProfileEditor.refreshServers]).
+     */
     fun stableTags(servers: List<ManagedServer>): List<String> {
+        val used = mutableSetOf<String>()
+        return servers.map { server ->
+            val base = serverTag(server.displayName)
+            var candidate = base
+            var occurrence = 2
+            while (!used.add(candidate)) candidate = "$base · ${occurrence++}"
+            candidate
+        }
+    }
+
+    /** Имя сервера, пригодное в тег: без секретов, управляющих символов и скобок журнала ядра. */
+    fun serverTag(displayName: String): String {
+        val redacted = SecretRedactor.redactInline(displayName).replace(SecretRedactor.MASK, " ")
+        val cleaned = buildString {
+            redacted.codePoints().forEach { point ->
+                when {
+                    // Ядро пишет «outbound/vless[тег]»: квадратная скобка в теге ломала бы разбор журнала.
+                    point == '['.code -> append('(')
+                    point == ']'.code -> append(')')
+                    Character.isISOControl(point) || point in BIDI_CONTROLS -> append(' ')
+                    else -> appendCodePoint(point)
+                }
+            }
+        }.replace(WHITESPACE, " ").trim()
+        if (cleaned.none { it.isLetterOrDigit() || it.isSurrogate() }) return FALLBACK_TAG
+        return cleaned.takeCodePoints(MAX_TAG_CODE_POINTS).trimEnd()
+    }
+
+    private const val FALLBACK_TAG = "Сервер"
+    private const val MAX_TAG_CODE_POINTS = 64
+    private val WHITESPACE = Regex("\\s+")
+
+    /** Встраивания и переопределения направления текста: ими можно перевернуть имя на экране. */
+    private val BIDI_CONTROLS = (0x202A..0x202E) + (0x2066..0x2069)
+
+    private fun String.takeCodePoints(limit: Int): String {
+        if (codePointCount(0, length) <= limit) return this
+        return substring(0, offsetByCodePoints(0, limit))
+    }
+
+    /** Теги до 0.5.15 (слаги): по ним обновление подписки находит прежний выбор. */
+    fun legacyStableTags(servers: List<ManagedServer>): List<String> {
         val bases = servers.map { slug(it.displayName) }
         val counts = bases.groupingBy { it }.eachCount()
         val used = mutableSetOf<String>()

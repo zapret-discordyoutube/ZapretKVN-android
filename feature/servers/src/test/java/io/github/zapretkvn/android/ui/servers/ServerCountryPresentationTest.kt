@@ -43,12 +43,12 @@ class ServerCountryPresentationTest {
     }
 
     @Test
-    fun `precedence is name flag then address then sibling then words in the name`() {
+    fun `precedence is name flag then words in the name then address then sibling`() {
         val rows = offline(
             listOf(
                 option("🇳🇱 Amsterdam", "185.12.34.56:443"), // флаг в имени
                 option("hy2 node", "185.12.34.56:8443", "hysteria2"), // сосед по адресу: NL, но адрес главнее
-                option("Finland fast", "203.0.113.50:443"), // слово в имени: FI, но адрес главнее
+                option("Finland fast", "203.0.113.50:443"), // слово в имени главнее адреса входа (фронт, CDN)
                 option("Frankfurt 3", "203.0.113.51:443"), // адреса в таблице нет: слово в имени
                 option("Hysteria 2", "185.12.99.1:443", "hysteria2"), // ничего не известно
             ),
@@ -56,7 +56,7 @@ class ServerCountryPresentationTest {
         )
         assertEquals("NL", rows.getValue("🇳🇱 Amsterdam").countryCode)
         assertEquals("DE", rows.getValue("hy2 node").countryCode)
-        assertEquals("SE", rows.getValue("Finland fast").countryCode)
+        assertEquals("FI", rows.getValue("Finland fast").countryCode)
         assertEquals("DE", rows.getValue("Frankfurt 3").countryCode)
         assertNull(rows.getValue("Hysteria 2").countryCode)
     }

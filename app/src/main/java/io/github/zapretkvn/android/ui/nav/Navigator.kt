@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.ui.nav
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,6 +49,20 @@ class Navigator internal constructor(private val stack: SnapshotStateList<Route>
         stack.clear()
         stack.add(Route.Tab(target))
     }
+
+    /** Нажатие в нижней панели: повтор на открытой вкладке — «наверх», как в системных приложениях. */
+    fun onTabClick(target: AppTab) {
+        if (stack.size == 1 && tab == target) {
+            reselections[target] = (reselections[target] ?: 0) + 1
+        } else {
+            switchTab(target)
+        }
+    }
+
+    private val reselections = mutableStateMapOf<AppTab, Int>()
+
+    /** Сколько раз нажали на уже открытую вкладку [tab]: вкладка прокручивается наверх при росте. */
+    fun reselections(tab: AppTab): Int = reselections[tab] ?: 0
 
     fun push(route: Route) {
         if (stack.last() != route) stack.add(route)

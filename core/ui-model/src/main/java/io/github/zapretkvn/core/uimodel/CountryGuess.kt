@@ -14,7 +14,11 @@ object CountryGuess {
     private val ISO = Locale.getISOCountries().toHashSet()
 
     /** Токены, похожие на коды стран, но в именах серверов почти всегда значат другое. */
-    private val NOT_COUNTRIES = setOf("WS", "TV", "AI", "IO", "ME", "TO", "IS", "AM", "AS", "BY", "IN", "IT", "NO", "SO", "TG")
+    private val NOT_COUNTRIES = setOf(
+        "WS", "TV", "AI", "IO", "ME", "TO", "IS", "AM", "AS", "BY", "IN", "IT", "NO", "SO", "TG",
+        // Shadowsocks, гигабайты трафика, номер узла: имя теперь главнее GeoIP, ложная страна стоила бы дороже.
+        "SS", "GB", "ID",
+    )
 
     private val NAMES: Map<String, String> = buildMap {
         fun add(code: String, vararg names: String) = names.forEach { put(it, code) }
@@ -148,9 +152,15 @@ fun endpointHostKey(endpoint: String?): String? =
 
 /**
  * Дополняет имена без флага страной. Порядок: эмодзи-флаг в имени (такие
- * серверы сюда не попадают) → страна по IP сервера из офлайн-таблицы
- * ([geoByHost]: ключ хоста → код) → сервер с тем же адресом и флагом в имени
- * (часто VLESS и Hysteria на одном узле) → слова в имени → слова в имени хоста.
+ * серверы сюда не попадают) → страна или город в имени («Riga», «Латвия») →
+ * страна по IP сервера из офлайн-таблицы ([geoByHost]: ключ хоста → код) →
+ * сервер с тем же адресом и флагом в имени (часто VLESS и Hysteria на одном
+ * узле) → слова в имени хоста.
+ *
+ * Имя важнее адреса: адрес в ссылке — это вход, а не выход. Сервер за фронтом
+ * или CDN в другой стране по IP входа попадал не в свою страну (латвийский
+ * узел за финским входом — в Финляндию, 16.10.2026); имя пишет тот, кто знает,
+ * где сервер на самом деле.
  * Возвращает тег → код страны только для тех, у кого флага в имени не было.
  */
 fun inferCountries(
@@ -165,9 +175,9 @@ fun inferCountries(
     return buildMap {
         parsed.forEach { (tag, name, host) ->
             if (name.countryCode != null) return@forEach
-            val code = host?.let(geoByHost::get)
+            val code = CountryGuess.fromName(name.title)
+                ?: host?.let(geoByHost::get)
                 ?: host?.let(byHost::get)
-                ?: CountryGuess.fromName(name.title)
                 ?: CountryGuess.fromHost(host)
             if (code != null) put(tag, code)
         }

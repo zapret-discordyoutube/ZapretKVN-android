@@ -16,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Собранные вместе контроллеры профилей над одним [ProfilesUiState]. */
@@ -78,7 +79,11 @@ internal class ProfilesModule(
                 removeBootstrap = removeBootstrap,
                 onProfilesChanged = servers::refreshSummaries,
                 onProfileRenamed = editor::onProfileRenamed,
-                onProfileDeleted = editor::onProfileDeleted,
+                onProfileDeleted = { id ->
+                    editor.onProfileDeleted(id)
+                    // Звёздочки удалённого профиля не копятся в настройках.
+                    scope.launch { settingsStore.retainFavoriteProfiles(store.profiles.value.mapTo(HashSet()) { it.id }) }
+                },
             )
             val imports = ImportController(
                 state = state,

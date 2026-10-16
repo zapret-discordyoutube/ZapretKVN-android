@@ -202,7 +202,7 @@ private fun TabsScaffold(
                 AppTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = navigator.tab == tab,
-                        onClick = { navigator.switchTab(tab) },
+                        onClick = { navigator.onTabClick(tab) },
                         icon = { Icon(tab.icon, contentDescription = tab.title) },
                         label = { Text(tab.title, maxLines = 1) },
                     )

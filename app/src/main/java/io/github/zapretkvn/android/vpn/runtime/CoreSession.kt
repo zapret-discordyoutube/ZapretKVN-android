@@ -179,7 +179,8 @@ internal class CoreSession(
 
     val isClosing: Boolean get() = closing.get()
 
-    fun startLatencyProbe(group: RuntimeSelectorGroup) = latencyProbeCoordinator.start(group)
+    fun startLatencyProbe(group: RuntimeSelectorGroup, only: Set<String>? = null) =
+        latencyProbeCoordinator.start(group, only)
 
     fun stopLatencyProbe() = latencyProbeCoordinator.stop()
 

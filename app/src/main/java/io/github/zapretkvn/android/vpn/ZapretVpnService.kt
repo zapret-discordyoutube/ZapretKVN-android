@@ -21,10 +21,21 @@ import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.R
 import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.platform.VpnSystemPolicyDetector
+import io.github.zapretkvn.android.ui.CurrentServerLabel
 import io.github.zapretkvn.android.vpn.runtime.ForegroundState
 import io.github.zapretkvn.android.vpn.runtime.RuntimeHost
 import io.github.zapretkvn.android.vpn.runtime.VpnRuntime
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 /**
  * Android-оболочка VPN: переводит Intent-команды в [VpnRuntime], держит
@@ -35,6 +46,15 @@ class ZapretVpnService : VpnService() {
     private val foregroundActive = AtomicBoolean(false)
     private val container by lazy { (application as ZapretApplication).container }
     private lateinit var runtime: VpnRuntime
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** Последнее показанное состояние: смена сервера перерисовывает уведомление с ним же. */
+    private data class Shown(val state: ForegroundState, val detail: String?)
+
+    @Volatile private var shown: Shown? = null
+
+    /** «🇱🇻 Hiprig · VLESS WS · TLS» — сервер, через который идёт трафик; null — неизвестен. */
+    @Volatile private var serverLabel: String? = null
     private val host = object : RuntimeHost {
         override fun showForeground(state: ForegroundState, detail: String?) =
             this@ZapretVpnService.showForeground(state, detail)
@@ -71,6 +91,28 @@ class ZapretVpnService : VpnService() {
             },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        observeCurrentServer()
+    }
+
+    /**
+     * Уведомление называет текущий сервер с флагом и именем из подписки, как вкладка
+     * «Серверы», а не тег ядра. Смена сервера (вручную, автозамена, «умная проверка»)
+     * приходит из групп ядра и перерисовывает уведомление с прежним состоянием.
+     */
+    private fun observeCurrentServer() {
+        combine(
+            container.vpnController.selectorGroups,
+            container.serverCountryStore.countries,
+            container.uiSettingsStore.settings.map { it.hideServerAddresses }.distinctUntilChanged(),
+        ) { groups, countries, hide -> CurrentServerLabel.of(groups, countries, hide) }
+            .distinctUntilChanged()
+            .onEach { label -> serverLabel = label }
+            .drop(1)
+            .onEach {
+                shown?.takeIf { foregroundActive.get() && it.state in SERVER_STATES }
+                    ?.let { showForeground(it.state, it.detail) }
+            }
+            .launchIn(scope)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -101,6 +143,7 @@ class ZapretVpnService : VpnService() {
                 groupTag = intent.getStringExtra(EXTRA_GROUP_TAG).orEmpty(),
                 startId = startId,
                 stop = intent.getBooleanExtra(EXTRA_STOP_PING, false),
+                only = intent.getStringArrayListExtra(EXTRA_ONLY).orEmpty(),
             )
             ACTION_STOP -> runtime.stop(startId, null)
             ACTION_RESUME -> runtime.resume(startId)
@@ -120,6 +163,7 @@ class ZapretVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         runCatching { unregisterReceiver(screenStateReceiver) }
         val finalState = runtime.destroy()
         finishForeground()
@@ -147,10 +191,14 @@ class ZapretVpnService : VpnService() {
             stopIntent(this),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        shown = Shown(state, detail)
+        val status = detail?.let { "${state.text} · $it" } ?: state.text
+        // Пока сервер работает (или его меняют), главное в уведомлении — какой это сервер.
+        val server = serverLabel?.takeIf { state in SERVER_STATES }
         val builder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_vpn_notification)
-            .setContentTitle("Zapret KVN")
-            .setContentText(detail?.let { "${state.text} · $it" } ?: state.text)
+            .setContentTitle(server ?: "Zapret KVN")
+            .setContentText(status)
             .setContentIntent(openIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -208,6 +256,7 @@ class ZapretVpnService : VpnService() {
         private const val ACTION_CLEAR_DNS_CACHE = "io.github.zapretkvn.android.vpn.CLEAR_DNS_CACHE"
         private const val ACTION_PING_GROUP = "io.github.zapretkvn.android.vpn.PING_GROUP"
         private const val EXTRA_STOP_PING = "stop_ping"
+        private const val EXTRA_ONLY = "only_outbounds"
         private const val EXTRA_PROFILE_ID = "profile_id"
         private const val EXTRA_GROUP_TAG = "group_tag"
         private const val EXTRA_OUTBOUND_TAG = "outbound_tag"
@@ -215,6 +264,11 @@ class ZapretVpnService : VpnService() {
         private const val EXTRA_UPDATER_ROUTING = "updater_routing"
         private const val NOTIFICATION_CHANNEL_ID = "vpn"
         private const val NOTIFICATION_ID = 1001
+        private val SERVER_STATES = setOf(
+            ForegroundState.Connected,
+            ForegroundState.LinkLost,
+            ForegroundState.SwitchingServer,
+        )
 
         fun startIntent(context: Context, profileId: String, updaterRouting: Boolean = false): Intent =
             Intent(context, ZapretVpnService::class.java)
@@ -255,11 +309,13 @@ class ZapretVpnService : VpnService() {
             profileId: String,
             groupTag: String,
             stop: Boolean = false,
+            only: List<String> = emptyList(),
         ): Intent =
             Intent(context, ZapretVpnService::class.java)
                 .setAction(ACTION_PING_GROUP)
                 .putExtra(EXTRA_PROFILE_ID, profileId)
                 .putExtra(EXTRA_GROUP_TAG, groupTag)
                 .putExtra(EXTRA_STOP_PING, stop)
+                .putStringArrayListExtra(EXTRA_ONLY, ArrayList(only))
     }
 }

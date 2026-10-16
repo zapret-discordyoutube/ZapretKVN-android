@@ -805,6 +805,37 @@ class ImportParserTest {
     }
 
     @Test
+    fun `refresh carries selection from a pre-0_5_15 slug tag to the real name`() {
+        val one = server("🇳🇱 One · VLESS", "one.example")
+        val two = server("🇱🇻 Two · VLESS", "two.example")
+        // Профиль, сохранённый до 0.5.15: теги — слаги, флагов нет.
+        val legacy = ManagedProfileFactory.subscription(listOf(one, two))
+            .replace("\"🇳🇱 One · VLESS\"", "\"one-vless\"")
+            .replace("\"🇱🇻 Two · VLESS\"", "\"two-vless\"")
+        val selected = ConfigAnalyzer.selectServer(legacy, ConfigAnalyzer.MANAGED_SELECTOR_TAG, "two-vless")
+
+        val refreshed = ManagedProfileEditor.refreshServers(selected, listOf(one, two))
+
+        assertEquals("🇱🇻 Two · VLESS", refreshed.selectedTag)
+        assertFalse(refreshed.selectionChanged)
+        assertEquals(listOf("🇳🇱 One · VLESS", "🇱🇻 Two · VLESS"), ConfigAnalyzer.selectorGroups(refreshed.json).single().outbounds)
+    }
+
+    @Test
+    fun `refresh keeps the selected server when the subscription renames it`() {
+        val one = server("One", "one.example")
+        val two = server("Two", "two.example")
+        val original = ManagedProfileFactory.subscription(listOf(one, two))
+        val selected = ConfigAnalyzer.selectServer(original, ConfigAnalyzer.MANAGED_SELECTOR_TAG, "Two")
+
+        val renamed = server("🇱🇻 Riga", "two.example")
+        val refreshed = ManagedProfileEditor.refreshServers(selected, listOf(one, renamed))
+
+        assertEquals("🇱🇻 Riga", refreshed.selectedTag)
+        assertFalse(refreshed.selectionChanged)
+    }
+
+    @Test
     fun `single server append changes only managed outbound list`() {
         val original = ManagedProfileFactory.single(server("One", "one.example"))
         val rootBefore = JsonConfig.parse(original) as JsonObject

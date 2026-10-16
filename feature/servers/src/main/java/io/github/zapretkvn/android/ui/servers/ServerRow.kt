@@ -1,7 +1,9 @@
 package io.github.zapretkvn.android.ui.servers
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,8 +29,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
@@ -48,14 +56,17 @@ import io.github.zapretkvn.core.designsystem.toneColor
  * число и маленькое слово цветом тона. Высота одиночной строки ~56 dp.
  * Выбранный сервер: тональный фон и галочка на флаге.
  * [onClick] == null — строка справочная (группа выбирается автоматически).
+ * [onFavorite] — долгое нажатие добавляет в избранное или убирает (звёздочка у имени);
+ * для TalkBack то же самое — отдельным действием строки.
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ServerRow(
     row: ServerRowUi,
     position: RowPosition,
     onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    onFavorite: (() -> Unit)? = null,
 ) {
     val shape = cardShape(position)
     val container = if (row.selected) {
@@ -63,14 +74,30 @@ fun ServerRow(
     } else {
         MaterialTheme.colorScheme.surfaceContainerLow
     }
+    val favoriteLabel = if (row.favorite) "Убрать из избранного" else "В избранное"
     val semanticsModifier = Modifier.semantics(mergeDescendants = true) {
         contentDescription = row.a11y
         if (row.selected) stateDescription = "выбран"
+        if (onFavorite != null) {
+            customActions = listOf(CustomAccessibilityAction(favoriteLabel) { onFavorite(); true })
+        }
     }
-    val clickModifier = if (onClick != null) {
-        Modifier.selectable(selected = row.selected, role = Role.RadioButton, onClick = onClick)
-    } else {
-        Modifier
+    val haptics = LocalHapticFeedback.current
+    val clickModifier = when {
+        onFavorite != null -> Modifier
+            .semantics { selected = row.selected }
+            .combinedClickable(
+                role = Role.RadioButton,
+                onClickLabel = if (onClick != null) "Выбрать" else null,
+                onLongClickLabel = favoriteLabel,
+                onLongClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onFavorite()
+                },
+                onClick = onClick ?: {},
+            )
+        onClick != null -> Modifier.selectable(selected = row.selected, role = Role.RadioButton, onClick = onClick)
+        else -> Modifier
     }
     val wide = LocalDensity.current.fontScale > WIDE_FONT_SCALE
 
@@ -92,12 +119,25 @@ fun ServerRow(
         ) {
             Leading(row)
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    row.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 3,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (row.favorite) {
+                        Icon(
+                            ZapretIcons.Star,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(end = Spacing.xs)
+                                .size(14.dp)
+                                .testTag("server-favorite-star"),
+                        )
+                    }
+                    Text(
+                        row.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Medium,
+                        maxLines = 3,
+                    )
+                }
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                     itemVerticalAlignment = Alignment.CenterVertically,
@@ -222,6 +262,8 @@ fun SectionRow(
     item: ServerListItem.Section,
     onToggle: (key: String, expand: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** Проверить только серверы этой секции (страны или избранных); null — кнопки нет. */
+    onMeasure: (() -> Unit)? = null,
 ) {
     val section = item.section
     val shape = cardShape(if (item.expanded) RowPosition.First else RowPosition.Only)
@@ -238,7 +280,7 @@ fun SectionRow(
                 contentDescription = "${section.title}, ${item.meta}"
                 stateDescription = if (item.expanded) "развёрнуто" else "свёрнуто"
             }
-            .testTag("server-section-${section.code ?: "other"}"),
+            .testTag("server-section-${section.code ?: if (section.favorites) "favorites" else "other"}"),
     ) {
         Row(
             modifier = Modifier
@@ -248,7 +290,14 @@ fun SectionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
-            if (section.flag != null) {
+            if (section.favorites) {
+                Icon(
+                    ZapretIcons.Star,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(LEADING_SIZE).padding(2.dp),
+                )
+            } else if (section.flag != null) {
                 FlagBadge(section.flag, size = LEADING_SIZE)
             } else {
                 Icon(
@@ -265,6 +314,20 @@ fun SectionRow(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            if (onMeasure != null) {
+                // Проверка одной страны: ядро идёт только по её серверам, по одному с паузой.
+                IconButton(
+                    onClick = onMeasure,
+                    enabled = !item.measuring,
+                    modifier = Modifier.testTag("server-section-measure-${section.code ?: if (section.favorites) "favorites" else "other"}"),
+                ) {
+                    Icon(
+                        ZapretIcons.Bolt,
+                        contentDescription = "Проверить: ${section.title}",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             Icon(
                 if (item.expanded) ZapretIcons.ExpandLess else ZapretIcons.ExpandMore,

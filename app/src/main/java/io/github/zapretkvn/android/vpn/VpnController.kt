@@ -170,12 +170,16 @@ class VpnController(
         )
     }
 
-    fun measureGroup(groupTag: String) {
+    /**
+     * Проверка задержки группы. [only] — только эти серверы (одна страна, результаты поиска
+     * или фильтра); пусто — вся группа. Ядро всё равно идёт по одному с паузой 10–20 с.
+     */
+    fun measureGroup(groupTag: String, only: List<String> = emptyList()) {
         val connected = mutableState.value as? VpnConnectionState.Connected ?: return
         if (groupTag.isBlank()) return
         ContextCompat.startForegroundService(
             context,
-            ZapretVpnService.pingGroupIntent(context, connected.profileId, groupTag),
+            ZapretVpnService.pingGroupIntent(context, connected.profileId, groupTag, only = only),
         )
     }
 
@@ -506,7 +510,8 @@ class VpnController(
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
-    ): Boolean = latencyPublisher.beginLatencyProbe(generation, requestId, groupTag, networkIdentity)
+        only: Set<String>? = null,
+    ): Boolean = latencyPublisher.beginLatencyProbe(generation, requestId, groupTag, networkIdentity, only)
 
     internal fun publishLatencyBatch(
         generation: Long,

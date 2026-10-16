@@ -53,11 +53,14 @@ import io.github.zapretkvn.core.designsystem.splitFlagStrip
 @Stable
 class ServerListActions(
     val onSelect: (groupTag: String, serverTag: String) -> Unit,
-    val onMeasure: ((groupTag: String) -> Unit)? = null,
+    /** Проверка группы: [only] — только эти серверы (страна, найденные); пусто — вся группа. */
+    val onMeasure: ((groupTag: String, only: List<String>) -> Unit)? = null,
     val onStopMeasure: ((groupTag: String) -> Unit)? = null,
     val onToggleGroup: (groupTag: String) -> Unit = {},
     val onToggleSection: (sectionKey: String, expand: Boolean) -> Unit = { _, _ -> },
     val onChangeProfile: (() -> Unit)? = null,
+    /** Долгое нажатие на строку: добавить в избранное или убрать; null — избранного нет. */
+    val onFavorite: ((serverTag: String, favorite: Boolean) -> Unit)? = null,
 )
 
 /**
@@ -72,6 +75,8 @@ class ServerTools(
     val onQuery: ((String) -> Unit)?,
     val onChip: (ServerChip) -> Unit,
     val onReset: () -> Unit,
+    /** Подсказать про избранное: оно есть, но звёздочек ещё нет. */
+    val favoritesHint: Boolean = false,
 )
 
 const val SERVER_LIST_TAG = "profile-servers-sheet"
@@ -112,15 +117,23 @@ private fun LazyListScope.serverItems(
             is ServerListItem.Profile -> ProfileHeaderCard(item.header, actions.onChangeProfile)
             ServerListItem.Tools -> if (tools != null) ServerToolsBar(tools)
             is ServerListItem.Group -> GroupCard(item, actions)
-            is ServerListItem.Section -> SectionRow(item, actions.onToggleSection)
+            is ServerListItem.Section -> SectionRow(
+                item = item,
+                onToggle = actions.onToggleSection,
+                onMeasure = actions.onMeasure?.takeIf { item.measurable }?.let { measure ->
+                    { measure(item.groupTag, item.section.rows.map { it.tag }) }
+                },
+            )
             is ServerListItem.Server -> ServerRow(
                 row = item.row,
                 position = item.position,
                 onClick = if (item.readOnly) null else {
                     { actions.onSelect(item.row.groupTag, item.row.tag) }
                 },
+                onFavorite = actions.onFavorite?.let { toggle -> { toggle(item.row.tag, !item.row.favorite) } },
                 modifier = if (item.animate) Modifier.animateItem(fadeInSpec = tween(Motion.QUICK), placementSpec = null) else Modifier,
             )
+            is ServerListItem.FoundProbe -> FoundProbeBar(item, actions)
             is ServerListItem.Note -> Text(
                 item.text,
                 style = MaterialTheme.typography.bodySmall,
@@ -221,10 +234,21 @@ private fun GroupCard(item: ServerListItem.Group, actions: ServerListActions) {
                         modifier = Modifier.testTag("servers-measure-stop"),
                     ) { Text("Остановить") }
                 } else {
+                    // Идёт поиск или фильтр — проверяются только найденные, как в v2rayNG.
+                    val found = item.found?.takeIf { it.size < group.rows.size }
                     FilledTonalButton(
-                        onClick = { measure(group.tag) },
-                        enabled = group.live && !group.measuring,
-                    ) { Text(if (group.measuring) "Проверяем…" else "Проверить все") }
+                        onClick = { measure(group.tag, found.orEmpty()) },
+                        enabled = group.live && !group.measuring && found?.isEmpty() != true,
+                        modifier = Modifier.testTag(if (found != null) "servers-measure-found" else "servers-measure-all"),
+                    ) {
+                        Text(
+                            when {
+                                group.measuring -> "Проверяем…"
+                                found != null -> "Проверить найденные · ${found.size}"
+                                else -> "Проверить все"
+                            },
+                        )
+                    }
                 }
                 Text(
                     group.probeLine,
@@ -246,6 +270,57 @@ private fun GroupCard(item: ServerListItem.Group, actions: ServerListActions) {
                 )
                 TextButton(onClick = { actions.onSelect(group.tag, hint.serverTag) }) { Text("Переключить") }
             }
+        }
+    }
+}
+
+/**
+ * Поиск или фильтр в единственной группе: «Найдено N» и «Проверить найденные». Проверяются
+ * только результаты — удобно найти серверы одного узла в длинном списке и проверить их.
+ */
+@Composable
+private fun FoundProbeBar(item: ServerListItem.FoundProbe, actions: ServerListActions) {
+    val group = item.group
+    val measure = actions.onMeasure ?: return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = Spacing.s),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+        ) {
+            Text(
+                group.probeLine?.takeIf { group.measuring } ?: "Найдено ${item.found.size}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            val stop = actions.onStopMeasure
+            if (group.measuring && stop != null) {
+                OutlinedButton(onClick = { stop(group.tag) }, modifier = Modifier.testTag("servers-measure-stop")) {
+                    Text("Остановить")
+                }
+            } else {
+                FilledTonalButton(
+                    onClick = { measure(group.tag, item.found) },
+                    enabled = group.live,
+                    modifier = Modifier.testTag("servers-measure-found"),
+                ) { Text("Проверить найденные") }
+            }
+        }
+        if (!group.live) {
+            Text(
+                "Проверка доступна после подключения",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        group.progressFraction?.let {
+            LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -317,6 +392,13 @@ private fun ServerToolsBar(tools: ServerTools) {
                 }
             }
         }
+        if (tools.favoritesHint) {
+            Text(
+                "Удерживайте сервер, чтобы добавить его в избранное",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -359,7 +441,7 @@ fun ServerPickerContent(
     groups: List<ServerGroupUi>,
     onSelect: (groupTag: String, serverTag: String) -> Unit,
     modifier: Modifier = Modifier,
-    onMeasure: ((groupTag: String) -> Unit)? = null,
+    onMeasure: ((groupTag: String, only: List<String>) -> Unit)? = null,
     testTag: String = SERVER_LIST_TAG,
     leading: (@Composable () -> Unit)? = null,
 ) {

@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import io.github.zapretkvn.android.ui.SubscriptionAutoUpdate
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.core.designsystem.SectionHeader
 import io.github.zapretkvn.core.designsystem.SettingsRow
@@ -48,6 +49,7 @@ fun SettingsMainScreen(
     onSlowServerSwitchChange: (Boolean) -> Unit,
     onHideServerAddressesChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
+    onSubscriptionUpdateChange: (Int) -> Unit = {},
 ) {
     var themeSheetOpen by rememberSaveable { mutableStateOf(false) }
     if (themeSheetOpen) {
@@ -55,6 +57,14 @@ fun SettingsMainScreen(
             selected = ui.themeMode,
             onSelected = onThemeSelected,
             onDismiss = { themeSheetOpen = false },
+        )
+    }
+    var subscriptionSheetOpen by rememberSaveable { mutableStateOf(false) }
+    if (subscriptionSheetOpen) {
+        SubscriptionUpdateSheet(
+            selected = ui.subscriptionUpdateHours,
+            onSelected = onSubscriptionUpdateChange,
+            onDismiss = { subscriptionSheetOpen = false },
         )
     }
 
@@ -140,6 +150,15 @@ fun SettingsMainScreen(
                     icon = ZapretIcons.Download,
                     onClick = { onOpenPage(SettingsPage.Updates) },
                 )
+                RowDivider()
+                SettingsRow(
+                    title = "Автообновление подписок",
+                    subtitle = "${SubscriptionAutoUpdate.title(ui.subscriptionUpdateHours)}. " +
+                        "Новые серверы приходят сами, подключение не прерывается.",
+                    icon = ZapretIcons.Refresh,
+                    onClick = { subscriptionSheetOpen = true },
+                    modifier = Modifier.testTag("subscription-auto-update"),
+                )
             }
         }
 
@@ -187,6 +206,56 @@ fun RowDivider() {
         modifier = Modifier.padding(horizontal = Spacing.l),
         color = MaterialTheme.colorScheme.outlineVariant,
     )
+}
+
+/** Автообновление подписок: как часто, или только вручную. Выбор закрывает шторку. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SubscriptionUpdateSheet(
+    selected: Int,
+    onSelected: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.padding(bottom = Spacing.xl)) {
+            Text(
+                "Автообновление подписок",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(horizontal = Spacing.l, vertical = Spacing.m),
+            )
+            Text(
+                "Список серверов подписки обновляется в фоне. Работающий VPN не перезапускается: " +
+                    "новые серверы появятся сразу, а подключатся при следующем подключении.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = Spacing.l, vertical = Spacing.xs),
+            )
+            SubscriptionAutoUpdate.CHOICES.forEach { hours ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .selectable(
+                            selected = hours == selected,
+                            role = Role.RadioButton,
+                            onClick = {
+                                onSelected(hours)
+                                scope.launch { sheetState.hide() }.invokeOnCompletion { onDismiss() }
+                            },
+                        )
+                        .padding(horizontal = Spacing.l, vertical = Spacing.s)
+                        .testTag("subscription-auto-update-$hours"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                ) {
+                    RadioButton(selected = hours == selected, onClick = null)
+                    Text(SubscriptionAutoUpdate.title(hours), style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+    }
 }
 
 /** Выбор темы: четыре варианта в нижней шторке, выбор закрывает её. */

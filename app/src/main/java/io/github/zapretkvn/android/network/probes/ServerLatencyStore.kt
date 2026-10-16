@@ -100,7 +100,15 @@ internal object ServerLatencyReducer {
                 fingerprint -> tag to entry
                 else -> null
             }
-        }.toMap()
+        }.toMap(LinkedHashMap())
+        // Тег сменился, а сервер тот же (подписка переименовала его; 0.5.15 перешёл со слагов
+        // на настоящие имена): замер переезжает к единственному серверу с тем же отпечатком адреса.
+        val tagsByFingerprint = known.entries.groupBy({ it.value }, { it.key })
+        profile.forEach { (tag, entry) ->
+            if (tag in known) return@forEach
+            val target = entry.fingerprint?.let(tagsByFingerprint::get)?.singleOrNull() ?: return@forEach
+            if (target !in kept) kept[target] = entry
+        }
         kept.takeIf(Map<String, PersistedServerLatency>::isNotEmpty)?.let { profileId to it }
     }.toMap()
 

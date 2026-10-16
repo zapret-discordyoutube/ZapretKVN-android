@@ -163,7 +163,22 @@ data class ServerRowUi(
     val badge: String?,
     val searchText: String,
     val a11y: String,
+    /** В избранном: звёздочка в строке, чип «★ Избранные», секция наверху длинной группы. */
+    val favorite: Boolean = false,
 )
+
+/** Строки с отметкой избранного; озвучка тоже говорит «в избранном». */
+fun List<ServerGroupUi>.withFavorites(favorites: Set<String>): List<ServerGroupUi> {
+    if (favorites.isEmpty()) return this
+    return map { group ->
+        if (group.rows.none { it.tag in favorites }) return@map group
+        group.copy(
+            rows = group.rows.map { row ->
+                if (row.tag in favorites) row.copy(favorite = true, a11y = "${row.a11y}, в избранном") else row
+            },
+        )
+    }
+}
 
 fun serverRowUi(
     groupTag: String,
@@ -548,12 +563,15 @@ fun profileHeader(
     profile: ProfileMetadata,
     stats: ServerStats,
     nowEpochMillis: Long,
+    /** «автообновление раз в сутки» — только у подписок; у файла и ссылки на сервер null. */
+    autoUpdate: String? = null,
 ): ProfileHeaderUi = ProfileHeaderUi(
     name = profile.name,
     counts = stats.countsLabel(),
     flags = stats.flagStrip(),
     extraFlags = stats.extraFlags(),
-    updated = "Обновлено ${formatAge(nowEpochMillis - profile.updatedAtEpochMillis)}",
+    updated = "Обновлено ${formatAge(nowEpochMillis - profile.updatedAtEpochMillis)}" +
+        autoUpdate.orEmpty().let { if (it.isEmpty()) it else " · $it" },
 )
 
 // ---------------------------------------------------------------------------
@@ -562,6 +580,7 @@ fun profileHeader(
 
 sealed interface ServerChip {
     data object All : ServerChip
+    data object Favorites : ServerChip
     data object Fast : ServerChip
     data class Country(val code: String) : ServerChip
 }
@@ -579,6 +598,7 @@ fun ServerRowUi.matches(filter: ServerFilter): Boolean {
     if (words.any { !searchText.contains(it) }) return false
     return when (val chip = filter.chip) {
         ServerChip.All -> true
+        ServerChip.Favorites -> favorite
         ServerChip.Fast -> latency.band == LatencyBand.Fast || latency.band == LatencyBand.Normal
         is ServerChip.Country -> countryCode == chip.code
     }
@@ -595,6 +615,7 @@ private const val COUNTRY_CHIPS = 6
 fun serverChips(groups: List<ServerGroupUi>): ServerChips {
     val rows = groups.flatMap { it.rows }.distinctBy { it.tag }
     val fast = rows.count { it.latency.band == LatencyBand.Fast || it.latency.band == LatencyBand.Normal }
+    val favorites = rows.count { it.favorite }
     val countries = rows.filter { it.countryCode != null }
         .groupBy { it.countryCode!! }
         .entries
@@ -604,6 +625,7 @@ fun serverChips(groups: List<ServerGroupUi>): ServerChips {
         }
     val primary = buildList {
         add(ChipUi(ServerChip.All, "Все ${rows.size}", rows.size))
+        if (favorites > 0) add(ChipUi(ServerChip.Favorites, "★ $favorites", favorites))
         if (fast > 0) add(ChipUi(ServerChip.Fast, "⚡ Быстрые $fast", fast))
         addAll(countries.take(COUNTRY_CHIPS))
     }
@@ -662,6 +684,8 @@ sealed interface ServerListItem {
         val collapsible: Boolean,
         val shown: Int,
         val showControls: Boolean,
+        /** Идёт поиск или фильтр: «Проверить найденные» проверяет только эти серверы. */
+        val found: List<String>? = null,
     ) : ServerListItem {
         override val key get() = "group-${group.tag}"
         override val contentType get() = "group"
@@ -672,6 +696,11 @@ sealed interface ServerListItem {
         val section: CountrySection,
         val expanded: Boolean,
         val hasSelected: Boolean,
+        /** Группа подключена и её можно проверить: у секции кнопка «проверить только её». */
+        val measurable: Boolean = false,
+        /** Идёт проверка этой группы: кнопка секции недоступна. */
+        val measuring: Boolean = false,
+        val groupTag: String = "",
     ) : ServerListItem {
         override val key get() = section.key
         override val contentType get() = "section"
@@ -689,13 +718,27 @@ sealed interface ServerListItem {
         val readOnly: Boolean,
         /** Строка появляется плавно: только в небольших секциях (≤ [ANIMATE_SECTION_MAX]). */
         val animate: Boolean = false,
+        /** Копия строки в секции «Избранные»: ключ отличается от основной строки. */
+        val inFavorites: Boolean = false,
     ) : ServerListItem {
-        override val key get() = row.key
+        override val key get() = if (inFavorites) "fav:${row.key}" else row.key
         override val contentType get() = "server"
     }
 
     data class Note(override val key: String, val text: String) : ServerListItem {
         override val contentType get() = "note"
+    }
+
+    /**
+     * Поиск или фильтр в группе без карточки (одна группа): сколько найдено и кнопка
+     * «Проверить найденные» — как в v2rayNG, проверяются только результаты.
+     */
+    data class FoundProbe(
+        val group: ServerGroupUi,
+        val found: List<String>,
+    ) : ServerListItem {
+        override val key get() = "found-${group.tag}"
+        override val contentType get() = "found"
     }
 
     data object EmptyFilter : ServerListItem {
@@ -731,6 +774,8 @@ data class CountrySection(
     val rows: List<ServerRowUi>,
     /** Лучшая свежая задержка в мс (только удачные свежие замеры) или null. */
     val bestMillis: Int?,
+    /** «★ Избранные» над странами: строки — копии строк из своих стран. */
+    val favorites: Boolean = false,
 ) {
     val bestLabel: String? get() = bestMillis?.let { formatPing(it.toLong()) }
 }
@@ -765,6 +810,22 @@ data class SectionState(
 }
 
 private fun sectionKey(groupTag: String, code: String?) = "sec:$groupTag:${code ?: "other"}"
+
+const val FAVORITES_SECTION_TITLE = "Избранные"
+
+private fun favoritesSection(groupTag: String, rows: List<ServerRowUi>): CountrySection? {
+    val favorites = rows.filter { it.favorite }
+    if (favorites.isEmpty()) return null
+    return CountrySection(
+        key = "sec:$groupTag:favorites",
+        code = null,
+        flag = null,
+        title = FAVORITES_SECTION_TITLE,
+        rows = favorites,
+        bestMillis = favorites.filter { it.latency.band != null }.mapNotNull { it.latency.rankMillis }.minOrNull(),
+        favorites = true,
+    )
+}
 
 /**
  * Делит строки группы на секции по странам. Порядок: как строки (подписка) или по
@@ -841,6 +902,7 @@ fun buildServerList(
         if (activeFilter.active && rows.isEmpty()) continue
         val expanded = activeFilter.active || !collapsible ||
             ((group.tag == defaultExpanded) != (group.tag in toggledGroups))
+        val found = rows.map { it.tag }.takeIf { activeFilter.active }
         if (groupCards && !(activeFilter.active && groups.size == 1)) {
             items += ServerListItem.Group(
                 group = group,
@@ -848,7 +910,10 @@ fun buildServerList(
                 collapsible = collapsible && !activeFilter.active,
                 shown = rows.size,
                 showControls = true,
+                found = found,
             )
+        } else if (found != null && groupCards && rows.size > 1) {
+            items += ServerListItem.FoundProbe(group, found)
         }
         if (!group.selectable && !compact && groupCards && !(activeFilter.active && groups.size == 1)) {
             items += ServerListItem.Note("auto-${group.tag}", "Сервер выбирается автоматически. Менять не нужно")
@@ -871,15 +936,27 @@ fun buildServerList(
                 anyRows = true
             }
         } else {
-            for (section in countrySections) {
+            val measurable = group.live && groupCards
+            // Избранные — первой секцией, раскрытой по умолчанию: свои серверы под рукой в длинном списке.
+            for (section in listOfNotNull(favoritesSection(group.tag, rows)) + countrySections) {
                 val hasSelected = section.rows.any { it.selected }
-                val open = sections.expanded(section.key, byDefault = hasSelected || section.rows.any { it.tag in pinnedTags })
-                items += ServerListItem.Section(section, expanded = open, hasSelected = hasSelected)
+                val byDefault = section.favorites || hasSelected || section.rows.any { it.tag in pinnedTags }
+                val open = sections.expanded(section.key, byDefault = byDefault)
+                items += ServerListItem.Section(
+                    section,
+                    expanded = open,
+                    hasSelected = hasSelected,
+                    measurable = measurable,
+                    measuring = group.measuring,
+                    groupTag = group.tag,
+                )
                 if (!open) continue
                 val animate = section.rows.size <= ANIMATE_SECTION_MAX
                 section.rows.forEachIndexed { index, row ->
                     val pos = if (index == section.rows.lastIndex) RowPosition.Last else RowPosition.Middle
-                    items += ServerListItem.Server(row, pos, readOnly = !group.selectable, animate = animate)
+                    items += ServerListItem.Server(
+                        row, pos, readOnly = !group.selectable, animate = animate, inFavorites = section.favorites,
+                    )
                     anyRows = true
                 }
             }
@@ -888,7 +965,7 @@ fun buildServerList(
     if (activeFilter.active && !anyRows) items += ServerListItem.EmptyFilter
     return ServerListModel(
         items = items,
-        selectedIndex = items.indexOfFirst { it is ServerListItem.Server && it.row.selected },
+        selectedIndex = items.indexOfFirst { it is ServerListItem.Server && it.row.selected && !it.inFavorites },
         showTools = showTools,
         uniqueServers = uniqueServers,
     )
@@ -931,6 +1008,11 @@ fun buildServersUi(
     hideAddresses: Boolean,
     nowEpochMillis: Long,
     hostCountries: Map<String, String> = emptyMap(),
+    /** Теги избранных серверов активного профиля. */
+    favorites: Set<String> = emptySet(),
+    /** Подпись автообновления для профилей-подписок ([subscriptionIds]). */
+    autoUpdate: String? = null,
+    subscriptionIds: Set<String> = emptySet(),
 ): ServersUi {
     if (profiles.isEmpty()) return ServersUi.Empty
     val profile = profiles.firstOrNull { it.id == activeProfileId } ?: return ServersUi.NoActive
@@ -943,9 +1025,13 @@ fun buildServersUi(
                 summary, savedLatency[profile.id].orEmpty(), hideAddresses, nowEpochMillis, hostCountries,
             )
         else -> emptyList()
-    }
+    }.withFavorites(favorites)
+    val autoUpdateLabel = autoUpdate?.takeIf { profile.id in subscriptionIds }
     if (groups.isEmpty()) {
-        return ServersUi.NoServers(profile.id, profileHeader(profile, ServerStats(0, 0, emptyList()), nowEpochMillis))
+        return ServersUi.NoServers(
+            profile.id,
+            profileHeader(profile, ServerStats(0, 0, emptyList()), nowEpochMillis, autoUpdateLabel),
+        )
     }
     val groupTags = groups.map { it.tag }.toSet()
     val rows = groups.flatMap { it.rows }.filter { it.tag !in groupTags }.distinctBy { it.tag }
@@ -954,5 +1040,5 @@ fun buildServersUi(
         countries = rows.mapNotNull { it.countryCode }.distinct().size,
         flags = rows.mapNotNull { it.countryCode }.distinct().map(CountryGuess::flagOf),
     )
-    return ServersUi.Content(profile.id, profileHeader(profile, stats, nowEpochMillis), groups)
+    return ServersUi.Content(profile.id, profileHeader(profile, stats, nowEpochMillis, autoUpdateLabel), groups)
 }

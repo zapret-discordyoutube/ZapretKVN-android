@@ -28,6 +28,36 @@ class LatencyProbeReducerTest {
     }
 
     @Test
+    fun subsetProbeTouchesOnlyChosenServersAndCountsOnlyThem() {
+        val group = RuntimeSelectorGroup(
+            tag = "root",
+            type = "selector",
+            selected = "nl-1",
+            selectable = true,
+            items = listOf("nl-1", "lv-1", "lv-2", "fi-1").map { RuntimeOutboundItem(it, "vless", "$it.example:443") },
+        )
+
+        val result = LatencyProbeReducer.begin(listOf(group), 21, "root", "wifi-1", only = setOf("lv-1", "lv-2", "gone"))
+
+        assertTrue(result.started)
+        val running = result.groups.single()
+        assertEquals(2, running.probeProgress?.relayTotal)
+        assertEquals(0, running.probeProgress?.relayCompleted)
+        assertEquals(
+            listOf(false, true, true, false),
+            running.items.map { it.relay is LatencyProbeState.Running },
+        )
+    }
+
+    @Test
+    fun subsetWithoutGroupMembersDoesNotStart() {
+        val result = LatencyProbeReducer.begin(groups(), 22, "root", "wifi-1", only = setOf("gone"))
+
+        assertFalse(result.started)
+        assertEquals(null, result.groups.single().probeProgress)
+    }
+
+    @Test
     fun frozenOrderKeepsRowsInPlaceAndAppendsNewServers() {
         val items = listOf("a", "b", "c", "new").map {
             RuntimeOutboundItem(tag = it, type = "vless", endpoint = null)

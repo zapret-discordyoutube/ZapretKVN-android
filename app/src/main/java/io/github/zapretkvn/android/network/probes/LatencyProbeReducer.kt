@@ -19,23 +19,28 @@ internal object LatencyProbeReducer {
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
+        /** Только эти серверы группы (страна, результаты поиска); null — вся группа. */
+        only: Set<String>? = null,
     ): BeginResult {
         if (groups.any { it.probeProgress?.running == true }) return BeginResult(groups, false)
         var started = false
         val updated = groups.map { group ->
             if (group.tag != groupTag || group.items.isEmpty()) return@map group
             val nestedTypes = setOf("selector", "urltest")
-            val relayUnsupported = group.items.count { it.type.lowercase() in nestedTypes }
+            val probed = group.items.filter { only == null || it.tag in only }
+            if (probed.isEmpty()) return@map group
+            val relayUnsupported = probed.count { it.type.lowercase() in nestedTypes }
             started = true
             group.copy(
                 probeProgress = LatencyProbeProgress(
                     requestId = requestId,
                     networkIdentity = networkIdentity,
                     relayCompleted = relayUnsupported,
-                    relayTotal = group.items.size,
+                    relayTotal = probed.size,
                     running = true,
                 ),
                 items = group.items.map { item ->
+                    if (only != null && item.tag !in only) return@map item
                     val nested = item.type.lowercase() in nestedTypes
                     item.copy(
                         relay = if (nested) {

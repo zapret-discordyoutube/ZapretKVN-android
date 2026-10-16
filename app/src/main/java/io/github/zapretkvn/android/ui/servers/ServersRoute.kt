@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
+import io.github.zapretkvn.android.ui.FavoriteServers
+import io.github.zapretkvn.android.ui.SubscriptionAutoUpdate
 import io.github.zapretkvn.android.ui.nav.AppTab
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -63,9 +65,13 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
     val activeId = state.settings.activeProfileId
     val live = (vpnState as? VpnConnectionState.Connected)?.profileId == activeId && activeId != null
     val groupsForUi: List<RuntimeSelectorGroup> = if (live) runtimeGroups else emptyList()
+    val favorites = remember(state.settings.favoriteServers, activeId) {
+        FavoriteServers.of(state.settings.favoriteServers, activeId)
+    }
     val ui = remember(
         state.profiles, activeId, state.serverSummaries, savedLatency,
-        groupsForUi, live, state.settings.hideServerAddresses, hostCountries,
+        groupsForUi, live, state.settings.hideServerAddresses, hostCountries, favorites,
+        state.refreshableProfileIds, state.settings.subscriptionAutoUpdateHours,
     ) {
         buildServersUi(
             profiles = state.profiles,
@@ -77,6 +83,9 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             hideAddresses = state.settings.hideServerAddresses,
             nowEpochMillis = System.currentTimeMillis(),
             hostCountries = hostCountries,
+            favorites = favorites,
+            autoUpdate = SubscriptionAutoUpdate.shortLabel(state.settings.subscriptionAutoUpdateHours),
+            subscriptionIds = state.refreshableProfileIds,
         )
     }
 
@@ -138,6 +147,11 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             onStopMeasure = deps.vpn::stopMeasuring,
             onOpenProfiles = nav.openProfiles,
             onOpenEditor = deps.profiles::openEditor,
+            onFavorite = { tag, favorite ->
+                latestState.settings.activeProfileId?.let { profileId ->
+                    deps.profiles.settings.setFavoriteServer(profileId, tag, favorite)
+                }
+            },
         )
     }
     ServersScreen(
@@ -146,6 +160,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
         importer = importer,
         actions = actions,
         contentPadding = padding,
+        scrollToTop = nav.navigator.reselections(AppTab.Servers),
     )
 }
 

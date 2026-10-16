@@ -209,6 +209,54 @@ class ServerListTest {
     private fun sections(model: ServerListModel) = model.items.filterIsInstance<ServerListItem.Section>()
 
     @Test
+    fun favoritesGetStarChipAndOpenSectionOnTopOfLongGroup() {
+        val favorites = setOf("$nl NL3", "VLESS $de DE2")
+        val g = bigGroup().withFavorites(favorites)
+        val model = buildServerList(g, header(), ServerFilter())
+
+        val first = sections(model).first()
+        assertTrue(first.section.favorites)
+        assertTrue(first.expanded)
+        assertEquals(favorites, first.section.rows.map { it.tag }.toSet())
+        // Копии строк в «Избранных» не повторяют ключи строк в странах.
+        val keys = model.items.map { it.key }
+        assertEquals(keys.size, keys.toSet().size)
+        assertTrue(g.single().rows.single { it.tag == "$nl NL3" }.a11y.endsWith("в избранном"))
+
+        val chips = serverChips(g)
+        assertEquals(ChipUi(ServerChip.Favorites, "★ 2", 2), chips.primary[1])
+        val onlyFavorites = buildServerList(g, header(), ServerFilter(chip = ServerChip.Favorites))
+        assertEquals(favorites, onlyFavorites.items.filterIsInstance<ServerListItem.Server>().map { it.row.tag }.toSet())
+    }
+
+    @Test
+    fun searchInSingleGroupOffersToProbeOnlyTheResults() {
+        val model = buildServerList(bigGroup(), header(), ServerFilter(query = "de"))
+
+        val found = model.items.filterIsInstance<ServerListItem.FoundProbe>().single()
+        assertEquals((1..6).map { "VLESS $de DE$it" }, found.found)
+        assertTrue(model.items.none { it is ServerListItem.Group })
+    }
+
+    @Test
+    fun searchAcrossGroupsProbesOnlyResultsOfEachGroup() {
+        val a = rtGroup(items(10, prefix = "a"), tag = "first")
+        val b = rtGroup(items(10, prefix = "b"), tag = "second", primary = false)
+        val model = buildServerList(groups(a, b), header(), ServerFilter(query = "a1"))
+
+        val cards = model.items.filterIsInstance<ServerListItem.Group>()
+        assertEquals(listOf("first"), cards.map { it.group.tag })
+        assertEquals(listOf("a1", "a10"), cards.single().found)
+    }
+
+    @Test
+    fun countrySectionsOfConnectedGroupCanBeProbedOneByOne() {
+        val model = buildServerList(bigGroup(), header(), ServerFilter())
+
+        assertTrue(sections(model).all { it.measurable && it.groupTag == "zapret-proxy" })
+    }
+
+    @Test
     fun bigGroupIsSplitIntoCountrySectionsWithOtherLast() {
         val model = buildServerList(bigGroup(), header(), ServerFilter())
         val s = sections(model)

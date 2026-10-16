@@ -76,12 +76,12 @@ class CountryGuessTest {
     }
 
     @Test
-    fun `geoip of the address wins over sibling and name words but not over a flag`() {
+    fun `name words win over geoip, geoip wins over sibling, flag wins over all`() {
         val servers = listOf(
             "VLESS 🇳🇱 Amsterdam-2" to "185.12.34.56:443",
             // Тот же адрес, что у соседа с флагом NL, но таблица говорит DE: таблица главнее соседа.
             "Hysteria 2" to "185.12.34.56:8443",
-            // В имени слово «Finland», по адресу — SE: адрес главнее слов в имени.
+            // В имени слово «Finland», по адресу — SE: адрес — это вход (фронт, CDN), имя главнее.
             "Finland fast" to "Edge.Example.com:443",
             // Флаг в имени остаётся как есть и в подсказки не попадает.
             "VLESS 🇫🇮 Helsinki" to "edge.example.com:8443",
@@ -91,10 +91,31 @@ class CountryGuessTest {
         val geo = mapOf("185.12.34.56" to "DE", "edge.example.com" to "SE")
         val result = inferCountries(servers, geo)
         assertEquals("DE", result["Hysteria 2"])
-        assertEquals("SE", result["Finland fast"])
+        assertEquals("FI", result["Finland fast"])
         assertNull(result["VLESS 🇫🇮 Helsinki"])
         assertNull(result["VLESS 🇳🇱 Amsterdam-2"])
         assertEquals("DE", result["Frankfurt 3"])
+    }
+
+    @Test
+    fun `server behind a front abroad keeps the country from its name`() {
+        // 16.10.2026: латвийский узел за входом в Финляндии показывался в группе Финляндии.
+        val servers = listOf(
+            "Riga · VLESS WS · TLS" to "front.example.net:443",
+            "Hiprig · VLESS WS · TLS" to "front.example.net:8443",
+        )
+        val result = inferCountries(servers, mapOf("front.example.net" to "FI"))
+        assertEquals("LV", result["Riga · VLESS WS · TLS"])
+        // Имя без страны: остаётся только адрес входа — тут приложение знать не может.
+        assertEquals("FI", result["Hiprig · VLESS WS · TLS"])
+    }
+
+    @Test
+    fun `protocol and size abbreviations are not countries`() {
+        assertNull(CountryGuess.fromName("Hiprig · SS"))
+        assertNull(CountryGuess.fromName("Traffic 100 GB left"))
+        assertNull(CountryGuess.fromName("Node ID 7"))
+        assertEquals("GB", CountryGuess.fromName("GB London"))
     }
 
     @Test

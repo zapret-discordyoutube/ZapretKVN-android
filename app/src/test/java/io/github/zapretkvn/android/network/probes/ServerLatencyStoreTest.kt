@@ -127,6 +127,18 @@ class ServerLatencyStoreTest {
     }
 
     @Test
+    fun `a renamed server keeps its ping when the address is the same`() = runBlocking {
+        withTimeout(10_000) {
+            val store = store()
+            store.record("keep", fingerprints, relay = mapOf("tokyo" to success(42, 1)))
+            // 0.5.15: слаг «tokyo» стал настоящим именем «🇯🇵 Tokyo», адрес тот же.
+            store.retain(mapOf("keep" to mapOf("🇯🇵 Tokyo" to fingerprints.getValue("tokyo"))))
+            assertEquals(setOf("🇯🇵 Tokyo"), store.forProfile("keep").keys)
+            assertEquals(42, store.forProfile("keep").getValue("🇯🇵 Tokyo").relay?.millis)
+        }
+    }
+
+    @Test
     fun `icmp results from older versions are dropped and never written back`() {
         val legacy = """{"v":1,"profiles":{"p":{
             "relayed":{"fp":"a","relay":{"ms":42,"at":1000},"icmp":{"ms":10,"at":900}},

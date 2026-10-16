@@ -32,7 +32,61 @@ data class UiSettings(
     val dynamicColor: Boolean = false,
     /** Какие сервисы проверяет карточка «Доступность сервисов»; по умолчанию — набор каталога. */
     val serviceChecks: Set<ServiceId> = ServiceCatalog.defaultIds,
+    /** Избранные серверы всех профилей; читать через [FavoriteServers.of]. */
+    val favoriteServers: Set<String> = emptySet(),
+    /** Автообновление подписок: раз в столько часов; 0 — только вручную. */
+    val subscriptionAutoUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
 )
+
+/** Как часто фоновое задание обновляет подписки. */
+object SubscriptionAutoUpdate {
+    const val DEFAULT_HOURS = 24
+    val CHOICES = listOf(0, 6, 12, 24)
+
+    /** Неизвестное значение (старая или испорченная запись) — по умолчанию, а не «никогда». */
+    fun normalize(hours: Int?): Int = hours?.takeIf { it in CHOICES } ?: DEFAULT_HOURS
+
+    fun title(hours: Int): String = when (hours) {
+        0 -> "Только вручную"
+        24 -> "Раз в сутки"
+        else -> "Каждые $hours ч"
+    }
+
+    /** Подпись в шапке профиля: «автообновление раз в сутки». */
+    fun shortLabel(hours: Int): String = when (hours) {
+        0 -> "обновление вручную"
+        24 -> "автообновление раз в сутки"
+        else -> "автообновление каждые $hours ч"
+    }
+}
+
+/**
+ * Избранные серверы: «профиль + тег сервера». Тег — имя из подписки, поэтому звёздочка
+ * переживает обновление подписки, пока сервер называется так же.
+ */
+object FavoriteServers {
+    /** Сколько звёздочек храним всего: настройка не должна расти без предела. */
+    const val LIMIT = 500
+    private const val SEPARATOR = '\u001F'
+
+    fun token(profileId: String, tag: String): String = "$profileId$SEPARATOR$tag"
+
+    /** Теги избранных серверов профиля. */
+    fun of(tokens: Set<String>, profileId: String?): Set<String> {
+        if (profileId == null) return emptySet()
+        val prefix = "$profileId$SEPARATOR"
+        return tokens.filter { it.startsWith(prefix) }.mapTo(LinkedHashSet()) { it.removePrefix(prefix) }
+    }
+
+    fun toggle(tokens: Set<String>, profileId: String, tag: String, favorite: Boolean): Set<String> {
+        val token = token(profileId, tag)
+        return if (favorite) (tokens - token + token).toList().takeLast(LIMIT).toSet() else tokens - token
+    }
+
+    /** Звёздочки удалённых профилей не нужны. */
+    fun retainProfiles(tokens: Set<String>, profileIds: Set<String>): Set<String> =
+        tokens.filterTo(LinkedHashSet()) { it.substringBefore(SEPARATOR) in profileIds }
+}
 
 enum class NetworkTransportSetting {
     Wifi,

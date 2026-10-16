@@ -38,6 +38,7 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
         onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
         onHideServerAddressesChange = deps.profiles.settings::setHideServerAddresses,
         onDynamicColorChange = deps.profiles.settings::setDynamicColor,
+        onSubscriptionUpdateChange = deps.profiles.settings::setSubscriptionAutoUpdateHours,
     )
 }
 

@@ -7,6 +7,7 @@ import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.network.probes.services.ServiceId
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
+import io.github.zapretkvn.android.ui.SubscriptionAutoUpdate
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.android.ui.UiSettings
 import io.github.zapretkvn.android.updates.UpdateChannel
@@ -26,6 +27,7 @@ data class SettingsMainUi(
     val updateSummary: String,
     val aboutSummary: String,
     val advancedSummary: String,
+    val subscriptionUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
 )
 
 fun buildSettingsMain(
@@ -44,6 +46,7 @@ fun buildSettingsMain(
     updateSummary = updateSummary,
     aboutSummary = "Zapret KVN $appVersion",
     advancedSummary = ADVANCED_SUMMARY,
+    subscriptionUpdateHours = settings.subscriptionAutoUpdateHours,
 )
 
 /** Подпись строки «Проверка сервисов»: короткий выбор — названиями, длинный — числом. */

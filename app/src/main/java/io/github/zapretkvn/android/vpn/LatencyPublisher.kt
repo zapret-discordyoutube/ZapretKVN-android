@@ -47,11 +47,12 @@ internal class LatencyPublisher(
         requestId: Long,
         groupTag: String,
         networkIdentity: String,
+        only: Set<String>? = null,
     ): Boolean {
         var started = false
         mutable.update { groups ->
             if (generation != currentGeneration()) return@update groups
-            val result = LatencyProbeReducer.begin(groups, requestId, groupTag, networkIdentity)
+            val result = LatencyProbeReducer.begin(groups, requestId, groupTag, networkIdentity, only)
             started = result.started
             result.groups
         }

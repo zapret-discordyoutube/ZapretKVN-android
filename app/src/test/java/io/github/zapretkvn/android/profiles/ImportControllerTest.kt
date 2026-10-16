@@ -297,6 +297,28 @@ class ImportControllerTest {
     }
 
     @Test
+    fun `background refresh waits for the chosen interval and does nothing when manual`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        feed = "$one\n$two"
+        val created = store.profiles.value.single { it.id == profile.id }.updatedAtEpochMillis
+        val hour = 60L * 60 * 1000
+        var clock = created + 5 * hour
+
+        val refresher = SubscriptionAutoRefresher(service, store, sources, now = { clock })
+        // Список свежее шести часов: подписку не трогаем.
+        assertEquals(SubscriptionAutoRefreshReport(0, 0), refresher.refreshDue(6))
+        assertEquals(1, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().outbounds.size)
+        // «Только вручную»: не трогаем никогда.
+        clock = created + 100 * hour
+        assertEquals(SubscriptionAutoRefreshReport(0, 0), refresher.refreshDue(0))
+        // Срок вышел: обновляем.
+        assertEquals(SubscriptionAutoRefreshReport(1, 0), refresher.refreshDue(6))
+        assertEquals(2, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().outbounds.size)
+    }
+
+    @Test
     fun `background refresh keeps the profile when the subscription answers garbage`() = runBlocking {
         setUp()
         val profile = store.create("Подписка", ManagedProfileFactory.single(managedServers(one).single()), ProfileSource.Url)

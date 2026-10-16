@@ -52,10 +52,13 @@ import io.github.zapretkvn.core.designsystem.ZapretTopBar
 /** Действия вкладки «Серверы»; создаются один раз в Route. */
 class ServersScreenActions(
     val onSelect: (groupTag: String, serverTag: String) -> Unit,
-    val onMeasure: (groupTag: String) -> Unit,
+    /** [only] — только эти серверы (страна, найденные); пусто — вся группа. */
+    val onMeasure: (groupTag: String, only: List<String>) -> Unit,
     val onStopMeasure: (groupTag: String) -> Unit,
     val onOpenProfiles: () -> Unit,
     val onOpenEditor: (profileId: String) -> Unit,
+    /** Звёздочка: сервер активного профиля в избранное или из него. */
+    val onFavorite: (serverTag: String, favorite: Boolean) -> Unit,
 )
 
 /**
@@ -73,6 +76,8 @@ fun ServersScreen(
     importer: ProfileImporter,
     actions: ServersScreenActions,
     contentPadding: PaddingValues,
+    /** Растёт при повторном нажатии на вкладку «Серверы»: список уезжает наверх. */
+    scrollToTop: Int = 0,
 ) {
     var sort by rememberSaveable { mutableStateOf(ServerSort.Subscription) }
     // Порядок фиксируется в момент выбора сортировки: замеры строку не переставляют.
@@ -163,7 +168,7 @@ fun ServersScreen(
                 }
             }
             is ServersUi.Content -> key(ui.profileId) {
-                ServersBody(ui, order, sort, filter, { filter = it }, actions)
+                ServersBody(ui, order, sort, filter, { filter = it }, actions, scrollToTop)
             }
         }
     }
@@ -243,6 +248,7 @@ private fun ServersBody(
     filter: ServerFilter,
     onFilter: (ServerFilter) -> Unit,
     actions: ServersScreenActions,
+    scrollToTop: Int,
 ) {
     var toggled by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
     var sections by rememberSaveable(stateSaver = SectionStateSaver) { mutableStateOf(SectionState()) }
@@ -263,6 +269,7 @@ private fun ServersBody(
                 onQuery = null,
                 onChip = { onFilter(currentFilter.copy(chip = it)) },
                 onReset = { onFilter(ServerFilter()) },
+                favoritesHint = chips.primary.none { it.chip == ServerChip.Favorites },
             )
         } else {
             null
@@ -276,6 +283,7 @@ private fun ServersBody(
             onToggleGroup = { tag -> toggled = if (tag in toggled) toggled - tag else toggled + tag },
             onToggleSection = { key, expand -> sections = sections.with(key, expand) },
             onChangeProfile = actions.onOpenProfiles,
+            onFavorite = actions.onFavorite,
         )
     }
     val listState = rememberLazyListState()
@@ -298,6 +306,14 @@ private fun ServersBody(
         }
     }
     val scope = rememberCoroutineScope()
+    // Повторное нажатие на вкладку «Серверы» — наверх (первое значение — уже бывшие нажатия).
+    var seenScrollToTop by rememberSaveable { mutableStateOf(scrollToTop) }
+    LaunchedEffect(scrollToTop) {
+        if (scrollToTop != seenScrollToTop) {
+            seenScrollToTop = scrollToTop
+            listState.animateScrollToItem(0)
+        }
+    }
     val farDown by remember { derivedStateOf { listState.firstVisibleItemIndex >= TOP_BUTTON_INDEX } }
     Box(modifier = Modifier.fillMaxSize()) {
         ServerList(
@@ -326,5 +342,9 @@ private const val MAX_QUERY = 80
 /** Выбранная строка в первых экранах списка не требует прокрутки. */
 private const val SCROLL_MIN_INDEX = 6
 
-/** «Наверх» появляется, когда список прокручен дальше этой позиции. */
-private const val TOP_BUTTON_INDEX = 10
+/**
+ * «Наверх» появляется, когда список прокручен дальше этой позиции: шапка профиля,
+ * чипы и первая карточка уже за краем экрана. Раньше было 10 — в списке из свёрнутых
+ * стран до кнопки часто не доходило вовсе.
+ */
+private const val TOP_BUTTON_INDEX = 4

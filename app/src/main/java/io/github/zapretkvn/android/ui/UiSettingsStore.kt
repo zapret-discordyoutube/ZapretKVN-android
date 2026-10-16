@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -90,6 +91,8 @@ class UiSettingsStore(
                 slowServerSwitch = preferences[SLOW_SERVER_SWITCH] ?: true,
                 // Нет записи — набор по умолчанию, миграция не нужна.
                 serviceChecks = ServiceSelection.parse(preferences[SERVICE_CHECKS]),
+                favoriteServers = preferences[FAVORITE_SERVERS].orEmpty(),
+                subscriptionAutoUpdateHours = SubscriptionAutoUpdate.normalize(preferences[SUBSCRIPTION_AUTO_UPDATE_HOURS]),
             )
         }
 
@@ -110,6 +113,25 @@ class UiSettingsStore(
 
     suspend fun setRawEditorLineWrap(enabled: Boolean) {
         dataStore.edit { it[RAW_EDITOR_LINE_WRAP] = enabled }
+    }
+
+    suspend fun setSubscriptionAutoUpdateHours(hours: Int) {
+        dataStore.edit { it[SUBSCRIPTION_AUTO_UPDATE_HOURS] = SubscriptionAutoUpdate.normalize(hours) }
+    }
+
+    suspend fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[FAVORITE_SERVERS] =
+                FavoriteServers.toggle(preferences[FAVORITE_SERVERS].orEmpty(), profileId, tag, favorite)
+        }
+    }
+
+    suspend fun retainFavoriteProfiles(profileIds: Set<String>) {
+        dataStore.edit { preferences ->
+            val current = preferences[FAVORITE_SERVERS] ?: return@edit
+            val kept = FavoriteServers.retainProfiles(current, profileIds)
+            if (kept.size != current.size) preferences[FAVORITE_SERVERS] = kept
+        }
     }
 
     suspend fun setHideServerAddresses(enabled: Boolean) {
@@ -258,6 +280,8 @@ class UiSettingsStore(
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
         val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
         val SERVICE_CHECKS = stringSetPreferencesKey("service_check_ids")
+        val FAVORITE_SERVERS = stringSetPreferencesKey("favorite_servers")
+        val SUBSCRIPTION_AUTO_UPDATE_HOURS = intPreferencesKey("subscription_auto_update_hours")
     }
 }
 

@@ -213,9 +213,13 @@ class AppContainer(
             vpnController.state.map { it is VpnConnectionState.Stopped }.distinctUntilChanged()
                 .collect(directServiceChecker::onVpnIdle)
         }
-        // Суточная проверка обновлений не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
-        // поэтому ставится при каждом старте процесса; уже стоящее задание не трогается.
-        backgroundScope.launch { UpdateCheckJobService.schedule(appContext) }
+        // Фоновое задание не переживает перезагрузку (RECEIVE_BOOT_COMPLETED не запрашивается),
+        // поэтому ставится при каждом старте процесса; уже стоящее с тем же периодом не трогается,
+        // смена «Автообновления подписок» перестраивает период.
+        backgroundScope.launch {
+            uiSettingsStore.settings.map { it.subscriptionAutoUpdateHours }.distinctUntilChanged()
+                .collect { hours -> UpdateCheckJobService.schedule(appContext, hours) }
+        }
         // Слушатель службы очереди: пока VPN включён (процесс точно жив) и выбран канал Stable, новая
         // версия приходит за секунды после выхода, а не со следующей суточной проверкой.
         backgroundScope.launch {
