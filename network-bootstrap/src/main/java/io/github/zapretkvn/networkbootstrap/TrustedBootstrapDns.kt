@@ -7,14 +7,10 @@ import java.net.InetAddress
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.runInterruptible
 
 /**
  * DNS-сообщения для DoH: запрос и разбор ответа без сторонних библиотек.
@@ -200,6 +196,46 @@ object TrustedDnsPolicy {
 }
 
 /**
+ * Очередь доверенных резолверов: по одному, первым — ответивший в прошлый раз.
+ * Пять одновременных соединений к публичным DoH на каждое имя — узнаваемый
+ * рисунок; обычно хватает одного запроса к тому, кто уже отвечал.
+ */
+object DohRotation {
+    class Round<T>(val winner: T?, val all: List<T>)
+
+    /** Ответивший последним; общий на процесс — экземпляров резолвера много. */
+    @Volatile
+    private var lastAnswered: String? = null
+
+    fun order(servers: List<String>): List<String> {
+        val first = lastAnswered?.takeIf(servers::contains) ?: return servers
+        return listOf(first) + servers.filter { it != first }
+    }
+
+    /** Спрашивает по порядку до первого [isWinner]; победитель запоминается. */
+    inline fun <T> ask(servers: List<String>, isWinner: (T) -> Boolean, attempt: (String) -> T): Round<T> {
+        val all = ArrayList<T>()
+        for (server in order(servers)) {
+            val answer = attempt(server)
+            if (isWinner(answer)) {
+                remember(server)
+                return Round(answer, all + answer)
+            }
+            all += answer
+        }
+        return Round(null, all)
+    }
+
+    fun remember(server: String) {
+        lastAnswered = server
+    }
+
+    fun reset() {
+        lastAnswered = null
+    }
+}
+
+/**
  * Адрес VPN-сервера по DoH у резолверов, заданных литеральным IP.
  *
  * Системный резолвер на российских сетях отвечает NXDOMAIN на заблокированные
@@ -216,63 +252,42 @@ class TrustedDohResolver(
     // задерживать ответ, который уже получен от быстрого.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    suspend fun resolve(network: Network, hostname: String): TrustedDnsOutcome {
-        val winner = CompletableDeferred<TrustedDnsOutcome>()
-        val pending = servers.map { server ->
-            scope.async {
-                val outcome = try {
-                    runInterruptible { query(network, server, hostname) }
+    /**
+     * Резолверы опрашиваются по одному, первым — ответивший в прошлый раз: пять
+     * одновременных соединений к публичным DoH на каждое имя — узнаваемый рисунок.
+     * Опрос идёт в собственной области: блокирующий ввод-вывод не прерывается
+     * отменой, а отмена вызывающего не должна его ждать.
+     */
+    suspend fun resolve(network: Network, hostname: String): TrustedDnsOutcome =
+        scope.async {
+            val round = DohRotation.ask(servers, { it is TrustedDnsOutcome.Addresses }) { server ->
+                try {
+                    query(network, server, hostname)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
                     TrustedDnsOutcome.Unavailable
                 }
-                if (outcome is TrustedDnsOutcome.Addresses) winner.complete(outcome)
-                outcome
             }
-        }
-        val collector = scope.launch {
-            winner.complete(TrustedDnsPolicy.merge(pending.map { it.await() }))
-        }
-        try {
-            return winner.await()
-        } finally {
-            collector.cancel()
-            pending.forEach { it.cancel() }
-        }
-    }
+            round.winner ?: TrustedDnsPolicy.merge(round.all)
+        }.await()
 
     /**
-     * Передать готовое DNS-сообщение доверенным резолверам.
+     * Передать готовое DNS-сообщение доверенным резолверам — по одному, как [resolve].
      *
      * Возвращает ответ с адресами либо ответ «имени нет», если так сказали все
      * резолверы; `null` — доверенный путь недоступен, решает вызывающий.
      * Блокирующий вызов для потоков ядра.
      */
-    fun exchangeRaw(network: Network, message: ByteArray): ByteArray? = runBlocking {
-        val winner = CompletableDeferred<ByteArray?>()
-        val pending = servers.map { server ->
-            scope.async {
-                val answer = try {
-                    runInterruptible { post(network, server, message) }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Throwable) {
-                    null
-                }
-                if (answer != null && RawAnswerPolicy.isPositive(answer)) winner.complete(answer)
-                answer
+    fun exchangeRaw(network: Network, message: ByteArray): ByteArray? {
+        val round = DohRotation.ask(servers, { it != null && RawAnswerPolicy.isPositive(it) }) { server ->
+            try {
+                post(network, server, message)
+            } catch (_: Throwable) {
+                null
             }
         }
-        val collector = scope.launch {
-            winner.complete(RawAnswerPolicy.merge(pending.map { it.await() }))
-        }
-        try {
-            winner.await()
-        } finally {
-            collector.cancel()
-            pending.forEach { it.cancel() }
-        }
+        return round.winner ?: RawAnswerPolicy.merge(round.all)
     }
 
     private fun query(network: Network, server: String, hostname: String): TrustedDnsOutcome {
@@ -293,6 +308,14 @@ class TrustedDohResolver(
         DnsWire.parse(post(network, server, query))
 
     private fun post(network: Network, server: String, query: ByteArray): ByteArray {
+        DohTransports.preferred?.let { transport ->
+            try {
+                return transport.post(network, server, query, timeoutMillis)
+            } catch (_: DohTransportUnavailable) {
+                // В этой сборке транспорта нет: больше его не пробуем.
+                DohTransports.preferred = null
+            }
+        }
         val connection = network.openConnection(URL("https://$server/dns-query")) as HttpsURLConnection
         try {
             connection.connectTimeout = timeoutMillis

@@ -17,6 +17,7 @@ import android.view.Display
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import io.github.zapretkvn.android.network.BrowserTransport
 import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.android.R
 import io.github.zapretkvn.android.ZapretApplication
@@ -79,6 +80,7 @@ class ZapretVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        BrowserTransport.SocketGuard.attach(this)
         createNotificationChannel()
         runtime = VpnRuntime(this, container, host)
         runtime.onScreenInteractive(isDefaultDisplayOn())
@@ -163,6 +165,7 @@ class ZapretVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        BrowserTransport.SocketGuard.detach(this)
         scope.cancel()
         runCatching { unregisterReceiver(screenStateReceiver) }
         val finalState = runtime.destroy()
