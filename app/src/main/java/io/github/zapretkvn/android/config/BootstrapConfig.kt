@@ -92,6 +92,26 @@ object BootstrapConfig {
         return names
     }
 
+    /** Имя сервера по тегу outbound/endpoint (первый peer); IP-адреса не входят. */
+    fun serverHostsByTag(config: ParsedConfig): Map<String, String> {
+        val root = config.root ?: return emptyMap()
+        val hosts = LinkedHashMap<String, String>()
+        fun add(tag: String?, value: String?) {
+            val host = value?.trim()?.trimEnd('.')?.lowercase()?.takeIf(String::isNotEmpty) ?: return
+            if (tag != null && !looksNumeric(host)) hosts.putIfAbsent(tag, host)
+        }
+        (root["outbounds"] as? JsonArray)?.forEach { element ->
+            val outbound = element as? JsonObject ?: return@forEach
+            add(outbound.string("tag"), outbound.string("server"))
+        }
+        (root["endpoints"] as? JsonArray)?.forEach { element ->
+            val endpoint = element as? JsonObject ?: return@forEach
+            val peer = (endpoint["peers"] as? JsonArray)?.firstOrNull() as? JsonObject
+            add(endpoint.string("tag"), peer?.string("address"))
+        }
+        return hosts
+    }
+
     fun target(raw: String): ProxyBootstrapTarget? = target(ParsedConfig.parse(raw))
 
     fun target(config: ParsedConfig): ProxyBootstrapTarget? {

@@ -115,6 +115,32 @@ class TrustedBootstrapDnsTest {
     }
 
     @Test
+    fun systemFallbackIsAllowedOnlyForTheSelectedServer() {
+        ServerNameRegistry.replace(
+            hostnames = listOf("a.example.com", "b.example.com", "peer2.example.net"),
+            hostsByTag = mapOf("A" to "A.example.com.", "B" to "b.example.com"),
+            selectedHost = "a.example.com",
+        )
+        try {
+            assertTrue(ServerNameRegistry.allowsSystemFallback("a.example.com"))
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("b.example.com"))
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("peer2.example.net"))
+            // Обычные домены — не серверы, ограничение их не касается.
+            assertTrue(ServerNameRegistry.allowsSystemFallback("youtube.com"))
+
+            ServerNameRegistry.selectTag("B")
+            assertTrue(ServerNameRegistry.allowsSystemFallback("b.example.com"))
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("a.example.com"))
+
+            // Тег без имени (IP, группа) выбор не меняет.
+            ServerNameRegistry.selectTag("group")
+            assertTrue(ServerNameRegistry.allowsSystemFallback("b.example.com"))
+        } finally {
+            ServerNameRegistry.replace(emptyList())
+        }
+    }
+
+    @Test
     fun serverNameRegistryMatchesNormalizedNamesOnly() {
         ServerNameRegistry.replace(listOf("VPN.Example.com.", " node2.example.net ", ""))
         try {
@@ -127,14 +153,5 @@ class TrustedBootstrapDnsTest {
         } finally {
             ServerNameRegistry.replace(emptyList())
         }
-    }
-
-    @Test
-    fun tamperingMonitorRemembersDetection() {
-        DnsTamperingMonitor.reset()
-        assertEquals(0L, DnsTamperingMonitor.lastDetectedAtMillis)
-        DnsTamperingMonitor.mark(1234L)
-        assertEquals(1234L, DnsTamperingMonitor.lastDetectedAtMillis)
-        DnsTamperingMonitor.reset()
     }
 }

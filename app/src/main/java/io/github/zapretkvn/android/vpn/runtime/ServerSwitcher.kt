@@ -5,6 +5,7 @@ import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.profiles.ProfileStore
 import io.github.zapretkvn.android.vpn.VpnController
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -85,6 +86,8 @@ internal class ServerSwitcher(
                 RuntimeSwitchException(IllegalStateException("Клиент управления selector уже закрыт.")),
             )
         try {
+            // До команды: ядро сразу начнёт разрешать имя нового сервера.
+            ServerNameRegistry.selectTag(outboundTag)
             withContext(Dispatchers.IO) { client.selectOutbound(groupTag, outboundTag) }
             session.recordCommandedSelection(groupTag, outboundTag)
         } catch (cancelled: CancellationException) {
@@ -133,6 +136,7 @@ internal class ServerSwitcher(
         if (previousTag.isNullOrBlank()) return null
         val client = session.groupClient()
             ?: return IllegalStateException("Клиент управления selector уже закрыт; откат невозможен.")
+        ServerNameRegistry.selectTag(previousTag)
         return withContext(NonCancellable + Dispatchers.IO) {
             runCatching { client.selectOutbound(groupTag, previousTag) }
                 .onSuccess { session.recordCommandedSelection(groupTag, previousTag) }

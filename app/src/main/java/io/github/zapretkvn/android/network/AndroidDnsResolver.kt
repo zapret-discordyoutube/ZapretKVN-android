@@ -87,6 +87,12 @@ internal class AndroidLocalDnsTransport(
                 context.errorCode(DnsResponseClassifier.RCODE_NAME_ERROR)
                 return
             }
+            if (!ServerNameRegistry.allowsSystemFallback(domain)) {
+                // Доверенный путь недоступен, а сервер не выбран: его имя не уходит
+                // открытым запросом провайдеру. Выбранный идёт системным, как раньше.
+                context.errorCode(DnsResponseClassifier.RCODE_SERVER_FAILURE)
+                return
+            }
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val type = if (network == "ip4") DnsResolver.TYPE_A else DnsResolver.TYPE_AAAA
@@ -125,7 +131,8 @@ internal class AndroidLocalDnsTransport(
     override fun exchange(context: ExchangeContext, message: ByteArray) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
         val underlying = networkProvider() ?: error("Нет underlying network для Android DNS.")
-        if (ServerNameRegistry.contains(DnsWire.questionName(message))) {
+        val question = DnsWire.questionName(message)
+        if (ServerNameRegistry.contains(question)) {
             // Серверы группы ядро разрешает этим транспортом. Их имена идут
             // сначала доверенным путём: системный резолвер на заблокированное
             // имя отвечает «домена нет». Обычные прямые домены сюда не попадают.
@@ -133,6 +140,10 @@ internal class AndroidLocalDnsTransport(
             if (answer != null) {
                 val rcode = DnsWire.rcode(answer) ?: DnsResponseClassifier.RCODE_SERVER_FAILURE
                 if (rcode == DnsResponseClassifier.RCODE_SUCCESS) context.rawSuccess(answer) else context.errorCode(rcode)
+                return
+            }
+            if (!ServerNameRegistry.allowsSystemFallback(question)) {
+                context.errorCode(DnsResponseClassifier.RCODE_SERVER_FAILURE)
                 return
             }
         }

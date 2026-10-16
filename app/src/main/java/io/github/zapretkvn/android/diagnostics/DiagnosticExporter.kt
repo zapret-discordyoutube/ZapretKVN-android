@@ -1,6 +1,6 @@
 package io.github.zapretkvn.android.diagnostics
 
-import io.github.zapretkvn.networkbootstrap.DnsTamperingMonitor
+import io.github.zapretkvn.networkbootstrap.DecoyDnsCheck
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.content.ClipData
 import android.content.Context
@@ -88,10 +88,10 @@ class DiagnosticExporter(
     suspend fun createReport(): String {
         val settings = settingsStore.settings.first()
         val diagnostics = vpnController.diagnostics.value
-        val network = readCurrentNetwork(diagnostics.network)
+        val (network, decoy) = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 9)
+            put("report_version", 10)
             put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
                 buildJsonObject {
                     val failure = record.failure
@@ -189,8 +189,8 @@ class DiagnosticExporter(
                     put("private_dns_active", network.privateDnsActive)
                     // Имена серверов, которые идут доверенным DoH раньше системного DNS.
                     put("protected_server_names", ServerNameRegistry.snapshot().size)
-                    // Системный DNS ответил «имени нет» на сервер, который доверенный DNS знает.
-                    put("provider_denied_server_name", DnsTamperingMonitor.lastDetectedAtMillis > 0L)
+                    // Подмена DNS провайдером на чужом заблокированном домене (не на имени сервера).
+                    put("provider_dns_decoy", decoy.wire)
                 },
             )
             put("last_error", failureJson(diagnostics.lastFailure))
@@ -244,17 +244,23 @@ class DiagnosticExporter(
         return DiagnosticReportRedactor.redact(JsonConfig.format(root))
     }
 
-    private suspend fun readCurrentNetwork(fallback: DiagnosticNetworkState?): DiagnosticNetworkState {
+    /** Состояние основной сети и проверка подмены DNS на ней — только при экспорте по кнопке. */
+    private suspend fun readCurrentNetwork(
+        fallback: DiagnosticNetworkState?,
+    ): Pair<DiagnosticNetworkState, DecoyDnsCheck.Verdict> {
         val monitor = DefaultNetworkMonitor(appContext)
+        val unknown = DecoyDnsCheck.Verdict.Unknown
         return try {
             monitor.start()
-            monitor.awaitUnderlying(NETWORK_TIMEOUT_MILLIS).toDiagnosticState()
+            val underlying = monitor.awaitUnderlying(NETWORK_TIMEOUT_MILLIS)
+            val decoy = underlying.network?.let { DecoyDnsCheck.run(it) } ?: unknown
+            underlying.toDiagnosticState() to decoy
         } catch (_: TimeoutCancellationException) {
-            fallback ?: DiagnosticNetworkState()
+            (fallback ?: DiagnosticNetworkState()) to unknown
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
-            fallback ?: DiagnosticNetworkState()
+            (fallback ?: DiagnosticNetworkState()) to unknown
         } finally {
             monitor.close()
         }

@@ -110,29 +110,54 @@ object ServerNameRegistry {
     @Volatile
     private var names: Set<String> = emptySet()
 
+    @Volatile
+    private var hostByTag: Map<String, String> = emptyMap()
+
+    @Volatile
+    private var selected: String? = null
+
     fun replace(hostnames: Collection<String>) {
-        names = hostnames.mapNotNull { it.trim().trimEnd('.').lowercase().ifEmpty { null } }.toSet()
+        names = hostnames.mapNotNull(::normalize).toSet()
+        hostByTag = emptyMap()
+        selected = null
     }
 
-    fun contains(hostname: String?): Boolean =
-        hostname != null && hostname.trim().trimEnd('.').lowercase() in names
+    /**
+     * [hostnames] — все имена серверов (в том числе остальные peer WireGuard),
+     * [hostsByTag] — имя для выбора по тегу, [selectedHost] — выбранный сейчас.
+     */
+    fun replace(hostnames: Collection<String>, hostsByTag: Map<String, String>, selectedHost: String?) {
+        val byTag = hostsByTag.mapNotNull { (tag, host) -> normalize(host)?.let { tag to it } }.toMap()
+        hostByTag = byTag
+        names = (hostnames.mapNotNull(::normalize) + byTag.values).toSet()
+        selected = normalize(selectedHost)?.takeIf(names::contains)
+    }
+
+    /**
+     * Сервер [tag] становится выбранным — вызывать до команды ядру, чтобы его
+     * имя уже можно было разрешить. Тег без имени (IP-адрес, группа) выбор не
+     * меняет: прежний сервер остаётся единственным с запасным системным DNS.
+     */
+    fun selectTag(tag: String) {
+        hostByTag[tag]?.let { selected = it }
+    }
+
+    fun contains(hostname: String?): Boolean = normalize(hostname) in names
+
+    /**
+     * Можно ли спросить имя у системного DNS, когда доверенный недоступен:
+     * любое чужое имя — да, из серверов — только выбранный. Его адрес провайдер
+     * и так увидит при подключении, а имена остального пула открыто не уходят.
+     */
+    fun allowsSystemFallback(hostname: String?): Boolean {
+        val name = normalize(hostname) ?: return true
+        return name !in names || name == selected
+    }
 
     fun snapshot(): Set<String> = names
-}
 
-/** Признак того, что системный DNS отрицает существующее имя сервера. */
-object DnsTamperingMonitor {
-    @Volatile
-    var lastDetectedAtMillis: Long = 0L
-        private set
-
-    fun mark(nowMillis: Long = System.currentTimeMillis()) {
-        lastDetectedAtMillis = nowMillis
-    }
-
-    fun reset() {
-        lastDetectedAtMillis = 0L
-    }
+    private fun normalize(value: String?): String? =
+        value?.trim()?.trimEnd('.')?.lowercase()?.ifEmpty { null }
 }
 
 /** Итог опроса одного доверенного резолвера. */

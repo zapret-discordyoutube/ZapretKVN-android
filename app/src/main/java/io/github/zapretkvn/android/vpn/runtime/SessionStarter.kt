@@ -493,8 +493,12 @@ internal class SessionStarter(
             configFailure?.let { throw it }
             controller.startConnectionDiagnosticStage(token, "core_service", "Запуск sing-box и создание TUN")
             // Имена серверов группы: локальный DNS-транспорт спрашивает их
-            // сначала доверенным путём, а не системным резолвером.
-            ServerNameRegistry.replace(BootstrapConfig.serverHostnames(runtimeConfig))
+            // доверенным путём; системным — только выбранный, если DoH недоступен.
+            ServerNameRegistry.replace(
+                BootstrapConfig.serverHostnames(runtimeConfig),
+                BootstrapConfig.serverHostsByTag(runtimeConfig),
+                BootstrapConfig.target(runtimeConfig)?.hostname,
+            )
             commandServer.startOrReloadService(
                 runtimeJson,
                 OverrideOptions().apply {
@@ -755,6 +759,7 @@ internal class SessionStarter(
         }
         selections.forEach { selection ->
             try {
+                ServerNameRegistry.selectTag(selection.outboundTag)
                 withContext(Dispatchers.IO) { client.selectOutbound(selection.groupTag, selection.outboundTag) }
                 session.recordCommandedSelection(selection.groupTag, selection.outboundTag)
             } catch (cancelled: CancellationException) {

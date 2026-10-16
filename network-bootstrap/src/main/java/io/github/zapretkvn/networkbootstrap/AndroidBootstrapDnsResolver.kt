@@ -10,11 +10,7 @@ import java.net.InetAddress
 import java.net.UnknownHostException
 import java.util.concurrent.Executor
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -24,24 +20,17 @@ class AndroidBootstrapDnsResolver(
     /** > 0: системный запрос повторяется один раз, если ответа нет за это время (см. [HedgedQuery]). */
     private val hedgeAfterMillis: Long = 0,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     /**
-     * Адрес VPN-сервера: сначала доверенный DoH по IP, затем системный резолвер.
-     *
-     * Оба пути стартуют сразу. Ответ DoH предпочитается, потому что системный
-     * ответ провайдер может подменить; если DoH недоступен, используется
-     * системный ответ без дополнительного ожидания сверх окна DoH.
+     * Адрес VPN-сервера: сначала доверенный DoH по IP, системный резолвер — только
+     * если DoH недоступен. Открытый запрос с именем своего сервера провайдер видит
+     * и может связать с последующим подключением, поэтому он не уходит, пока есть
+     * доверенный ответ. Подмену DNS проверяет [DecoyDnsCheck] на чужом домене.
      */
     suspend fun resolve(
         network: Network,
         hostname: String,
         noCacheLookup: Boolean = false,
     ): List<InetAddress> {
-        // Системный запрос живёт в собственной области: после доверенного
-        // ответа он досчитывается в фоне и показывает, отрицает ли провайдер
-        // существующее имя сервера.
-        val system = scope.async { runCatching { resolveSystem(network, hostname, noCacheLookup) } }
         val verdict = if (trusted == null) {
             TrustedDnsOutcome.Unavailable
         } else {
@@ -49,30 +38,23 @@ class AndroidBootstrapDnsResolver(
                 ?: TrustedDnsOutcome.Unavailable
         }
         return when (verdict) {
-            is TrustedDnsOutcome.Addresses -> {
-                scope.launch {
-                    val failure = system.await().exceptionOrNull() as? BootstrapFailureException
-                    if (failure?.reason == BootstrapFailureCode.DnsNameNotFound) DnsTamperingMonitor.mark()
-                }
-                verdict.value
-            }
+            is TrustedDnsOutcome.Addresses -> verdict.value
             // Все доверенные резолверы подтвердили, что имени нет: системному
             // ответу здесь верить нечему.
-            TrustedDnsOutcome.NameMissing -> {
-                system.cancel()
-                throw BootstrapFailureException(
-                    BootstrapFailureCode.DnsNameNotFound,
-                    technicalDetail = "trusted_doh_nxdomain",
-                )
-            }
-            TrustedDnsOutcome.Unavailable -> try {
-                system.await().getOrThrow()
-            } catch (cancelled: CancellationException) {
-                system.cancel()
-                throw cancelled
-            }
+            TrustedDnsOutcome.NameMissing -> throw BootstrapFailureException(
+                BootstrapFailureCode.DnsNameNotFound,
+                technicalDetail = "trusted_doh_nxdomain",
+            )
+            TrustedDnsOutcome.Unavailable -> resolveSystem(network, hostname, noCacheLookup)
         }
     }
+
+    /** Только системный резолвер — для [DecoyDnsCheck] и проб внутри VPN-сети. */
+    suspend fun resolveSystemOnly(
+        network: Network,
+        hostname: String,
+        noCacheLookup: Boolean = false,
+    ): List<InetAddress> = resolveSystem(network, hostname, noCacheLookup)
 
     private suspend fun resolveSystem(
         network: Network,

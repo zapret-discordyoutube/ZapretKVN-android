@@ -81,6 +81,27 @@ class BootstrapConfigTest {
     }
 
     @Test
+    fun `server hosts by tag map each member to its name`() {
+        val hosts = BootstrapConfig.serverHostsByTag(
+            ParsedConfig.parse(
+                """
+                {
+                  "outbounds":[
+                    {"type":"selector","tag":"proxy","outbounds":["a","c"],"default":"a"},
+                    {"type":"trojan","tag":"a","server":"One.Example.com.","server_port":443},
+                    {"type":"hysteria2","tag":"c","server":"203.0.113.7","server_port":443}
+                  ],
+                  "endpoints":[
+                    {"type":"wireguard","tag":"wg","peers":[{"address":"wg.example.org","port":51820}]}
+                  ]
+                }
+                """.trimIndent(),
+            ),
+        )
+        assertEquals(mapOf("a" to "one.example.com", "wg" to "wg.example.org"), hosts)
+    }
+
+    @Test
     fun `server hostnames cover every group member and skip literals`() {
         val names = BootstrapConfig.serverHostnames(
             """
