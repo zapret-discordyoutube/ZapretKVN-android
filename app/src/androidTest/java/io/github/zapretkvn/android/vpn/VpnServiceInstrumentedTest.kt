@@ -232,16 +232,17 @@ class VpnServiceInstrumentedTest {
             val firstNetwork = waitForVpnNetwork(context)
             assertNotNull(firstNetwork)
 
-            val groups = withTimeoutOrNull(20_000) {
+            // cache.db ядра помнит выбор прошлого запуска; приложение навязывает сохранённый
+            // сервер сразу после старта, но первая публикация групп может его опередить.
+            withTimeoutOrNull(20_000) {
                 container.vpnController.selectorGroups.first { values ->
-                    values.any { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }
+                    values.any { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG && it.selected == "server-a" }
                 }
             } ?: error(
-                "Selector groups were not published; state=${container.vpnController.state.value}, " +
+                "Saved server-a was not applied; state=${container.vpnController.state.value}, " +
                     "groups=${container.vpnController.selectorGroups.value}, " +
                     "attempt=${container.vpnController.diagnostics.value.connectionAttempt}",
             )
-            assertEquals("server-a", groups.first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }.selected)
 
             VpnTestHooks.succeedNextSwitchVerification()
             container.vpnController.selectOutbound(
@@ -267,13 +268,19 @@ class VpnServiceInstrumentedTest {
             assertEquals(connected.connectedAtEpochMillis, (afterSwitch as VpnConnectionState.Connected).connectedAtEpochMillis)
             assertEquals(firstNetwork, waitForVpnNetwork(context))
 
-            val saved = container.profileStore.read(profile.id).json
-            assertEquals(
-                "server-b",
-                ConfigAnalyzer.selectorGroups(saved)
-                    .first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }
-                    .default,
-            )
+            // Профиль сохраняется после проверки переключения, то есть позже, чем ядро
+            // публикует новый выбор: ждём записи, а не читаем её в тот же миг.
+            val savedDefault = withTimeoutOrNull(10_000) {
+                var current: String?
+                do {
+                    current = ConfigAnalyzer.selectorGroups(container.profileStore.read(profile.id).json)
+                        .first { it.tag == ConfigAnalyzer.MANAGED_SELECTOR_TAG }
+                        .default
+                    if (current != "server-b") delay(100)
+                } while (current != "server-b")
+                current
+            }
+            assertEquals("server-b", savedDefault)
         } finally {
             container.vpnController.stop()
             withTimeout(20_000) {
