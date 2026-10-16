@@ -122,8 +122,9 @@ class AppContainer(
         },
         directAvailable = { nonVpnNetwork(appContext) != null },
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
-        // Напрямую — стеком Chromium: провайдер видит обычный Chrome, а не Conscrypt.
-        browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
+        // Напрямую стеком Chromium — выключено: запрос по имени (резолвер приложения
+        // для движка) убивал процесс на эмуляторе (c24). DoH по IP через Chromium работает.
+        // browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
     )
     init {
         // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
