@@ -2,6 +2,8 @@ package io.github.zapretkvn.android
 
 import android.app.Application
 import io.github.zapretkvn.android.diagnostics.AppCrashStore
+import io.github.zapretkvn.android.network.BrowserDohTransport
+import io.github.zapretkvn.networkbootstrap.DohTransports
 import java.io.File
 
 class ZapretApplication : Application() {
@@ -16,8 +18,8 @@ class ZapretApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         crashStore.install()
-        // Браузерный транспорт (BrowserDohTransport) выключен: первый запрос через Cronet
-        // ронял процесс на эмуляторе API 37 (c22). Вернуть после исправления:
-        // DohTransports.preferred = BrowserDohTransport
+        // DoH имён серверов — стеком Chromium (как браузер). Ядро загружается только
+        // при первом запросе; без Cronet транспорт сам уступит прежнему пути.
+        DohTransports.preferred = BrowserDohTransport
     }
 }

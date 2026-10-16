@@ -122,9 +122,14 @@ class AppContainer(
         },
         directAvailable = { nonVpnNetwork(appContext) != null },
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
-        // Напрямую стеком Chromium — выключено до исправления падения Cronet (c22):
-        // browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
+        // Напрямую — стеком Chromium: провайдер видит обычный Chrome, а не Conscrypt.
+        browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
     )
+    init {
+        // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
+        BrowserTransport.underlyingNetwork = { nonVpnNetwork(appContext) }
+    }
+
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
     )

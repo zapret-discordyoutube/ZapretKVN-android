@@ -5,9 +5,16 @@ import android.net.VpnService
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.networkbootstrap.DohTransport
 import io.github.zapretkvn.networkbootstrap.DohTransportUnavailable
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
+import io.github.zapretkvn.networkbootstrap.TrustedDnsOutcome
+import io.github.zapretkvn.networkbootstrap.TrustedDohResolver
+import io.nekohasekai.libbox.BrowserResolver
 import io.nekohasekai.libbox.BrowserSocketProtector
 import io.nekohasekai.libbox.Libbox
 import java.io.IOException
+import java.net.InetAddress
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonArray
@@ -42,6 +49,10 @@ internal object BrowserTransport {
     class UnavailableException(message: String) : IOException(message)
 
     private val guardInstalled = AtomicBoolean(false)
+
+    /** Основная (не VPN) сеть для резолва имён; задаёт приложение при старте. */
+    @Volatile
+    var underlyingNetwork: () -> Network? = { null }
 
     /** Блокирующий запрос; [IOException] — отказ этого запроса, [UnavailableException] — транспорта нет. */
     fun fetch(
@@ -97,9 +108,36 @@ internal object BrowserTransport {
         if (!guardInstalled.compareAndSet(false, true)) return
         try {
             Libbox.setBrowserSocketProtector(SocketGuard)
+            Libbox.setBrowserResolver(NameResolver)
         } catch (error: Throwable) {
             throw UnavailableException("setBrowserSocketProtector: ${error.javaClass.simpleName}")
         }
+    }
+
+    /**
+     * Имена для движка: доверенный DoH, а не системный DNS провайдера. Без DoH —
+     * системный резолв основной сети, но имя сервера уходит туда, только если это
+     * выбранный сервер (как у DNS-транспорта ядра). Пустая строка — «имени нет».
+     */
+    object NameResolver : BrowserResolver {
+        private val trusted = TrustedDohResolver()
+
+        override fun resolve(host: String): String {
+            val network = underlyingNetwork() ?: throw IOException("Нет основной сети для резолва.")
+            val outcome = runBlocking {
+                withTimeoutOrNull(TRUSTED_WINDOW_MILLIS) { trusted.resolve(network, host) }
+            } ?: TrustedDnsOutcome.Unavailable
+            return when (outcome) {
+                is TrustedDnsOutcome.Addresses -> outcome.value.joinToString(",") { it.hostAddress.orEmpty() }
+                TrustedDnsOutcome.NameMissing -> ""
+                TrustedDnsOutcome.Unavailable -> {
+                    if (!ServerNameRegistry.allowsSystemFallback(host)) throw IOException("DoH недоступен.")
+                    network.getAllByName(host).joinToString(",", transform = InetAddress::getHostAddress)
+                }
+            }
+        }
+
+        private const val TRUSTED_WINDOW_MILLIS = 4_000L
     }
 
     /** Решение по каждому сокету движка: VPN поднят — защитить от туннеля, иначе как есть. */
