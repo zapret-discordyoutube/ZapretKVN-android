@@ -100,4 +100,48 @@ class SubscriptionDirectFallbackTest {
             defaultServer.stop(0)
         }
     }
+
+    @Test
+    fun `cleartext link to a remote host never goes direct and needs the tunnel`() {
+        val (tunnelServer, tunnelHits) = serve(200, "THROUGH-TUNNEL")
+        try {
+            var plainOpened = false
+            val remote = "http://sub.example.net:8080/subscription"
+            val withoutTunnel = HttpSubscriptionFetcher(
+                openConnection = { _, _ ->
+                    plainOpened = true
+                    null
+                },
+                directAvailable = { true },
+            )
+            val refused = assertThrows(ImportException::class.java) {
+                withoutTunnel.fetch(SubscriptionSource(remote))
+            }
+            assertEquals(HttpSubscriptionFetcher.CLEARTEXT_NEEDS_TUNNEL, refused.message)
+            assertFalse(plainOpened)
+
+            // Туннель подменяем локальным сервером: важно лишь, что выбран именно этот путь.
+            val withTunnel = HttpSubscriptionFetcher(
+                openConnection = { _, _ ->
+                    plainOpened = true
+                    null
+                },
+                directAvailable = { true },
+                tunnelConnection = { URL(url(tunnelServer)).openConnection() as? HttpURLConnection },
+            )
+            assertEquals("THROUGH-TUNNEL", withTunnel.fetch(SubscriptionSource(remote)))
+            assertFalse(plainOpened)
+            assertEquals(1, tunnelHits.get())
+        } finally {
+            tunnelServer.stop(0)
+        }
+    }
+
+    @Test
+    fun `only remote plain http counts as cleartext exposure`() {
+        assertEquals(true, HttpSubscriptionFetcher.exposesCleartext("http://sub.example.net/a"))
+        assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("https://sub.example.net/a"))
+        assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("http://127.0.0.1:8080/a"))
+        assertEquals(false, HttpSubscriptionFetcher.exposesCleartext("http://[::1]:8080/a"))
+    }
 }

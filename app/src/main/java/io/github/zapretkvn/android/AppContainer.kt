@@ -120,6 +120,7 @@ class AppContainer(
             connection as? HttpURLConnection
         },
         directAvailable = { nonVpnNetwork(appContext) != null },
+        tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
     )
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
@@ -351,6 +352,16 @@ class AppContainer(
  */
 @Suppress("DEPRECATION") // allNetworks is the only synchronous way to see the
 // underlying physical transports while a VPN holds the default network.
+/** Поднятая VPN-сеть: соединение, привязанное к ней, идёт через туннель при любом выборе приложений. */
+private fun vpnNetwork(context: Context): Network? {
+    val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
+    return connectivity.allNetworks.firstOrNull { network ->
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+}
+
 private fun nonVpnNetwork(context: Context): Network? {
     val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return null
     val networks = connectivity.allNetworks

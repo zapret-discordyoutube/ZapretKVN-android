@@ -40,11 +40,17 @@ class HttpSubscriptionFetcher(
     // Whether a non-VPN network exists right now, so a direct attempt is worth
     // making. Default: never, so behaviour is unchanged until it is wired.
     private val directAvailable: () -> Boolean = { false },
+    // Connection explicitly bound to the running VPN network, or null when the
+    // tunnel is down. Plain http:// links travel only this way.
+    private val tunnelConnection: (url: URL) -> HttpURLConnection? = { null },
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
+        // Ссылка без шифрования: токен в адресе и список серверов в ответе провайдер
+        // прочитал бы целиком. Такая ссылка идёт только через туннель, напрямую — никогда.
+        if (exposesCleartext(validatedUrl(source.url))) return fetchVia(source, Path.Tunnel)
         if (directAvailable()) {
             try {
-                return fetchVia(source, direct = true)
+                return fetchVia(source, Path.Direct)
             } catch (transport: IOException) {
                 // No response reached us on the direct (non-VPN) path — only
                 // this "no answer" case is retried through the default network,
@@ -53,14 +59,22 @@ class HttpSubscriptionFetcher(
                 // authoritative and propagates instead of being masked here.
             }
         }
-        return fetchVia(source, direct = false)
+        return fetchVia(source, Path.Default)
     }
 
-    private fun fetchVia(source: SubscriptionSource, direct: Boolean): String {
+    private enum class Path { Direct, Default, Tunnel }
+
+    private fun open(url: URL, path: Path): HttpURLConnection? = when (path) {
+        Path.Direct -> openConnection(url, true)
+        Path.Default -> openConnection(url, false)
+        Path.Tunnel -> tunnelConnection(url) ?: throw ImportException(CLEARTEXT_NEEDS_TUNNEL)
+    }
+
+    private fun fetchVia(source: SubscriptionSource, path: Path): String {
         var current = validatedUrl(source.url)
         val origin = URI(current).host.orEmpty()
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
-            val connection = openConnection(URL(current), direct)
+            val connection = open(URL(current), path)
                 ?: throw ImportException("URL подписки не является HTTP(S).")
             try {
                 connection.instanceFollowRedirects = false
@@ -131,6 +145,18 @@ class HttpSubscriptionFetcher(
     }
 
     companion object {
+        const val CLEARTEXT_NEEDS_TUNNEL =
+            "Ссылка подписки без шифрования (http://): без VPN её и список серверов видит провайдер. " +
+                "Подключите VPN и обновите подписку или возьмите ссылку https://."
+
+        /** http:// не к самому устройству: адрес и ответ уходят в сеть открытым текстом. */
+        fun exposesCleartext(url: String): Boolean {
+            val uri = runCatching { URI(url) }.getOrNull() ?: return false
+            if (!uri.scheme.equals("http", ignoreCase = true)) return false
+            val host = uri.host?.trim('[', ']')?.lowercase() ?: return false
+            return host != "localhost" && host != "127.0.0.1" && host != "::1"
+        }
+
         fun validatedUrl(raw: String): String {
             val value = raw.trim()
             val uri = runCatching { URI(value) }
