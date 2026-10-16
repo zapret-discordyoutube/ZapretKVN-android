@@ -36,6 +36,8 @@ data class UiSettings(
     val favoriteServers: Set<String> = emptySet(),
     /** Автообновление подписок: раз в столько часов; 0 — только вручную. */
     val subscriptionAutoUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
+    /** Сортировка вкладки «Серверы» (имя варианта ServerSort); переживает перезапуск. */
+    val serverSort: String = "Subscription",
 )
 
 /** Как часто фоновое задание обновляет подписки. */

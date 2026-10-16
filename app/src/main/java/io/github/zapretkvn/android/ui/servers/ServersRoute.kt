@@ -152,6 +152,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
                     deps.profiles.settings.setFavoriteServer(profileId, tag, favorite)
                 }
             },
+            onSort = { sort -> deps.profiles.settings.setServerSort(sort.name) },
         )
     }
     ServersScreen(
@@ -161,6 +162,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
         actions = actions,
         contentPadding = padding,
         scrollToTop = nav.navigator.reselections(AppTab.Servers),
+        savedSort = ServerSort.entries.firstOrNull { it.name == state.settings.serverSort } ?: ServerSort.Subscription,
     )
 }
 

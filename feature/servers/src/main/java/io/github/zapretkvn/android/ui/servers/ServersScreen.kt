@@ -59,6 +59,8 @@ class ServersScreenActions(
     val onOpenEditor: (profileId: String) -> Unit,
     /** Звёздочка: сервер активного профиля в избранное или из него. */
     val onFavorite: (serverTag: String, favorite: Boolean) -> Unit,
+    /** Выбрана сортировка: сохраняется в настройках и переживает перезапуск. */
+    val onSort: (ServerSort) -> Unit = {},
 )
 
 /**
@@ -78,11 +80,19 @@ fun ServersScreen(
     contentPadding: PaddingValues,
     /** Растёт при повторном нажатии на вкладку «Серверы»: список уезжает наверх. */
     scrollToTop: Int = 0,
+    /** Сохранённая сортировка; настройки читаются асинхронно, поэтому может прийти позже. */
+    savedSort: ServerSort = ServerSort.Subscription,
 ) {
-    var sort by rememberSaveable { mutableStateOf(ServerSort.Subscription) }
+    var sort by rememberSaveable(savedSort) { mutableStateOf(savedSort) }
     // Порядок фиксируется в момент выбора сортировки: замеры строку не переставляют.
     var order by rememberSaveable { mutableStateOf(ArrayList<String>()) }
     val content = ui as? ServersUi.Content
+    // Восстановленная сортировка: порядок фиксируется на первом содержимом, как при выборе.
+    LaunchedEffect(sort, content != null) {
+        if (content != null && sort != ServerSort.Subscription && order.isEmpty()) {
+            order = ArrayList(frozenOrder(content.groups, sort))
+        }
+    }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var filter by rememberSaveable(content?.profileId, stateSaver = FilterSaver) { mutableStateOf(ServerFilter()) }
     val canSearch = content != null && content.groups.flatMap { it.rows }.distinctBy { it.tag }.size > FILTER_THRESHOLD
@@ -116,6 +126,7 @@ fun ServersScreen(
                         SortMenu(sort) { chosen ->
                             sort = chosen
                             order = ArrayList(frozenOrder(content.groups, chosen))
+                            actions.onSort(chosen)
                         }
                     }
                 },

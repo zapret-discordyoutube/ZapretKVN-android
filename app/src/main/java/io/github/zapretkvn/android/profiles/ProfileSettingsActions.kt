@@ -33,6 +33,8 @@ class ProfileSettingsActions internal constructor(
 
     fun setSubscriptionAutoUpdateHours(hours: Int) = apply { settingsStore.setSubscriptionAutoUpdateHours(hours) }
 
+    fun setServerSort(name: String) = apply { settingsStore.setServerSort(name) }
+
     fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) =
         apply { settingsStore.setFavoriteServer(profileId, tag, favorite) }
 

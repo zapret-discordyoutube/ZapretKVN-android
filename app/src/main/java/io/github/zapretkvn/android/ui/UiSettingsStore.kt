@@ -93,6 +93,7 @@ class UiSettingsStore(
                 serviceChecks = ServiceSelection.parse(preferences[SERVICE_CHECKS]),
                 favoriteServers = preferences[FAVORITE_SERVERS].orEmpty(),
                 subscriptionAutoUpdateHours = SubscriptionAutoUpdate.normalize(preferences[SUBSCRIPTION_AUTO_UPDATE_HOURS]),
+                serverSort = preferences[SERVER_SORT] ?: "Subscription",
             )
         }
 
@@ -117,6 +118,10 @@ class UiSettingsStore(
 
     suspend fun setSubscriptionAutoUpdateHours(hours: Int) {
         dataStore.edit { it[SUBSCRIPTION_AUTO_UPDATE_HOURS] = SubscriptionAutoUpdate.normalize(hours) }
+    }
+
+    suspend fun setServerSort(name: String) {
+        dataStore.edit { it[SERVER_SORT] = name }
     }
 
     suspend fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) {
@@ -252,6 +257,7 @@ class UiSettingsStore(
 
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val SERVER_SORT = stringPreferencesKey("server_sort")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
         val RAW_EDITOR_LINE_WRAP = booleanPreferencesKey("raw_editor_line_wrap")
