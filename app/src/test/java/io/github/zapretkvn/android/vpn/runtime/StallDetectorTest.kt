@@ -233,4 +233,32 @@ class StallDetectorTest {
         warmUp()
         assertNull(detector.onDnsFailure(at, "c.example"))
     }
+
+    @Test
+    fun `direct traffic no longer masks a dead proxy`() {
+        // Общие счётчики растут (прямые сайты), прокси отправляет, но ничего не получает.
+        var proxyUp = 0L
+        var t = 200_000L
+        var total = 0L
+        val detector = StallDetector()
+        fun sample(): StallEvent? {
+            t += 5_000
+            total += 50_000
+            proxyUp += 2_000
+            return detector.onSample(
+                TrafficSample(t, total, total, 6, proxyUplinkTotal = proxyUp, proxyDownlinkTotal = 0, proxyConnections = 2),
+            )
+        }
+        assertNull(sample())
+        assertNull(sample())
+        assertNull(sample())
+        val event = sample() as StallEvent.Suspected
+        assertEquals(StallKind.Traffic, event.kind)
+    }
+
+    @Test
+    fun `without proxy data the detector falls back to totals`() {
+        val sample = TrafficSample(1L, 10L, 20L, 3)
+        assertEquals(sample, sample.proxyView())
+    }
 }

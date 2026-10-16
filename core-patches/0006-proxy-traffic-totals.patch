@@ -1,0 +1,217 @@
+diff --git a/common/trafficcontrol/manager.go b/common/trafficcontrol/manager.go
+index d5b6a2b5..cef7ed53 100644
+--- a/common/trafficcontrol/manager.go
++++ b/common/trafficcontrol/manager.go
+@@ -42,6 +42,9 @@ type Manager struct {
+ 	closedConnections       list.List[TrackerMetadata]
+ 	closedUploadTotal       int64
+ 	closedDownloadTotal     int64
++	// Те же итоги только для соединений через прокси (см. IsProxyOutboundType).
++	closedProxyUploadTotal   int64
++	closedProxyDownloadTotal int64
+ 
+ 	eventSubscriber *observable.Subscriber[ConnectionEvent]
+ 	eventObserver   *observable.Observer[ConnectionEvent]
+@@ -110,6 +113,7 @@ func (m *Manager) leave(tracker Tracker) {
+ 		evicted := m.closedConnections.PopFront()
+ 		m.closedUploadTotal += evicted.Upload.Load()
+ 		m.closedDownloadTotal += evicted.Download.Load()
++		m.addClosedProxyLocked(evicted)
+ 	}
+ 	m.closedConnections.PushBack(metadataCopy)
+ 	m.closedConnectionsAccess.Unlock()
+@@ -187,6 +191,52 @@ func (m *Manager) Clear() {
+ 	for element := m.closedConnections.Front(); element != nil; element = element.Next() {
+ 		m.closedUploadTotal += element.Value.Upload.Load()
+ 		m.closedDownloadTotal += element.Value.Download.Load()
++		m.addClosedProxyLocked(element.Value)
+ 	}
+ 	m.closedConnections.Init()
+ }
++
++// IsProxyOutboundType: соединение идёт через прокси, а не напрямую, не в block и не в DNS.
++func IsProxyOutboundType(outboundType string) bool {
++	switch outboundType {
++	case "", "direct", "block", "dns":
++		return false
++	default:
++		return true
++	}
++}
++
++func (m *Manager) addClosedProxyLocked(metadata TrackerMetadata) {
++	if !IsProxyOutboundType(metadata.OutboundType) {
++		return
++	}
++	m.closedProxyUploadTotal += metadata.Upload.Load()
++	m.closedProxyDownloadTotal += metadata.Download.Load()
++}
++
++// ProxyTotal — байты (накопительно за сессию) и число активных соединений только
++// через прокси. Прямой трафик в общих итогах маскирует мёртвый прокси для
++// детектора «подключено, но данные не идут» на стороне приложения. Один проход по
++// соединениям, как у Total; отдельного потока событий не требует.
++func (m *Manager) ProxyTotal() (uplinkTotal int64, downlinkTotal int64, active int32) {
++	m.closedConnectionsAccess.Lock()
++	defer m.closedConnectionsAccess.Unlock()
++	uplinkTotal = m.closedProxyUploadTotal
++	downlinkTotal = m.closedProxyDownloadTotal
++	for element := m.closedConnections.Front(); element != nil; element = element.Next() {
++		if IsProxyOutboundType(element.Value.OutboundType) {
++			uplinkTotal += element.Value.Upload.Load()
++			downlinkTotal += element.Value.Download.Load()
++		}
++	}
++	m.connections.Range(func(_ uuid.UUID, tracker Tracker) bool {
++		metadata := tracker.Metadata()
++		if IsProxyOutboundType(metadata.OutboundType) {
++			uplinkTotal += metadata.Upload.Load()
++			downlinkTotal += metadata.Download.Load()
++			active++
++		}
++		return true
++	})
++	return
++}
+diff --git a/common/trafficcontrol/proxy_total_test.go b/common/trafficcontrol/proxy_total_test.go
+new file mode 100644
+index 00000000..1118fda4
+--- /dev/null
++++ b/common/trafficcontrol/proxy_total_test.go
+@@ -0,0 +1,67 @@
++package trafficcontrol
++
++import (
++	"sync/atomic"
++	"testing"
++
++	"github.com/gofrs/uuid/v5"
++)
++
++func trackerWith(m *Manager, outboundType string, up int64, down int64) *connTracker {
++	id, _ := uuid.NewV4()
++	upload, download := new(atomic.Int64), new(atomic.Int64)
++	upload.Store(up)
++	download.Store(down)
++	tracker := &connTracker{
++		metadata: TrackerMetadata{ID: id, OutboundType: outboundType, Upload: upload, Download: download},
++		manager:  m,
++	}
++	m.join(tracker)
++	return tracker
++}
++
++func TestProxyTotalExcludesDirectBlockAndDNS(t *testing.T) {
++	m := NewManager(nil)
++	trackerWith(m, "hysteria2", 100, 1000)
++	trackerWith(m, "direct", 50, 9000)
++	trackerWith(m, "dns", 1, 1)
++	trackerWith(m, "block", 1, 1)
++	up, down, active := m.ProxyTotal()
++	if up != 100 || down != 1000 || active != 1 {
++		t.Fatalf("ProxyTotal = %d/%d/%d, want 100/1000/1", up, down, active)
++	}
++}
++
++func TestProxyTotalKeepsClosedProxyBytesAfterEviction(t *testing.T) {
++	m := NewManager(nil)
++	m.closedConnections.PushBack(TrackerMetadata{OutboundType: "vless", Upload: atomicOf(7), Download: atomicOf(70)})
++	m.closedConnections.PushBack(TrackerMetadata{OutboundType: "direct", Upload: atomicOf(5), Download: atomicOf(500)})
++	m.Clear()
++	up, down, active := m.ProxyTotal()
++	if up != 7 || down != 70 || active != 0 {
++		t.Fatalf("ProxyTotal after clear = %d/%d/%d, want 7/70/0", up, down, active)
++	}
++	totalUp, totalDown := m.Total()
++	if totalUp != 12 || totalDown != 570 {
++		t.Fatalf("Total after clear = %d/%d, want 12/570", totalUp, totalDown)
++	}
++}
++
++func atomicOf(value int64) *atomic.Int64 {
++	result := new(atomic.Int64)
++	result.Store(value)
++	return result
++}
++
++func TestIsProxyOutboundType(t *testing.T) {
++	for _, value := range []string{"", "direct", "block", "dns"} {
++		if IsProxyOutboundType(value) {
++			t.Fatalf("%q must not be proxy", value)
++		}
++	}
++	for _, value := range []string{"selector", "hysteria2", "vless", "wireguard"} {
++		if !IsProxyOutboundType(value) {
++			t.Fatalf("%q must be proxy", value)
++		}
++	}
++}
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 0fa144c0..2502fefb 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -491,6 +491,18 @@ func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server
+ 	}
+ }
+ 
++// ProxyTraffic — итоги только через прокси для детектора обрыва (см. trafficcontrol.Manager.ProxyTotal).
++func (s *StartedService) ProxyTraffic() (uplinkTotal int64, downlinkTotal int64, active int32, available bool) {
++	s.serviceAccess.RLock()
++	nowService := s.instance
++	s.serviceAccess.RUnlock()
++	if nowService == nil || nowService.trafficManager == nil {
++		return 0, 0, 0, false
++	}
++	uplinkTotal, downlinkTotal, active = nowService.trafficManager.ProxyTotal()
++	return uplinkTotal, downlinkTotal, active, true
++}
++
+ func (s *StartedService) readStatus() *Status {
+ 	var status Status
+ 	status.Memory = memory.Total()
+diff --git a/experimental/libbox/command_server.go b/experimental/libbox/command_server.go
+index 5f62d03d..96541533 100644
+--- a/experimental/libbox/command_server.go
++++ b/experimental/libbox/command_server.go
+@@ -239,6 +239,21 @@ func (s *CommandServer) SetError(message string) {
+ 	s.StartedService.SetError(E.New(message))
+ }
+ 
++// ProxyTraffic — байты и активные соединения только через прокси, накопительно за
++// сессию. Вызывается приложением прямо в момент своего отсчёта трафика: отдельной
++// подписки на соединения (CommandConnections) нет.
++type ProxyTraffic struct {
++	UplinkTotal   int64
++	DownlinkTotal int64
++	Connections   int32
++	Available     bool
++}
++
++func (s *CommandServer) ProxyTraffic() *ProxyTraffic {
++	uplink, downlink, active, available := s.StartedService.ProxyTraffic()
++	return &ProxyTraffic{UplinkTotal: uplink, DownlinkTotal: downlink, Connections: active, Available: available}
++}
++
+ func (s *CommandServer) NeedWIFIState() bool {
+ 	instance := s.StartedService.Instance()
+ 	if instance == nil || instance.Box() == nil {
+diff --git a/go.mod b/go.mod
+index 18da5e38..c04af106 100644
+--- a/go.mod
++++ b/go.mod
+@@ -12,6 +12,7 @@ require (
+ 	github.com/anytls/sing-anytls v0.0.11
+ 	github.com/apernet/hysteria/core/v2 v2.13.0
+ 	github.com/apernet/hysteria/extras/v2 v2.13.0
++	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
+ 	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
+ 	github.com/caddyserver/zerossl v0.1.5
+ 	github.com/coder/websocket v1.8.14
+@@ -109,7 +110,6 @@ require (
+ 	filippo.io/hpke v0.4.0 // indirect
+ 	github.com/OneOfOne/xxhash v1.2.8 // indirect
+ 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
+-	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c // indirect
+ 	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
+ 	github.com/bahlo/generic-list-go v0.2.0 // indirect
+ 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

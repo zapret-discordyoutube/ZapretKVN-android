@@ -83,7 +83,8 @@ internal class StallDetector(
         if (!keepCooldown) lastAlarmAt = Long.MIN_VALUE
     }
 
-    fun onSample(sample: TrafficSample): StallEvent? {
+    fun onSample(raw: TrafficSample): StallEvent? {
+        val sample = raw.proxyView()
         val now = sample.elapsedRealtimeMillis
         val previousAt = lastSampleAt
         val previousDownlink = lastSampleDownlink

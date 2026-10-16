@@ -286,7 +286,20 @@ internal class CoreSession(
             if (lastTrafficEmitElapsed != Long.MIN_VALUE && now - lastTrafficEmitElapsed < minInterval) return
             lastTrafficEmitElapsed = now
         }
-        trafficFlow.tryEmit(TrafficSample(now, uplinkTotal, downlinkTotal, connections))
+        // Итоги только через прокси — прямой вызов в ядро в момент отсчёта (без подписки
+        // на соединения, I6-05): прямой трафик иначе маскирует мёртвый прокси.
+        val proxy = runCatching { server?.proxyTraffic() }.getOrNull()?.takeIf { it.available }
+        trafficFlow.tryEmit(
+            TrafficSample(
+                now,
+                uplinkTotal,
+                downlinkTotal,
+                connections,
+                proxyUplinkTotal = proxy?.uplinkTotal,
+                proxyDownlinkTotal = proxy?.downlinkTotal,
+                proxyConnections = proxy?.connections,
+            ),
+        )
         controller.recordSessionTraffic(generation, now, uplinkTotal, downlinkTotal)
         speedConsumer?.invoke(downlinkTotal, connections)
     }
