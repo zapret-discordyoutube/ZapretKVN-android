@@ -3,12 +3,16 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/experimental/libbox/browser_socket_protector.go
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,63 @@
 +//go:build with_naive_outbound && unix
 +
 +package libbox
 +
 +import (
++	"context"
++	"net/netip"
++	"strings"
++
 +	"github.com/sagernet/sing-box/common/browserfetch"
 +	E "github.com/sagernet/sing/common/exceptions"
 +)
@@ -33,12 +37,42 @@ index 0000000..1111111
 +		return E.New("browserfetch: socket protect refused")
 +	})
 +}
++
++// BrowserResolver — имена для браузерного транспорта: адреса через запятую,
++// пустая строка — «имени нет» (NXDOMAIN), ошибка — сбой резолва (SERVFAIL).
++// Приложение отвечает доверенным DoH, чтобы имя не уходило открытым DNS.
++type BrowserResolver interface {
++	Resolve(host string) (string, error)
++}
++
++func SetBrowserResolver(resolver BrowserResolver) {
++	if resolver == nil {
++		browserfetch.SetResolver(nil)
++		return
++	}
++	browserfetch.SetResolver(func(_ context.Context, host string) ([]netip.Addr, error) {
++		joined, err := resolver.Resolve(host)
++		if err != nil {
++			return nil, err
++		}
++		var addresses []netip.Addr
++		for _, field := range strings.Split(joined, ",") {
++			if address, parseErr := netip.ParseAddr(strings.TrimSpace(field)); parseErr == nil {
++				addresses = append(addresses, address.Unmap())
++			}
++		}
++		if len(addresses) == 0 {
++			return nil, browserfetch.ErrNameNotFound
++		}
++		return addresses, nil
++	})
++}
 diff --git a/experimental/libbox/browser_socket_protector_stub.go b/experimental/libbox/browser_socket_protector_stub.go
 new file mode 100644
-index 0000000..2222222
+index 0000000..1111111
 --- /dev/null
 +++ b/experimental/libbox/browser_socket_protector_stub.go
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,17 @@
 +//go:build !with_naive_outbound || !unix
 +
 +package libbox
@@ -48,5 +82,11 @@ index 0000000..2222222
 +}
 +
 +// Без Cronet браузерного транспорта нет (BrowserFetch отвечает unavailable),
-+// защищать нечего.
++// защищать и резолвить нечего.
 +func SetBrowserSocketProtector(BrowserSocketProtector) error { return nil }
++
++type BrowserResolver interface {
++	Resolve(host string) (string, error)
++}
++
++func SetBrowserResolver(BrowserResolver) {}
