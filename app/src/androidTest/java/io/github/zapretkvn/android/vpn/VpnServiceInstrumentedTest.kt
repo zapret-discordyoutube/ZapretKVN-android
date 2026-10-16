@@ -1062,15 +1062,14 @@ class VpnServiceInstrumentedTest {
                 )
                 try {
                     VpnTestHooks.reset()
-                    // До терминальной ошибки DNS-200 проходит серию повторов политики восстановления.
+                    // До терминальной ошибки проходит серию повторов политики восстановления.
                     val state = startAndAwaitTerminal(container.vpnController, profile.id, timeoutMillis = 60_000)
                     assertTrue("Dead proxy unexpectedly connected: $state", state is VpnConnectionState.Error)
-                    // Типизированная ошибка health-проверки («DNS через VPN не отвечает», DNS-200)
-                    // не подменяется строкой ядра: свидетельство мёртвого outbound остаётся только
-                    // в technicalDetail (core_evidence=…). Отказ должен прийти быстро, а не по
-                    // общему 20-секундному тайм-ауту проверки (VPN-120).
+                    // Через мёртвый сервер не пришло ни байта, поэтому молчание DNS — вина сервера:
+                    // типизированное «Сервер не отвечает» (VPN-200), а не «DNS через VPN» и не
+                    // перебор режимов DNS. Вердикт выносит проверка, а не общий тайм-аут (VPN-120).
                     val error = state as VpnConnectionState.Error
-                    assertTrue("Unexpected failure: $state", error.message.contains("DNS через VPN"))
+                    assertTrue("Unexpected failure: $state", error.message.contains("Сервер не отвечает"))
                     assertNotEquals("Health check hit the global timeout: $state", "VPN-120", error.code)
                     awaitCompletelyIdle(context)
                 } finally {

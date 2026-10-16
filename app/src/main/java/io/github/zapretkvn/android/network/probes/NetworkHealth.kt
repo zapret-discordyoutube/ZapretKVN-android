@@ -97,6 +97,21 @@ internal class VpnDnsHealthException(
     override val technicalDetail = (cause as? CodedFailure)?.technicalDetail
 }
 
+/**
+ * Через сервер за всё время проверки не пришло ни байта, и DNS молчал: это сервер
+ * (или путь до него), а не режим DNS. Код трафика VPN-200 — стартовый перебор
+ * считает сервер мёртвым и ищет замену; режимы DNS не перебираются.
+ */
+internal class VpnServerSilentException(dnsFailure: Throwable) : IOException(), CodedFailure {
+    override val failureCode = "VPN-200"
+    override val userMessage = "Сервер не отвечает: за время проверки через него не пришло ни одного ответа."
+    // DNS-отказ не кладётся причиной: по ней перебирались бы режимы DNS
+    // (AutomaticDnsFallbackPolicy) вместо замены сервера.
+    override val technicalDetail = "transport_cold dns=" +
+        ((dnsFailure as? CodedFailure)?.failureCode ?: dnsFailure.javaClass.simpleName)
+    override val message: String get() = userMessage
+}
+
 internal class VpnHealthTimeoutException : IllegalStateException(), CodedFailure {
     override val failureCode = "VPN-120"
     override val userMessage = "Проверка VPN не завершилась за 20 секунд."
@@ -570,6 +585,10 @@ class VpnHealthPipeline internal constructor(
                 dnsError = httpsFirst.second
                 httpsError = if (dnsError == null || strictPrivateDns) {
                     https.await()
+                } else if (!transportWarm()) {
+                    // Сервер молчал весь срок: ждать HTTPS бессмысленно, он идёт тем же путём.
+                    settle("cancelled=server_silent", "cancelled=server_silent", VpnHealthStageOutcome.Failed)
+                    throw VpnServerSilentException(dnsError)
                 } else {
                     // Обёртка отличает «HTTPS успешен» (ошибки нет) от «фора истекла» (null).
                     val graced = withTimeoutOrNull(HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS) { listOf(https.await()) }
@@ -587,6 +606,7 @@ class VpnHealthPipeline internal constructor(
             }
             settle("cancelled", "cancelled", VpnHealthStageOutcome.Failed)
             if (strictPrivateDns && dnsError != null) throw StrictPrivateDnsVpnException(dnsError)
+            if (dnsError != null && !transportWarm()) throw VpnServerSilentException(dnsError)
             // HTTPS не прошёл: причину определяет DNS-проба (классификация DNS-200
             // нужна AutomaticDnsFallbackPolicy), иначе остаётся ошибка HTTPS.
             throw dnsError ?: checkNotNull(httpsError)
@@ -1211,8 +1231,12 @@ class VpnHealthPipeline internal constructor(
         /** Фора HTTPS-пробе после окончательного провала DNS-пробы. */
         const val HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS = 1_500L
 
-        /** Запас до общего срока: последняя DNS-проба холодного транспорта успевает дать вердикт. */
-        const val COLD_RETRY_MARGIN_MILLIS = 1_500L
+        /**
+         * Запас до общего срока: новая попытка не начинается позже, чем за длительность
+         * одной полной DNS-пробы (UDP + TCP по 2,5 с), — вердикт выносит проверка, а не
+         * общий тайм-аут VPN-120.
+         */
+        const val COLD_RETRY_MARGIN_MILLIS = 5_500L
 
         /**
          * Strict Private DNS: Android проверяет резолвер заново на каждой новой

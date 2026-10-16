@@ -65,6 +65,16 @@ class StartupFallbackPolicyTest {
     }
 
     @Test
+    fun `silent server during a cold start is replaced, not blamed on dns`() {
+        val silent = io.github.zapretkvn.android.network.probes.VpnServerSilentException(
+            io.github.zapretkvn.android.network.probes.VpnDnsHealthException("DNS через VPN не отвечает: DNS-101."),
+        )
+        assertEquals(HysteriaFailureCode.TARGET_NETWORK_TIMEOUT, code(silent, null))
+        // Перебор режимов DNS ищет DNS-ошибку по цепочке причин: её там быть не должно.
+        assertTrue(silent.causes().none { it is io.github.zapretkvn.android.network.probes.VpnDnsHealthException })
+    }
+
+    @Test
     fun `dns probe failure blames the server only when the core names it`() {
         val dns = VpnDnsHealthException("DNS через VPN не отвечает")
         val untargeted = evidence("sing-box", "", "dns: exchange failed: context deadline exceeded")
