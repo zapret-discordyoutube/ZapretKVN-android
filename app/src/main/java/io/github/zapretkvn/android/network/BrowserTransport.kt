@@ -54,18 +54,20 @@ internal object BrowserTransport {
     @Volatile
     var underlyingNetwork: () -> Network? = { null }
 
-    /** Блокирующий запрос; [IOException] — отказ этого запроса, [UnavailableException] — транспорта нет. */
+    /**
+     * Блокирующий GET; [IOException] — отказ этого запроса, [UnavailableException] —
+     * транспорта нет. Тела запроса нет намеренно: загрузка тела в cronet-go роняла
+     * процесс, ядро такие запросы отвергает.
+     */
     fun fetch(
         url: String,
-        method: String = "GET",
         headers: List<Pair<String, String>> = emptyList(),
-        body: ByteArray? = null,
         timeoutMillis: Int,
         maxBytes: Long,
     ): Response {
         installGuard()
         val request = buildJsonObject {
-            put("method", method)
+            put("method", "GET")
             put("url", url)
             if (headers.isNotEmpty()) {
                 put(
@@ -73,7 +75,6 @@ internal object BrowserTransport {
                     buildJsonArray { headers.forEach { (name, value) -> add(JsonArray(listOf(JsonPrimitive(name), JsonPrimitive(value)))) } },
                 )
             }
-            body?.let { put("body", Base64.getEncoder().encodeToString(it)) }
             put("timeout_ms", timeoutMillis)
             put("max_bytes", maxBytes)
         }

@@ -2,6 +2,8 @@ package io.github.zapretkvn.android
 
 import android.app.Application
 import io.github.zapretkvn.android.diagnostics.AppCrashStore
+import io.github.zapretkvn.android.network.BrowserDohTransport
+import io.github.zapretkvn.networkbootstrap.DohTransports
 import java.io.File
 
 class ZapretApplication : Application() {
@@ -16,8 +18,8 @@ class ZapretApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         crashStore.install()
-        // DoH имён серверов стеком Chromium (BrowserDohTransport) выключен: при запуске
-        // движка на эмуляторе случается SIGSEGV (c23/c24, недетерминированно). Вернуть
-        // после разбора: DohTransports.preferred = BrowserDohTransport
+        // DoH имён серверов — стеком Chromium (как браузер), GET ?dns=. Ядро загружается
+        // только при первом запросе; без Cronet транспорт сам уступит прежнему пути.
+        DohTransports.preferred = BrowserDohTransport
     }
 }
