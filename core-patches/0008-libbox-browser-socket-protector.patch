@@ -1,0 +1,52 @@
+diff --git a/experimental/libbox/browser_socket_protector.go b/experimental/libbox/browser_socket_protector.go
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/experimental/libbox/browser_socket_protector.go
+@@ -0,0 +1,29 @@
++//go:build with_naive_outbound && unix
++
++package libbox
++
++import (
++	"github.com/sagernet/sing-box/common/browserfetch"
++	E "github.com/sagernet/sing/common/exceptions"
++)
++
++// BrowserSocketProtector — Zapret KVN (Android): решение по каждому сокету
++// браузерного транспорта до connect. Пока VPN поднят, приложение защищает сокет
++// от своего же туннеля (VpnService.protect), иначе ничего не делает.
++type BrowserSocketProtector interface {
++	Protect(fd int32) bool
++}
++
++// SetBrowserSocketProtector ставится один раз при старте процесса, до первого
++// BrowserFetch: движок Chromium один на процесс и принимает dialer лишь до запуска.
++func SetBrowserSocketProtector(protector BrowserSocketProtector) error {
++	if protector == nil {
++		return browserfetch.SetSocketControl(nil)
++	}
++	return browserfetch.SetSocketControl(func(fd uintptr) error {
++		if protector.Protect(int32(fd)) {
++			return nil
++		}
++		return E.New("browserfetch: socket protect refused")
++	})
++}
+diff --git a/experimental/libbox/browser_socket_protector_stub.go b/experimental/libbox/browser_socket_protector_stub.go
+new file mode 100644
+index 0000000..2222222
+--- /dev/null
++++ b/experimental/libbox/browser_socket_protector_stub.go
+@@ -0,0 +1,11 @@
++//go:build !with_naive_outbound || !unix
++
++package libbox
++
++type BrowserSocketProtector interface {
++	Protect(fd int32) bool
++}
++
++// Без Cronet браузерного транспорта нет (BrowserFetch отвечает unavailable),
++// защищать нечего.
++func SetBrowserSocketProtector(BrowserSocketProtector) error { return nil }
