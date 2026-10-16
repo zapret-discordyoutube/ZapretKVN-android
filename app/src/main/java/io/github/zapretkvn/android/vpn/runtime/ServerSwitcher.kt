@@ -107,6 +107,24 @@ internal class ServerSwitcher(
         SwitchOutcome.Committed
     }
 
+    /**
+     * Единая точка переключения для ручного выбора, автозамены и резерва при старте:
+     * любой сбой проверки или сохранения превращается в откат с причиной, отмена
+     * пробрасывается.
+     */
+    suspend fun switchOrRollback(
+        session: CoreSession,
+        groupTag: String,
+        outboundTag: String,
+        verifier: SwitchVerifier? = null,
+    ): SwitchOutcome = try {
+        switch(session, groupTag, outboundTag, verifier)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        SwitchOutcome.RolledBack(error)
+    }
+
     /** Вернуть участника группы без сохранения (откат пробы «умной проверки»). */
     suspend fun restore(session: CoreSession, groupTag: String, outboundTag: String): Throwable? =
         session.switchLock.withLock { rollback(session, groupTag, outboundTag) }

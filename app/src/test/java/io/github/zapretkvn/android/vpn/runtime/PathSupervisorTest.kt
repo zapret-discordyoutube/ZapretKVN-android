@@ -194,6 +194,25 @@ class PathSupervisorTest {
     }
 
     @Test
+    fun `smart switches share the automation budget with failover`() {
+        val ids = arrayOf("a", "b", "c")
+        repeat(PathSupervisor.MAX_SWITCHES_PER_WINDOW) {
+            supervisor.recordExternalSwitch()
+            now += PathSupervisor.COMMIT_FENCE_MILLIS
+        }
+        val probe = supervisor.onHint(timeout("a")) { plan("a", "vless", *ids) } as PathDecision.Probe
+        val decision = supervisor.onProbeResult(probe.episode, false, plan("a", "vless", *ids), emptyMap())
+        assertEquals(PathSupervisor.REASON_SWITCH_RATE_LIMIT, (decision as PathDecision.Ignore).reason)
+    }
+
+    @Test
+    fun `external switch fences stale hints like a committed failover`() {
+        supervisor.recordExternalSwitch()
+        val decision = supervisor.onHint(timeout("a")) { plan("a") }
+        assertTrue(decision is PathDecision.Ignore)
+    }
+
+    @Test
     fun `false alarm and stale probe are not unrecovered failures`() {
         val alive = supervisor.onHint(timeout("a")) { plan("a") } as PathDecision.Probe
         val ignored = supervisor.onProbeResult(alive.episode, true, plan("a"), emptyMap()) as PathDecision.Ignore

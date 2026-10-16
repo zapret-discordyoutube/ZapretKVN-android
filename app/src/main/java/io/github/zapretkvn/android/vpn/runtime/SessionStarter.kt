@@ -701,18 +701,12 @@ internal class SessionStarter(
                 ),
             )
             var health: HealthCheckResult? = null
-            val outcome = try {
-                switcher.switch(
-                    session,
-                    plan.groupTag,
-                    candidate.id,
-                    SwitchVerifier { candidateSession, json -> health = verifyServer(candidateSession, json, dnsServer) },
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                SwitchOutcome.RolledBack(error)
-            }
+            val outcome = switcher.switchOrRollback(
+                session,
+                plan.groupTag,
+                candidate.id,
+                SwitchVerifier { candidateSession, json -> health = verifyServer(candidateSession, json, dnsServer) },
+            )
             when (outcome) {
                 SwitchOutcome.Committed -> return candidate.id to checkNotNull(health)
                 is SwitchOutcome.RolledBack -> dead += candidate.id

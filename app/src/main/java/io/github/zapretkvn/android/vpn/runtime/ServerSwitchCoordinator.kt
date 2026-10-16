@@ -141,19 +141,13 @@ internal class ServerSwitchCoordinator(
         timeline("Сервер выбран вручную: ${server(outboundTag)}.")
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
-            val outcome = try {
-                // Та же проверка связи, что у failover: недоступный сервер не остаётся выбранным.
-                switcher.switch(
-                    session,
-                    groupTag,
-                    outboundTag,
-                    SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Throwable) {
-                SwitchOutcome.RolledBack(error)
-            }
+            // Та же проверка связи, что у failover: недоступный сервер не остаётся выбранным.
+            val outcome = switcher.switchOrRollback(
+                session,
+                groupTag,
+                outboundTag,
+                SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
+            )
             postToActor { onSelectDone(session, outboundTag, outcome, startId) }
         }
     }
@@ -289,18 +283,12 @@ internal class ServerSwitchCoordinator(
                 val startedAt = clock()
                 runOperation(Operation.Failover) { previous ->
                     previous?.cancelAndJoin()
-                    val outcome = try {
-                        switcher.switch(
-                            session,
-                            decision.groupTag,
-                            decision.toId,
-                            SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Throwable) {
-                        SwitchOutcome.RolledBack(error)
-                    }
+                    val outcome = switcher.switchOrRollback(
+                        session,
+                        decision.groupTag,
+                        decision.toId,
+                        SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
+                    )
                     postToActor {
                         onSwitchDone(session, decision.episode, decision.fromId, decision.toId, code, startedAt, outcome)
                     }
@@ -325,6 +313,9 @@ internal class ServerSwitchCoordinator(
         when (outcome) {
             SwitchOutcome.Committed -> {
                 supervisor.onSwitchResult(episode, committed = true)
+                // Общий бюджет автоматики: «умная проверка» после автозамены выдерживает свою
+                // паузу и считает переключение в часовом лимите — без второго переключения подряд.
+                smartPolicy.onSwitch()
                 controller.publishDiagnosticWarning(
                     "Выполнено одно автоматическое переключение сервера (${code.name}) за " +
                         "${clock() - startedAt} мс; ядро не перезапускалось.",
@@ -581,6 +572,8 @@ internal class ServerSwitchCoordinator(
         }
 
         override suspend fun onCommitted(session: CoreSession) = ask {
+            // Общий бюджет автоматики: переключение «умной проверки» входит в лимит автозамены.
+            supervisor.recordExternalSwitch()
             controller.clearConnectionIdentity(session.generation)
             onExitChanged(session)
         }

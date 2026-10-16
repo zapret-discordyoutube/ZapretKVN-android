@@ -209,6 +209,17 @@ internal class PathSupervisor(
     }
 
     /**
+     * Переключение не из эпизода супервизора («умная проверка»): входит в общий лимит
+     * переключений автоматики и ставит ту же паузу после переключения.
+     */
+    fun recordExternalSwitch() {
+        val now = monotonicMillis()
+        pruneSwitches(now)
+        switchTimes.addLast(now)
+        commitFenceUntil = now + COMMIT_FENCE_MILLIS
+    }
+
+    /**
      * Серверы, не прошедшие проверку при запуске: сессия начинается на
      * резервном, и надзор не должен вернуть её на заведомо мёртвый.
      */
