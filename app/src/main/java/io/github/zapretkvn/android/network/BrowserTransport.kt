@@ -157,18 +157,19 @@ internal object BrowserTransport {
     }
 }
 
-/** DoH к резолверу по IP через [BrowserTransport]; сеть запроса — основная (сокеты защищены). */
+/**
+ * DoH к резолверу по IP через [BrowserTransport]; сеть запроса — основная (сокеты защищены).
+ * GET `?dns=` (RFC 8484), как у самого Chrome: загрузка тела запроса в cronet-go роняла
+ * процесс (SIGSEGV в UploadDataSink под нагрузкой GC), а GET тела не несёт. ID запроса
+ * не обнуляется: ядро сверяет ID ответа со своим запросом.
+ */
 internal object BrowserDohTransport : DohTransport {
     override fun post(network: Network, server: String, query: ByteArray, timeoutMillis: Int): ByteArray {
+        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(query)
         val response = try {
             BrowserTransport.fetch(
-                url = "https://$server/dns-query",
-                method = "POST",
-                headers = listOf(
-                    "content-type" to "application/dns-message",
-                    "accept" to "application/dns-message",
-                ),
-                body = query,
+                url = "https://$server/dns-query?dns=$encoded",
+                headers = listOf("accept" to "application/dns-message"),
                 timeoutMillis = timeoutMillis,
                 maxBytes = MAX_RESPONSE_BYTES,
             )
