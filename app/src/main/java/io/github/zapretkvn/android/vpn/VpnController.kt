@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import androidx.core.content.ContextCompat
+import io.github.zapretkvn.android.diagnostics.ConnectionFailureKey
+import io.github.zapretkvn.android.diagnostics.CoreLogNoise
 import io.github.zapretkvn.android.diagnostics.AppCrashRecord
 import io.github.zapretkvn.android.diagnostics.AppProcessExitReader
 import io.github.zapretkvn.android.diagnostics.DiagnosticAttemptOutcome
@@ -476,7 +478,9 @@ class VpnController(
         generation: Long,
         entries: List<Pair<Int, String>>,
         ingressDropped: Int,
-    ) = diagnosticsRecorder.publishCoreDiagnosticLogs(generation, entries, ingressDropped)
+        noise: Map<CoreLogNoise, Int> = emptyMap(),
+        failures: Map<ConnectionFailureKey, Int> = emptyMap(),
+    ) = diagnosticsRecorder.publishCoreDiagnosticLogs(generation, entries, ingressDropped, noise, failures)
 
     internal fun publishDiagnosticLogStream(generation: Long, active: Boolean) =
         diagnosticsRecorder.publishDiagnosticLogStream(generation, active)

@@ -143,7 +143,7 @@ class DiagnosticExportInstrumentedTest {
 
             val report = exporter.createReport()
             JsonConfig.parse(report)
-            assertTrue("\"report_version\": 10" in report)
+            assertTrue("\"report_version\": 11" in report)
             assertTrue(BuildConfig.CORE_COMMIT in report)
             assertTrue(BuildConfig.CORE_PATCH_SHA256 in report)
             assertTrue("\"private_dns_mode\"" in report)

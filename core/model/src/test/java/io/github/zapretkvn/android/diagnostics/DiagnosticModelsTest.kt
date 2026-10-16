@@ -56,27 +56,30 @@ class DiagnosticModelsTest {
     }
 
     @Test
-    fun `visible log view is bounded to newest eighty lines`() {
-        val application = (0 until 60).map { DiagnosticLogLine(5, "app-$it", it.toLong()) }
-        val core = (60 until 120).map { DiagnosticLogLine(3, "core-$it", it.toLong()) }
+    fun `visible log view is bounded to the newest lines`() {
+        val half = MAX_DIAGNOSTIC_LOG_LINES / 2 + 20
+        val application = (0 until half).map { DiagnosticLogLine(5, "app-$it", it.toLong()) }
+        val core = (half until 2 * half).map { DiagnosticLogLine(3, "core-$it", it.toLong()) }
 
         val logs = DiagnosticState(applicationLogs = application, coreLogs = core).logs
+        val firstKept = 2 * half - MAX_DIAGNOSTIC_LOG_LINES
 
         assertEquals(MAX_DIAGNOSTIC_LOG_LINES, logs.size)
-        assertFalse(logs.any { it.message == "app-39" })
-        assertTrue(logs.any { it.message == "app-40" })
-        assertEquals("core-119", logs.last().message)
+        assertFalse(logs.any { it.message == "app-${firstKept - 1}" })
+        assertTrue(logs.any { it.message == "app-$firstKept" })
+        assertEquals("core-${2 * half - 1}", logs.last().message)
     }
 
     @Test
     fun `individual ring also drops its oldest lines`() {
-        val result = (0 until 100).fold(emptyList<DiagnosticLogLine>()) { lines, index ->
+        val total = MAX_DIAGNOSTIC_LOG_LINES + 20
+        val result = (0 until total).fold(emptyList<DiagnosticLogLine>()) { lines, index ->
             lines.appendBounded(DiagnosticLogLine(5, "line-$index", index.toLong()))
         }
 
         assertEquals(MAX_DIAGNOSTIC_LOG_LINES, result.size)
         assertEquals("line-20", result.first().message)
-        assertEquals("line-99", result.last().message)
+        assertEquals("line-${total - 1}", result.last().message)
     }
 
     @Test
@@ -180,6 +183,59 @@ class DiagnosticModelsTest {
         assertTrue(batch.entries.any { it.second.contains("received handshake response") })
         assertFalse(batch.entries.any { it.second == "routine one" })
         assertEquals(2, batch.droppedLines)
+    }
+
+    @Test
+    fun `xray startup noise is counted without taking batch slots`() {
+        val collector = CoreDiagnosticBatchCollector(limit = 2)
+        repeat(300) { collector.add(3, "WARN[0000] xray: [Warning] core: Xray 26.3.27 started") }
+        repeat(100) {
+            collector.add(
+                3,
+                "WARN[0000] xray: [Warning] common/errors: The feature gRPC transport (with unnecessary costs, etc.) is deprecated",
+            )
+        }
+        collector.add(2, "ERROR[0046] [1 5ms] connection: open connection to 1.2.3.4:443 using outbound/vless[a]: i/o timeout")
+        val batch = collector.result()
+
+        assertEquals(1, batch.entries.size)
+        assertEquals(0, batch.droppedLines)
+        assertEquals(mapOf(CoreLogNoise.XrayStarted to 300, CoreLogNoise.XrayDeprecated to 100), batch.noise)
+    }
+
+    @Test
+    fun `connection failures are summarised without addresses`() {
+        val ipv6 = ConnectionFailureKey.parse(
+            2,
+            "ERROR[0000] [2837305672 18ms] connection: connection download closed: dial error: " +
+                "dial tcp6 [2001:db8::1]:443: connect: network is unreachable",
+        )
+        assertEquals(ConnectionFailureKey("tcp6", 443, "unknown", "unreachable"), ipv6)
+
+        val proxy = ConnectionFailureKey.parse(
+            2,
+            "ERROR[0046] [1 5.0s] connection: open connection to 203.0.113.5:443 using outbound/vless[node]: i/o timeout",
+        )
+        assertEquals(ConnectionFailureKey("tcp", null, "vless", "timeout"), proxy)
+
+        val udp = ConnectionFailureKey.parse(2, "ERROR connection: dial udp 203.0.113.5:443: connection refused")
+        assertEquals(ConnectionFailureKey("udp", 443, "unknown", "refused"), udp)
+
+        assertEquals(null, ConnectionFailureKey.parse(5, "INFO connection: dial tcp 1.2.3.4:443: i/o timeout"))
+        assertEquals(null, ConnectionFailureKey.parse(2, "ERROR dns: exchange failed"))
+        assertTrue(listOfNotNull(ipv6, proxy, udp).none { "2001" in it.toString() || "203.0" in it.toString() })
+    }
+
+    @Test
+    fun `per connection lines are evicted before ordinary info`() {
+        val info = CoreDiagnosticClassifier.classify(5, "INFO[0001] outbound/vless[a]: outbound connection to x:443")
+        val routine = CoreDiagnosticClassifier.classify(5, "INFO[0045] [1 0ms] router: found package name: app")
+        assertTrue(routine.routine)
+        assertFalse(info.routine)
+        var lines = listOf(info, routine)
+        lines = lines.appendPrioritizedBounded(info.copy(message = "INFO newer"), limit = 2).lines
+        assertTrue(lines.none { it.routine })
+        assertTrue(lines.any { it.message == info.message })
     }
 
     @Test

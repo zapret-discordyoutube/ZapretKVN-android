@@ -817,7 +817,7 @@ internal class DiagnosticLogTap(
 
     fun publish(collector: CoreDiagnosticBatchCollector) {
         val batch = collector.result()
-        controller.publishCoreDiagnosticLogs(generation, batch.entries, batch.droppedLines)
+        controller.publishCoreDiagnosticLogs(generation, batch.entries, batch.droppedLines, batch.noise, batch.failures)
     }
 
     fun disconnected() {

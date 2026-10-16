@@ -1,6 +1,9 @@
 package io.github.zapretkvn.android.vpn
 
 import android.os.SystemClock
+import io.github.zapretkvn.android.diagnostics.MAX_CONNECTION_FAILURE_KINDS
+import io.github.zapretkvn.android.diagnostics.ConnectionFailureKey
+import io.github.zapretkvn.android.diagnostics.CoreLogNoise
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticClassifier
 import io.github.zapretkvn.android.diagnostics.DiagnosticAttemptOutcome
 import io.github.zapretkvn.android.diagnostics.DiagnosticConnectionAttempt
@@ -469,6 +472,8 @@ internal class ConnectionDiagnosticsRecorder(
             it.copy(
                 coreLogs = emptyList(),
                 coreLogStats = DiagnosticLogStats(),
+                coreNoise = emptyMap(),
+                connectionFailures = emptyMap(),
             )
         }
     }
@@ -513,8 +518,23 @@ internal class ConnectionDiagnosticsRecorder(
         generation: Long,
         entries: List<Pair<Int, String>>,
         ingressDropped: Int,
+        noise: Map<CoreLogNoise, Int> = emptyMap(),
+        failures: Map<ConnectionFailureKey, Int> = emptyMap(),
     ) {
         if (generation != currentGeneration()) return
+        if (noise.isNotEmpty() || failures.isNotEmpty()) {
+            mutable.update { current ->
+                val noiseTotal = noise.values.sum()
+                current.copy(
+                    coreNoise = current.coreNoise.merged(noise),
+                    connectionFailures = current.connectionFailures.merged(failures, MAX_CONNECTION_FAILURE_KINDS),
+                    coreLogStats = current.coreLogStats.copy(
+                        receivedLines = current.coreLogStats.receivedLines + noiseTotal,
+                        noiseLines = current.coreLogStats.noiseLines + noiseTotal,
+                    ),
+                )
+            }
+        }
         val attemptSnapshot = mutable.value.connectionAttempt
             ?.takeIf { it.generation == generation }
         val currentStage = attemptSnapshot
@@ -777,6 +797,16 @@ internal class ConnectionDiagnosticsRecorder(
             )
             it.copy(applicationLogs = result.lines, applicationLogStats = result.stats)
         }
+    }
+
+    /** Счётчики складываются; новые ключи сверх [limit] не заводятся — первые отказы важнее. */
+    private fun <K> Map<K, Long>.merged(add: Map<K, Int>, limit: Int = Int.MAX_VALUE): Map<K, Long> {
+        val next = toMutableMap()
+        add.forEach { (key, count) ->
+            val known = next[key]
+            if (known != null) next[key] = known + count else if (next.size < limit) next[key] = count.toLong()
+        }
+        return next
     }
 
     private companion object {

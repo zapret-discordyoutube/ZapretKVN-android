@@ -75,6 +75,8 @@ data class DiagnosticLogLine(
     val source: DiagnosticLogSource = DiagnosticLogSource.Application,
     val category: DiagnosticLogCategory = DiagnosticLogCategory.Other,
     val priority: Boolean = false,
+    /** Строка на каждое соединение (пакет, адрес, вход в TUN): вытесняется первой. */
+    val routine: Boolean = false,
     val repeatCount: Int = 1,
     val lastReceivedAtEpochMillis: Long = receivedAtEpochMillis,
     val attempt: Long? = null,
@@ -115,6 +117,8 @@ data class DiagnosticLogStats(
     val receivedLines: Long = 0,
     val coalescedLines: Long = 0,
     val droppedLines: Long = 0,
+    /** Известный шум ядра ([CoreLogNoise]): не занимает места, только считается. */
+    val noiseLines: Long = 0,
 )
 
 data class DiagnosticLogAppendResult(
@@ -125,6 +129,8 @@ data class DiagnosticLogAppendResult(
 data class CoreDiagnosticBatch(
     val entries: List<Pair<Int, String>>,
     val droppedLines: Int,
+    val noise: Map<CoreLogNoise, Int> = emptyMap(),
+    val failures: Map<ConnectionFailureKey, Int> = emptyMap(),
 )
 
 /** Caps each libbox callback before it can trigger StateFlow allocations. */
@@ -133,8 +139,18 @@ class CoreDiagnosticBatchCollector(
 ) {
     private val retained = ArrayList<Pair<Int, String>>(limit.coerceAtLeast(0))
     private var dropped = 0
+    private val noise = HashMap<CoreLogNoise, Int>()
+    private val failures = HashMap<ConnectionFailureKey, Int>()
 
     fun add(level: Int, rawMessage: String) {
+        // Шум не занимает мест в пачке: сотни одинаковых предупреждений при старте
+        // Xray иначе вытесняли всё полезное ещё до приоритетного буфера.
+        CoreLogNoise.of(rawMessage)?.let { kind ->
+            noise[kind] = (noise[kind] ?: 0) + 1
+            return
+        }
+        // Отказ считается до любого отбора: сводка не теряет его, даже если строку вытеснят.
+        ConnectionFailureKey.parse(level, rawMessage)?.let { key -> failures[key] = (failures[key] ?: 0) + 1 }
         val message = rawMessage.take(MAX_DIAGNOSTIC_LOG_LINE_CHARS)
         val candidate = level to message
         if (retained.size < limit) {
@@ -153,7 +169,7 @@ class CoreDiagnosticBatchCollector(
         dropped++
     }
 
-    fun result(): CoreDiagnosticBatch = CoreDiagnosticBatch(retained.toList(), dropped)
+    fun result(): CoreDiagnosticBatch = CoreDiagnosticBatch(retained.toList(), dropped, noise.toMap(), failures.toMap())
 }
 
 object CoreDiagnosticClassifier {
@@ -175,12 +191,22 @@ object CoreDiagnosticClassifier {
             source = DiagnosticLogSource.Core,
             category = category,
             priority = priority,
+            routine = !priority && ROUTINE_MARKERS.any(normalized::contains),
         )
     }
 
     fun isPotentiallyImportant(level: Int, message: String): Boolean =
         level <= 3 || PRIORITY_MARKERS.any(message.lowercase()::contains)
 
+    /** По строке на каждое соединение: ценны только рядом с отказом, а их сотни. */
+    private val ROUTINE_MARKERS = listOf(
+        "router: found package name",
+        "router: found reserve mapped domain",
+        "inbound connection from",
+        "inbound connection to",
+        "inbound packet connection",
+        "inbound dns packet",
+    )
     private val WIREGUARD_MARKERS = listOf("wireguard", "handshake", "peer(", "peer ")
     private val DNS_MARKERS = listOf("dns", "domain resolver", "rcode")
     private val TUN_MARKERS = listOf("tun", "protect(", "protect fd", "interface monitor")
@@ -310,6 +336,8 @@ data class DiagnosticState(
     val applicationLogStats: DiagnosticLogStats = DiagnosticLogStats(),
     val coreLogs: List<DiagnosticLogLine> = emptyList(),
     val coreLogStats: DiagnosticLogStats = DiagnosticLogStats(),
+    val coreNoise: Map<CoreLogNoise, Long> = emptyMap(),
+    val connectionFailures: Map<ConnectionFailureKey, Long> = emptyMap(),
     val logStreamActive: Boolean = false,
     val network: DiagnosticNetworkState? = null,
     val vpnPolicy: DiagnosticVpnPolicy? = null,
@@ -409,7 +437,7 @@ fun List<DiagnosticLogLine>.appendPrioritizedBounded(
 /** 0 - DEBUG/TRACE, 1 - ordinary INFO/NOTICE, 2 - priority evidence (evicted last). */
 private fun DiagnosticLogLine.evictionRank(): Int = when {
     priority -> 2
-    level >= 6 -> 0
+    routine || level >= 6 -> 0
     else -> 1
 }
 
@@ -431,9 +459,84 @@ private fun DiagnosticLogLine.sameDiagnosticMessage(other: DiagnosticLogLine): B
         stage == other.stage &&
         target == other.target
 
-const val MAX_DIAGNOSTIC_LOG_LINES = 80
+const val MAX_DIAGNOSTIC_LOG_LINES = 200
 const val MAX_DIAGNOSTIC_STARTUP_LOG_LINES = 48
 const val MAX_DIAGNOSTIC_CORE_BATCH_LINES = 48
 const val MAX_DIAGNOSTIC_LOG_LINE_CHARS = 600
 const val MAX_DIAGNOSTIC_ATTEMPTS = 6
 const val MAX_DIAGNOSTIC_STAGES = 48
+
+/**
+ * Известный шум ядра. Встроенный Xray на каждый VLESS/VMess с gRPC/WS пишет при
+ * старте «started» и предупреждения об устаревших транспортах — в большой
+ * подписке сотни строк разом. Они ничего не говорят об отказе.
+ */
+enum class CoreLogNoise(val code: String) {
+    XrayDeprecated("xray_deprecated"),
+    XrayStarted("xray_started"),
+    ;
+
+    companion object {
+        private val STARTED = Regex("""core: xray [0-9.]+ started""")
+
+        fun of(message: String): CoreLogNoise? {
+            val text = message.lowercase()
+            if ("xray:" !in text) return null
+            return when {
+                "deprecated" in text -> XrayDeprecated
+                STARTED.containsMatchIn(text) -> XrayStarted
+                else -> null
+            }
+        }
+    }
+}
+
+/**
+ * Сводка отказов соединений без имён и адресов: сеть, порт, путь и вид ошибки.
+ * По ней видно, что рвётся — UDP 443 через сервер, IPv6 напрямую, таймауты
+ * прокси, — даже когда сами строки уже вытеснены.
+ */
+data class ConnectionFailureKey(
+    val network: String,
+    val port: Int?,
+    val path: String,
+    val error: String,
+) {
+    companion object {
+        private val DIAL = Regex("""\b(tcp6|tcp4|tcp|udp6|udp4|udp)\s+\[?[^\s\]]*\]?:(\d{1,5})\b""")
+        private val OUTBOUND = Regex("""outbound/([a-z0-9_-]+)""")
+
+        fun parse(level: Int, message: String): ConnectionFailureKey? {
+            if (level > 3) return null
+            val text = message.lowercase()
+            if ("connection" !in text && "dial" !in text) return null
+            val error = errorKind(text) ?: return null
+            val dial = DIAL.find(text)
+            val network = dial?.groupValues?.get(1) ?: when {
+                "udp" in text || "packet" in text -> "udp"
+                else -> "tcp"
+            }
+            return ConnectionFailureKey(
+                network = network,
+                port = dial?.groupValues?.get(2)?.toIntOrNull(),
+                path = OUTBOUND.find(text)?.groupValues?.get(1) ?: "unknown",
+                error = error,
+            )
+        }
+
+        private fun errorKind(text: String): String? = when {
+            "network is unreachable" in text || "no route to host" in text -> "unreachable"
+            "timeout" in text || "timed out" in text || "deadline exceeded" in text -> "timeout"
+            "connection refused" in text -> "refused"
+            "connection reset" in text || "reset by peer" in text -> "reset"
+            "eof" in text -> "eof"
+            "broken pipe" in text -> "broken_pipe"
+            "tls" in text || "certificate" in text || "handshake" in text -> "tls"
+            "rejected" in text || "blocked" in text -> "rejected"
+            "error" in text || "failed" in text -> "other"
+            else -> null
+        }
+    }
+}
+
+const val MAX_CONNECTION_FAILURE_KINDS = 32

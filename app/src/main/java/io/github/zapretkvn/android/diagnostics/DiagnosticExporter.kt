@@ -91,7 +91,7 @@ class DiagnosticExporter(
         val (network, decoy) = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 10)
+            put("report_version", 11)
             put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
                 buildJsonObject {
                     val failure = record.failure
@@ -200,6 +200,28 @@ class DiagnosticExporter(
                     put("application", logStatsJson(diagnostics.applicationLogStats, diagnostics.applicationLogs.size))
                     put("core", logStatsJson(diagnostics.coreLogStats, diagnostics.coreLogs.size))
                 },
+            )
+            // Шум ядра только числом: строки не хранятся и ничего не вытесняют.
+            put(
+                "core_noise",
+                buildJsonObject { diagnostics.coreNoise.forEach { (kind, count) -> put(kind.code, count) } },
+            )
+            // Отказы соединений сессии без имён приложений и адресов: что именно рвётся.
+            put(
+                "connection_failures",
+                JsonArray(
+                    diagnostics.connectionFailures.entries
+                        .sortedByDescending { it.value }
+                        .map { (key, count) ->
+                            buildJsonObject {
+                                put("network", key.network)
+                                key.port?.let { put("port", it) }
+                                put("path", key.path)
+                                put("error", key.error)
+                                put("count", count)
+                            }
+                        },
+                ),
             )
             put(
                 "connection_attempt",
@@ -530,6 +552,7 @@ class DiagnosticExporter(
             put("retained_entries", retainedEntries)
             put("coalesced_lines", stats.coalescedLines)
             put("dropped_lines", stats.droppedLines)
+            put("noise_lines", stats.noiseLines)
         }
 
     private fun JsonObjectBuilder.putDiagnosticContext(
