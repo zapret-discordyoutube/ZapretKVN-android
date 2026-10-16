@@ -358,6 +358,16 @@ internal class SessionStarter(
         }
         val underlying = networkBootstrap.network
         val preparedBootstrap = networkBootstrap.value
+        // Strict Private DNS: DoT/DoH Android к резолверу пользователя ведём напрямую,
+        // как без VPN (см. RuntimeConfigOptions.privateDnsRoute).
+        val privateDnsRoute = if (underlying.privateDnsMode == PrivateDnsMode.Strict) {
+            val physical = underlying.network
+            PrivateDnsRoutes.forStrict(underlying.privateDnsServerName) { host ->
+                physical?.getAllByName(host).orEmpty().mapNotNull { it.hostAddress }
+            }
+        } else {
+            null
+        }
         preparedBootstrap.target?.let { target ->
             ServerAddressRedactor.registerAliases(
                 target.hostname,
@@ -386,6 +396,7 @@ internal class SessionStarter(
                     // режима, где DNS узла уже отказал, остаются целиком на Android.
                     androidDnsProxiedViaNode = configuredDnsMode == DnsMode.Android &&
                         underlying.privateDnsMode != PrivateDnsMode.Strict,
+                    privateDnsRoute = privateDnsRoute,
                 ),
             )
         ) {

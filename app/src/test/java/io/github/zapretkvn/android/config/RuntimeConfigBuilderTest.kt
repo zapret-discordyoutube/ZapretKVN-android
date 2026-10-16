@@ -746,6 +746,78 @@ class RuntimeConfigBuilderTest {
         assertEquals(1, rejectsWithCidr.size)
     }
 
+    /**
+     * Strict Private DNS: DoT/DoH Android к резолверу пользователя идёт напрямую,
+     * как без VPN, а не через узел. Правила стоят сразу за перехватом DNS, раньше
+     * пользовательских, и не размножаются при пересборке из runtime JSON.
+     */
+    @Test
+    fun `strict private DNS resolver traffic goes direct right after DNS hijack`() {
+        val options = RuntimeConfigOptions(
+            dnsMode = DnsMode.Android,
+            privateDnsRoute = PrivateDnsRoute(
+                hostname = "Dns.Example.",
+                addresses = listOf("203.0.113.53", "2001:db8::53", "not-an-ip"),
+            ),
+        )
+        val first = RuntimeConfigBuilder.build(validConfig(), options = options) as RuntimeConfigResult.Ready
+        val second = RuntimeConfigBuilder.build(first.json, options = options) as RuntimeConfigResult.Ready
+        for (result in listOf(first, second)) {
+            val root = JsonConfig.parse(result.json) as JsonObject
+            val rules = ((root["route"] as JsonObject)["rules"] as JsonArray).map { it as JsonObject }
+            assertEquals("hijack-dns", rules[0].string("action"))
+            assertEquals("reject", rules[1].string("action"))
+            val byIp = rules[2]
+            assertEquals(
+                listOf("203.0.113.53/32", "2001:db8::53/128"),
+                (byIp["ip_cidr"] as JsonArray).map { (it as JsonPrimitive).content },
+            )
+            assertEquals(listOf("853", "443"), (byIp["port"] as JsonArray).map { (it as JsonPrimitive).content })
+            assertNull("DoH over HTTP/3 must match UDP too", byIp["network"])
+            assertEquals("zapret-private-dns", byIp.string("outbound"))
+            assertEquals("sniff", rules[3].string("action"))
+            assertEquals("853", (rules[3]["port"] as JsonPrimitive).content)
+            assertEquals(
+                listOf("dns.example"),
+                (rules[4]["domain"] as JsonArray).map { (it as JsonPrimitive).content },
+            )
+            assertEquals("zapret-private-dns", rules[4].string("outbound"))
+            assertEquals(1, rules.count { it.string("action") == "sniff" && it["package_name"] == null })
+            assertEquals(2, rules.count { it.string("outbound") == "zapret-private-dns" })
+            val direct = (root["outbounds"] as JsonArray).map { it as JsonObject }
+                .filter { it.string("tag") == "zapret-private-dns" }
+            assertEquals(1, direct.size)
+            assertEquals("direct", direct.single().string("type"))
+        }
+    }
+
+    @Test
+    fun `without strict private DNS no resolver bypass is generated`() {
+        val result = RuntimeConfigBuilder.build(
+            validConfig(),
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Android),
+        ) as RuntimeConfigResult.Ready
+        assertFalse("zapret-private-dns" in result.json)
+        val rules = (((JsonConfig.parse(result.json) as JsonObject)["route"] as JsonObject)["rules"] as JsonArray)
+            .map { it as JsonObject }
+        assertTrue(rules.none { (it["port"] as? JsonPrimitive)?.contentOrNull == "853" })
+    }
+
+    @Test
+    fun `strict private DNS without resolved addresses still routes DoT by name`() {
+        val result = RuntimeConfigBuilder.build(
+            validConfig(),
+            options = RuntimeConfigOptions(
+                dnsMode = DnsMode.FromJson,
+                privateDnsRoute = PrivateDnsRoute("dns.example", emptyList()),
+            ),
+        ) as RuntimeConfigResult.Ready
+        val rules = (((JsonConfig.parse(result.json) as JsonObject)["route"] as JsonObject)["rules"] as JsonArray)
+            .map { it as JsonObject }
+        assertTrue(rules.none { it["ip_cidr"] != null && it.string("outbound") == "zapret-private-dns" })
+        assertEquals(1, rules.count { it.string("outbound") == "zapret-private-dns" && it["domain"] != null })
+    }
+
     @Test
     fun `invalid enabled override fails before core start`() {
         val result = RuntimeConfigBuilder.build(

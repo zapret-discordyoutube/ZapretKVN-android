@@ -79,7 +79,22 @@ data class RuntimeConfigOptions(
      * отказал). Без выбранного proxy флаг ничего не меняет.
      */
     val androidDnsProxiedViaNode: Boolean = true,
+    /**
+     * Strict Private DNS нижней сети: Android шифрует DNS и VPN-сети, отправляя DoT
+     * (853) или DoH (443) к резолверу пользователя внутрь TUN. Этот путь ведёт
+     * напрямую по физической сети — так же, как Android ходит к тому же резолверу
+     * без VPN, и как уже ходит наш local DNS. Через proxy он зависел бы от узла:
+     * узел мог не пропускать 853, а лишний handshake не укладывался в проверку.
+     */
+    val privateDnsRoute: PrivateDnsRoute? = null,
 )
+
+/**
+ * Резолвер strict Private DNS: имя из настроек Android и его адреса, полученные
+ * через нижнюю сеть. Адресов может не быть (резолв не удался) — тогда DoT
+ * распознаётся по SNI.
+ */
+data class PrivateDnsRoute(val hostname: String, val addresses: List<String>)
 
 sealed interface RuntimeConfigResult {
     data class Ready(val json: String) : RuntimeConfigResult {
@@ -268,6 +283,7 @@ object RuntimeConfigBuilder {
             healthCheckPackageName = options.healthCheckPackageName,
             blockedPackages = blockedPackages,
             androidDnsProxiedViaNode = options.androidDnsProxiedViaNode,
+            privateDnsRoute = options.privateDnsRoute,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         return dnsOverlay as RuntimeConfigResult.Ready
@@ -337,6 +353,7 @@ object RuntimeConfigBuilder {
         healthCheckPackageName: String?,
         blockedPackages: Set<String>,
         androidDnsProxiedViaNode: Boolean,
+        privateDnsRoute: PrivateDnsRoute?,
     ): RuntimeConfigResult {
         // «DNS Android» с выбранным proxy отправляет проксируемые имена к DNS узла;
         // без proxy (или с отключённым флагом) все имена остаются на системном DNS.
@@ -459,7 +476,8 @@ object RuntimeConfigBuilder {
             mode in MANAGED_DNS_MODES ||
             fromJsonNeedsAndroidFallback ||
             selectedProxyTag != null ||
-            blockedPackages.isNotEmpty()
+            blockedPackages.isNotEmpty() ||
+            privateDnsRoute != null
         ) {
             val route = (root["route"] as? JsonObject)?.toMutableMap()
                 ?: return invalid("В конфигурации отсутствует route.")
@@ -471,13 +489,17 @@ object RuntimeConfigBuilder {
                 } else {
                     existingRules
                 }
-                ).filterNot { isDnsSinkRejectRule(it, dnsSinkCidrs) }
+                ).filterNot {
+                    isDnsSinkRejectRule(it, dnsSinkCidrs) ||
+                        (it as? JsonObject)?.let(::isPrivateDnsRouteRule) == true
+                }
             val generatedRouteRules = buildList {
                 addAll(packageRejectRules(blockedPackages))
                 if (mode in MANAGED_DNS_MODES || fromJsonNeedsAndroidFallback) {
                     add(hijackDnsRule())
                     dnsSinkRejectRule(dnsSinkCidrs)?.let(::add)
                 }
+                privateDnsRoute?.let { addAll(privateDnsRouteRules(it)) }
                 selectedProxyTag?.let { proxyTag ->
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
                     add(healthProbeRule(proxyTag, healthCheckPackageName))
@@ -495,6 +517,16 @@ object RuntimeConfigBuilder {
             }
             resolverTag?.let { route["default_domain_resolver"] = JsonPrimitive(it) }
             next["route"] = JsonObject(route)
+            if (privateDnsRoute != null) {
+                val outbounds = (root["outbounds"] as? JsonArray)?.toList().orEmpty()
+                    .filterNot { (it as? JsonObject)?.string("tag") == PRIVATE_DNS_DIRECT_TAG }
+                next["outbounds"] = JsonArray(
+                    outbounds + buildJsonObject {
+                        put("type", "direct")
+                        put("tag", PRIVATE_DNS_DIRECT_TAG)
+                    },
+                )
+            }
         }
         val nextObject = JsonObject(next)
         val json = JsonConfig.format(nextObject)
@@ -848,6 +880,63 @@ object RuntimeConfigBuilder {
         put("outbound", proxyTag)
     }
 
+    /**
+     * Сначала адреса резолвера на 853 и 443 (DoH Android 13+ идёт по HTTP/3, поэтому
+     * без ограничения network): правило по IP не требует sniff. DoH делит IP с
+     * сервисами того же оператора (Cloudflare, Google): сайт на этом IP и порту 443
+     * тоже пойдёт напрямую — приемлемая цена, другого признака DoH Android нет.
+     * Затем DoT по SNI: адрес резолвера мог смениться после нашего резолва. Sniff
+     * ограничен портом 853 — только DoT, глобальный sniff остаётся выключенным.
+     */
+    private fun privateDnsRouteRules(route: PrivateDnsRoute): List<JsonObject> = buildList {
+        val cidrs = route.addresses.mapNotNull(::hostCidr).distinct()
+        if (cidrs.isNotEmpty()) {
+            add(
+                buildJsonObject {
+                    put("ip_cidr", JsonArray(cidrs.map(::JsonPrimitive)))
+                    put("port", JsonArray(PRIVATE_DNS_PORTS.map(::JsonPrimitive)))
+                    put("action", "route")
+                    put("outbound", PRIVATE_DNS_DIRECT_TAG)
+                },
+            )
+        }
+        add(
+            buildJsonObject {
+                put("network", "tcp")
+                put("port", PRIVATE_DNS_DOT_PORT)
+                put("action", "sniff")
+                put("sniffer", JsonArray(listOf(JsonPrimitive("tls"))))
+                put("timeout", "1s")
+            },
+        )
+        add(
+            buildJsonObject {
+                put("network", "tcp")
+                put("port", PRIVATE_DNS_DOT_PORT)
+                put("domain", JsonArray(listOf(JsonPrimitive(route.hostname.trim().trimEnd('.').lowercase()))))
+                put("action", "route")
+                put("outbound", PRIVATE_DNS_DIRECT_TAG)
+            },
+        )
+    }
+
+    private fun hostCidr(address: String): String? {
+        val value = address.trim().removePrefix("[").removeSuffix("]").substringBefore('%')
+        return when {
+            value.isEmpty() -> null
+            ':' in value -> "$value/128"
+            value.split('.').let { parts -> parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 } } ->
+                "$value/32"
+            else -> null
+        }
+    }
+
+    private fun isPrivateDnsRouteRule(rule: JsonObject): Boolean =
+        rule.string("outbound") == PRIVATE_DNS_DIRECT_TAG ||
+            rule.string("action") == "sniff" &&
+            (rule["port"] as? JsonPrimitive)?.contentOrNull == PRIVATE_DNS_DOT_PORT.toString() &&
+            rule.keys == setOf("network", "port", "action", "sniffer", "timeout")
+
     private fun isRejectRule(element: JsonElement): Boolean =
         (element as? JsonObject)?.string("action") == "reject"
 
@@ -858,6 +947,7 @@ object RuntimeConfigBuilder {
 
     private fun isGeneratedRouteRule(element: JsonElement): Boolean {
         val rule = element as? JsonObject ?: return false
+        if (isPrivateDnsRouteRule(rule)) return true
         return rule.string("action") == "hijack-dns" &&
             (rule["port"] as? JsonPrimitive)?.contentOrNull == "53"
             || rule.string("action") == "route" &&
@@ -1023,6 +1113,9 @@ object RuntimeConfigBuilder {
     private val MANAGED_DNS_MODES = setOf(DnsMode.Automatic, DnsMode.Android, DnsMode.Secure)
     private val PROXY_DNS_MODES = setOf(DnsMode.Automatic, DnsMode.Secure)
     private const val ANDROID_DNS_TAG = "zapret-android-dns"
+    private const val PRIVATE_DNS_DIRECT_TAG = "zapret-private-dns"
+    private const val PRIVATE_DNS_DOT_PORT = 853
+    private val PRIVATE_DNS_PORTS = listOf(853, 443)
     private const val ANDROID_WIREGUARD_MTU = 1280
     private const val RUNTIME_LOG_LEVEL = "warn"
     private const val NODE_DNS_UDP_TAG = "zapret-node-dns-udp"

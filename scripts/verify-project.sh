@@ -247,6 +247,11 @@ expected = [
     # только после импорта/обновления профиля или при запуске; повторов и циклов нет.
     ("app/src/main/java/io/github/zapretkvn/android/network/geo/ServerCountryStore.kt", 1),
     ("app/src/main/java/io/github/zapretkvn/android/network/probes/HealthProbeRace.kt", 1),
+    # DNS-проба VPN-сети при strict Private DNS: повтор после неудачи со случайной паузой
+    # 0,5-1,5 с, только внутри проверки подключения и в бюджете 12 с (меньше общего 20 с).
+    # Android валидирует резолвер заново на каждой новой VPN-сети; без strict проба одна.
+    # Периодического таймера и повторов вне подключения нет.
+    ("app/src/main/java/io/github/zapretkvn/android/network/probes/StrictPrivateDnsProbe.kt", 1),
     # Проверка доступности сервисов: единственная пауза probeSleep(). Ею делаются случайный сдвиг
     # старта запросов (0-400 мс) и единственный повтор основного запроса через туннель (1,5-3 с).
     # Запуск только по нажатию: автозапуска после подключения нет. Внутри одного запуска, без

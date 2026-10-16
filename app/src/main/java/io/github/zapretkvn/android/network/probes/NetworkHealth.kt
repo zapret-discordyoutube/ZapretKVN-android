@@ -69,6 +69,24 @@ data class HealthCheckResult(
  * CodedFailure с DNS-200: проба идёт через VPN-сеть, поэтому коды системного
  * bootstrap-DNS (DNS-1xx) из cause-цепочки не должны попадать в итоговую ошибку.
  */
+/**
+ * Strict Private DNS не ответил через VPN ни на повторы DNS-пробы, ни в HTTPS-проверке.
+ * Его путь к резолверу уже прямой (как без VPN), поэтому туннель тут ни при чём:
+ * действие за пользователем, повтор лишь множит заметные запросы — код терминальный.
+ */
+internal class StrictPrivateDnsVpnException(cause: Throwable?) : IllegalStateException(
+    "Частный DNS Android не отвечает через VPN. Выключите «Частный DNS» в настройках " +
+        "Android или выберите «Автоматически» и подключитесь снова.",
+    cause,
+), CodedFailure {
+    override val failureCode = "DNS-111"
+    override val userMessage = checkNotNull(message)
+    override val technicalDetail = listOfNotNull(
+        "private_dns=strict",
+        generateSequence(cause) { it.cause }.filterIsInstance<CodedFailure>().firstOrNull()?.failureCode,
+    ).joinToString(" ")
+}
+
 internal class VpnDnsHealthException(
     message: String,
     cause: Throwable? = null,
@@ -329,6 +347,7 @@ class VpnHealthPipeline internal constructor(
         mode: DnsMode,
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily = ProxyIpFamily.Unspecified,
+        strictPrivateDns: Boolean = false,
         onNetworkLease: (Long) -> Unit = {},
         onNetworkLost: () -> Unit = {},
         onStageStarted: (VpnHealthStage) -> Unit = {},
@@ -337,7 +356,8 @@ class VpnHealthPipeline internal constructor(
         val lease = lane?.acquireOrNull(ProbeLane.Owner.Connect, ProbeLane.CONNECT_WAIT_MILLIS)
         try {
             return verifyOnLane(
-                mode, internalDnsServer, proxyIpFamily, onNetworkLease, onNetworkLost, onStageStarted, onStageFinished,
+                mode, internalDnsServer, proxyIpFamily, strictPrivateDns,
+                onNetworkLease, onNetworkLost, onStageStarted, onStageFinished,
             )
         } finally {
             lease?.release()
@@ -348,6 +368,7 @@ class VpnHealthPipeline internal constructor(
         mode: DnsMode,
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily,
+        strictPrivateDns: Boolean,
         onNetworkLease: (Long) -> Unit,
         onNetworkLost: () -> Unit,
         onStageStarted: (VpnHealthStage) -> Unit,
@@ -401,6 +422,7 @@ class VpnHealthPipeline internal constructor(
                             mode = mode,
                             internalDnsServer = internalDnsServer,
                             proxyIpFamily = proxyIpFamily,
+                            strictPrivateDns = strictPrivateDns,
                             deadlineElapsedRealtimeMillis = healthDeadline,
                             onStageStarted = onStageStarted,
                             onStageFinished = onStageFinished,
@@ -419,6 +441,7 @@ class VpnHealthPipeline internal constructor(
         mode: DnsMode,
         internalDnsServer: String,
         proxyIpFamily: ProxyIpFamily,
+        strictPrivateDns: Boolean,
         deadlineElapsedRealtimeMillis: Long,
         onStageStarted: (VpnHealthStage) -> Unit,
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
@@ -454,6 +477,7 @@ class VpnHealthPipeline internal constructor(
                     vpnNetwork,
                     mode,
                     internalDnsServer,
+                    strictPrivateDns,
                     { stage ->
                         if (!decided.get()) {
                             runningDnsStage.set(stage)
@@ -482,7 +506,9 @@ class VpnHealthPipeline internal constructor(
                     deadlineElapsedRealtimeMillis = deadlineElapsedRealtimeMillis,
                     // Если DNS уже провален, долгую спасательную пробу не ждём:
                     // быстрый отказ нужен для перехода на следующий DNS-режим.
-                    rescueAllowed = { !dnsFailed.get() },
+                    // При strict Private DNS следующего режима нет, а HTTPS — сквозная
+                    // проверка того же системного DNS: она и решает.
+                    rescueAllowed = { strictPrivateDns || !dnsFailed.get() },
                     onStageStarted = { stage ->
                         if (!decided.get()) {
                             httpsRunning.set(true)
@@ -530,7 +556,7 @@ class VpnHealthPipeline internal constructor(
                 dnsError = dns.await()
             } else {
                 dnsError = httpsFirst.second
-                httpsError = if (dnsError == null) {
+                httpsError = if (dnsError == null || strictPrivateDns) {
                     https.await()
                 } else {
                     // Обёртка отличает «HTTPS успешен» (ошибки нет) от «фора истекла» (null).
@@ -548,6 +574,7 @@ class VpnHealthPipeline internal constructor(
                 }
             }
             settle("cancelled", "cancelled", VpnHealthStageOutcome.Failed)
+            if (strictPrivateDns && dnsError != null) throw StrictPrivateDnsVpnException(dnsError)
             // HTTPS не прошёл: причину определяет DNS-проба (классификация DNS-200
             // нужна AutomaticDnsFallbackPolicy), иначе остаётся ошибка HTTPS.
             throw dnsError ?: checkNotNull(httpsError)
@@ -563,6 +590,7 @@ class VpnHealthPipeline internal constructor(
         vpnNetwork: Network,
         mode: DnsMode,
         internalDnsServer: String,
+        strictPrivateDns: Boolean,
         onStageStarted: (VpnHealthStage) -> Unit,
         onStageFinished: (VpnHealthStage, VpnHealthStageOutcome, String?) -> Unit,
     ) {
@@ -581,14 +609,20 @@ class VpnHealthPipeline internal constructor(
         // при strict Private DNS и в резерве Auto — системный DNS Android.
         onStageStarted(VpnHealthStage.DnsAndroidProbe)
         try {
-            val addresses = resolver.resolve(
-                vpnNetwork,
-                ManagedHealthProbe.endpoints.first().host,
-            )
+            val host = ManagedHealthProbe.endpoints.first().host
+            var attempts = 1
+            val addresses = if (strictPrivateDns) {
+                StrictPrivateDnsProbe.resolve(
+                    budgetMillis = STRICT_PRIVATE_DNS_PROBE_BUDGET_MILLIS,
+                    onAttempt = { attempts = it },
+                ) { resolver.resolve(vpnNetwork, host) }
+            } else {
+                resolver.resolve(vpnNetwork, host)
+            }
             onStageFinished(
                 VpnHealthStage.DnsAndroidProbe,
                 VpnHealthStageOutcome.Success,
-                "answers=${addresses.size}",
+                "answers=${addresses.size}" + if (attempts > 1) " attempts=$attempts" else "",
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -1151,6 +1185,13 @@ class VpnHealthPipeline internal constructor(
 
         /** Фора HTTPS-пробе после окончательного провала DNS-пробы. */
         const val HTTPS_GRACE_AFTER_DNS_FAILURE_MILLIS = 1_500L
+
+        /**
+         * Strict Private DNS: Android проверяет резолвер заново на каждой новой
+         * VPN-сети, и первый ответ может опоздать. Повторы DNS-пробы — внутри этого
+         * бюджета (меньше [HEALTH_TIMEOUT_MILLIS]).
+         */
+        const val STRICT_PRIVATE_DNS_PROBE_BUDGET_MILLIS = 12_000L
         const val DNS_TIMEOUT_MILLIS = 2_500
         const val HTTPS_ENDPOINT_TIMEOUT_MILLIS = 4_000
         const val HTTPS_PROBE_STAGGER_MILLIS = 1_000L

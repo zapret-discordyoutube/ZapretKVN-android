@@ -57,6 +57,13 @@ object EffectiveOverlaySummary {
             ?.mapNotNull { it as? JsonObject }
             .orEmpty()
             .count(::isHealthProbeRoute)
+        // Прямой путь strict Private DNS: сколько правил и адресов резолвера (сами адреса
+        // и имя резолвера в отчёт не попадают).
+        val privateDnsDirectRules = (route?.get("rules") as? JsonArray)
+            ?.mapNotNull { it as? JsonObject }
+            .orEmpty()
+            .filter { it.string("outbound") == PRIVATE_DNS_DIRECT_TAG }
+        val privateDnsDirectAddresses = privateDnsDirectRules.sumOf { (it["ip_cidr"] as? JsonArray)?.size ?: 0 }
         val managedRuleSets = (route?.get("rule_set") as? JsonArray)
             ?.mapNotNull { it as? JsonObject }
             .orEmpty()
@@ -181,6 +188,8 @@ object EffectiveOverlaySummary {
                 put("route_rule_count", managedRouteRules.size)
                 put("health_probe_route_count", healthProbeRouteCount)
                 put("health_probe_tls_sniff_count", healthProbeTlsSniffCount)
+                put("private_dns_direct_route_count", privateDnsDirectRules.size)
+                put("private_dns_direct_address_count", privateDnsDirectAddresses)
                 put(
                     "route_actions",
                     JsonArray(
@@ -272,6 +281,7 @@ object EffectiveOverlaySummary {
     private val TOKEN = Regex("[a-zA-Z0-9_-]+")
     private const val MANAGED_PREFIX = "zapret-"
     private const val BOOTSTRAP_TAG = "zapret-bootstrap-lkg"
+    private const val PRIVATE_DNS_DIRECT_TAG = "zapret-private-dns"
     private const val ANDROID_DNS_TAG = "zapret-android-dns"
     private const val WIREGUARD_DIRECT_PREFIX = "zapret-wireguard-direct"
 }

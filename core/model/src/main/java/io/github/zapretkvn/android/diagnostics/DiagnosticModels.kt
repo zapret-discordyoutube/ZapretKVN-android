@@ -24,7 +24,7 @@ object DiagnosticFailureClassifier {
         val value = message.lowercase()
         return when {
             "always-on" in value || "lockdown" in value -> DiagnosticErrorType.Permission
-            "private dns" in value -> DiagnosticErrorType.PrivateDns
+            "private dns" in value || "частный dns" in value -> DiagnosticErrorType.PrivateDns
             "vpn-сервер явно отклонил ключ" in value -> DiagnosticErrorType.VpnAccess
             "авторизац" in value || "captive" in value -> DiagnosticErrorType.CaptivePortal
             "разрешение" in value && "vpn" in value -> DiagnosticErrorType.Permission
