@@ -2,6 +2,6 @@
 # The first non-comment line must be "tag: vX.Y.Z" of the release being built;
 # for any other tag the notes fall back to "ADB device tests not verified".
 # Never claim a check that did not run.
-tag: v0.5.16
+tag: v0.5.17
 Release attestation: host-verified; Android emulator (API 37, x86_64) ADB-verified; physical device not verified.
-Эмулятор zapret_api37 на 59665ad: VpnServiceInstrumentedTest (33 из 33), ManualSelection, ManualSelectionUi, PathSupervision, HomeUi и DiagnosticExport пройдены; Hysteria2 через локальный официальный сервер: холодный старт (сервер заморожен на 5 и 8 с при подключении, DNS Android и Автоматически) — 4 из 4 с первой попытки, обрыв основного при живом резервном — замена за 31 с, оба мертвы — «Нет связи с сервером». Физическое устройство не проверялось.
+Эмулятор zapret_api37 на ac3af8f: ServerSortPersistence (сортировка читается новым экземпляром хранилища), VpnServiceInstrumentedTest (33 из 33), ManualSelection, ManualSelectionUi, PathSupervision, HomeUi и DiagnosticExport пройдены; Hysteria2 через локальный официальный сервер: холодный старт 4 из 4 с первой попытки, обрыв основного при живом резервном — замена, оба мертвы — «Нет связи с сервером». Физическое устройство не проверялось.
