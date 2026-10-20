@@ -43,6 +43,8 @@ internal fun directVerdict(path: PathResult): DirectVerdict = when (path.verdict
         blocked = false,
         opens = false,
     )
+    ServiceVerdict.Slow ->
+        DirectVerdict("Открывается медленно", "Ответ идёт дольше пяти секунд", Tone.Warning, blocked = false, opens = true)
     ServiceVerdict.NotMeasured -> DirectVerdict("Не проверено", null, Tone.Neutral, blocked = false, opens = false)
 }
 

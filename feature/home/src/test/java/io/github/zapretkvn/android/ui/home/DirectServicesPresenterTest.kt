@@ -19,6 +19,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DirectServicesPresenterTest {
+    @Test
+    fun slowDirectServiceOpensButIsAWarning() {
+        val verdict = directVerdict(PathResult(ServiceVerdict.Slow, 6_000, null, 1, 1))
+
+        assertEquals("Открывается медленно", verdict.label)
+        assertEquals(Tone.Warning, verdict.tone)
+        assertTrue(verdict.opens)
+        assertFalse(verdict.blocked)
+    }
+
     private val now = 10_000_000L
     private val six = ServiceCatalog.defaults.map { it.id }
 

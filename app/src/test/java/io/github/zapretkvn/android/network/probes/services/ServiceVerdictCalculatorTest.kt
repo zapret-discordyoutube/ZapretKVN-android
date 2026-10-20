@@ -76,6 +76,34 @@ class ServiceVerdictCalculatorTest {
     }
 
     @Test
+    fun anOpeningServiceWithAVerySlowPrimaryRequestIsSlowNotOk() {
+        val v = ServiceVerdictCalculator::verdict
+        val slow = PathOutcome.Ok(ServiceQuality.SLOW_MILLIS, 200)
+        val justFast = PathOutcome.Ok(ServiceQuality.SLOW_MILLIS - 1, 200)
+        val blocked = PathOutcome.Blocked(HttpsProbeFailureKind.Reset)
+
+        assertEquals(ServiceVerdict.Slow, v(slow, emptyList()))
+        assertEquals(ServiceVerdict.Ok, v(justFast, emptyList()))
+        // Закрытое побочное имя тяжелее медленного ответа: сервис открывается не целиком.
+        assertEquals(ServiceVerdict.Partial, v(slow, listOf(blocked)))
+        // Отказ региона по-прежнему главнее скорости.
+        assertEquals(ServiceVerdict.GeoRefused, v(slow, listOf(PathOutcome.GeoRefused(10, 403))))
+    }
+
+    @Test
+    fun slowServiceHasItsOwnHeadlineButStillCountsAsOpening() {
+        val h = ServiceVerdictCalculator::headline
+        val slow = ServiceVerdict.Slow
+
+        assertEquals(Headline.Slow, h(slow, ServiceVerdict.Blocked, RouteHint.Proxy))
+        assertEquals(Headline.Slow, h(slow, ServiceVerdict.NotMeasured, RouteHint.Unknown))
+        // Если по правилам маршрутов сервис идёт напрямую и прямой путь открывается, важнее он.
+        assertEquals(Headline.Direct, h(slow, ServiceVerdict.Ok, RouteHint.Direct))
+        // Медленный прямой путь тоже считается открывающимся.
+        assertEquals(Headline.ViaVpn, h(ServiceVerdict.Ok, slow, RouteHint.Proxy))
+    }
+
+    @Test
     fun headlineMatrix() {
         val h = ServiceVerdictCalculator::headline
         val ok = ServiceVerdict.Ok

@@ -51,12 +51,13 @@ fun headlineLabel(headline: Headline): String = when (headline) {
     Headline.GeoRefused -> "Сервис не работает из региона сервера"
     Headline.Unavailable -> "Недоступно"
     Headline.NotChecked -> "Не проверено"
+    Headline.Slow -> "Медленно"
 }
 
 fun headlineTone(headline: Headline): Tone = when (headline) {
     Headline.ViaVpn, Headline.Both -> Tone.Good
     Headline.Direct -> Tone.Accent
-    Headline.Partial, Headline.GeoRefused -> Tone.Warning
+    Headline.Partial, Headline.GeoRefused, Headline.Slow -> Tone.Warning
     Headline.Unavailable -> Tone.Bad
     Headline.NotChecked -> Tone.Neutral
 }
@@ -75,6 +76,7 @@ fun headlineDetail(snapshot: ServiceSnapshot): String? = when (snapshot.headline
         ServiceVerdict.Blocked, ServiceVerdict.Unreachable -> "Не открывается через сервер VPN"
         else -> "Не открывается"
     }
+    Headline.Slow -> "Открывается, но ответ идёт дольше пяти секунд: сервер или канал перегружены, попробуйте другой сервер"
     Headline.NotChecked -> null
 }
 
@@ -111,7 +113,7 @@ fun servicesCardUi(
     return ServicesCardUi(summary, rows, checking, footnote, hasResults = snapshots.isNotEmpty())
 }
 
-private val OPEN_HEADLINES = setOf(Headline.ViaVpn, Headline.Direct, Headline.Both)
+private val OPEN_HEADLINES = setOf(Headline.ViaVpn, Headline.Direct, Headline.Both, Headline.Slow)
 
 private fun snapshotOf(availability: ServiceAvailability): ServiceSnapshot? = when (availability) {
     ServiceAvailability.NotChecked -> null

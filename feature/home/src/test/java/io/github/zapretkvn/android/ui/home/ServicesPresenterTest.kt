@@ -41,6 +41,20 @@ class ServicesPresenterTest {
         ServiceAvailabilityState(items = mapOf(*pairs))
 
     @Test
+    fun slowServiceIsAWarningWithAHintAndStillCountsAsOpening() {
+        assertEquals("Медленно", headlineLabel(Headline.Slow))
+        assertEquals(Tone.Warning, headlineTone(Headline.Slow))
+        val detail = headlineDetail(snap(ServiceId.YouTube, Headline.Slow, latency = 6_200, tunnel = ServiceVerdict.Slow))
+        assertTrue(detail.orEmpty().contains("попробуйте другой сервер"))
+
+        val state = results(
+            ServiceId.YouTube to ServiceAvailability.Result(snap(ServiceId.YouTube, Headline.Slow, tunnel = ServiceVerdict.Slow)),
+        )
+        val card = servicesCardUi(state, now, services = listOf(ServiceId.YouTube))
+        assertEquals("Все 1 открываются", card.summary)
+    }
+
+    @Test
     fun verdictWordsAndTones() {
         assertEquals("Через VPN", headlineLabel(Headline.ViaVpn))
         assertEquals("Напрямую", headlineLabel(Headline.Direct))

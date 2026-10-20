@@ -50,8 +50,11 @@ internal object ServiceVerdictCalculator {
             return ServiceVerdict.GeoRefused
         }
         return when (primary) {
-            is PathOutcome.Ok ->
-                if (secondary.any { it is PathOutcome.Blocked }) ServiceVerdict.Partial else ServiceVerdict.Ok
+            is PathOutcome.Ok -> when {
+                secondary.any { it is PathOutcome.Blocked } -> ServiceVerdict.Partial
+                primary.millis >= ServiceQuality.SLOW_MILLIS -> ServiceVerdict.Slow
+                else -> ServiceVerdict.Ok
+            }
             is PathOutcome.Blocked -> when (primary.kind) {
                 HttpsProbeFailureKind.Timeout,
                 HttpsProbeFailureKind.Reset,
@@ -66,7 +69,7 @@ internal object ServiceVerdictCalculator {
         }
     }
 
-    private fun ServiceVerdict.opens() = this == ServiceVerdict.Ok || this == ServiceVerdict.Partial
+    private fun ServiceVerdict.opens() = this == ServiceVerdict.Ok || this == ServiceVerdict.Partial || this == ServiceVerdict.Slow
 
     /**
      * Что показать в строке. Туннель по правилам профиля — это то, что видит
@@ -93,6 +96,8 @@ internal object ServiceVerdictCalculator {
             }
             tunnel == ServiceVerdict.Partial ->
                 if (directOpens && route == RouteHint.Direct) Headline.Direct else Headline.Partial
+            tunnel == ServiceVerdict.Slow ->
+                if (directOpens && route == RouteHint.Direct) Headline.Direct else Headline.Slow
             tunnel == ServiceVerdict.NotMeasured ->
                 if (directOpens) Headline.Direct else Headline.Unavailable
             // Туннель не открыл сервис.

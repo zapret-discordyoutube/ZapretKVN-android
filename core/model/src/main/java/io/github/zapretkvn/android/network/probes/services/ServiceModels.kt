@@ -37,6 +37,15 @@ enum class ServiceVerdict(val token: String) {
     Blocked("blocked"),
     Unreachable("unreachable"),
     NotMeasured("not_measured"),
+
+    /** Сервис открывается, но основной запрос шёл дольше [ServiceQuality.SLOW_MILLIS]: сервер или канал перегружены. */
+    Slow("slow"),
+}
+
+/** Порог качества ответа: открывающийся сервис с таким временем основного запроса считается медленным. */
+object ServiceQuality {
+    /** DNS + TCP + TLS + заголовки по туннелю обычно укладываются в 1–2 с; больше пяти — уже заметная проблема. */
+    const val SLOW_MILLIS = 5_000
 }
 
 enum class RouteHint(val token: String) { Proxy("proxy"), Direct("direct"), Unknown("unknown") }
@@ -50,6 +59,7 @@ enum class Headline(val token: String) {
     GeoRefused("geo_refused"),
     Unavailable("unavailable"),
     NotChecked("not_checked"),
+    Slow("slow"),
 }
 
 data class PathResult(
