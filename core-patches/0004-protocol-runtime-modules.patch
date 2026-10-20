@@ -2082,10 +2082,10 @@ index 0000000..b8c14da
 + }
 diff --git a/protocol/xraycore/outbound.go b/protocol/xraycore/outbound.go
 new file mode 100644
-index 0000000..bdd6f36
+index 0000000..ce6646e
 --- /dev/null
 +++ b/protocol/xraycore/outbound.go
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,331 @@
 +// Package xraycore delegates VLESS and its transports to the official Xray core.
 +// sing-box owns routing and all underlying socket creation. No second TUN or
 +// localhost proxy is needed inside Android.
@@ -2210,14 +2210,18 @@ index 0000000..bdd6f36
 +	}, nil
 +}
 +
-+func (h *Outbound) Start(stage adapter.StartStage) error {
-+	if stage != adapter.StartStateStart {
++func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	switch stage {
++	case adapter.StartStateInitialize:
++		scope.Add(h.Close)
 +		return nil
++	case adapter.StartStateStart:
++		if h.closed.Load() {
++			return os.ErrClosed
++		}
++		return h.instance.Start()
 +	}
-+	if h.closed.Load() {
-+		return os.ErrClosed
-+	}
-+	return h.instance.Start()
++	return nil
 +}
 +
 +func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

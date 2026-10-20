@@ -29,12 +29,12 @@ type zapretAuditTransport struct {
 	exchange func(context.Context, *dns.Msg) (*dns.Msg, error)
 }
 
-func (t *zapretAuditTransport) Start(adapter.StartStage) error { return nil }
-func (t *zapretAuditTransport) Close() error                   { return nil }
-func (t *zapretAuditTransport) Type() string                   { return "audit" }
-func (t *zapretAuditTransport) Tag() string                    { return t.tag }
-func (t *zapretAuditTransport) Dependencies() []string         { return nil }
-func (t *zapretAuditTransport) Reset()                         {}
+func (t *zapretAuditTransport) Start(adapter.StartStage, *adapter.Scope) error { return nil }
+func (t *zapretAuditTransport) Close() error                                   { return nil }
+func (t *zapretAuditTransport) Type() string                                   { return "audit" }
+func (t *zapretAuditTransport) Tag() string                                    { return t.tag }
+func (t *zapretAuditTransport) Dependencies() []string                         { return nil }
+func (t *zapretAuditTransport) Reset()                                         {}
 func (t *zapretAuditTransport) Exchange(ctx context.Context, message *dns.Msg) (*dns.Msg, error) {
 	t.calls++
 	return t.exchange(ctx, message)
