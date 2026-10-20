@@ -1,5 +1,5 @@
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 5e8c7998..edd2ca3c 100644
+index f1fb0f0..eecee46 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
 @@ -2,6 +2,8 @@ package daemon
@@ -11,15 +11,15 @@ index 5e8c7998..edd2ca3c 100644
  	"net/netip"
  	"os"
  	"runtime"
-@@ -21,6 +23,7 @@ import (
- 	"github.com/sagernet/sing-box/log"
+@@ -22,6 +24,7 @@ import (
  	"github.com/sagernet/sing-box/protocol/group"
+ 	"github.com/sagernet/sing-box/service/oomkiller"
  	"github.com/sagernet/sing/common"
 +	E "github.com/sagernet/sing/common/exceptions"
  	"github.com/sagernet/sing/common/memory"
  	"github.com/sagernet/sing/common/observable"
  	"github.com/sagernet/sing/service"
-@@ -743,6 +746,196 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
+@@ -751,6 +754,196 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
  	return &emptypb.Empty{}, nil
  }
  
@@ -217,7 +217,7 @@ index 5e8c7998..edd2ca3c 100644
  	s.serviceAccess.RLock()
  	boxService := s.instance
 diff --git a/daemon/started_service.pb.go b/daemon/started_service.pb.go
-index e87da877..7b4836db 100644
+index e87da87..7b4836d 100644
 --- a/daemon/started_service.pb.go
 +++ b/daemon/started_service.pb.go
 @@ -294,6 +294,61 @@ func (ServiceStatus_Type) EnumDescriptor() ([]byte, []int) {
@@ -3565,7 +3565,7 @@ index e87da877..7b4836db 100644
  			NumServices:   1,
  		},
 diff --git a/daemon/started_service.proto b/daemon/started_service.proto
-index 1234ad0b..fa901e35 100644
+index 1234ad0..fa901e3 100644
 --- a/daemon/started_service.proto
 +++ b/daemon/started_service.proto
 @@ -19,6 +19,7 @@ service StartedService {
@@ -3604,7 +3604,7 @@ index 1234ad0b..fa901e35 100644
    string groupTag = 1;
    string outboundTag = 2;
 diff --git a/daemon/started_service_grpc.pb.go b/daemon/started_service_grpc.pb.go
-index 1ce890b3..810142b9 100644
+index 1ce890b..810142b 100644
 --- a/daemon/started_service_grpc.pb.go
 +++ b/daemon/started_service_grpc.pb.go
 @@ -31,6 +31,7 @@ const (
@@ -3834,7 +3834,7 @@ index 1ce890b3..810142b9 100644
  			Handler:       _StartedService_SubscribeConnections_Handler,
 diff --git a/daemon/started_service_relay_probe_test.go b/daemon/started_service_relay_probe_test.go
 new file mode 100644
-index 00000000..ca766810
+index 0000000..ca76681
 --- /dev/null
 +++ b/daemon/started_service_relay_probe_test.go
 @@ -0,0 +1,209 @@
@@ -4048,7 +4048,7 @@ index 00000000..ca766810
 +	}
 +}
 diff --git a/experimental/libbox/command_client.go b/experimental/libbox/command_client.go
-index 5c5ad912..6ef9d5e4 100644
+index 3d28600..134479f 100644
 --- a/experimental/libbox/command_client.go
 +++ b/experimental/libbox/command_client.go
 @@ -7,6 +7,7 @@ import (
@@ -4059,7 +4059,7 @@ index 5c5ad912..6ef9d5e4 100644
  	"sync"
  	"time"
  
-@@ -58,6 +59,24 @@ type CommandClientHandler interface {
+@@ -59,6 +60,24 @@ type CommandClientHandler interface {
  	WriteConnectionEvents(events *ConnectionEvents)
  }
  
@@ -4084,7 +4084,7 @@ index 5c5ad912..6ef9d5e4 100644
  type LogEntry struct {
  	Level   int32
  	Message string
-@@ -579,6 +598,56 @@ func (c *CommandClient) URLTest(outboundTag string) error {
+@@ -608,6 +627,56 @@ func (c *CommandClient) URLTest(outboundTag string) error {
  	return nil
  }
  

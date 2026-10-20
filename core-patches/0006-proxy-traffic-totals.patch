@@ -1,5 +1,5 @@
 diff --git a/common/trafficcontrol/manager.go b/common/trafficcontrol/manager.go
-index d5b6a2b5..cef7ed53 100644
+index 19f6fd0..5e6d9b3 100644
 --- a/common/trafficcontrol/manager.go
 +++ b/common/trafficcontrol/manager.go
 @@ -42,6 +42,9 @@ type Manager struct {
@@ -12,7 +12,7 @@ index d5b6a2b5..cef7ed53 100644
  
  	eventSubscriber *observable.Subscriber[ConnectionEvent]
  	eventObserver   *observable.Observer[ConnectionEvent]
-@@ -110,6 +113,7 @@ func (m *Manager) leave(tracker Tracker) {
+@@ -104,6 +107,7 @@ func (m *Manager) leave(tracker Tracker) {
  		evicted := m.closedConnections.PopFront()
  		m.closedUploadTotal += evicted.Upload.Load()
  		m.closedDownloadTotal += evicted.Download.Load()
@@ -20,7 +20,7 @@ index d5b6a2b5..cef7ed53 100644
  	}
  	m.closedConnections.PushBack(metadataCopy)
  	m.closedConnectionsAccess.Unlock()
-@@ -187,6 +191,52 @@ func (m *Manager) Clear() {
+@@ -181,6 +185,52 @@ func (m *Manager) Clear() {
  	for element := m.closedConnections.Front(); element != nil; element = element.Next() {
  		m.closedUploadTotal += element.Value.Upload.Load()
  		m.closedDownloadTotal += element.Value.Download.Load()
@@ -75,7 +75,7 @@ index d5b6a2b5..cef7ed53 100644
 +}
 diff --git a/common/trafficcontrol/proxy_total_test.go b/common/trafficcontrol/proxy_total_test.go
 new file mode 100644
-index 00000000..1118fda4
+index 0000000..1118fda
 --- /dev/null
 +++ b/common/trafficcontrol/proxy_total_test.go
 @@ -0,0 +1,67 @@
@@ -147,10 +147,10 @@ index 00000000..1118fda4
 +	}
 +}
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 0fa144c0..2502fefb 100644
+index 6ea7e62..a9f75da 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
-@@ -491,6 +491,18 @@ func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server
+@@ -499,6 +499,18 @@ func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server
  	}
  }
  
@@ -170,10 +170,10 @@ index 0fa144c0..2502fefb 100644
  	var status Status
  	status.Memory = memory.Total()
 diff --git a/experimental/libbox/command_server.go b/experimental/libbox/command_server.go
-index 5f62d03d..96541533 100644
+index 5dd456d..e0b2bd5 100644
 --- a/experimental/libbox/command_server.go
 +++ b/experimental/libbox/command_server.go
-@@ -239,6 +239,21 @@ func (s *CommandServer) SetError(message string) {
+@@ -235,6 +235,21 @@ func (s *CommandServer) SetError(message string) {
  	s.StartedService.SetError(E.New(message))
  }
  
@@ -196,7 +196,7 @@ index 5f62d03d..96541533 100644
  	instance := s.StartedService.Instance()
  	if instance == nil || instance.Box() == nil {
 diff --git a/go.mod b/go.mod
-index 18da5e38..c04af106 100644
+index 72afdd2..d4d5065 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -12,6 +12,7 @@ require (

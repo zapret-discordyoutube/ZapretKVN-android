@@ -1,5 +1,5 @@
 diff --git a/common/dialer/resolve.go b/common/dialer/resolve.go
-index 66282674..55a96f17 100644
+index 6628267..55a96f1 100644
 --- a/common/dialer/resolve.go
 +++ b/common/dialer/resolve.go
 @@ -113,8 +113,11 @@ func (d *resolveDialer) DialContext(ctx context.Context, network string, destina
@@ -27,10 +27,10 @@ index 66282674..55a96f17 100644
  
  func (d *resolveDialer) QueryOptions() adapter.DNSQueryOptions {
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 72842ab6..c091b6b9 100644
+index eecee46..6ea7e62 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
-@@ -445,8 +445,10 @@ func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.
+@@ -454,8 +454,10 @@ func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.
  	s.serviceAccess.RLock()
  	boxService := s.instance
  	s.serviceAccess.RUnlock()
@@ -44,7 +44,7 @@ index 72842ab6..c091b6b9 100644
  	return &DefaultLogLevel{Level: LogLevel(boxService.logFactory.Level())}, nil
  }
 diff --git a/go.mod b/go.mod
-index 88b2c086..23fbe16d 100644
+index e11fa39..97bd898 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -85,6 +85,7 @@ require (
@@ -124,13 +124,13 @@ index 88b2c086..23fbe16d 100644
  )
  
 @@ -294,3 +305,5 @@ replace github.com/shtorm-7/go-cache/v2 => github.com/shtorm-7/go-cache/v2 v2.1.
- replace github.com/sagernet/sing => github.com/shtorm-7/sing v0.9.0-beta.4-extended-1.2.1
+ replace github.com/sagernet/sing => github.com/shtorm-7/sing v0.9.7-extended-1.2.1
  
- replace github.com/sagernet/sing-mux => github.com/shtorm-7/sing-mux v0.3.5-extended-1.0.0
+ replace github.com/sagernet/sing-mux => github.com/shtorm-7/sing-mux v0.3.10-extended-1.1.0
 +
 +replace github.com/xtls/xray-core => ./third_party/xray-core
 diff --git a/go.sum b/go.sum
-index 35421a3a..407e9b7f 100644
+index ccf0f5b..365d313 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -74,6 +74,8 @@ github.com/cilium/ebpf v0.16.0/go.mod h1:L7u2Blt2jMM/vLAVgjxluxtBKlz3/GWjB0dMOEn
@@ -258,7 +258,7 @@ index 35421a3a..407e9b7f 100644
  modernc.org/cc/v4 v4.27.3/go.mod h1:3YjcbCqhoTTHPycJDRl2WZKKFj0nwcOIPBfEZK0Hdk8=
  modernc.org/ccgo/v4 v4.32.4 h1:L5OB8rpEX4ZsXEQwGozRfJyJSFHbbNVOoQ59DU9/KuU=
 diff --git a/include/registry.go b/include/registry.go
-index 811906c3..2ecd7712 100644
+index 811906c..2ecd771 100644
 --- a/include/registry.go
 +++ b/include/registry.go
 @@ -49,6 +49,7 @@ import (
@@ -279,7 +279,7 @@ index 811906c3..2ecd7712 100644
  	anytls.RegisterOutbound(registry)
  	registerMASQUEOutbound(registry)
 diff --git a/option/vless.go b/option/vless.go
-index 989bcc65..e4a16f2f 100644
+index 989bcc6..e4a16f2 100644
 --- a/option/vless.go
 +++ b/option/vless.go
 @@ -16,6 +16,7 @@ type VLESSUser struct {
@@ -291,7 +291,7 @@ index 989bcc65..e4a16f2f 100644
  	ServerOptions
  	UUID       string      `json:"uuid"`
 diff --git a/parser/link/vless.go b/parser/link/vless.go
-index f1833669..61cae6ab 100644
+index f183366..61cae6a 100644
 --- a/parser/link/vless.go
 +++ b/parser/link/vless.go
 @@ -21,6 +21,7 @@ func parseVLESSLink(link string) (option.Outbound, error) {
@@ -304,7 +304,7 @@ index f1833669..61cae6ab 100644
  		UTLS:    &option.OutboundUTLSOptions{},
 diff --git a/protocol/hysteria2/audit_boundary_test.go b/protocol/hysteria2/audit_boundary_test.go
 new file mode 100644
-index 00000000..103c1df1
+index 0000000..103c1df
 --- /dev/null
 +++ b/protocol/hysteria2/audit_boundary_test.go
 @@ -0,0 +1,66 @@
@@ -375,7 +375,7 @@ index 00000000..103c1df1
 +	}
 +}
 diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
-index 3ea82556..e4620a60 100644
+index 95cd5f4..10df1b2 100644
 --- a/protocol/hysteria2/outbound.go
 +++ b/protocol/hysteria2/outbound.go
 @@ -51,12 +51,14 @@ var (
@@ -458,7 +458,7 @@ index 3ea82556..e4620a60 100644
  	oldClient := h.client
  	h.client = client
  	h.access.Unlock()
-@@ -218,7 +238,11 @@ func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+@@ -226,7 +246,11 @@ func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
  }
  
  func (h *Outbound) Close() error {
@@ -470,7 +470,7 @@ index 3ea82556..e4620a60 100644
  	client := h.client
  	h.client = closedClient{}
  	h.access.Unlock()
-@@ -300,10 +324,14 @@ func (f *protectedConnFactory) New(net.Addr) (net.PacketConn, error) {
+@@ -308,10 +332,14 @@ func (f *protectedConnFactory) New(net.Addr) (net.PacketConn, error) {
  			conn := f.firstConn
  			f.firstConn = nil
  			f.access.Unlock()
@@ -487,7 +487,7 @@ index 3ea82556..e4620a60 100644
  	}
  	var (
  		conn net.PacketConn
-@@ -363,6 +391,20 @@ func (f *protectedConnFactory) Close() error {
+@@ -371,6 +399,20 @@ func (f *protectedConnFactory) Close() error {
  
  type packetConnOnly struct{ net.PacketConn }
  
@@ -508,7 +508,7 @@ index 3ea82556..e4620a60 100644
  func validateObfs(obfsOptions *option.Hysteria2Obfs) error {
  	if obfsOptions == nil {
  		return nil
-@@ -507,7 +549,7 @@ type hyPacketConn struct {
+@@ -515,7 +557,7 @@ type hyPacketConn struct {
  func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
  	payload, address, err := c.conn.Receive()
  	if err != nil {
@@ -517,7 +517,7 @@ index 3ea82556..e4620a60 100644
  	}
  	n := copy(buffer, payload)
  	return n, M.ParseSocksaddr(address), nil
-@@ -516,7 +558,7 @@ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+@@ -524,7 +566,7 @@ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
  func (c *hyPacketConn) WriteTo(buffer []byte, address net.Addr) (int, error) {
  	err := c.conn.Send(buffer, M.SocksaddrFromNet(address).String())
  	if err != nil {
@@ -527,7 +527,7 @@ index 3ea82556..e4620a60 100644
  	return len(buffer), nil
  }
 diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
-index 6b964ba0..cbbce0e0 100644
+index 6b964ba..cbbce0e 100644
 --- a/protocol/hysteria2/outbound_test.go
 +++ b/protocol/hysteria2/outbound_test.go
 @@ -303,8 +303,8 @@ func testOfficialClientAgainstUpstreamServer(
@@ -543,7 +543,7 @@ index 6b964ba0..cbbce0e0 100644
  	if err != nil {
 diff --git a/protocol/hysteria2/tcp_conn.go b/protocol/hysteria2/tcp_conn.go
 new file mode 100644
-index 00000000..53c3874e
+index 0000000..53c3874
 --- /dev/null
 +++ b/protocol/hysteria2/tcp_conn.go
 @@ -0,0 +1,88 @@
@@ -637,7 +637,7 @@ index 00000000..53c3874e
 +}
 diff --git a/protocol/hysteria2/tcp_conn_test.go b/protocol/hysteria2/tcp_conn_test.go
 new file mode 100644
-index 00000000..29b86f40
+index 0000000..29b86f4
 --- /dev/null
 +++ b/protocol/hysteria2/tcp_conn_test.go
 @@ -0,0 +1,282 @@
@@ -925,10 +925,10 @@ index 00000000..29b86f40
 +}
 diff --git a/protocol/vless/outbound.go b/protocol/vless/outbound.go
 deleted file mode 100644
-index fca1995c..00000000
+index 61a60cc..0000000
 --- a/protocol/vless/outbound.go
 +++ /dev/null
-@@ -1,465 +0,0 @@
+@@ -1,502 +0,0 @@
 -package vless
 -
 -import (
@@ -964,7 +964,11 @@ index fca1995c..00000000
 -	outbound.Register[option.VLESSOutboundOptions](registry, C.TypeVLESS, NewOutbound)
 -}
 -
--var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
+-var (
+-	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+-	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+-	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+-)
 -
 -type Outbound struct {
 -	outbound.Adapter
@@ -1086,7 +1090,11 @@ index fca1995c..00000000
 -}
 -
 -func (h *Outbound) MultiplexEnabled() bool {
--	return h.multiplexDialer != nil
+-	if h.multiplexDialer != nil {
+-		return true
+-	}
+-	multiplexTransport, isMultiplexTransport := h.transport.(adapter.V2RayMultiplexClientTransport)
+-	return isMultiplexTransport && multiplexTransport.MultiplexEnabled()
 -}
 -
 -func (h *Outbound) InterfaceUpdated(ctx context.Context) {
@@ -1098,8 +1106,37 @@ index fca1995c..00000000
 -	}
 -}
 -
--func (h *Outbound) Close() error {
--	return common.Close(common.PtrOrNil(h.multiplexDialer), h.transport)
+-func (h *Outbound) SetKeepIdleConnections(keep bool) {
+-	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+-	if isTransportKeeper {
+-		transportKeeper.SetKeepIdleConnections(keep)
+-	}
+-	if h.multiplexDialer != nil {
+-		h.multiplexDialer.SetKeepIdleConnections(keep)
+-	}
+-}
+-
+-func (h *Outbound) CloseIdleConnections() {
+-	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+-	if isTransportKeeper {
+-		transportKeeper.CloseIdleConnections()
+-	}
+-	if h.multiplexDialer != nil {
+-		h.multiplexDialer.CloseIdleConnections()
+-	}
+-}
+-
+-func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+-	if stage != adapter.StartStateInitialize {
+-		return nil
+-	}
+-	if h.transport != nil {
+-		scope.Add(h.transport.Close)
+-	}
+-	if h.multiplexDialer != nil {
+-		scope.Add(h.multiplexDialer.Close)
+-	}
+-	return nil
 -}
 -
 -type vlessDialer Outbound
@@ -1396,7 +1433,7 @@ index fca1995c..00000000
 -}
 diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
 new file mode 100644
-index 00000000..94bea8cc
+index 0000000..94bea8c
 --- /dev/null
 +++ b/protocol/xraycore/config.go
 @@ -0,0 +1,348 @@
@@ -1750,7 +1787,7 @@ index 00000000..94bea8cc
 +}
 diff --git a/protocol/xraycore/config_test.go b/protocol/xraycore/config_test.go
 new file mode 100644
-index 00000000..a1a84944
+index 0000000..a1a8494
 --- /dev/null
 +++ b/protocol/xraycore/config_test.go
 @@ -0,0 +1,257 @@
@@ -2013,7 +2050,7 @@ index 00000000..a1a84944
 +}
 diff --git a/protocol/xraycore/logger.patch b/protocol/xraycore/logger.patch
 new file mode 100644
-index 00000000..b8c14daf
+index 0000000..b8c14da
 --- /dev/null
 +++ b/protocol/xraycore/logger.patch
 @@ -0,0 +1,26 @@
@@ -2045,7 +2082,7 @@ index 00000000..b8c14daf
 + }
 diff --git a/protocol/xraycore/outbound.go b/protocol/xraycore/outbound.go
 new file mode 100644
-index 00000000..bdd6f36f
+index 0000000..bdd6f36
 --- /dev/null
 +++ b/protocol/xraycore/outbound.go
 @@ -0,0 +1,327 @@
@@ -2378,7 +2415,7 @@ index 00000000..bdd6f36f
 +}
 diff --git a/protocol/xraycore/outbound_test.go b/protocol/xraycore/outbound_test.go
 new file mode 100644
-index 00000000..e222a99c
+index 0000000..e222a99
 --- /dev/null
 +++ b/protocol/xraycore/outbound_test.go
 @@ -0,0 +1,93 @@
@@ -2477,7 +2514,7 @@ index 00000000..e222a99c
 +}
 diff --git a/protocol/xraycore/prepare.sh b/protocol/xraycore/prepare.sh
 new file mode 100644
-index 00000000..2ce5a42b
+index 0000000..2ce5a42
 --- /dev/null
 +++ b/protocol/xraycore/prepare.sh
 @@ -0,0 +1,22 @@

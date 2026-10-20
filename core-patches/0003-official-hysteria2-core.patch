@@ -1,5 +1,5 @@
 diff --git a/common/dialer/resolve.go b/common/dialer/resolve.go
-index 21fe38d5..66282674 100644
+index 21fe38d..6628267 100644
 --- a/common/dialer/resolve.go
 +++ b/common/dialer/resolve.go
 @@ -3,6 +3,7 @@ package dialer
@@ -61,7 +61,7 @@ index 21fe38d5..66282674 100644
  	return d.queryOptions
  }
 diff --git a/go.mod b/go.mod
-index ff070258..88b2c086 100644
+index b89be75..e11fa39 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -9,12 +9,14 @@ require (
@@ -123,7 +123,7 @@ index ff070258..88b2c086 100644
  	modernc.org/libc v1.72.0 // indirect
  	modernc.org/mathutil v1.7.1 // indirect
 diff --git a/go.sum b/go.sum
-index f73992ad..35421a3a 100644
+index 2759f02..ccf0f5b 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -44,6 +44,12 @@ github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAf
@@ -176,10 +176,10 @@ index f73992ad..35421a3a 100644
  go4.org/mem v0.0.0-20240501181205-ae6ca9944745/go.mod h1:reUoABIJ9ikfM5sgtSF3Wushcza7+WeD01VB9Lirh3g=
  go4.org/netipx v0.0.0-20231129151722-fdeea329fbba h1:0b9z3AuHCjxk0x/opv64kcgZLBseWJUpBw5I82+2U4M=
 diff --git a/option/hysteria2.go b/option/hysteria2.go
-index 68832de9..edc3ee35 100644
+index 237109b..83f3535 100644
 --- a/option/hysteria2.go
 +++ b/option/hysteria2.go
-@@ -202,14 +202,16 @@ type Hysteria2MasqueradeString struct {
+@@ -210,14 +210,16 @@ type Hysteria2MasqueradeString struct {
  type Hysteria2OutboundOptions struct {
  	DialerOptions
  	ServerOptions
@@ -205,7 +205,7 @@ index 68832de9..edc3ee35 100644
  	QUICOptions
  	BBRProfile          string          `json:"bbr_profile,omitempty" enum:"standard,conservative,aggressive"`
 diff --git a/parser/link/hysteria2.go b/parser/link/hysteria2.go
-index a825118d..e0014878 100644
+index a825118..e001487 100644
 --- a/parser/link/hysteria2.go
 +++ b/parser/link/hysteria2.go
 @@ -1,61 +1,472 @@
@@ -722,7 +722,7 @@ index a825118d..e0014878 100644
 +}
 diff --git a/parser/link/hysteria2_test.go b/parser/link/hysteria2_test.go
 new file mode 100644
-index 00000000..98923720
+index 0000000..9892372
 --- /dev/null
 +++ b/parser/link/hysteria2_test.go
 @@ -0,0 +1,99 @@
@@ -826,7 +826,7 @@ index 00000000..98923720
 +	}
 +}
 diff --git a/parser/link/parser.go b/parser/link/parser.go
-index 092df20c..f34c2ccc 100644
+index 092df20..f34c2cc 100644
 --- a/parser/link/parser.go
 +++ b/parser/link/parser.go
 @@ -16,7 +16,7 @@ func ParseSubscriptionLink(link string) (option.Outbound, error) {
@@ -839,10 +839,10 @@ index 092df20c..f34c2ccc 100644
  	case "tuic":
  		return parseTuicLink(link)
 diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
-index 6576bf9f..3ea82556 100644
+index 14e761f..95cd5f4 100644
 --- a/protocol/hysteria2/outbound.go
 +++ b/protocol/hysteria2/outbound.go
-@@ -1,192 +1,186 @@
+@@ -1,34 +1,41 @@
  package hysteria2
  
  import (
@@ -873,7 +873,6 @@ index 6576bf9f..3ea82556 100644
  	C "github.com/sagernet/sing-box/constant"
  	"github.com/sagernet/sing-box/log"
  	"github.com/sagernet/sing-box/option"
--	"github.com/sagernet/sing-box/protocol/tuic"
 -	qtls "github.com/sagernet/sing-quic"
 -	"github.com/sagernet/sing-quic/hysteria"
 -	"github.com/sagernet/sing-quic/hysteria2"
@@ -894,12 +893,12 @@ index 6576bf9f..3ea82556 100644
  func RegisterOutbound(registry *outbound.Registry) {
  	outbound.Register[option.Hysteria2OutboundOptions](registry, C.TypeHysteria2, NewOutbound)
  }
- 
+@@ -36,161 +43,144 @@ func RegisterOutbound(registry *outbound.Registry) {
  var (
--	_ adapter.Outbound                = (*tuic.Outbound)(nil)
--	_ adapter.InterfaceUpdateListener = (*tuic.Outbound)(nil)
-+	_ adapter.Outbound                = (*Outbound)(nil)
-+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+ 	_ adapter.Outbound                = (*Outbound)(nil)
+ 	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+-	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+-	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
  )
  
 +// Outbound keeps sing-box in charge of TUN, routing and Android socket
@@ -919,7 +918,6 @@ index 6576bf9f..3ea82556 100644
  }
  
 -func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
--	options.UDPFragmentDefault = true
 +func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
 +	var err error
 +	options, err = applyHysteria2URI(options)
@@ -965,10 +963,13 @@ index 6576bf9f..3ea82556 100644
 +	if _, err := upstreamTLSConfig(ctx, options); err != nil {
 +		return nil, err
  	}
+-	realmSTUNServersIsDomain := options.Realm != nil && options.Realm.STUNServersIsDomain()
 -	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
--		Context:        ctx,
--		Options:        options.DialerOptions,
--		RemoteIsDomain: options.ServerIsDomain(),
+-		Context:          ctx,
+-		Options:          options.DialerOptions,
+-		RemoteIsDomain:   options.ServerIsDomain() || realmSTUNServersIsDomain,
+-		ResolverOnDetour: realmSTUNServersIsDomain,
+-		NewDialer:        realmSTUNServersIsDomain,
 -	})
 +	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
  	if err != nil {
@@ -976,11 +977,12 @@ index 6576bf9f..3ea82556 100644
  	}
 -	var realmOptions *realm.Options
 -	if options.Realm != nil {
--		queryOptions, err := adapter.DNSQueryOptionsFrom(ctx, options.DialerOptions.DomainResolver)
--		if err != nil {
--			return nil, err
+-		var queryOptions adapter.DNSQueryOptions
+-		if realmSTUNServersIsDomain {
+-			queryOptions = outboundDialer.(dialer.ResolveDialer).QueryOptions()
 -		}
--		httpClientTransport, err := service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))
+-		var httpClientTransport adapter.HTTPTransport
+-		httpClientTransport, err = service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))
 -		if err != nil {
 -			return nil, E.Cause(err, "create realm http client")
 -		}
@@ -1069,7 +1071,9 @@ index 6576bf9f..3ea82556 100644
 +func applyHysteria2URI(options option.Hysteria2OutboundOptions) (option.Hysteria2OutboundOptions, error) {
 +	if strings.TrimSpace(options.URI) == "" {
 +		return options, nil
-+	}
+ 	}
+-	if options.Server != "" || options.ServerPort != 0 || len(options.ServerPorts) > 0 {
+-		return "", tlsOptions, E.New("realm conflicts with server, server_port, and server_ports")
 +	parsed, err := linkparser.ParseSubscriptionLink(options.URI)
 +	if err != nil {
 +		return options, E.New("invalid Hysteria2 URI")
@@ -1077,9 +1081,7 @@ index 6576bf9f..3ea82556 100644
 +	parsedOptions, ok := parsed.Options.(*option.Hysteria2OutboundOptions)
 +	if !ok {
 +		return options, E.New("invalid Hysteria2 URI options")
- 	}
--	if options.Server != "" || options.ServerPort != 0 || len(options.ServerPorts) > 0 {
--		return "", tlsOptions, E.New("realm conflicts with server, server_port, and server_ports")
++	}
 +	// URI transport fields are authoritative; retain native dialer/TUN and
 +	// TLS material fields from JSON so Android protection remains in charge.
 +	options.Server = parsedOptions.Server
@@ -1157,7 +1159,7 @@ index 6576bf9f..3ea82556 100644
  	case N.NetworkUDP:
  		conn, err := h.ListenPacket(ctx, destination)
  		if err != nil {
-@@ -200,13 +194,335 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
+@@ -204,31 +194,343 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination
  
  func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
  	h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
@@ -1186,15 +1188,28 @@ index 6576bf9f..3ea82556 100644
 +	_ = oldClient.Close()
  }
  
- func (h *Outbound) Close() error {
--	return h.client.CloseWithError(os.ErrClosed)
+-func (h *Outbound) MultiplexEnabled() bool {
+-	return true
++func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	if stage != adapter.StartStateInitialize {
++		return nil
++	}
++	scope.Add(h.Close)
++	return nil
+ }
+ 
+-func (h *Outbound) SetKeepIdleConnections(keep bool) {
+-	h.client.SetKeepIdleConnections(keep)
++func (h *Outbound) Close() error {
 +	h.access.Lock()
 +	client := h.client
 +	h.client = closedClient{}
 +	h.access.Unlock()
 +	return client.Close()
-+}
-+
+ }
+ 
+-func (h *Outbound) CloseIdleConnections() {
+-	h.client.CloseIdleConnections()
 +type closedClient struct{}
 +
 +func (closedClient) TCP(string) (net.Conn, error)     { return nil, os.ErrClosed }
@@ -1211,8 +1226,10 @@ index 6576bf9f..3ea82556 100644
 +	hopIntervalMax time.Duration
 +	obfs           *option.Hysteria2Obfs
 +	access         sync.Mutex
-+}
-+
+ }
+ 
+-func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+-	if stage != adapter.StartStateInitialize {
 +func newProtectedConnFactory(ctx context.Context, outboundDialer N.Dialer, options option.Hysteria2OutboundOptions) (*protectedConnFactory, net.Addr, error) {
 +	destination := options.ServerOptions.Build()
 +	var (
@@ -1324,8 +1341,11 @@ index 6576bf9f..3ea82556 100644
 +	f.access.Lock()
 +	defer f.access.Unlock()
 +	if f.firstConn == nil {
-+		return nil
-+	}
+ 		return nil
+ 	}
+-	scope.Add(func() error {
+-		return h.client.CloseWithError(os.ErrClosed)
+-	})
 +	err := f.firstConn.Close()
 +	f.firstConn = nil
 +	return err
@@ -1360,8 +1380,8 @@ index 6576bf9f..3ea82556 100644
 +	if typeName != "gecko" && (gecko.MinPacketSize != 0 || gecko.MaxPacketSize != 0) {
 +		return E.New("min_packet_size/max_packet_size are only valid for gecko")
 +	}
-+	return nil
-+}
+ 	return nil
+ }
 +
 +func upstreamTLSConfig(ctx context.Context, options option.Hysteria2OutboundOptions) (hyclient.TLSConfig, error) {
 +	tlsOptions := options.TLS
@@ -1472,7 +1492,7 @@ index 6576bf9f..3ea82556 100644
 +
 +type hyPacketConn struct {
 +	conn hyclient.HyUDPConn
- }
++}
 +
 +func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
 +	payload, address, err := c.conn.Receive()
@@ -1498,7 +1518,7 @@ index 6576bf9f..3ea82556 100644
 +func (c *hyPacketConn) SetWriteDeadline(time.Time) error { return nil }
 diff --git a/protocol/hysteria2/outbound_test.go b/protocol/hysteria2/outbound_test.go
 new file mode 100644
-index 00000000..6b964ba0
+index 0000000..6b964ba
 --- /dev/null
 +++ b/protocol/hysteria2/outbound_test.go
 @@ -0,0 +1,444 @@

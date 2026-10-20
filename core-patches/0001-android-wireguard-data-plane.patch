@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index 23092463..ff070258 100644
+index 54b8335..b89be75 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -105,6 +105,7 @@ require (
@@ -19,7 +19,7 @@ index 23092463..ff070258 100644
  	github.com/opencontainers/image-spec v1.1.1 // indirect
  	github.com/panjf2000/ants/v2 v2.12.0 // indirect
 diff --git a/go.sum b/go.sum
-index f456520e..f73992ad 100644
+index 3cd88bc..2759f02 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -32,6 +32,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V
@@ -41,10 +41,10 @@ index f456520e..f73992ad 100644
  github.com/mholt/acmez/v3 v3.1.6/go.mod h1:5nTPosTGosLxF3+LU4ygbgMRFDhbAVpqMI4+a4aHLBY=
  github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
 diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
-index c2263a74..e31d0e1a 100644
+index bcfa042..cae06d9 100644
 --- a/protocol/wireguard/endpoint.go
 +++ b/protocol/wireguard/endpoint.go
-@@ -205,6 +205,9 @@ func (w *Endpoint) updateBind(ctx context.Context) {
+@@ -208,6 +208,9 @@ func (w *Endpoint) updateBind(ctx context.Context) {
  }
  
  func (w *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
@@ -54,7 +54,7 @@ index c2263a74..e31d0e1a 100644
  	return adapter.PreMatchFlow
  }
  
-@@ -364,5 +367,5 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
+@@ -367,5 +370,5 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
  	if !w.started.Load() {
  		return false
  	}
@@ -63,7 +63,7 @@ index c2263a74..e31d0e1a 100644
  }
 diff --git a/transport/wireguard/android_client_bind.go b/transport/wireguard/android_client_bind.go
 new file mode 100644
-index 00000000..5c151c82
+index 0000000..5c151c8
 --- /dev/null
 +++ b/transport/wireguard/android_client_bind.go
 @@ -0,0 +1,231 @@
@@ -300,7 +300,7 @@ index 00000000..5c151c82
 +func (e androidEndpoint) SrcIP() netip.Addr { return netip.Addr{} }
 diff --git a/transport/wireguard/android_client_bind_test.go b/transport/wireguard/android_client_bind_test.go
 new file mode 100644
-index 00000000..5a835582
+index 0000000..5a83558
 --- /dev/null
 +++ b/transport/wireguard/android_client_bind_test.go
 @@ -0,0 +1,130 @@
@@ -436,7 +436,7 @@ index 00000000..5a835582
 +func (a testAddress) String() string  { return string(a) }
 diff --git a/transport/wireguard/android_engine.go b/transport/wireguard/android_engine.go
 new file mode 100644
-index 00000000..027a215c
+index 0000000..027a215
 --- /dev/null
 +++ b/transport/wireguard/android_engine.go
 @@ -0,0 +1,123 @@
@@ -564,7 +564,7 @@ index 00000000..027a215c
 +	return err
 +}
 diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
-index a2108279..62702e8f 100644
+index 6bbaba9..af7f4cf 100644
 --- a/transport/wireguard/endpoint.go
 +++ b/transport/wireguard/endpoint.go
 @@ -8,6 +8,7 @@ import (
@@ -595,7 +595,7 @@ index a2108279..62702e8f 100644
  	}, nil
  }
  
-@@ -161,8 +164,20 @@ func (e *Endpoint) Start(postStart bool) error {
+@@ -161,11 +164,23 @@ func (e *Endpoint) Start(postStart bool) error {
  			e.options.Logger.Error(fmt.Sprintf(strings.ToLower(format), args...))
  		},
  	}
@@ -615,30 +615,31 @@ index a2108279..62702e8f 100644
 +		e.tunDevice.SetDevice(sagerDevice)
 +		wgDevice = sagerDevice
 +	}
- 	var ipcConf strings.Builder
- 	ipcConf.WriteString(e.ipcConf)
- 	if e.options.Amnezia != nil {
-@@ -248,13 +263,17 @@ func (e *Endpoint) Start(postStart bool) error {
+ 	domainPeers := make(map[device.NoisePublicKey]*peerConfig)
+ 	for peerIndex, peer := range e.peers {
+-		if !peer.destination.IsDomain() {
++		if e.androidEngine || !peer.destination.IsDomain() {
+ 			continue
+ 		}
+ 		var publicKey device.NoisePublicKey
+@@ -177,7 +192,7 @@ func (e *Endpoint) Start(postStart bool) error {
+ 		domainPeers[publicKey] = &e.peers[peerIndex]
+ 	}
+ 	if len(domainPeers) > 0 {
+-		wgDevice.SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
++		wgDevice.(*device.Device).SetEndpointResolverFunc(func(publicKey device.NoisePublicKey) ([]conn.Endpoint, error) {
+ 			peer, found := domainPeers[publicKey]
+ 			if !found {
+ 				return nil, nil
+@@ -289,15 +304,47 @@ func (e *Endpoint) Start(postStart bool) error {
  		wgDevice.Close()
  		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
  	}
 +	if activator, isAndroidEngine := wgDevice.(androidEngineActivator); isAndroidEngine {
 +		activator.activate()
 +	}
- 	for _, peer := range e.peers {
--		if !peer.destination.IsDomain() {
-+		if e.androidEngine || !peer.destination.IsDomain() {
- 			continue
- 		}
-+		sagerDevice := wgDevice.(*device.Device)
- 		var publicKey device.NoisePublicKey
- 		common.Must(publicKey.FromHex(peer.publicKeyHex))
--		wgPeer, found := wgDevice.LookupActivePeer(publicKey)
-+		wgPeer, found := sagerDevice.LookupActivePeer(publicKey)
- 		if !found {
- 			wgDevice.Close()
- 			return E.New("missing configured peer: ", peer.destination)
-@@ -281,10 +300,39 @@ func (e *Endpoint) Start(postStart bool) error {
+ 	e.device = wgDevice
+ 	e.pause = service.FromContext[pause.Manager](e.options.Context)
  	if e.pause != nil {
  		e.pauseCallback = e.pause.RegisterCallback(e.onPauseUpdated)
  	}
@@ -646,9 +647,9 @@ index a2108279..62702e8f 100644
 +	if sagerDevice, isSagerDevice := wgDevice.(*device.Device); isSagerDevice {
 +		e.allowedIPs = sagerDevice.AllowedIPs()
 +	}
-+	return nil
-+}
-+
+ 	return nil
+ }
+ 
 +// resolveAndroidPeers pins domain peers to one resolved address. The official
 +// engine used on Android has no per-peer endpoint resolver, so the address is
 +// chosen once per start, as it was before sing-box 1.14.
@@ -666,9 +667,9 @@ index a2108279..62702e8f 100644
 +		}
 +		e.peers[peerIndex].endpoint = netip.AddrPortFrom(addresses[0], peer.destination.Port)
 +	}
- 	return nil
- }
- 
++	return nil
++}
++
 +// SupportsFlow reports whether TUN packets may be written straight into the
 +// engine. Only the sagernet engine implements InputPackets; the Android
 +// official engine keeps the stack data plane.
@@ -679,7 +680,7 @@ index a2108279..62702e8f 100644
  func (e *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
  	if !destination.Addr.IsValid() {
  		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
-@@ -324,6 +372,14 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
+@@ -337,6 +384,14 @@ func (e *Endpoint) Lookup(address netip.Addr) *device.Peer {
  	return e.allowedIPs.LookupFromPacket(netip.Addr{}, address, nil)
  }
  
@@ -695,7 +696,7 @@ index a2108279..62702e8f 100644
  	if e.device == nil {
  		return nil
 diff --git a/transport/wireguard/port.go b/transport/wireguard/port.go
-index f410bad5..89707dbf 100644
+index f410bad..89707db 100644
 --- a/transport/wireguard/port.go
 +++ b/transport/wireguard/port.go
 @@ -19,8 +19,8 @@ func (e *Endpoint) PortMTU() uint32 {

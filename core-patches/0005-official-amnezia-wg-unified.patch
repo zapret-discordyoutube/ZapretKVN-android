@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index 23fbe16d..18da5e38 100644
+index 97bd898..72afdd2 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -7,6 +7,7 @@ require (
@@ -27,7 +27,7 @@ index 23fbe16d..18da5e38 100644
  	github.com/opencontainers/image-spec v1.1.1 // indirect
  	github.com/panjf2000/ants/v2 v2.12.0 // indirect
 diff --git a/go.sum b/go.sum
-index 407e9b7f..533b3c95 100644
+index 365d313..ce57f89 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -32,8 +32,8 @@ github.com/alexbrainman/sspi v0.0.0-20231016080023-1a75b4708caa h1:LHTHcTQiSGT7V
@@ -51,7 +51,7 @@ index 407e9b7f..533b3c95 100644
  github.com/mholt/acmez/v3 v3.1.6/go.mod h1:5nTPosTGosLxF3+LU4ygbgMRFDhbAVpqMI4+a4aHLBY=
  github.com/miekg/dns v1.1.72 h1:vhmr+TF2A3tuoGNkLDFK9zi36F2LS+hKTRW0Uf8kbzI=
 diff --git a/option/wireguard.go b/option/wireguard.go
-index 580de8b3..9a004d27 100644
+index ca965e3..9a004d2 100644
 --- a/option/wireguard.go
 +++ b/option/wireguard.go
 @@ -31,17 +31,17 @@ type WireGuardPeer struct {
@@ -80,16 +80,18 @@ index 580de8b3..9a004d27 100644
  	H1                     *badoption.Range[uint32] `json:"h1,omitempty"`
  	H2                     *badoption.Range[uint32] `json:"h2,omitempty"`
  	H3                     *badoption.Range[uint32] `json:"h3,omitempty"`
-@@ -58,4 +58,6 @@ type WireGuardAmnezia struct {
+@@ -58,6 +58,6 @@ type WireGuardAmnezia struct {
  	RejectAfterTime        *badoption.Range[uint32] `json:"reject_after_time,omitempty"`
  	KeepaliveTimeout       *badoption.Range[uint32] `json:"keepalive_timeout,omitempty"`
  	MaxHandshakeAttempts   *badoption.Range[uint32] `json:"max_handshake_attempts,omitempty"`
+-	RandomTrailers         bool                     `json:"random_trailers,omitempty"`
+-	DisableCookies         bool                     `json:"disable_cookies,omitempty"`
 +	RandomTrailers         *bool                    `json:"random_trailers,omitempty"`
 +	DisableCookies         *bool                    `json:"disable_cookies,omitempty"`
  }
 diff --git a/option/wireguard_validation.go b/option/wireguard_validation.go
 new file mode 100644
-index 00000000..f54119d4
+index 0000000..f54119d
 --- /dev/null
 +++ b/option/wireguard_validation.go
 @@ -0,0 +1,89 @@
@@ -184,7 +186,7 @@ index 00000000..f54119d4
 +}
 diff --git a/option/wireguard_validation_test.go b/option/wireguard_validation_test.go
 new file mode 100644
-index 00000000..8a9a5f5b
+index 0000000..8a9a5f5
 --- /dev/null
 +++ b/option/wireguard_validation_test.go
 @@ -0,0 +1,25 @@
@@ -214,7 +216,7 @@ index 00000000..8a9a5f5b
 +	}
 +}
 diff --git a/protocol/warp/endpoint.go b/protocol/warp/endpoint.go
-index 321f4815..8cacc3b3 100644
+index dc7fda1..ad0ec6f 100644
 --- a/protocol/warp/endpoint.go
 +++ b/protocol/warp/endpoint.go
 @@ -40,6 +40,13 @@ type Endpoint struct {
@@ -231,7 +233,7 @@ index 321f4815..8cacc3b3 100644
  	var dependencies []string
  	if options.Detour != "" {
  		dependencies = append(dependencies, options.Detour)
-@@ -98,9 +105,9 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+@@ -99,9 +106,9 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
  		var amnezia *option.WireGuardAmnezia
  		if options.Amnezia != nil {
  			amnezia = &option.WireGuardAmnezia{
@@ -244,7 +246,7 @@ index 321f4815..8cacc3b3 100644
  				I1:                     options.Amnezia.I1,
  				I2:                     options.Amnezia.I2,
  				I3:                     options.Amnezia.I3,
-@@ -144,7 +151,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+@@ -145,7 +152,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
  							netip.MustParsePrefix("0.0.0.0/0"),
  							netip.MustParsePrefix("::/0"),
  						},
@@ -253,21 +255,8 @@ index 321f4815..8cacc3b3 100644
  					},
  				},
  				MTU: 1280,
-diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
-index e31d0e1a..2a265950 100644
---- a/protocol/wireguard/endpoint.go
-+++ b/protocol/wireguard/endpoint.go
-@@ -103,6 +103,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
- 			RejectAfterTime:        options.Amnezia.RejectAfterTime,
- 			KeepaliveTimeout:       options.Amnezia.KeepaliveTimeout,
- 			MaxHandshakeAttempts:   options.Amnezia.MaxHandshakeAttempts,
-+			RandomTrailers:         options.Amnezia.RandomTrailers,
-+			DisableCookies:         options.Amnezia.DisableCookies,
- 		}
- 	}
- 	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 diff --git a/transport/wireguard/android_client_bind.go b/transport/wireguard/android_client_bind.go
-index 5c151c82..3289289a 100644
+index 5c151c8..3289289 100644
 --- a/transport/wireguard/android_client_bind.go
 +++ b/transport/wireguard/android_client_bind.go
 @@ -2,6 +2,7 @@ package wireguard
@@ -442,7 +431,7 @@ index 5c151c82..3289289a 100644
  
  type androidEndpoint netip.AddrPort
 diff --git a/transport/wireguard/android_client_bind_test.go b/transport/wireguard/android_client_bind_test.go
-index 5a835582..8aecf46d 100644
+index 5a83558..8aecf46 100644
 --- a/transport/wireguard/android_client_bind_test.go
 +++ b/transport/wireguard/android_client_bind_test.go
 @@ -2,16 +2,22 @@ package wireguard
@@ -558,7 +547,7 @@ index 5a835582..8aecf46d 100644
  
  type testDialer struct{ connection net.Conn }
 diff --git a/transport/wireguard/android_engine.go b/transport/wireguard/android_engine.go
-index 027a215c..28136ac9 100644
+index 027a215..28136ac 100644
 --- a/transport/wireguard/android_engine.go
 +++ b/transport/wireguard/android_engine.go
 @@ -1,18 +1,12 @@
@@ -705,7 +694,7 @@ index 027a215c..28136ac9 100644
  	})
  	return err
 diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
-index 62702e8f..8a314e66 100644
+index af7f4cf..4b2a7ab 100644
 --- a/transport/wireguard/endpoint.go
 +++ b/transport/wireguard/endpoint.go
 @@ -17,6 +17,7 @@ import (
@@ -725,7 +714,7 @@ index 62702e8f..8a314e66 100644
  		e.options.Logger.Info("wireguard engine: android split data-plane")
  	} else {
  		sagerDevice := device.NewDevice(e.options.Context, e.returnDevice, bind, logger, e.options.Workers, e.options.PreallocatedBuffersPerPool, e.options.DisablePauses)
-@@ -182,25 +183,25 @@ func (e *Endpoint) Start(postStart bool) error {
+@@ -217,25 +218,25 @@ func (e *Endpoint) Start(postStart bool) error {
  	ipcConf.WriteString(e.ipcConf)
  	if e.options.Amnezia != nil {
  		if e.options.Amnezia.JC > 0 {
@@ -758,20 +747,28 @@ index 62702e8f..8a314e66 100644
  		}
  		if e.options.Amnezia.H1 != nil {
  			ipcConf.WriteString("\nh1=" + e.options.Amnezia.H1.String())
-@@ -251,6 +252,12 @@ func (e *Endpoint) Start(postStart bool) error {
+@@ -286,14 +287,14 @@ func (e *Endpoint) Start(postStart bool) error {
  		if e.options.Amnezia.KeepaliveTimeout != nil {
  			ipcConf.WriteString("\nkeepalive_timeout=" + e.options.Amnezia.KeepaliveTimeout.String())
  		}
+-		if e.options.Amnezia.MaxHandshakeAttempts != nil {
+-			ipcConf.WriteString("\nmax_handshake_attempts=" + e.options.Amnezia.MaxHandshakeAttempts.String())
 +		if e.options.Amnezia.RandomTrailers != nil {
 +			ipcConf.WriteString("\nrandom_trailers=" + strconv.FormatBool(*e.options.Amnezia.RandomTrailers))
-+		}
+ 		}
+-		if e.options.Amnezia.RandomTrailers {
+-			ipcConf.WriteString("\nrandom_trailers=true")
 +		if e.options.Amnezia.DisableCookies != nil {
 +			ipcConf.WriteString("\ndisable_cookies=" + strconv.FormatBool(*e.options.Amnezia.DisableCookies))
-+		}
- 		if e.options.Amnezia.MaxHandshakeAttempts != nil {
- 			ipcConf.WriteString("\nmax_handshake_attempts=" + e.options.Amnezia.MaxHandshakeAttempts.String())
  		}
-@@ -261,7 +268,7 @@ func (e *Endpoint) Start(postStart bool) error {
+-		if e.options.Amnezia.DisableCookies {
+-			ipcConf.WriteString("\ndisable_cookies=true")
++		if e.options.Amnezia.MaxHandshakeAttempts != nil {
++			ipcConf.WriteString("\nmax_handshake_attempts=" + e.options.Amnezia.MaxHandshakeAttempts.String())
+ 		}
+ 	}
+ 	for _, peer := range e.peers {
+@@ -302,7 +303,7 @@ func (e *Endpoint) Start(postStart bool) error {
  	err = wgDevice.IpcSet(ipcConf.String())
  	if err != nil {
  		wgDevice.Close()
@@ -780,7 +777,7 @@ index 62702e8f..8a314e66 100644
  	}
  	if activator, isAndroidEngine := wgDevice.(androidEngineActivator); isAndroidEngine {
  		activator.activate()
-@@ -402,7 +409,7 @@ type peerConfig struct {
+@@ -414,7 +415,7 @@ type peerConfig struct {
  	publicKeyHex    string
  	preSharedKeyHex string
  	allowedIPs      []netip.Prefix
@@ -789,7 +786,7 @@ index 62702e8f..8a314e66 100644
  }
  
  func (c peerConfig) GenerateIpcLines() string {
-@@ -417,8 +424,8 @@ func (c peerConfig) GenerateIpcLines() string {
+@@ -429,8 +430,8 @@ func (c peerConfig) GenerateIpcLines() string {
  	for _, allowedIP := range c.allowedIPs {
  		ipcLines.WriteString("\nallowed_ip=" + allowedIP.String())
  	}
@@ -801,7 +798,7 @@ index 62702e8f..8a314e66 100644
  	return ipcLines.String()
  }
 diff --git a/transport/wireguard/endpoint_options.go b/transport/wireguard/endpoint_options.go
-index 50161643..a266a602 100644
+index 83cc684..a266a60 100644
 --- a/transport/wireguard/endpoint_options.go
 +++ b/transport/wireguard/endpoint_options.go
 @@ -47,17 +47,17 @@ type PeerOptions struct {
@@ -830,10 +827,12 @@ index 50161643..a266a602 100644
  	H1                     *badoption.Range[uint32]
  	H2                     *badoption.Range[uint32]
  	H3                     *badoption.Range[uint32]
-@@ -74,4 +74,6 @@ type AmneziaOptions struct {
+@@ -74,6 +74,6 @@ type AmneziaOptions struct {
  	RejectAfterTime        *badoption.Range[uint32]
  	KeepaliveTimeout       *badoption.Range[uint32]
  	MaxHandshakeAttempts   *badoption.Range[uint32]
+-	RandomTrailers         bool
+-	DisableCookies         bool
 +	RandomTrailers         *bool
 +	DisableCookies         *bool
  }
