@@ -103,6 +103,36 @@ class ForgejoUpdateSourceTest {
     }
 
     @Test
+    fun `release list from a mirror is used with assets on that mirror`() {
+        // git.zapret.moe и git2 не открываются, ответило git3: API под зеркалом
+        // отдаёт ссылки на файлы на том же зеркале.
+        val onMirror = { url: String -> url.replace("https://git.zapret.moe/", "https://git3.zapret.moe/") }
+        val http = FakeHttp().apply {
+            text[onMirror(LIST)] = onMirror("[${release(prerelease = false)}]")
+            text[onMirror(METADATA_URL)] = metadata(SHA)
+            text[onMirror(CHECKSUM_URL)] = "$SHA  $APK"
+        }
+
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
+            .latest(UpdateChannel.Stable)
+
+        assertEquals(APK, candidate.apkAsset.name)
+        assertEquals("git2.zapret.moe", ForgejoHttpsClient.FORGEJO_HOSTS.first())
+    }
+
+    @Test
+    fun `assets on another mirror than the answering one are rejected`() {
+        val http = FakeHttp().apply {
+            text[LIST.replace("git.zapret.moe", "git2.zapret.moe")] = "[${release(prerelease = false)}]"
+            text[METADATA_URL] = metadata(SHA)
+            text[CHECKSUM_URL] = "$SHA  $APK"
+        }
+        assertThrows(UpdateException::class.java) {
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        }
+    }
+
+    @Test
     fun `only fixed Forgejo https hosts are accepted`() {
         assertEquals(
             "https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file",
@@ -113,11 +143,17 @@ class ForgejoUpdateSourceTest {
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("http://git.zapret.moe/file") }
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://example.com/file") }
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://git.zapret.moe@evil.example/file") }
+        assertEquals(
+            "https://git2.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file",
+            ForgejoHttpsClient.validatedUrl("https://git2.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file"),
+        )
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://git9.zapret.moe/file") }
     }
 
     private class FakeHttp : UpdateHttpClient {
         val text = mutableMapOf<String, String>()
-        override fun readText(url: String, maxBytes: Int): String = text[url] ?: error("missing $url")
+        // Как настоящий клиент: недоступный адрес — UpdateException.
+        override fun readText(url: String, maxBytes: Int): String = text[url] ?: throw UpdateException("missing $url")
         override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse = error("not used")
     }
 

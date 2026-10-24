@@ -204,7 +204,7 @@ class ForgejoHttpsClient(
                 throw UpdateException("Forgejo вернул некорректный URL.", error)
             }
             val host = uri.host?.lowercase()
-            val allowedHost = host == FORGEJO_HOST
+            val allowedHost = host in FORGEJO_HOSTS
             if (uri.scheme != "https" || !allowedHost || uri.userInfo != null ||
                 uri.fragment != null || uri.port !in setOf(-1, 443)
             ) {
@@ -229,7 +229,12 @@ class ForgejoHttpsClient(
         private const val MAX_REDIRECTS = 5
         private const val CONNECT_TIMEOUT_MILLIS = 10_000
         private const val READ_TIMEOUT_MILLIS = 20_000
-        private const val FORGEJO_HOST = "git.zapret.moe"
+        /**
+         * Имена Forgejo проекта: один сайт под несколькими именами. git.zapret.moe в России
+         * режут по имени (TLS SNI), поэтому нумерованные зеркала идут первыми. API, спрошенный
+         * под зеркалом, отдаёт ссылки на файлы на том же зеркале.
+         */
+        val FORGEJO_HOSTS = listOf("git2.zapret.moe", "git3.zapret.moe", "git4.zapret.moe", "git.zapret.moe")
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
         private val CONTENT_RANGE = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
     }
@@ -245,9 +250,12 @@ class ForgejoUpdateSource(
         if (!REPOSITORY.matches(it)) throw IllegalArgumentException("Invalid Forgejo repository: $it")
     }
 
+    // Имя, под которым ответил список выпусков: с него же берутся файлы выпуска.
+    @Volatile
+    private var answeredHost: String = ForgejoHttpsClient.FORGEJO_HOSTS.first()
+
     override fun latest(channel: UpdateChannel): UpdateCandidate {
-        val endpoint = "https://git.zapret.moe/api/v1/repos/$repository/releases?limit=20"
-        val releases = UpdateJson.releases(http.readText(endpoint, MAX_RELEASE_JSON_BYTES))
+        val releases = UpdateJson.releases(readReleaseList())
             .filterNot(ForgejoRelease::draft)
             .filter { release ->
                 when (channel) {
@@ -263,6 +271,22 @@ class ForgejoUpdateSource(
         if (releases.isEmpty()) throw UpdateException("В выбранном канале нет Forgejo Releases.")
 
         return candidate(releases.first())
+    }
+
+    /** Список выпусков под первым ответившим именем; ошибка последнего имени — наружу. */
+    private fun readReleaseList(): String {
+        val hosts = listOf(answeredHost) + ForgejoHttpsClient.FORGEJO_HOSTS.filter { it != answeredHost }
+        var failure: UpdateException? = null
+        for (host in hosts) {
+            try {
+                val text = http.readText("https://$host/api/v1/repos/$repository/releases?limit=20", MAX_RELEASE_JSON_BYTES)
+                answeredHost = host
+                return text
+            } catch (error: UpdateException) {
+                failure = error
+            }
+        }
+        throw failure ?: UpdateException("Не удалось связаться с Forgejo.", retryViaVpn = true)
     }
 
     private fun candidate(release: ForgejoRelease): UpdateCandidate {
@@ -305,7 +329,7 @@ class ForgejoUpdateSource(
 
     private fun releaseAssetUrl(value: String): String {
         val trusted = ForgejoHttpsClient.validatedUrl(value)
-        val expectedPrefix = "https://git.zapret.moe/$repository/releases/download/"
+        val expectedPrefix = "https://$answeredHost/$repository/releases/download/"
         if (!trusted.startsWith(expectedPrefix)) {
             throw UpdateException("Forgejo вернул asset из другого репозитория.")
         }

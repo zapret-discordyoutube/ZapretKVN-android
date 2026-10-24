@@ -100,7 +100,8 @@ class ReleaseWaitClient(
     private fun encode(text: String): String = URLEncoder.encode(text, Charsets.UTF_8.name())
 
     companion object {
-        const val WAIT_URL = "https://git.zapret.moe/api/zapret/kvn-android/wait"
+        // Очередь обновлений — на первом зеркале: основное имя git.zapret.moe режут по TLS.
+        val WAIT_URL = "https://${ForgejoHttpsClient.FORGEJO_HOSTS.first()}/api/zapret/kvn-android/wait"
         const val CHANNEL_STABLE = "stable"
 
         /** Первый вопрос — без ожидания; служба отвечает сразу. */
