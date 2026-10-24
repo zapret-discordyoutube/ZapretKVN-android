@@ -5,5 +5,4 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-В карточке сервисов сервис, который открывается, но отвечает дольше пяти секунд, теперь отмечен как «Медленно», а не как доступный
-Ядро sing-box-extended обновлено до 1.14.3-extended-2.7.3 вместе с Windows-версией
+Проверка обновлений работает и без VPN: если основной адрес git.zapret.moe недоступен, приложение берёт выпуски с зеркал git2.zapret.moe и следующих
