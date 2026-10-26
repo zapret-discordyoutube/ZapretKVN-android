@@ -133,6 +133,36 @@ class SlowServerSwitchTest {
     }
 
     @Test
+    fun `repeated false alarms of one server back off 5, 15, 30, 30 minutes`() = runBlocking {
+        val host = FakeHost(measurements = ArrayDeque(List(4) { fast }))
+        for (minutes in listOf(5L, 15L, 30L, 30L)) {
+            assertEquals(SlowSwitchOutcome.FalseAlarm, engine(host).runEpisode())
+            assertTrue(host.logs.last(), host.logs.last().endsWith("через $minutes мин."))
+            now += minutes * 60_000L - 1
+            assertEquals(SlowSwitchGate.Cooldown, policy.gate(enabled = true, busy = false))
+            now += 1
+            assertEquals(SlowSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+        }
+        assertEquals(4, host.measureCalls)
+        assertTrue(host.trials.isEmpty())
+    }
+
+    @Test
+    fun `a confirmed slow server and a switch reset the false alarm count`() = runBlocking {
+        val host = FakeHost(measurements = ArrayDeque(listOf(fast, fast, slow, slow)))
+        engine(host).runEpisode()
+        now += 5 * 60_000L
+        engine(host).runEpisode()
+        now += 15 * 60_000L
+        // Подтверждённо медленный, кандидат не лучше: счёт сервера «a» сброшен.
+        assertEquals(SlowSwitchOutcome.NoBetter, engine(host).runEpisode())
+        now += POST_SWITCH_HOLD_MILLIS
+        host.measurements.addLast(fast)
+        assertEquals(SlowSwitchOutcome.FalseAlarm, engine(host).runEpisode())
+        assertTrue(host.logs.last(), host.logs.last().endsWith("через 5 мин."))
+    }
+
+    @Test
     fun `failed measurement is inconclusive, not slow`() = runBlocking {
         val host = FakeHost(measurements = ArrayDeque(listOf(null)))
         assertEquals(SlowSwitchOutcome.Inconclusive, engine(host).runEpisode())

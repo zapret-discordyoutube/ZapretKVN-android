@@ -32,8 +32,15 @@ internal object SlowServerSwitchDefaults {
      */
     const val MAX_SAMPLE_GAP_MILLIS = 11_000L
 
-    /** Ложная тревога или неубедительный замер: пауза перед следующей проверкой. */
+    /** Неубедительный замер или нет кандидатов: пауза перед следующей проверкой. */
     const val FALSE_ALARM_COOLDOWN_MILLIS = 5 * 60_000L
+
+    /**
+     * Пауза после 1-й, 2-й, 3-й и следующих ложных тревог одного сервера подряд
+     * (SMART_SWITCH_FALSE_ALARM_BACKOFF_SEC на ПК). Подтверждённо медленный замер
+     * или переключение сбрасывают счёт: каждый замер — до 3 МБ через сервер.
+     */
+    val FALSE_ALARM_BACKOFF_MILLIS = longArrayOf(5 * 60_000L, 15 * 60_000L, 30 * 60_000L)
 
     /** После любого переключения (в том числе пробного) — без умных переключений. */
     const val POST_SWITCH_HOLD_MILLIS = 10 * 60_000L
@@ -145,6 +152,7 @@ internal class SlowServerSwitchPolicy(
     private var manualHoldUntil = Long.MIN_VALUE
     private val switchTimes = ArrayDeque<Long>()
     private val slowUntil = mutableMapOf<String, Long>()
+    private val falseAlarms = mutableMapOf<String, Int>()
     private var profileId: String? = null
 
     /** Медленные метки относятся к тегам конкретного профиля. */
@@ -153,6 +161,7 @@ internal class SlowServerSwitchPolicy(
         if (this.profileId == profileId) return
         this.profileId = profileId
         slowUntil.clear()
+        falseAlarms.clear()
     }
 
     @Synchronized
@@ -230,11 +239,32 @@ internal class SlowServerSwitchPolicy(
         cooldownUntil = monotonicMillis() + SlowServerSwitchDefaults.FALSE_ALARM_COOLDOWN_MILLIS
     }
 
+    /**
+     * Ложная тревога сервера [id]: пауза растёт 5 → 15 → 30 минут.
+     * @return длина паузы, мс.
+     */
+    @Synchronized
+    fun onFalseAlarm(id: String): Long {
+        val count = (falseAlarms[id] ?: 0) + 1
+        falseAlarms[id] = count
+        val steps = SlowServerSwitchDefaults.FALSE_ALARM_BACKOFF_MILLIS
+        val pause = steps[minOf(count, steps.size) - 1]
+        cooldownUntil = monotonicMillis() + pause
+        return pause
+    }
+
+    /** Замер подтвердил медленный сервер [id]: его ложные тревоги больше не в счёт. */
+    @Synchronized
+    fun onConfirmedSlow(id: String) {
+        falseAlarms.remove(id)
+    }
+
     /** Любое переключение селектора, даже пробное, расходует часовой лимит. */
     @Synchronized
     fun onSwitch() {
         val now = monotonicMillis()
         lastSwitchAt = now
+        falseAlarms.clear()
         pruneSwitches(now)
         switchTimes.addLast(now)
     }
@@ -345,10 +375,14 @@ internal class SlowServerSwitchEngine(
             return SlowSwitchOutcome.Inconclusive
         }
         if (!policy.isSlow(current)) {
-            policy.onCooldown()
-            host.log("Низкая скорость не подтвердилась: ${formatRate(current)}.")
+            val pause = policy.onFalseAlarm(snapshot.currentId)
+            host.log(
+                "Низкая скорость не подтвердилась: ${formatRate(current)}; " +
+                    "повтор не раньше чем через ${pause / 60_000} мин.",
+            )
             return SlowSwitchOutcome.FalseAlarm
         }
+        policy.onConfirmedSlow(snapshot.currentId)
         // Пока шёл замер, пользователь или failover могли сменить состояние.
         val fresh = host.snapshot() ?: return SlowSwitchOutcome.SessionGone
         if (fresh.currentId != snapshot.currentId) return SlowSwitchOutcome.Superseded
