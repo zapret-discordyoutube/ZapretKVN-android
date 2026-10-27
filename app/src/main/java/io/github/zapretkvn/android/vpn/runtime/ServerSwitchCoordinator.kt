@@ -207,6 +207,9 @@ internal class ServerSwitchCoordinator(
     fun onCoreHints(generation: Long, hints: List<PathHint>) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session)) return
+        // Только что выбранный сервер ещё поднимает соединения, и его таймауты в логе —
+        // не повод для пробы: она отменила бы сам выбор.
+        if (operationKind == Operation.Select && operationActive()) return
         for (hint in hints) {
             val decision = supervisor.onHint(hint) { currentPlan(session, hint.outboundTag) }
             when (decision) {

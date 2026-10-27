@@ -256,6 +256,30 @@ class ImportControllerTest {
     }
 
     @Test
+    fun `refresh does not bring back the server chosen before the selection changed`() = runBlocking {
+        setUp()
+        val profile = store.create("Подписка", ManagedProfileFactory.subscription(managedServers(one, two)), ProfileSource.Url)
+        sources.put(profile.id, SubscriptionSource("https://sub.example/list"))
+        state.value = state.value.copy(profiles = store.profiles.value)
+        feed = "$one\n$two"
+
+        controller.refreshSubscription(profile.id)
+        awaitCondition { state.value.importPreview != null }
+        idle()
+        // Пока открыт предпросмотр, пользователь выбрал другой сервер.
+        val stored = store.read(profile.id).json
+        val group = ConfigAnalyzer.selectorGroups(stored).single()
+        val other = group.outbounds.first { it != group.default }
+        store.update(profile.id, ConfigAnalyzer.selectServer(stored, group.tag, other))
+
+        controller.confirmRefresh(restartConnected = false)
+        awaitCondition { state.value.importPreview == null }
+        idle()
+
+        assertEquals(other, ConfigAnalyzer.selectorGroups(store.read(profile.id).json).single().default)
+    }
+
+    @Test
     fun `subscription link in the clipboard opens the url form instead of a format error`() = runBlocking {
         setUp()
         feed = "https://sub.example/list?token=abc\n"

@@ -61,7 +61,11 @@ internal class SubscriptionAutoRefresher(
             // следующего прохода, остальные обновляются.
             try {
                 val preview = service.refreshPreview(profileId, store.profiles.value)
-                store.update(profileId, preview.preparedJson)
+                // Предпросмотр собран из профиля, прочитанного до скачивания подписки:
+                // выбранный за это время сервер (вручную или автоматикой) не затирается
+                // прежним — выбор берётся из профиля на момент записи.
+                val current = store.read(profileId).json
+                store.update(profileId, ManagedProfileEditor.preserveSelectorDefaults(current, preview.preparedJson).json)
                 updated++
             } catch (error: ImportException) {
                 skipped++

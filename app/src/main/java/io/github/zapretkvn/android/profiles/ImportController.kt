@@ -111,7 +111,9 @@ internal class ImportController(
             return@run
         }
         val profileId = checkNotNull(pending.refreshProfileId)
-        store.update(profileId, pending.preparedJson)
+        // Пока открыт предпросмотр, сервер могли сменить: выбор — из профиля на момент записи.
+        val current = store.read(profileId).json
+        store.update(profileId, ManagedProfileEditor.preserveSelectorDefaults(current, pending.preparedJson).json)
         state.update { it.copy(importPreview = null) }
         val outcome = refreshOutcome(
             restartConnected = restartConnected,
