@@ -81,9 +81,9 @@ class ManualSelectionInstrumentedTest {
         }
     }
 
-    /** Ручной выбор проходит ту же проверку связи, что failover: при отказе прежний сервер возвращается. */
+    /** Выбор пользователя не откатывается: неудачная проверка связи только предупреждает. */
     @Test
-    fun manualSelectionThatFailsVerificationRollsBackWithoutRestart() = runBlocking<Unit> {
+    fun manualSelectionThatFailsVerificationStaysAndWarnsWithoutRestart() = runBlocking<Unit> {
         withProfile { container, profileId, context ->
             val controller = container.vpnController
             val connected = connect(container, profileId)
@@ -96,22 +96,17 @@ class ManualSelectionInstrumentedTest {
             VpnTestHooks.failNextHysteriaReplacement()
             controller.selectOutbound(profileId, ConfigAnalyzer.MANAGED_SELECTOR_TAG, "server-b")
             val message = withTimeoutOrNull(20_000) { controller.message.first { it != null } }
-            assertTrue("No rollback message: ${describe(container)}", message?.contains("не прошёл проверку связи") == true)
-            withTimeout(10_000) { while (runtimeSelected(container) != "server-a") delay(50) }
+            assertTrue("No warning: ${describe(container)}", message?.contains("не ответил на проверку связи") == true)
             delay(3_000)
 
-            assertEquals("server-a", runtimeSelected(container))
-            assertEquals("server-a", savedSelected(container, profileId))
+            assertEquals("server-b", runtimeSelected(container))
+            assertEquals("server-b", savedSelected(container, profileId))
             val state = controller.state.value
             assertTrue(describe(container), state is VpnConnectionState.Connected)
             assertEquals(connected.connectedAtEpochMillis, (state as VpnConnectionState.Connected).connectedAtEpochMillis)
             assertEquals(generation, controller.currentGeneration())
             assertEquals(attempts, controller.diagnostics.value.recentConnectionAttempts.map { it.generation to it.trigger })
             assertEquals(tun, waitForVpnNetwork(context))
-            assertTrue(
-                describe(container),
-                controller.diagnostics.value.applicationLogs.any { "не прошёл проверку связи" in it.message },
-            )
 
             // Следующий выбор без отказа проходит.
             VpnTestHooks.succeedNextSwitchVerification()

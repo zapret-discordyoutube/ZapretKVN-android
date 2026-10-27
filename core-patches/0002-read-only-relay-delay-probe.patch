@@ -193,7 +193,7 @@ index f1fb0f0..eecee46 100644
 +		return result
 +	}
 +	testContext, cancel := context.WithTimeout(ctx, C.TCPTimeout)
-+	delay, err := urltest.URLTest(testContext, relayDelayProbeURL, target.outbound)
++	delay, err := urltest.URLTest(urltest.ContextWithIsUnifiedDelay(testContext), relayDelayProbeURL, target.outbound)
 +	cancel()
 +	result.TestedAtUnixMillis = time.Now().UnixMilli()
 +	result.Outcome = relayDelayProbeOutcome(err, testContext.Err())

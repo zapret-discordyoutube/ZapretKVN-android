@@ -168,6 +168,7 @@ internal class LatencyProbeCoordinator(
                         when (state) {
                             is LatencyProbeState.Success -> success++
                             is LatencyProbeState.Unsupported -> unsupported++
+                            is LatencyProbeState.Stale, LatencyProbeState.NotTested -> Unit
                             else -> failed++
                         }
                     }
@@ -201,12 +202,10 @@ internal class LatencyProbeCoordinator(
                 runCatching { client.disconnect() }
                 probe.relayClient = null
             }
+            // Ядро не вернуло результат (оборвался поток, отмена): сервер не проверен,
+            // а не «не отвечает» — пачка ложных «мёртвых» после одного сбоя потока.
             val missing = testable.filter { seen.add(it.tag) }.associate { item ->
-                item.tag to LatencyProbeState.Failed(
-                    LatencyFailure.Failed,
-                    item.relay.lastSample(),
-                    failedAtEpochMillis = System.currentTimeMillis(),
-                )
+                item.tag to (item.relay.lastSample()?.let(LatencyProbeState::Stale) ?: LatencyProbeState.NotTested)
             }
             if (missing.isNotEmpty()) results.trySend(missing)
             results.close()

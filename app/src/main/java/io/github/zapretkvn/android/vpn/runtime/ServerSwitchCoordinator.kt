@@ -143,18 +143,32 @@ internal class ServerSwitchCoordinator(
         setPathStatus(session, PathStatus.Switching, "сервер выбран вручную")
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
-            // Та же проверка связи, что у failover: недоступный сервер не остаётся выбранным.
-            val outcome = switcher.switchOrRollback(
-                session,
-                groupTag,
-                outboundTag,
-                SwitchVerifier { candidateSession, json -> verifyCandidate(candidateSession, json) },
-            )
-            postToActor { onSelectDone(session, outboundTag, outcome, startId) }
+            // Выбор пользователя закрепляется сразу и не откатывается: разовая неудача
+            // проверки (смена сети, медленный DNS) возвращала прежний сервер, и выбор
+            // «не нажимался». Проверка связи идёт после и только предупреждает.
+            val outcome = switcher.switchOrRollback(session, groupTag, outboundTag)
+            val checkError = if (outcome == SwitchOutcome.Committed) checkChosen(session) else null
+            postToActor { onSelectDone(session, outboundTag, outcome, checkError, startId) }
         }
     }
 
-    private fun onSelectDone(session: CoreSession, outboundTag: String, outcome: SwitchOutcome, startId: Int) {
+    /** Проверка связи через выбранный сервер; ошибка — для предупреждения, не для отката. */
+    private suspend fun checkChosen(session: CoreSession): Throwable? = try {
+        verifyCandidate(session, container.profileStore.read(session.profileId).json)
+        null
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        error
+    }
+
+    private fun onSelectDone(
+        session: CoreSession,
+        outboundTag: String,
+        outcome: SwitchOutcome,
+        checkError: Throwable?,
+        startId: Int,
+    ) {
         if (sessions.active() !== session || session.generation != controller.currentGeneration()) return
         when (outcome) {
             SwitchOutcome.Committed -> {
@@ -162,6 +176,14 @@ internal class ServerSwitchCoordinator(
                 host.showForeground(ForegroundState.Connected)
                 controller.clearConnectionIdentity(session.generation)
                 onExitChanged(session)
+                if (checkError != null) {
+                    val failure = VpnFailureStates.from(checkError)
+                    timeline("Выбранный ${server(outboundTag)} не ответил на проверку связи (${failure.code}); выбор оставлен.")
+                    controller.publishMessage(
+                        "Сервер ${server(outboundTag)} не ответил на проверку связи, но остаётся выбранным. " +
+                            "Если сайты не открываются, выберите другой. ${failure.message}",
+                    )
+                }
             }
             is SwitchOutcome.RolledBack -> {
                 // Прежний сервер возвращён: путь тот же, что был до выбора.
