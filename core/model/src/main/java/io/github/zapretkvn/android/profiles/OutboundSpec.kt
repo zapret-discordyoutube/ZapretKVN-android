@@ -63,7 +63,7 @@ sealed interface OutboundSpec {
             put("uuid", uuid)
             put("encryption", encryption)
             flow?.takeIf(String::isNotBlank)?.let { put("flow", it) }
-            putTls(tls)
+            putTls(tls, http1Transport = transport?.type in HTTP1_TRANSPORTS)
             putTransport(transport)
         }
     }
@@ -86,7 +86,7 @@ sealed interface OutboundSpec {
             put("uuid", uuid)
             put("security", security)
             if (alterId != 0) put("alter_id", alterId)
-            putTls(tls)
+            putTls(tls, http1Transport = transport?.type in HTTP1_TRANSPORTS)
             putTransport(transport)
         }
     }
@@ -105,7 +105,7 @@ sealed interface OutboundSpec {
             put("server", server)
             put("server_port", serverPort)
             put("password", password)
-            putTls(tls)
+            putTls(tls, http1Transport = transport?.type in HTTP1_TRANSPORTS)
             putTransport(transport)
         }
     }
@@ -254,6 +254,7 @@ private const val DEFAULT_UTLS_FINGERPRINT = "chrome"
 private fun JsonObjectBuilder.putTls(
     settings: TlsSettings,
     allowTcpOnlyTlsFeatures: Boolean = true,
+    http1Transport: Boolean = false,
 ) {
     if (!settings.enabled) return
     put(
@@ -289,8 +290,16 @@ private fun JsonObjectBuilder.putTls(
                         },
                     )
                 }
-            if (settings.alpn.isNotEmpty()) {
-                put("alpn", JsonArray(settings.alpn.map(::JsonPrimitive)))
+            // WebSocket и HTTP upgrade идут только поверх HTTP/1.1: с alpn=h2,http/1.1
+            // сервер выбирал h2, TLS устанавливался, а трафик не шёл (Xray в этом
+            // случае сам оставляет http/1.1).
+            val alpn = if (http1Transport) {
+                settings.alpn.filterNot { it.equals("h2", ignoreCase = true) || it.equals("h3", ignoreCase = true) }
+            } else {
+                settings.alpn
+            }
+            if (alpn.isNotEmpty()) {
+                put("alpn", JsonArray(alpn.map(::JsonPrimitive)))
             }
             settings.echConfigPem?.takeIf(String::isNotBlank)?.let { pem ->
                 put(
@@ -305,6 +314,8 @@ private fun JsonObjectBuilder.putTls(
     )
 }
 
+private val HTTP1_TRANSPORTS = setOf("ws", "httpupgrade")
+
 private fun JsonObjectBuilder.putTransport(transport: TransportSettings?) {
     transport?.let { put("transport", it.toJson()) }
 }
@@ -313,12 +324,19 @@ private fun TransportSettings.toJson(): JsonObject = buildJsonObject {
     put("type", type)
     when (type) {
         "ws", "http", "httpupgrade" -> {
-            path?.takeIf(String::isNotBlank)?.let { put("path", it) }
+            // Xray читает «?ed=2048» из пути WebSocket как ранние данные в заголовке
+            // Sec-WebSocket-Protocol; в пути sing-box сервер ответил бы 404.
+            val (cleanPath, earlyData) = if (type == "ws") splitEarlyData(path.orEmpty()) else (path.orEmpty() to 0)
+            cleanPath.takeIf(String::isNotBlank)?.let { put("path", it) }
+            if (earlyData > 0) {
+                put("max_early_data", earlyData)
+                put("early_data_header_name", "Sec-WebSocket-Protocol")
+            }
             host?.takeIf(String::isNotBlank)?.let { value ->
-                if (type == "http") {
-                    put("host", buildJsonArray { add(JsonPrimitive(value)) })
-                } else {
-                    put("headers", buildJsonObject { put("Host", value) })
+                when (type) {
+                    "http" -> put("host", buildJsonArray { add(JsonPrimitive(value)) })
+                    "httpupgrade" -> put("host", value)
+                    else -> put("headers", buildJsonObject { put("Host", value) })
                 }
             }
         }
@@ -331,4 +349,23 @@ private fun TransportSettings.toJson(): JsonObject = buildJsonObject {
             xhttpOptions?.forEach { (key, value) -> put(key, value) }
         }
     }
+}
+
+/** `/ws?ed=2048` → (`/ws`, 2048); остальные параметры пути остаются. */
+internal fun splitEarlyData(path: String): Pair<String, Int> {
+    val mark = path.indexOf('?')
+    if (mark < 0) return path to 0
+    var early = 0
+    val kept = path.substring(mark + 1).split('&').filter { part ->
+        val key = part.substringBefore('=')
+        val value = part.substringAfter('=', "")
+        if (key == "ed" && value.isNotEmpty() && value.all(Char::isDigit)) {
+            early = value.toIntOrNull() ?: 0
+            false
+        } else {
+            part.isNotEmpty()
+        }
+    }
+    val base = path.substring(0, mark)
+    return (if (kept.isEmpty()) base else "$base?${kept.joinToString("&")}") to early
 }

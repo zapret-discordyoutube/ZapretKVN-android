@@ -369,6 +369,12 @@ internal class SessionStarter(
         } else {
             null
         }
+        if (preparedBootstrap.tcpPreflightFailed) {
+            controller.publishDiagnosticWarning(
+                "Сервер не ответил на пустое TCP-соединение за 1,5 с; подключаемся всё равно — " +
+                    "решают рукопожатие ядра и проверка связи.",
+            )
+        }
         preparedBootstrap.target?.let { target ->
             ServerAddressRedactor.registerAliases(
                 target.hostname,

@@ -143,6 +143,12 @@ data class PreparedBootstrap(
     val overlay: BootstrapHostOverlay? = null,
     /** Адреса взяты из свежего LKG-кэша без ожидания резолва; кэш обновляет фоновая задача. */
     val fromCache: Boolean = false,
+    /**
+     * Пустое TCP-соединение к серверу не установилось за [ProxyBootstrapper] тайм-аут.
+     * Это не приговор: подключение всё равно идёт, решают рукопожатие ядра и проверка
+     * связи после запуска (а при мёртвом сервере — резерв группы).
+     */
+    val tcpPreflightFailed: Boolean = false,
 )
 
 class ProxyBootstrapper(
@@ -175,10 +181,8 @@ class ProxyBootstrapper(
         if (!target.requiresDns) {
             val literal = numericAddresses(listOf(target.hostname))
             if (literal.isEmpty()) error("Некорректный IP-адрес VPN-сервера.")
-            if (target.tcpPreflightSupported && firstReachable(underlying, target, literal) == null) {
-                error("VPN-сервер не отвечает: ${target.hostname}:${target.port}.")
-            }
-            return PreparedBootstrap(target, literal, now)
+            val preflightFailed = target.tcpPreflightSupported && firstReachable(underlying, target, literal) == null
+            return PreparedBootstrap(target, literal, now, tcpPreflightFailed = preflightFailed)
         }
         val lkg = cache.find(profileId, target.hostname, now)
         // Stale-while-revalidate: свежий (до 24 ч) адрес из кэша берём сразу, если сервер
@@ -226,7 +230,17 @@ class ProxyBootstrapper(
                     return PreparedBootstrap(target, cached, lkg.resolvedAtEpochMillis, lkg.overlay(target))
                 }
             }
-            error("VPN-сервер не отвечает: ${target.hostname}:${target.port}.")
+            // Пустое TCP-соединение не ответило за 1,5 с — раньше подключение на этом
+            // обрывалось («VPN-сервер не отвечает»), хотя сервер работал: медленная сеть,
+            // потерянный SYN, ТСПУ, не отвечающий на пустые соединения. Решает настоящее
+            // рукопожатие ядра, как в других клиентах.
+            return PreparedBootstrap(
+                target,
+                addresses,
+                now,
+                target.overlay(addresses),
+                tcpPreflightFailed = true,
+            )
         }
 
         if (target.staleAddressAllowed && lkg?.isUsableAt(now) == true) {
