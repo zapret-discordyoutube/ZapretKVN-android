@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.importer
 
 import io.github.zapretkvn.android.config.JsonConfig
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -14,7 +15,8 @@ import kotlinx.serialization.json.JsonPrimitive
  */
 internal object XtlsXhttpExtraConverter {
     fun convert(decodedExtra: String?): JsonObject? {
-        if (decodedExtra.isNullOrBlank()) return null
+        // «extra=null» встречается в публичных подписках: Xray читает его как «не задано».
+        if (decodedExtra.isNullOrBlank() || decodedExtra.trim() == "null") return null
         val source = try {
             JsonConfig.parse(decodedExtra) as? JsonObject
                 ?: throw ImportException(
@@ -39,6 +41,8 @@ internal object XtlsXhttpExtraConverter {
     ): JsonObject {
         val options = linkedMapOf<String, JsonElement>()
         source.forEach { (sourceKey, value) ->
+            // null у ключа — «не задано», как у Xray: downloadSettings: null и т. п.
+            if (value is JsonNull) return@forEach
             when (sourceKey) {
                 "type", "network" -> requireXhttpMarker(value, "$label.$sourceKey")
                 "extra", "xhttpSettings", "splithttpSettings" -> {

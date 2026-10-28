@@ -40,6 +40,8 @@ class ProfileSettingsActions internal constructor(
 
     fun setSlowServerSwitch(enabled: Boolean) = apply { settingsStore.setSlowServerSwitch(enabled) }
 
+    fun setConnectOnLaunch(enabled: Boolean) = apply { settingsStore.setConnectOnLaunch(enabled) }
+
     fun setServiceCheck(id: ServiceId, enabled: Boolean) = apply { settingsStore.setServiceCheck(id, enabled) }
 
     fun setDnsMode(mode: DnsMode) = apply("Смена режима DNS") { settingsStore.setDnsMode(mode) }

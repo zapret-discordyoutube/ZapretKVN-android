@@ -141,6 +141,8 @@ object ImportParser {
         }
         var insecureSkipped = 0
         var firstInsecure: InsecureTlsImportException? = null
+        var brokenSkipped = 0
+        var firstBroken: ImportException? = null
         val servers = extracted.links.mapIndexedNotNull { index, link ->
             try {
                 ShareLinkParser.parse(link, index)
@@ -151,9 +153,16 @@ object ImportParser {
                 insecureSkipped += 1
                 if (firstInsecure == null) firstInsecure = insecure
                 null
+            } catch (broken: ImportException) {
+                // Одна испорченная ссылка не отменяет всю подписку (публичные списки
+                // на сотни серверов почти всегда содержат пару битых строк), как на ПК.
+                if (extracted.links.size == 1) throw broken
+                brokenSkipped += 1
+                if (firstBroken == null) firstBroken = broken
+                null
             }
         }
-        if (servers.isEmpty()) firstInsecure?.let { throw it }
+        if (servers.isEmpty()) (firstInsecure ?: firstBroken)?.let { throw it }
         rejectProviderNotice(servers)
         return ImportCandidate.Managed(
             servers = servers,
@@ -169,6 +178,10 @@ object ImportParser {
             },
             importWarnings = listOfNotNull(
                 insecureSkipped.takeIf { it > 0 }?.let(TlsVerificationPolicy::skippedServersWarning),
+                brokenSkipped.takeIf { it > 0 }?.let { count ->
+                    "Пропущено ссылок, которые не удалось разобрать: $count" +
+                        (firstBroken?.message?.let { " (например: $it)" } ?: "") + "."
+                },
             ) + collectWarnings(servers, extracted.unsupportedSchemes),
             importNotes = collectNotes(servers),
         )

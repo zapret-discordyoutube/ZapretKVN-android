@@ -47,6 +47,7 @@ fun SettingsMainScreen(
     onOpenPage: (SettingsPage) -> Unit,
     onThemeSelected: (ThemeMode) -> Unit,
     onSlowServerSwitchChange: (Boolean) -> Unit,
+    onConnectOnLaunchChange: (Boolean) -> Unit = {},
     onHideServerAddressesChange: (Boolean) -> Unit,
     onDynamicColorChange: (Boolean) -> Unit,
     onSubscriptionUpdateChange: (Int) -> Unit = {},
@@ -104,6 +105,17 @@ fun SettingsMainScreen(
                     onCheckedChange = onSlowServerSwitchChange,
                     modifier = Modifier.testTag("slow-server-switch"),
                     switchDescription = "Переключать при низкой скорости",
+                )
+                RowDivider()
+                SwitchRow(
+                    title = "Подключаться при запуске",
+                    subtitle = "Открыли приложение — VPN подключается к выбранному профилю сам. " +
+                        "Выключено — подключение только кнопкой.",
+                    icon = ZapretIcons.Power,
+                    checked = ui.connectOnLaunch,
+                    onCheckedChange = onConnectOnLaunchChange,
+                    modifier = Modifier.testTag("connect-on-launch"),
+                    switchDescription = "Подключаться при запуске",
                 )
             }
         }

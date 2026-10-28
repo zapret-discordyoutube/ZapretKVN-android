@@ -115,6 +115,7 @@ class MainActivity : ComponentActivity() {
             checkServicesDirect = container.directServiceChecker::check,
         )
         observeUpdates()
+        if (savedInstanceState == null) connectOnLaunchIfEnabled(container)
         val initialSettings = profilesViewModel.state.value.settings
         val initialAppearance = initialSettings.themeMode to initialSettings.dynamicColor
         setContent {
@@ -156,6 +157,20 @@ class MainActivity : ComponentActivity() {
      * Разовая проверка обновлений при запуске (в Stable обновление скачивается само) и открытие
      * подтверждения установки, когда пользователь уже нажал «Установить».
      */
+    /**
+     * «Подключаться при запуске» (по умолчанию выключено, как на ПК): только холодный
+     * старт экрана, а не поворот; VPN уже работает или профиля нет — ничего не делаем.
+     */
+    private fun connectOnLaunchIfEnabled(container: AppContainer) {
+        lifecycleScope.launch {
+            val settings = container.uiSettingsStore.settings.first()
+            val profileId = settings.activeProfileId ?: return@launch
+            if (settings.connectOnLaunch && vpnController.state.value is VpnConnectionState.Stopped) {
+                requestVpnStart(profileId)
+            }
+        }
+    }
+
     private fun observeUpdates() {
         lifecycleScope.launch {
             val settings = profilesViewModel.state.first { it.initialized }.settings

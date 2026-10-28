@@ -36,6 +36,7 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
         onOpenPage = { page -> nav.openSettingsPage(page.id) },
         onThemeSelected = deps.profiles.settings::setTheme,
         onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
+        onConnectOnLaunchChange = deps.profiles.settings::setConnectOnLaunch,
         onHideServerAddressesChange = deps.profiles.settings::setHideServerAddresses,
         onDynamicColorChange = deps.profiles.settings::setDynamicColor,
         onSubscriptionUpdateChange = deps.profiles.settings::setSubscriptionAutoUpdateHours,

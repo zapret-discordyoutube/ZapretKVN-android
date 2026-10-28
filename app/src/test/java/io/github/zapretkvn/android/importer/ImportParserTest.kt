@@ -939,6 +939,30 @@ class ImportParserTest {
     }
 
     @Test
+    fun `one broken link does not cancel a public subscription`() {
+        // «VLESS по грибы»: ~200 ссылок, пара испорченных — раньше импорт падал целиком.
+        val good = "vless://d65cc14c-f53f-4fe2-b262-97856601319c@one.example:443" +
+            "?security=tls&type=tcp&sni=one.example#Good"
+        val broken = "vless://d65cc14c-f53f-4fe2-b262-97856601319c@two.example:443" +
+            "?security=tls&type=xhttp&sni=two.example&extra=%5B1%5D#Broken"
+        val candidate = ImportParser.parse("$good\n$broken\n", ProfileSource.Url) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+        assertTrue(candidate.importWarnings.any { it.contains("Пропущено ссылок") })
+    }
+
+    @Test
+    fun `xhttp extra null means not set like in xray`() {
+        val candidate = ImportParser.parse(
+            "vless://d65cc14c-f53f-4fe2-b262-97856601319c@one.example:443" +
+                "?security=tls&type=xhttp&path=%2Fx&sni=one.example&extra=null#Null",
+            ProfileSource.Link,
+        ) as ImportCandidate.Managed
+
+        assertEquals(1, candidate.servers.size)
+    }
+
+    @Test
     fun `hysteria2 pin without insecure remains valid and preserved`() {
         val pin = "ab".repeat(32)
         val candidate = ImportParser.parse(

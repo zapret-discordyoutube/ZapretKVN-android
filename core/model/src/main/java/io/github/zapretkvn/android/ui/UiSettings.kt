@@ -28,6 +28,8 @@ data class UiSettings(
     val networkAutomation: NetworkAutomationSettings = NetworkAutomationSettings(),
     /** «Умная проверка»: переключать сервер при подтверждённой низкой скорости. */
     val slowServerSwitch: Boolean = true,
+    /** Подключаться к активному профилю при открытии приложения (как «Подключаться при запуске» на ПК). */
+    val connectOnLaunch: Boolean = false,
     /** Цвета обоев (Material You). По умолчанию — фирменная яркая палитра. */
     val dynamicColor: Boolean = false,
     /** Какие сервисы проверяет карточка «Доступность сервисов»; по умолчанию — набор каталога. */

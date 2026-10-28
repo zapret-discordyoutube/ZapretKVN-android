@@ -89,6 +89,7 @@ class UiSettingsStore(
                         .toSet(),
                 ),
                 slowServerSwitch = preferences[SLOW_SERVER_SWITCH] ?: true,
+                connectOnLaunch = preferences[CONNECT_ON_LAUNCH] ?: false,
                 // Нет записи — набор по умолчанию, миграция не нужна.
                 serviceChecks = ServiceSelection.parse(preferences[SERVICE_CHECKS]),
                 favoriteServers = preferences[FAVORITE_SERVERS].orEmpty(),
@@ -199,6 +200,10 @@ class UiSettingsStore(
         }
     }
 
+    suspend fun setConnectOnLaunch(enabled: Boolean) {
+        dataStore.edit { it[CONNECT_ON_LAUNCH] = enabled }
+    }
+
     suspend fun setSlowServerSwitch(enabled: Boolean) {
         dataStore.edit { it[SLOW_SERVER_SWITCH] = enabled }
     }
@@ -285,6 +290,7 @@ class UiSettingsStore(
             stringSetPreferencesKey("network_automation_trusted_ssids")
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
         val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
+        val CONNECT_ON_LAUNCH = booleanPreferencesKey("connect_on_launch")
         val SERVICE_CHECKS = stringSetPreferencesKey("service_check_ids")
         val FAVORITE_SERVERS = stringSetPreferencesKey("favorite_servers")
         val SUBSCRIPTION_AUTO_UPDATE_HOURS = intPreferencesKey("subscription_auto_update_hours")
