@@ -2,6 +2,6 @@
 # The first non-comment line must be "tag: vX.Y.Z" of the release being built;
 # for any other tag the notes fall back to "ADB device tests not verified".
 # Never claim a check that did not run.
-tag: v0.5.22
+tag: v0.5.23
 Release attestation: host-verified; Android emulator (API 36, x86_64) ADB-verified; physical device not verified.
-Эмулятор zapret_api36 на 5724890 с пересобранным ядром (патч 0002 unified delay): ManualSelectionInstrumentedTest 2 из 2 (выбор без перезапуска VPN, выбор при неудачной проверке связи остаётся и предупреждает), Hysteria2-вариант пропущен без сервера; VpnServiceInstrumentedTest#singletonSelectorIsPublishedAndRelayProbeKeepsSelection и LatencyProbeReducerInstrumentedTest 3 из 3. Unit-тесты debug пройдены. Физическое устройство не проверялось.
+Эмулятор zapret_api36 на 3a8af1c: NetworkDnsInstrumentedTest 4 из 4 (подготовка подключения без запрета по пустому TCP), ManualSelectionInstrumentedTest 2 из 2 дважды подряд (Hysteria2-вариант пропущен без сервера; первый прогон сразу после загрузки эмулятора сорвала смена сети Android). Unit-тесты debug пройдены (OutboundSpecTransportTest 5/5, импорт подписок с битыми ссылками и extra=null). Исправление ws/alpn/ed проверено вживую на ПК против сервера Xray. Физическое устройство не проверялось.
