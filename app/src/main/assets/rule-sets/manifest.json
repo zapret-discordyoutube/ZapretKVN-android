@@ -5,7 +5,7 @@
     {
       "tag": "zapret-ru-domains",
       "file": "zapret-ru-domains.srs",
-      "sha256": "93989524bffa6313ed1ce4924acd3926cfbc989109800ed0645e925a5591fcc0",
+      "sha256": "998d93ae16f72f247a2ca5c037a9ceaefe05cae4e3d4ab6581d5325f2537c0dd",
       "source": "rulesets/zapret-ru-domains.json",
       "source_revision": "project-v1",
       "license": "GPL-3.0-or-later"
