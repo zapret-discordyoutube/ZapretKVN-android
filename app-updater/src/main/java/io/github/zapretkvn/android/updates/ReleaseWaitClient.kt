@@ -101,7 +101,7 @@ class ReleaseWaitClient(
 
     companion object {
         // Очередь обновлений — на первом зеркале: основное имя git.zapret.moe режут по TLS.
-        val WAIT_URL = "https://${ForgejoHttpsClient.FORGEJO_HOSTS.first()}/api/zapret/kvn-android/wait"
+        val WAIT_URL = "https://${ForgejoHosts.BUILT_IN.first()}/api/zapret/kvn-android/wait"
         const val CHANNEL_STABLE = "stable"
 
         /** Первый вопрос — без ожидания; служба отвечает сразу. */

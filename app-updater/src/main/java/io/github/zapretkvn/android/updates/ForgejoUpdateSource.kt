@@ -10,6 +10,13 @@ import java.net.URI
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.HttpsURLConnection
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 /** Ответ на GET; тело читает вызывающий и обязан закрыть ответ. */
 class UpdateResponse(
@@ -40,6 +47,9 @@ interface UpdateHttpClient {
      * Редиректы внутри Forgejo обрабатывает реализация.
      */
     fun open(url: String, start: Long = 0, endInclusive: Long? = null): UpdateResponse
+
+    /** Входная страница со списком имён (не Forgejo): хосты — только [ForgejoHosts.ENTRY_HOSTS]. */
+    fun readEntryList(url: String, maxBytes: Int): String = readText(url, maxBytes)
 
     fun readText(url: String, maxBytes: Int): String = open(url).use { response ->
         if (response.contentLength > maxBytes) {
@@ -182,6 +192,57 @@ class ForgejoHttpsClient(
         }
     }
 
+    override fun readEntryList(url: String, maxBytes: Int): String {
+        var current = entryUrl(url)
+        repeat(MAX_REDIRECTS + 1) {
+            val connection = open(URL(current))
+            try {
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
+                connection.readTimeout = READ_TIMEOUT_MILLIS
+                connection.useCaches = false
+                connection.setRequestProperty("User-Agent", USER_AGENT)
+                when (connection.responseCode) {
+                    in REDIRECTS -> current = entryUrl(
+                        URI(current).resolve(
+                            connection.getHeaderField("Location")
+                                ?: throw UpdateException("Входная страница вернула перенаправление без адреса."),
+                        ).toString(),
+                    )
+                    200 -> return connection.inputStream.use { input ->
+                        val output = ByteArrayOutputStream()
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            if (output.size() > maxBytes) throw UpdateException("Входная страница слишком большая.")
+                        }
+                        output.toString(Charsets.UTF_8.name())
+                    }
+                    else -> throw UpdateException("Входная страница ответила ${connection.responseCode}.", retryViaVpn = true)
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+        throw UpdateException("Слишком много перенаправлений входной страницы.")
+    }
+
+    private fun entryUrl(raw: String): String {
+        val uri = try {
+            URI(raw)
+        } catch (error: Exception) {
+            throw UpdateException("Некорректный адрес входной страницы.", error)
+        }
+        if (uri.scheme != "https" || uri.host?.lowercase() !in ForgejoHosts.ENTRY_HOSTS || uri.userInfo != null ||
+            uri.port !in setOf(-1, 443)
+        ) {
+            throw UpdateException("Входная страница вне разрешённых хостов.")
+        }
+        return uri.toASCIIString()
+    }
+
     private fun open(url: URL): HttpsURLConnection {
         val bound = try {
             if (route == UpdateRoute.Direct) direct?.open(url) else null
@@ -204,7 +265,7 @@ class ForgejoHttpsClient(
                 throw UpdateException("Forgejo вернул некорректный URL.", error)
             }
             val host = uri.host?.lowercase()
-            val allowedHost = host in FORGEJO_HOSTS
+            val allowedHost = ForgejoHosts.isKnown(host)
             if (uri.scheme != "https" || !allowedHost || uri.userInfo != null ||
                 uri.fragment != null || uri.port !in setOf(-1, 443)
             ) {
@@ -229,12 +290,6 @@ class ForgejoHttpsClient(
         private const val MAX_REDIRECTS = 5
         private const val CONNECT_TIMEOUT_MILLIS = 10_000
         private const val READ_TIMEOUT_MILLIS = 20_000
-        /**
-         * Имена Forgejo проекта: один сайт под несколькими именами. git.zapret.moe в России
-         * режут по имени (TLS SNI), поэтому нумерованные зеркала идут первыми. API, спрошенный
-         * под зеркалом, отдаёт ссылки на файлы на том же зеркале.
-         */
-        val FORGEJO_HOSTS = listOf("git2.zapret.moe", "git3.zapret.moe", "git4.zapret.moe", "git.zapret.moe")
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
         private val CONTENT_RANGE = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""")
     }
@@ -252,7 +307,7 @@ class ForgejoUpdateSource(
 
     // Имя, под которым ответил список выпусков: с него же берутся файлы выпуска.
     @Volatile
-    private var answeredHost: String = ForgejoHttpsClient.FORGEJO_HOSTS.first()
+    private var answeredHost: String = ForgejoHosts.BUILT_IN.first()
 
     override fun latest(channel: UpdateChannel): UpdateCandidate {
         val releases = UpdateJson.releases(readReleaseList())
@@ -273,20 +328,43 @@ class ForgejoUpdateSource(
         return candidate(releases.first())
     }
 
-    /** Список выпусков под первым ответившим именем; ошибка последнего имени — наружу. */
+    /**
+     * Список выпусков под первым ответившим именем. Молчат все известные имена — новые имена
+     * берутся со входной страницы (ForgejoHosts.ENTRY_LISTS) и пробуются они; ошибка последнего — наружу.
+     */
     private fun readReleaseList(): String {
-        val hosts = listOf(answeredHost) + ForgejoHttpsClient.FORGEJO_HOSTS.filter { it != answeredHost }
+        val known = listOf(answeredHost) + ForgejoHosts.all().filter { it != answeredHost }
         var failure: UpdateException? = null
-        for (host in hosts) {
+        for (host in known) {
             try {
-                val text = http.readText("https://$host/api/v1/repos/$repository/releases?limit=20", MAX_RELEASE_JSON_BYTES)
-                answeredHost = host
-                return text
+                return readReleaseListFrom(host)
             } catch (error: UpdateException) {
                 failure = error
             }
         }
+        for (url in ForgejoHosts.ENTRY_LISTS) {
+            val fresh = try {
+                ForgejoHosts.learnFromEntry(http.readEntryList(url, MAX_ENTRY_LIST_BYTES)).filter { it !in known }
+            } catch (error: UpdateException) {
+                failure = failure ?: error
+                continue
+            }
+            for (host in fresh) {
+                try {
+                    return readReleaseListFrom(host)
+                } catch (error: UpdateException) {
+                    failure = error
+                }
+            }
+            if (fresh.isNotEmpty()) break
+        }
         throw failure ?: UpdateException("Не удалось связаться с Forgejo.", retryViaVpn = true)
+    }
+
+    private fun readReleaseListFrom(host: String): String {
+        val text = http.readText("https://$host/api/v1/repos/$repository/releases?limit=20", MAX_RELEASE_JSON_BYTES)
+        answeredHost = host
+        return text
     }
 
     private fun candidate(release: ForgejoRelease): UpdateCandidate {
@@ -342,6 +420,63 @@ class ForgejoUpdateSource(
         const val MAX_RELEASE_JSON_BYTES = 1024 * 1024
         const val MAX_METADATA_BYTES = 64 * 1024
         const val MAX_CHECKSUM_BYTES = 4 * 1024
+        const val MAX_ENTRY_LIST_BYTES = 64 * 1024
         val REPOSITORY = Regex("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+    }
+}
+
+/**
+ * Имена Forgejo проекта: один сайт под несколькими именами. git.zapret.moe в России режут по имени
+ * (TLS SNI), поэтому зеркала идут первыми; API, спрошенный под зеркалом, отдаёт ссылки на файлы на
+ * том же зеркале. С 30.10.2026 людям раздаются зеркала со случайными именами (cwdnvtsqdc.zapret.moe):
+ * их приложение узнаёт со входной страницы на большой платформе (Google Apps Script, gist GitHub;
+ * их пишет zapret-beacon на сервере, pve-admin servers.md «Entry pages»), когда молчат все известные
+ * имена. Принимается только одна метка под zapret.moe, имя с приставкой — только git: чужой хост
+ * в проверку адресов ([ForgejoHttpsClient.validatedUrl]) так не попадёт. Тот же принцип, что у
+ * zapret_update/mirrors.py в Windows-версии.
+ */
+object ForgejoHosts {
+    val BUILT_IN = listOf("git2.zapret.moe", "git3.zapret.moe", "git4.zapret.moe", "git.zapret.moe")
+    val ENTRY_LISTS = listOf(
+        "https://script.google.com/macros/s/AKfycbzcEPk67WW6fYC0vPVm397QyDFHd4m-SrfKDBnfvG8jAD-n_HXVv8AqQnEHZ6A42oIh/exec?format=json",
+        "https://gist.githubusercontent.com/fuckyourkn/ecb9b6a03f53bddcdd47023ebc12d4f9/raw/targets.json",
+    )
+    val ENTRY_HOSTS = setOf("script.google.com", "script.googleusercontent.com", "gist.githubusercontent.com")
+    private val NAME = Regex("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.zapret\\.moe")
+    private val PREFIXED = Regex("(git|wiki)\\d*\\.zapret\\.moe")
+
+    @Volatile
+    private var learned: List<String> = emptyList()
+
+    /** Имена в порядке, в котором их пробовать: узнанные со входной страницы, затем встроенные. */
+    fun all(): List<String> = (learned + BUILT_IN).distinct()
+
+    fun isKnown(host: String?): Boolean = host != null && host in all()
+
+    fun accepts(name: String): Boolean {
+        if (!NAME.matches(name)) return false
+        val family = PREFIXED.matchEntire(name)?.groupValues?.get(1)
+        return family == null || family == "git"
+    }
+
+    /** Имена git со входной страницы (схема 1, families.git.hosts); запоминаются. */
+    fun learnFromEntry(text: String): List<String> {
+        val hosts = try {
+            val document = Json.parseToJsonElement(text).jsonObject
+            if (document["schema"]?.jsonPrimitive?.intOrNull != 1) return emptyList()
+            document["families"]?.jsonObject?.get("git")?.jsonObject?.get("hosts")?.jsonArray
+                ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.lowercase() }
+                ?.filter(::accepts)?.distinct().orEmpty()
+        } catch (error: SerializationException) {
+            throw UpdateException("Входная страница вернула не JSON.", error)
+        } catch (error: IllegalArgumentException) {
+            throw UpdateException("Входная страница вернула неожиданный JSON.", error)
+        }
+        if (hosts.isNotEmpty()) learned = hosts
+        return hosts
+    }
+
+    internal fun forgetForTests() {
+        learned = emptyList()
     }
 }

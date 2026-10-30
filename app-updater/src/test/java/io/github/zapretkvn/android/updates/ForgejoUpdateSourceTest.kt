@@ -1,6 +1,9 @@
 package io.github.zapretkvn.android.updates
 
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
@@ -117,7 +120,7 @@ class ForgejoUpdateSourceTest {
             .latest(UpdateChannel.Stable)
 
         assertEquals(APK, candidate.apkAsset.name)
-        assertEquals("git2.zapret.moe", ForgejoHttpsClient.FORGEJO_HOSTS.first())
+        assertEquals("git2.zapret.moe", ForgejoHosts.BUILT_IN.first())
     }
 
     @Test
@@ -150,10 +153,65 @@ class ForgejoUpdateSourceTest {
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://git9.zapret.moe/file") }
     }
 
+    @After
+    fun forgetLearnedNames() = ForgejoHosts.forgetForTests()
+
+    @Test
+    fun `when every known name is silent the entry page gives a random mirror that is used`() {
+        val onRandom = { url: String -> url.replace("https://git.zapret.moe/", "https://cwdnvtsqdc.zapret.moe/") }
+        val http = FakeHttp().apply {
+            text[ForgejoHosts.ENTRY_LISTS.first()] =
+                """{"schema": 1, "families": {"git": {"name": "Zapret Git", "hosts": ["cwdnvtsqdc.zapret.moe", "git2.zapret.moe"]}}}"""
+            text[onRandom(LIST)] = onRandom("[${release(prerelease = false)}]")
+            text[onRandom(METADATA_URL)] = metadata(SHA)
+            text[onRandom(CHECKSUM_URL)] = "$SHA  $APK"
+        }
+
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+
+        assertEquals(APK, candidate.apkAsset.name)
+        assertEquals("cwdnvtsqdc.zapret.moe", ForgejoHosts.all().first())
+        assertTrue(ForgejoHosts.isKnown("cwdnvtsqdc.zapret.moe"))
+    }
+
+    @Test
+    fun `entry pages are not asked while a known name answers`() {
+        val http = FakeHttp().apply {
+            text[LIST.replace("https://git.zapret.moe/", "https://git2.zapret.moe/")] = "[${release(prerelease = false)}]".replace("https://git.zapret.moe/", "https://git2.zapret.moe/")
+            text[METADATA_URL.replace("https://git.zapret.moe/", "https://git2.zapret.moe/")] = metadata(SHA)
+            text[CHECKSUM_URL.replace("https://git.zapret.moe/", "https://git2.zapret.moe/")] = "$SHA  $APK"
+        }
+        ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        assertFalse(http.asked.any { it in ForgejoHosts.ENTRY_LISTS })
+    }
+
+    @Test
+    fun `only single labels under zapret moe of the git family are learned`() {
+        val learned = ForgejoHosts.learnFromEntry(
+            """{"schema": 1, "families": {"git": {"hosts": ["cwdnvtsqdc.zapret.moe", "wiki7.zapret.moe", "evil.example", "a.b.zapret.moe", "GIT5.ZAPRET.MOE"]}}}""",
+        )
+        assertEquals(listOf("cwdnvtsqdc.zapret.moe", "git5.zapret.moe"), learned)
+        assertFalse(ForgejoHosts.isKnown("evil.example"))
+        assertEquals(emptyList<String>(), ForgejoHosts.learnFromEntry("""{"schema": 2, "families": {}}"""))
+        assertThrows(UpdateException::class.java) { ForgejoHosts.learnFromEntry("not json") }
+    }
+
+    @Test
+    fun `an unlisted random name is not a Forgejo host until an entry page names it`() {
+        val url = "https://cwdnvtsqdc.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file"
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl(url) }
+        ForgejoHosts.learnFromEntry("""{"schema": 1, "families": {"git": {"hosts": ["cwdnvtsqdc.zapret.moe"]}}}""")
+        assertEquals(url, ForgejoHttpsClient.validatedUrl(url))
+    }
+
     private class FakeHttp : UpdateHttpClient {
         val text = mutableMapOf<String, String>()
+        val asked = mutableListOf<String>()
         // Как настоящий клиент: недоступный адрес — UpdateException.
-        override fun readText(url: String, maxBytes: Int): String = text[url] ?: throw UpdateException("missing $url")
+        override fun readText(url: String, maxBytes: Int): String {
+            asked += url
+            return text[url] ?: throw UpdateException("missing $url")
+        }
         override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse = error("not used")
     }
 
