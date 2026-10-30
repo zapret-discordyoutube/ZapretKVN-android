@@ -5,4 +5,5 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Сайт emias.info (ЕМИАС) теперь открывается напрямую, без VPN
+Обновления находят новые зеркала сайта со случайными именами
+Если все известные адреса закрыты, рабочие берутся со страниц на Google и GitHub
