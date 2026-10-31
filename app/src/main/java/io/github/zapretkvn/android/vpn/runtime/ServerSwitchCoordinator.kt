@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.config.ParsedConfig
+import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.VpnFailureStates
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.engines.failover.LatencyHint
@@ -143,23 +144,25 @@ internal class ServerSwitchCoordinator(
         setPathStatus(session, PathStatus.Switching, "сервер выбран вручную")
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
-            // Выбор пользователя закрепляется сразу и не откатывается: разовая неудача
-            // проверки (смена сети, медленный DNS) возвращала прежний сервер, и выбор
-            // «не нажимался». Проверка связи идёт после и только предупреждает.
-            val outcome = switcher.switchOrRollback(session, groupTag, outboundTag)
-            val checkError = if (outcome == SwitchOutcome.Committed) checkChosen(session) else null
-            postToActor { onSelectDone(session, outboundTag, outcome, checkError, startId) }
+            // Транзакция выбора (SelectionTransaction): выбор закрепляется после
+            // проверки; мёртвый сервер возвращает прежний, сбой не по вине сервера
+            // оставляет выбор с предупреждением.
+            val transaction = SelectionTransaction<CoreSession>(
+                outboundTag,
+                verify = ::verifyCandidate,
+                evidence = { current ->
+                    RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(current.generation))
+                },
+                plan = { current, tag -> currentPlan(current, tag) },
+            )
+            val outcome = switcher.switchOrRollback(
+                session,
+                groupTag,
+                outboundTag,
+                SwitchVerifier { candidateSession, json -> transaction.check(candidateSession, json) },
+            )
+            postToActor { onSelectDone(session, outboundTag, outcome, transaction.warning, startId) }
         }
-    }
-
-    /** Проверка связи через выбранный сервер; ошибка — для предупреждения, не для отката. */
-    private suspend fun checkChosen(session: CoreSession): Throwable? = try {
-        verifyCandidate(session, container.profileStore.read(session.profileId).json)
-        null
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: Throwable) {
-        error
     }
 
     private fun onSelectDone(
@@ -186,12 +189,18 @@ internal class ServerSwitchCoordinator(
                 }
             }
             is SwitchOutcome.RolledBack -> {
-                // Прежний сервер возвращён: путь тот же, что был до выбора.
+                // Прежний сервер возвращён: путь тот же, что был до выбора; профиль
+                // не менялся — отказавший сервер не становился выбранным.
                 setPathStatus(session, PathStatus.Ok, "прежний сервер возвращён")
-                val failure = VpnFailureStates.from(outcome.error)
-                timeline("Выбранный ${server(outboundTag)} не прошёл проверку связи (${failure.code}): прежний сервер возвращён.")
+                val dead = generateSequence(outcome.error) { it.cause }.filterIsInstance<DeadServerException>().firstOrNull()
+                val failure = VpnFailureStates.from(dead?.cause ?: outcome.error)
+                timeline("Выбранный ${server(outboundTag)} не прошёл проверку связи (${dead?.code?.name ?: failure.code}): прежний сервер возвращён.")
                 controller.publishMessage(
-                    "Сервер ${server(outboundTag)} не прошёл проверку связи, оставлен прежний. ${failure.message}",
+                    if (dead != null) {
+                        "Сервер ${server(outboundTag)} не ответил, соединение осталось на прежнем. ${dead.explanation()}"
+                    } else {
+                        "Сервер ${server(outboundTag)} не прошёл проверку связи, оставлен прежний. ${failure.message}"
+                    },
                 )
                 host.showForeground(ForegroundState.Connected)
             }
