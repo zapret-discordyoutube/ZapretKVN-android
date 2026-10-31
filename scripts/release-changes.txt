@@ -5,4 +5,5 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Длинные сообщения приложения висят дольше и их можно закрыть крестиком, короткие по-прежнему уходят быстро
+Приложение больше не включает VPN само при открытии ради проверки обновлений и не гасит его потом молча
+Временный VPN для загрузки обновления поднимается только по кнопке «Проверить» или «Скачать»
