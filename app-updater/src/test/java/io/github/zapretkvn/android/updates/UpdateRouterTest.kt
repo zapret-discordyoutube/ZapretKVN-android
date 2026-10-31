@@ -191,6 +191,21 @@ class UpdateRouterTest {
     }
 
     @Test
+    fun `a remembered vpn route does not start the vpn before trying direct`() = runBlocking {
+        val prefs = InMemoryUpdatePrefs().apply { lastRoute = UpdateRoute.Vpn }
+        val vpn = FakeVpn()
+        val order = mutableListOf<UpdateRoute>()
+        val lease = router(vpn, vpnActive = false, prefs = prefs) { route ->
+            order += route
+            "x"
+        }.race(allowStartingVpn = true) { it.readText("u", 1) }
+        assertEquals(listOf(UpdateRoute.Direct), order)
+        assertEquals(0, vpn.connected.get())
+        lease.close()
+        assertEquals(UpdateRoute.Direct, router(vpn, vpnActive = false, prefs = prefs) { "x" }.downloadOrder(null, true).first())
+    }
+
+    @Test
     fun `download order puts the check winner first and respects the background rule`() {
         val vpn = FakeVpn()
         val r = router(vpn, vpnActive = false) { "x" }

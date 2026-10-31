@@ -17,8 +17,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *
  * - VPN включён: прямой запрос и запрос через VPN идут наперегонки (второй стартует через
  *   [hedgeMillis], чтобы не перезапускать VPN ради быстрого прямого ответа), побеждает первый успех.
- * - VPN выключен: сначала прямой, при маршрутной ошибке — временный VPN-маршрут, если это разрешено.
- * Маршрут, который сработал последним, пробуется первым.
+ * - VPN выключен: всегда сначала прямой, при маршрутной ошибке — временный VPN-маршрут, если это
+ *   разрешено (только действие пользователя: «Проверить», «Скачать»).
+ * Пока VPN включён, маршрут, который сработал последним, пробуется первым. Выключенный VPN ради
+ * запомненного маршрута не поднимается: раньше после одной удачи через VPN каждое открытие
+ * приложения начиналось с запуска VPN.
  */
 class UpdateRouter(
     private val clientFor: (UpdateRoute) -> UpdateHttpClient,
@@ -54,7 +57,8 @@ class UpdateRouter(
      */
     suspend fun <T> race(allowStartingVpn: Boolean, block: suspend (UpdateHttpClient) -> T): Lease<T> {
         val vpnUp = vpnActive()
-        val routes = preferredOrder().filter { it == UpdateRoute.Direct || usableVpn(vpnUp, allowStartingVpn) }
+        val order = if (vpnUp) preferredOrder() else listOf(UpdateRoute.Direct, UpdateRoute.Vpn)
+        val routes = order.filter { it == UpdateRoute.Direct || usableVpn(vpnUp, allowStartingVpn) }
         if (vpnUp && routes.size == 2) return raceTwo(routes[0], routes[1], block)
         return sequential(routes, block)
     }
@@ -78,7 +82,7 @@ class UpdateRouter(
     /** Маршруты для загрузки после проверки: победивший в проверке первым, остальные запасными. */
     fun downloadOrder(winner: UpdateRoute?, allowStartingVpn: Boolean): List<UpdateRoute> {
         val vpnUp = vpnActive()
-        val first = winner ?: preferredOrder().first()
+        val first = winner ?: if (vpnUp) preferredOrder().first() else UpdateRoute.Direct
         return listOf(first, if (first == UpdateRoute.Direct) UpdateRoute.Vpn else UpdateRoute.Direct)
             .filter { it == UpdateRoute.Direct || usableVpn(vpnUp, allowStartingVpn) }
     }

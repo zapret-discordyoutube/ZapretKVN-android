@@ -252,7 +252,10 @@ class UpdateController(
         mutableState.value = UpdateState.Checking(channel.name)
         var lease: UpdateRouter.Lease<UpdateCandidate>? = null
         try {
-            lease = router.race(allowStartingVpn = !background) { client -> sourceFactory(client).latest(channel) }
+            // Выключенный VPN поднимает только проверка по нажатию. Автоматическая (при открытии
+            // приложения) раньше включала временный маршрут сама: пользователь видел «VPN
+            // подключён», а через минуту он молча гас (31.10.2026).
+            lease = router.race(allowStartingVpn = !automatic) { client -> sourceFactory(client).latest(channel) }
             coroutineContext.ensureActive()
             val candidate = lease.value
             if (candidate.metadata.versionCode <= currentVersionCode) {
@@ -351,7 +354,8 @@ class UpdateController(
                 failure = error
             }
         }
-        val order = router.downloadOrder(lease?.route ?: prefs.lastRoute, allowStartingVpn = !background)
+        // Загрузка сама поднимает VPN только по кнопке «Скачать»; автоматическая — нет.
+        val order = router.downloadOrder(lease?.route ?: prefs.lastRoute, allowStartingVpn = manual)
             .filter { it != lease?.route }
         if (order.isEmpty()) throw failure ?: UpdateRoutesFailedException(emptyList())
         val routed = router.sequential(order) { client -> downloadVia(client, candidate, partial, manual) }

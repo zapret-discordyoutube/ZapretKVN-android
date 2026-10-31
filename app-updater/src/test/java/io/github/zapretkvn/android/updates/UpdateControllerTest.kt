@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -46,6 +47,7 @@ class UpdateControllerTest {
         val silentFlags: MutableList<Boolean>,
         val states: MutableList<UpdateState>,
         val prefs: UpdatePrefs,
+        val vpnStarts: java.util.concurrent.atomic.AtomicInteger,
     )
 
     private fun controller(
@@ -70,6 +72,7 @@ class UpdateControllerTest {
         val installs = CopyOnWriteArrayList<Pair<File, String>>()
         val silentFlags = CopyOnWriteArrayList<Boolean>()
         val states = CopyOnWriteArrayList<UpdateState>()
+        val vpnStarts = java.util.concurrent.atomic.AtomicInteger()
         val installed = installedApk?.let { File(TestZips.tempDir(), "base.apk").also { f -> f.writeBytes(it) } }
         val failing = object : UpdateHttpClient {
             override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse =
@@ -89,7 +92,10 @@ class UpdateControllerTest {
                 }
             },
             verifier = verifier,
-            vpnFallback = UpdateVpnFallback { UpdateVpnSession { } },
+            vpnFallback = UpdateVpnFallback {
+                vpnStarts.incrementAndGet()
+                UpdateVpnSession { }
+            },
             installer = UpdateInstaller { file, sha, _, silent ->
                 if (installerThrows) throw UpdateException("Сессия установки не открылась.")
                 installs += file to sha
@@ -111,7 +117,7 @@ class UpdateControllerTest {
             hedgeMillis = 20,
         )
         http.files["https://git.zapret.moe/x"] = ByteArray(1)
-        return Setup(controller, root, http, installs, silentFlags, states, prefs)
+        return Setup(controller, root, http, installs, silentFlags, states, prefs, vpnStarts)
     }
 
     private fun Setup.record() {
@@ -148,6 +154,28 @@ class UpdateControllerTest {
         setup.await { it is UpdateState.Ready }
         assertTrue(setup.states.none { it is UpdateState.Failure })
         assertEquals(UpdateRoute.Vpn, setup.prefs.lastRoute)
+    }
+
+    @Test
+    fun `automatic check on launch never switches on a vpn that is off`() {
+        // Раньше открытие приложения при заблокированном Forgejo поднимало временный VPN:
+        // пользователь видел «подключено», шёл в браузер, а VPN молча гас после загрузки.
+        val prefs = InMemoryUpdatePrefs().apply { lastRoute = UpdateRoute.Vpn }
+        val setup = controller(bytes, vpnActive = false, failDirect = true, prefs = prefs)
+        setup.record()
+        setup.controller.checkOnce(UpdateChannel.Stable)
+        runBlocking { withTimeout(15_000) { while (setup.states.none { it is UpdateState.Checking }) delay(10) } }
+        setup.await { it !is UpdateState.Checking && it !is UpdateState.Downloading }
+        assertEquals(0, setup.vpnStarts.get())
+        assertTrue(setup.states.none { it is UpdateState.Failure })
+    }
+
+    @Test
+    fun `manual check may use the temporary vpn route when direct is blocked`() {
+        val setup = controller(bytes, vpnActive = false, failDirect = true)
+        setup.controller.check(UpdateChannel.Stable)
+        setup.await { it is UpdateState.Available }
+        assertEquals(1, setup.vpnStarts.get())
     }
 
     @Test
