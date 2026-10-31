@@ -5,5 +5,5 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Обновления находят новые зеркала сайта со случайными именами
-Если все известные адреса закрыты, рабочие берутся со страниц на Google и GitHub
+Сервер, который не ответил при ручном выборе, не становится выбранным: связь остаётся на прежнем
+Если UDP до сервера Hysteria не доходит, приложение так и пишет и советует сервер VLESS или Trojan
