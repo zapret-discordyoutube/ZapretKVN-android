@@ -188,7 +188,18 @@ object VpnErrorExplainer {
                 "Настройки маскировки не совпали с сервером",
                 "Обновите подписку, чтобы получить актуальные параметры сервера.",
             )
-            HysteriaFailureCode.TARGET_NETWORK_TIMEOUT,
+            HysteriaFailureCode.TARGET_NETWORK_TIMEOUT -> VpnErrorExplanation(
+                "Сервер недоступен из этой сети",
+                if (context.protocol?.lowercase() in UDP_PROTOCOLS) {
+                    // Сервер не ответил ни на один пакет: UDP до него не доходит.
+                    // Помогает сервер на TCP, а не повтор того же протокола.
+                    "Протокол ${protocolName(context.protocol)} работает только через UDP, а UDP до этого " +
+                        "сервера не доходит: его режет сеть или оператор, либо сервер выключен. " +
+                        tcpServer(context) + " Можно также попробовать другую сеть."
+                } else {
+                    otherServer(context) + " Можно также попробовать другую сеть."
+                },
+            )
             HysteriaFailureCode.TARGET_CONNECTION_CLOSED,
             HysteriaFailureCode.TARGET_CONNECTION_REFUSED,
             -> VpnErrorExplanation(
@@ -248,6 +259,12 @@ object VpnErrorExplainer {
         "Выберите другой сервер в списке."
     } else {
         "В профиле один сервер: обновите подписку или добавьте другой ключ."
+    }
+
+    private fun tcpServer(context: VpnErrorContext): String = if (context.hasOtherServers) {
+        "Выберите сервер VLESS или Trojan — они работают через TCP."
+    } else {
+        "В профиле один сервер: обновите подписку или добавьте ключ VLESS или Trojan — они работают через TCP."
     }
 
     private fun protocolName(protocol: String?): String = when (protocol?.lowercase()) {

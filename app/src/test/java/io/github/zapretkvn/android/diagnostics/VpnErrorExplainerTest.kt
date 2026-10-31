@@ -57,6 +57,38 @@ class VpnErrorExplainerTest {
     }
 
     @Test
+    fun `udp server without any reply points to a tcp protocol`() {
+        val hysteria = VpnErrorExplainer.explain(
+            "TARGET_NETWORK_TIMEOUT",
+            context = VpnErrorContext(protocol = "hysteria2", hasOtherServers = true),
+        )
+        assertEquals("Сервер недоступен из этой сети", hysteria.title)
+        assertTrue("только через UDP" in hysteria.hint)
+        assertTrue("не доходит" in hysteria.hint)
+        assertTrue("VLESS или Trojan" in hysteria.hint)
+
+        val single = VpnErrorExplainer.explain(
+            "TARGET_NETWORK_TIMEOUT",
+            context = VpnErrorContext(protocol = "tuic", hasOtherServers = false),
+        )
+        assertTrue("один сервер" in single.hint)
+        assertTrue("VLESS или Trojan" in single.hint)
+
+        val vless = VpnErrorExplainer.explain(
+            "TARGET_NETWORK_TIMEOUT",
+            context = VpnErrorContext(protocol = "vless", hasOtherServers = true),
+        )
+        assertFalse("UDP" in vless.hint)
+        assertTrue("другой сервер" in vless.hint)
+
+        val refused = VpnErrorExplainer.explain(
+            "TARGET_CONNECTION_REFUSED",
+            context = VpnErrorContext(protocol = "hysteria2", hasOtherServers = true),
+        )
+        assertFalse("не доходит" in refused.hint)
+    }
+
+    @Test
     fun `vpn-200 verdicts pick distinct explanations`() {
         val titles = listOf("timeout", "tls", "reset", "dns", "http").map { verdict ->
             VpnErrorExplainer.explain("VPN-200", "verdict=$verdict a:$verdict@1").title
