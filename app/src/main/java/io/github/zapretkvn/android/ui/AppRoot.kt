@@ -263,25 +263,25 @@ private fun MessagesHost(deps: AppDependencies, snackbarHostState: SnackbarHostS
     LaunchedEffect(deps.profiles) {
         deps.profiles.state.map { it.message }.distinctUntilChanged().filterNotNull().collect {
             deps.profiles.consumeMessage()
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showAppMessage(it)
         }
     }
     LaunchedEffect(deps.vpn) {
         deps.vpn.message.filterNotNull().collect {
             deps.vpn.consumeMessage()
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showAppMessage(it)
         }
     }
     LaunchedEffect(deps.routing) {
         deps.routing.state.map { it.message }.distinctUntilChanged().filterNotNull().collect {
             deps.routing.consumeMessage()
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showAppMessage(it)
         }
     }
     LaunchedEffect(deps.apps) {
         deps.apps.state.map { it.message }.distinctUntilChanged().filterNotNull().collect {
             deps.apps.consumeMessage()
-            snackbarHostState.showSnackbar(it)
+            snackbarHostState.showAppMessage(it)
         }
     }
 }
