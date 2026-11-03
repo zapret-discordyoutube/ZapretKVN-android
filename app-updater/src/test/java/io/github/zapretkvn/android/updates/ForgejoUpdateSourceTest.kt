@@ -151,6 +151,24 @@ class ForgejoUpdateSourceTest {
             ForgejoHttpsClient.validatedUrl("https://git2.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v1/file"),
         )
         assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://git9.zapret.moe/file") }
+        // Копия выпусков на GitHub: её адрес и перенаправление на хранилище файлов GitHub.
+        for (host in ForgejoHosts.GITHUB_DOWNLOAD_HOSTS) {
+            assertEquals("https://$host/a", ForgejoHttpsClient.validatedUrl("https://$host/a"))
+        }
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://gist.github.com/a") }
+    }
+
+    @Test
+    fun `github copy is built only from a forgejo release asset`() {
+        assertEquals(
+            "https://github.com/zapret-discordyoutube/ZapretKVN-android/releases/download/v0.5.28/Zapret-KVN-v0.5.28-arm64-v8a.apk",
+            ForgejoHosts.githubAssetUrl(
+                "https://git2.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v0.5.28/Zapret-KVN-v0.5.28-arm64-v8a.apk",
+            ),
+        )
+        assertEquals(null, ForgejoHosts.githubAssetUrl("https://example.com/zapretkvn/x/releases/download/v1/a.apk"))
+        assertEquals(null, ForgejoHosts.githubAssetUrl("https://git.zapret.moe/zapretkvn/x/archive/v1.zip"))
+        assertEquals(null, ForgejoHosts.githubAssetUrl("https://git.zapret.moe/zapretkvn/x/releases/download/v1/sub/a.apk"))
     }
 
     @After

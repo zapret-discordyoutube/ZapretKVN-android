@@ -21,6 +21,7 @@ import org.junit.Test
 
 class UpdateControllerTest {
     private val url = "https://git.zapret.moe/zapretkvn/ZapretKVN-android/releases/download/v2.0.0/app.apk"
+    private val githubUrl = "https://github.com/zapret-discordyoutube/ZapretKVN-android/releases/download/v2.0.0/app.apk"
 
     private class Fixture(val root: File = File(TestZips.tempDir(), "updates"))
 
@@ -144,6 +145,29 @@ class UpdateControllerTest {
         assertTrue(setup.states.none { it is UpdateState.Failure })
         assertArrayEquals(bytes, File(setup.root, ready.candidate.metadata.apkFile).readBytes())
         assertEquals(0, setup.installs.size)
+    }
+
+    @Test
+    fun `apk comes from the github copy first and forgejo is not touched`() {
+        val setup = controller(bytes)
+        setup.http.files[githubUrl] = bytes
+        setup.controller.checkOnce(UpdateChannel.Stable)
+        val ready = setup.await { it is UpdateState.Ready } as UpdateState.Ready
+
+        assertArrayEquals(bytes, File(setup.root, ready.candidate.metadata.apkFile).readBytes())
+        assertTrue(githubUrl in setup.http.servedUrls)
+        assertTrue(url !in setup.http.servedUrls)
+    }
+
+    @Test
+    fun `a corrupted github copy falls back to forgejo`() {
+        val setup = controller(bytes)
+        setup.http.files[githubUrl] = bytes.copyOf().also { it[1000] = (it[1000] + 1).toByte() }
+        setup.controller.checkOnce(UpdateChannel.Stable)
+        val ready = setup.await { it is UpdateState.Ready } as UpdateState.Ready
+
+        assertArrayEquals(bytes, File(setup.root, ready.candidate.metadata.apkFile).readBytes())
+        assertTrue(url in setup.http.servedUrls)
     }
 
     @Test

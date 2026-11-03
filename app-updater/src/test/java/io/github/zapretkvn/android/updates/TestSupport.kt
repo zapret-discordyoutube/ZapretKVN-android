@@ -121,11 +121,14 @@ class FakeRangeHttp(
     var corruptAt: Long = -1,
 ) : UpdateHttpClient {
     val requests = mutableListOf<Pair<Long, Long?>>()
+    /** Адреса, по которым файл действительно отдан. */
+    val servedUrls = mutableListOf<String>()
     var servedBytes = 0L
 
     override fun open(url: String, start: Long, endInclusive: Long?): UpdateResponse {
         val data = files[url] ?: throw UpdateException("Forgejo Release пока не опубликован.")
         requests += start to endInclusive
+        servedUrls += url
         val ranged = start > 0 || endInclusive != null
         if (ranged && !supportsRange) {
             return UpdateResponse(200, 0, data.size.toLong(), data.size.toLong(), data.inputStream())

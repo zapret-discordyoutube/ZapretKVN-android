@@ -265,7 +265,7 @@ class ForgejoHttpsClient(
                 throw UpdateException("Forgejo вернул некорректный URL.", error)
             }
             val host = uri.host?.lowercase()
-            val allowedHost = ForgejoHosts.isKnown(host)
+            val allowedHost = ForgejoHosts.isKnown(host) || host in ForgejoHosts.GITHUB_DOWNLOAD_HOSTS
             if (uri.scheme != "https" || !allowedHost || uri.userInfo != null ||
                 uri.fragment != null || uri.port !in setOf(-1, 443)
             ) {
@@ -452,6 +452,27 @@ object ForgejoHosts {
     fun all(): List<String> = (learned + BUILT_IN).distinct()
 
     fun isKnown(host: String?): Boolean = host != null && host in all()
+
+    /**
+     * Копия файлов выпусков на GitHub (решение владельца 2026-11-03: APK качается с GitHub, Forgejo — запасной путь;
+     * выпуски копирует forgejo_releases_to_github.py на хосте). Тот же тег и то же имя файла; подлинность APK держат
+     * SHA-256 из метаданных выпуска и подпись, поэтому к именам Forgejo добавлены только хосты загрузки GitHub.
+     */
+    const val GITHUB_OWNER = "zapret-discordyoutube"
+    val GITHUB_DOWNLOAD_HOSTS = setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
+
+    /** Адрес того же файла выпуска на GitHub по адресу на Forgejo (`/<owner>/<repo>/releases/download/<tag>/<file>`); null — не выходит. */
+    fun githubAssetUrl(forgejoUrl: String): String? {
+        val uri = try {
+            java.net.URI(forgejoUrl)
+        } catch (_: Exception) {
+            return null
+        }
+        if (uri.scheme != "https" || !isKnown(uri.host?.lowercase())) return null
+        val parts = uri.rawPath.orEmpty().trim('/').split('/')
+        if (parts.size != 6 || parts[2] != "releases" || parts[3] != "download" || parts.any(String::isEmpty)) return null
+        return "https://github.com/$GITHUB_OWNER/${parts[1]}/releases/download/${parts[4]}/${parts[5]}"
+    }
 
     fun accepts(name: String): Boolean {
         if (!NAME.matches(name)) return false

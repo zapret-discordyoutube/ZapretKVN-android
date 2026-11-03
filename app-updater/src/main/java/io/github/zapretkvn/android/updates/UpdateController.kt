@@ -366,14 +366,33 @@ class UpdateController(
         }
     }
 
+    /** Сначала копия выпуска на GitHub, при сетевом сбое или неверном SHA-256 — Forgejo (решение владельца 2026-11-03). */
     private suspend fun downloadVia(
         client: UpdateHttpClient,
         candidate: UpdateCandidate,
         partial: File,
         manual: Boolean,
     ): DownloadOutcome {
+        val forgejo = candidate.apkAsset.downloadUrl
+        val github = ForgejoHosts.githubAssetUrl(forgejo) ?: return downloadFrom(client, candidate, partial, manual, forgejo)
+        return try {
+            downloadFrom(client, candidate, partial, manual, github)
+        } catch (_: UpdateException) {
+            // Недокачанный .part остаётся: тот же файл докачивается с Forgejo.
+            downloadFrom(client, candidate, partial, manual, forgejo)
+        } catch (_: java.io.IOException) {
+            downloadFrom(client, candidate, partial, manual, forgejo)
+        }
+    }
+
+    private suspend fun downloadFrom(
+        client: UpdateHttpClient,
+        candidate: UpdateCandidate,
+        partial: File,
+        manual: Boolean,
+        url: String,
+    ): DownloadOutcome {
         val metadata = candidate.metadata
-        val url = candidate.apkAsset.downloadUrl
         val plan = downloader.plan(client, url, metadata.apkSize, partial)
         if (!manual && !UpdateAutoDownloadPolicy.allows(environment.isMetered(), plan.networkBytes)) {
             return DownloadOutcome.Deferred
