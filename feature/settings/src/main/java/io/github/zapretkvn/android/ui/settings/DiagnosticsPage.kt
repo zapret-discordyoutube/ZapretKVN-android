@@ -58,7 +58,7 @@ fun DiagnosticsScreen(
     diagnostics: DiagnosticState,
     onCreateDiagnosticShare: suspend () -> Intent,
     onClearDnsCache: () -> Unit,
-    /** Адрес страницы обращений на открытом зеркале сайта (или на GitHub); пустая строка — не открывать. */
+    /** Адрес страницы обращений: открытое зеркало сайта или входная страница Zapret Links; пустая строка — не открывать. */
     onResolveSupportUrl: suspend () -> String = { "" },
 ) {
     var toggled by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -312,7 +312,7 @@ private fun SummaryCard(
     }
 }
 
-/** «Открыть страницу обращений»: рабочее зеркало сайта проекта, а если ни одно не открывается — GitHub. */
+/** «Открыть страницу обращений»: рабочее зеркало сайта проекта, иначе входная страница Zapret Links. */
 @Composable
 private fun SupportPageButton(onResolveSupportUrl: suspend () -> String) {
     val context = LocalContext.current
@@ -351,7 +351,8 @@ private fun SupportPageButton(onResolveSupportUrl: suspend () -> String) {
         }
         HintText(
             error ?: "Создайте обращение и приложите отправленный файл. Страница открывается на рабочем " +
-                "зеркале сайта проекта, а если не открывается ни одно — на GitHub.",
+                "зеркале сайта проекта, а если приложение не нашло ни одного — через входную страницу " +
+                "Zapret Links, где зеркала проверяет сам браузер.",
         )
     }
 }

@@ -78,7 +78,7 @@ class AppDependencies(
     val restartVpn: () -> Unit,
     val installUpdate: () -> Unit,
     val createDiagnosticShare: suspend () -> Intent,
-    /** Страница обращений в поддержку на открытом зеркале сайта или на GitHub (ждёт сеть). */
+    /** Страница обращений в поддержку: открытое зеркало сайта или входная страница Zapret Links (ждёт сеть). */
     val resolveSupportUrl: suspend () -> String,
     /** Проверка сервисов без VPN: результаты (только в памяти) и нажатие на карточку. */
     val directServices: StateFlow<ServiceAvailabilityState>,

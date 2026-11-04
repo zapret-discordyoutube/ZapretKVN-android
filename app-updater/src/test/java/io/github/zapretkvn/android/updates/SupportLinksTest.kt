@@ -37,7 +37,7 @@ class SupportLinksTest {
         val http = FakeHttp(
             ForgejoHosts.all().associate { "https://$it/_sites/mirrors.json" to "<html>login</html>" },
         )
-        assertEquals(SupportLinks.GITHUB_URL, SupportLinks.resolve(http, deadlineMillis = 1_500))
+        assertEquals(SupportLinks.entryPageUrl(), SupportLinks.resolve(http, deadlineMillis = 1_500))
     }
 
     @Test
@@ -56,10 +56,14 @@ class SupportLinksTest {
     }
 
     @Test
-    fun `when nothing opens the page is on github`() {
+    fun `when nothing opens the app the entry page of zapret links is the support page`() {
         val http = FakeHttp(emptyMap())
         val url = SupportLinks.resolve(http, deadlineMillis = 1_500)
-        assertEquals("https://github.com/zapret-discordyoutube/ZapretKVN-android/issues/new", url)
+        assertEquals(SupportLinks.entryPageUrl(), url)
+        assertTrue(url, url.startsWith("https://script.google.com/macros/s/"))
+        assertTrue(url, url.endsWith("?s=git&p=zapretkvn/ZapretKVN-android/issues/new"))
+        assertFalse(url, url.contains("format=json"))
+        assertFalse(url, url.contains("github.com"))
         assertTrue(http.asked.any { it.contains("/_sites/mirrors.json") })
     }
 

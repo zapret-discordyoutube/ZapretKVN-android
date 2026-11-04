@@ -11,14 +11,29 @@ import kotlinx.serialization.json.jsonObject
  * Страница обращений в поддержку на том имени сайта проекта, которое открывается сейчас.
  * Тот же порядок, что у кнопки «Поддержка» в Windows (`xray_fluent/support/site.py`):
  * известные имена Forgejo (встроенные и узнанные со входных страниц) → новые имена со входных
- * страниц → страница обращений в репозитории на GitHub, когда не открывается ни одно зеркало.
+ * страниц → входная страница Zapret Links на script.google.com с путём обращений: она работает
+ * в браузере и сама предлагает зеркало, которое там открывается. На GitHub обращений нет (там
+ * только копии выпусков), поэтому он запасным путём не служит.
  *
  * Имя проверяется запросом `/_sites/mirrors.json`: он есть на каждом имени нашего сайта,
  * и верный ответ доказывает, что имя открывается с этого телефона.
  */
 object SupportLinks {
     const val SUPPORT_PATH = "/zapretkvn/ZapretKVN-android/issues/new"
-    const val GITHUB_URL = "https://github.com/${ForgejoHosts.GITHUB_OWNER}/ZapretKVN-android/issues/new"
+    private const val ENTRY_HOST = "script.google.com"
+
+    /**
+     * Входная страница Zapret Links (та же, что в [ForgejoHosts.ENTRY_LISTS], но без `format=json`)
+     * с путём нашего сайта: фильтр провайдера видит только script.google.com, а страница в браузере
+     * показывает зеркала, которые действительно грузятся. Нужна, когда приложение само не нашло
+     * открывающееся имя: его сеть и сеть браузера доходят до сайта по-разному.
+     */
+    fun entryPageUrl(path: String = SUPPORT_PATH): String {
+        val entry = ForgejoHosts.ENTRY_LISTS.firstNotNullOfOrNull { listed ->
+            runCatching { java.net.URI(listed) }.getOrNull()?.takeIf { it.host == ENTRY_HOST }
+        } ?: return "https://${ForgejoHosts.BUILT_IN.last()}$path"
+        return "${entry.scheme}://${entry.rawAuthority}${entry.rawPath}?s=git&p=${path.trim('/')}"
+    }
 
     private const val MIRRORS_PATH = "/_sites/mirrors.json"
     private const val RACE_DEADLINE_MILLIS = 4_000L
@@ -42,7 +57,7 @@ object SupportLinks {
             race(http, fresh, deadlineMillis)?.let { return "https://$it$SUPPORT_PATH" }
             break
         }
-        return GITHUB_URL
+        return entryPageUrl()
     }
 
     /** Имена спрашиваются параллельно; побеждает первое, давшее верный список зеркал. */
