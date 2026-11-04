@@ -90,6 +90,40 @@ class FetchDiagnosisTest {
     }
 
     @Test
+    fun `vpn reaches the server but the request gets no answer is not reported as vpn opens it`() {
+        val d = verdict(fail("tls") to ok, fail("http") to ok)
+        assertEquals(Culprit.Server, d.culprit)
+        assertTrue(d.certain)
+        assertFalse(d.advice.contains("Через VPN сервер подписки открывается"))
+        assertTrue(d.where.contains("через VPN соединение и TLS проходят, но на запрос сайта ответа нет"))
+        assertTrue(d.advice.contains("не пускает адрес этого VPN-сервера"))
+    }
+
+    @Test
+    fun `a failed request stage is described by how it ended`() {
+        assertTrue(FetchJudge.describeFailure(fail("http", "timeout"), "через VPN").contains("ответа нет"))
+        assertTrue(FetchJudge.describeFailure(fail("http", "reset"), "напрямую").contains("соединение оборвалось"))
+        assertTrue(FetchJudge.describeFailure(fail("http", "reset"), "напрямую").contains("напрямую"))
+    }
+
+    @Test
+    fun `the probe request never carries the path or token of the subscription`() {
+        val own = String(FetchProbes.httpRequest("sub.example.com"), Charsets.US_ASCII)
+        assertTrue(own.startsWith("GET / HTTP/1.1\r\nHost: sub.example.com\r\n"))
+        assertTrue(own.endsWith("\r\n\r\n"))
+        val control = String(FetchProbes.httpRequest(FetchJudge.CONTROL_HOST), Charsets.US_ASCII)
+        assertTrue(control.startsWith("GET /generate_204 HTTP/1.1"))
+    }
+
+    @Test
+    fun `any http answer passes the request stage and silence or garbage does not`() {
+        FetchProbes.checkHttpHead("HTTP/1.1 404 Not Found".toByteArray())
+        FetchProbes.checkHttpHead("HTTP/2 200".toByteArray())
+        assertEquals("reset", FetchProbes.classify(runCatching { FetchProbes.checkHttpHead(ByteArray(0)) }.exceptionOrNull()!!))
+        assertEquals("error", FetchProbes.classify(runCatching { FetchProbes.checkHttpHead("SSH-2.0-OpenSSH".toByteArray()) }.exceptionOrNull()!!))
+    }
+
+    @Test
     fun `evidence carries whether any profile exists`() {
         val prober = { _: android.net.Network?, _: String, _: Int -> ok }
         assertFalse(FetchProbes.collect(host, 443, null, null, prober, serversAvailable = false).serversAvailable)

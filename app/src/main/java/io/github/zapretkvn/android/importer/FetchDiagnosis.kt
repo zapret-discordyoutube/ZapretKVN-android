@@ -68,7 +68,7 @@ object FetchMasking {
 /** Итог проверки одного узла по одному маршруту. [failed] пуст, если все стадии пройдены. */
 data class HostProbe(
     val ok: Boolean,
-    val failed: String = "",   // "dns" | "tcp" | "tls"
+    val failed: String = "",   // "dns" | "tcp" | "tls" | "http"
     val how: String = "",      // "timeout" | "reset" | "refused" | "dns" | "cert" | "tls_error" | "error"
     val timings: List<Pair<String, Int>> = emptyList(),
     val detail: String = "",
@@ -132,6 +132,11 @@ object FetchJudge {
                 "reset" -> "$route TCP есть, но рукопожатие TLS оборвали сразу — типичная блокировка по имени сервера (SNI)"
                 "timeout" -> "$route TCP есть, но рукопожатие TLS повисло — типичная блокировка по имени сервера (SNI)"
                 else -> "$route TCP есть, но защищённое соединение (TLS) не установилось"
+            }
+            "http" -> if (probe.how == "timeout") {
+                "$route соединение и TLS проходят, но на запрос сайта ответа нет: сервер молчит или не принимает запросы с этого адреса"
+            } else {
+                "$route соединение и TLS проходят, но после запроса сайта соединение оборвалось"
             }
             else -> "$route соединение с сервером не удалось (${probe.failed})"
         }
@@ -199,6 +204,12 @@ object FetchJudge {
                     Culprit.Block, true, where,
                     "Через VPN сервер подписки открывается: обновите подписку при включённом VPN.",
                 )
+                vTarget != null && vTarget.failed == "http" -> done(
+                    Culprit.Server, true, where + "; " + describeFailure(vTarget, "через VPN"),
+                    "Напрямую путь закрыт, а через VPN соединение с сервером есть, но на запрос он не отвечает: " +
+                        "возможно, сервер подписки не пускает адрес этого VPN-сервера. Подключитесь к другому серверу " +
+                        "и обновите подписку или возьмите ссылку подписки заново.",
+                )
                 vTarget != null -> done(
                     Culprit.Server, true, where + "; " + describeFailure(vTarget, "через VPN"),
                     "Сервер недоступен и напрямую, и через VPN.",
@@ -238,7 +249,24 @@ object FetchJudge {
 
 /** Пробы стадий DNS → TCP → TLS по выбранной сети (null — сеть по умолчанию). */
 object FetchProbes {
-    const val PROBE_TIMEOUT_MILLIS = 4_000
+    const val PROBE_TIMEOUT_MILLIS = 6_000
+
+    /** После рукопожатия стадии «настоящий запрос» всегда достаётся хотя бы столько времени. */
+    const val HTTP_MIN_BUDGET_MILLIS = 2_500
+    private const val PROBE_USER_AGENT = "Mozilla/5.0 (Linux; Android) ZapretKVN-check"
+
+    /** Контрольный узел отвечает на generate_204 мгновенно; у сервера подписки берётся корень сайта, путь и токен ссылки в пробу не попадают. */
+    internal fun httpPath(host: String): String = if (host == FetchJudge.CONTROL_HOST) "/generate_204" else "/"
+
+    internal fun httpRequest(host: String): ByteArray =
+        ("GET ${httpPath(host)} HTTP/1.1\r\nHost: $host\r\nUser-Agent: $PROBE_USER_AGENT\r\n" +
+            "Accept: */*\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII)
+
+    /** Любой ответ, хоть 404, значит «сервер отвечает на HTTP»; молчание или не-HTTP считаются сбоем. */
+    internal fun checkHttpHead(head: ByteArray) {
+        if (head.isEmpty()) throw EOFException("соединение закрыто без ответа")
+        if (!String(head, Charsets.ISO_8859_1).startsWith("HTTP/")) throw IOException("ответ не похож на HTTP")
+    }
 
     fun classify(error: Throwable): String {
         var current: Throwable? = error
@@ -295,19 +323,40 @@ object FetchProbes {
         timings += "tcp" to elapsed()
 
         started = System.nanoTime()
+        val tls: SSLSocket
         try {
             val left = remaining().coerceAtLeast(100)
             socket.soTimeout = left
-            val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory)
+            tls = (SSLSocketFactory.getDefault() as SSLSocketFactory)
                 .createSocket(socket, host, port, true) as SSLSocket
             tls.soTimeout = left
             tls.startHandshake()
-            tls.close()
         } catch (error: IOException) {
             runCatching { socket.close() }
             return HostProbe(false, "tls", classify(error), timings, error.javaClass.simpleName)
         }
         timings += "tls" to elapsed()
+
+        // Рукопожатие ещё не значит, что сервер отвечает: один настоящий запрос по готовому соединению.
+        started = System.nanoTime()
+        try {
+            tls.soTimeout = remaining().coerceAtLeast(HTTP_MIN_BUDGET_MILLIS)
+            tls.outputStream.write(httpRequest(host))
+            tls.outputStream.flush()
+            val buffer = ByteArray(256)
+            var head = ByteArray(0)
+            while (head.size < 12) {
+                val read = tls.inputStream.read(buffer)
+                if (read < 0) break
+                head += buffer.copyOf(read)
+            }
+            checkHttpHead(head)
+        } catch (error: IOException) {
+            return HostProbe(false, "http", classify(error), timings, error.javaClass.simpleName)
+        } finally {
+            runCatching { tls.close() }
+        }
+        timings += "http" to elapsed()
         return HostProbe(true, timings = timings)
     }
 
