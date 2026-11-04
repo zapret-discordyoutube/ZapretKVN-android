@@ -78,6 +78,8 @@ class AppDependencies(
     val restartVpn: () -> Unit,
     val installUpdate: () -> Unit,
     val createDiagnosticShare: suspend () -> Intent,
+    /** Страница обращений в поддержку на открытом зеркале сайта или на GitHub (ждёт сеть). */
+    val resolveSupportUrl: suspend () -> String,
     /** Проверка сервисов без VPN: результаты (только в памяти) и нажатие на карточку. */
     val directServices: StateFlow<ServiceAvailabilityState>,
     val checkServicesDirect: () -> Unit,

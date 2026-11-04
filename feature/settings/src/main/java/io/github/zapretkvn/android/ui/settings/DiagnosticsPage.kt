@@ -1,6 +1,8 @@
 package io.github.zapretkvn.android.ui.settings
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -21,10 +24,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -42,6 +47,8 @@ import io.github.zapretkvn.core.designsystem.ZapretIcons
 import io.github.zapretkvn.core.designsystem.toneColor
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 fun DiagnosticsScreen(
@@ -51,6 +58,8 @@ fun DiagnosticsScreen(
     diagnostics: DiagnosticState,
     onCreateDiagnosticShare: suspend () -> Intent,
     onClearDnsCache: () -> Unit,
+    /** Адрес страницы обращений на открытом зеркале сайта (или на GitHub); пустая строка — не открывать. */
+    onResolveSupportUrl: suspend () -> String = { "" },
 ) {
     var toggled by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var logsExpanded by rememberSaveable { mutableStateOf(false) }
@@ -68,7 +77,7 @@ fun DiagnosticsScreen(
 
     SettingsPageList(contentPadding, tag = "diagnostics-screen") {
         item(key = "summary", contentType = "summary") {
-            SummaryCard(summary, vpnState, onCreateDiagnosticShare)
+            SummaryCard(summary, vpnState, onCreateDiagnosticShare, onResolveSupportUrl)
         }
 
         item(key = DiagnosticsSections.Error, contentType = "section") {
@@ -261,7 +270,10 @@ private fun SummaryCard(
     summary: DiagnosticsSummary,
     vpnState: VpnConnectionState,
     onCreateDiagnosticShare: suspend () -> Intent,
+    onResolveSupportUrl: suspend () -> String,
 ) {
+    // Страница обращений предлагается, когда отчёт уже ушёл в окно отправки.
+    var shared by remember { mutableStateOf(false) }
     ZapretCard {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -291,8 +303,56 @@ private fun SummaryCard(
             label = "Экспортировать диагностику",
             onCreateDiagnosticShare = onCreateDiagnosticShare,
             modifier = Modifier.fillMaxWidth(),
+            onShared = { shared = true },
         )
         HintText("Создаёт временный отчёт без секретов и открывает системное окно отправки.")
+        if (shared) {
+            SupportPageButton(onResolveSupportUrl)
+        }
+    }
+}
+
+/** «Открыть страницу обращений»: рабочее зеркало сайта проекта, а если ни одно не открывается — GitHub. */
+@Composable
+private fun SupportPageButton(onResolveSupportUrl: suspend () -> String) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var opening by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        OutlinedButton(
+            enabled = !opening,
+            onClick = {
+                scope.launch {
+                    opening = true
+                    error = null
+                    try {
+                        val url = onResolveSupportUrl()
+                        if (url.isNotBlank()) {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: ActivityNotFoundException) {
+                        error = "Не найден браузер, чтобы открыть страницу обращений."
+                    } catch (_: Throwable) {
+                        error = "Не удалось открыть страницу обращений."
+                    } finally {
+                        opening = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("open-support-page"),
+        ) {
+            if (opening) {
+                CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp).size(18.dp), strokeWidth = 2.dp)
+            }
+            Text("Открыть страницу обращений")
+        }
+        HintText(
+            error ?: "Создайте обращение и приложите отправленный файл. Страница открывается на рабочем " +
+                "зеркале сайта проекта, а если не открывается ни одно — на GitHub.",
+        )
     }
 }
 

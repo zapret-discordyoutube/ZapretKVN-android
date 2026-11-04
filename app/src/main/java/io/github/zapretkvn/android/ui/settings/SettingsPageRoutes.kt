@@ -147,6 +147,7 @@ internal fun DiagnosticsRoute(deps: AppDependencies, nav: AppNavigation, padding
         vpnState = vpnState,
         diagnostics = diagnostics,
         onCreateDiagnosticShare = deps.createDiagnosticShare,
+        onResolveSupportUrl = deps.resolveSupportUrl,
         onClearDnsCache = deps.vpn::clearDnsCache,
     )
 }

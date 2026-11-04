@@ -26,10 +26,12 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.ZapretRoot
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.core.net.toUri
@@ -38,6 +40,7 @@ import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.core.designsystem.ZapretTheme
+import io.github.zapretkvn.android.updates.SupportLinks
 import io.github.zapretkvn.android.updates.UpdateState
 import io.github.zapretkvn.android.vpn.external.ExternalControlComponent
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -112,6 +115,7 @@ class MainActivity : ComponentActivity() {
             },
             installUpdate = ::requestUpdateInstall,
             createDiagnosticShare = { container.diagnosticExporter.createShareIntent() },
+            resolveSupportUrl = { withContext(Dispatchers.IO) { SupportLinks.resolve() } },
             directServices = container.directServiceChecker.state,
             checkServicesDirect = container.directServiceChecker::check,
         )

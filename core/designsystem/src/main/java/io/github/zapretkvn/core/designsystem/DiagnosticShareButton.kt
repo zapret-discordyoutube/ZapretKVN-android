@@ -29,6 +29,8 @@ fun DiagnosticShareButton(
     onCreateDiagnosticShare: suspend () -> Intent,
     modifier: Modifier = Modifier,
     testTag: String = "export-diagnostics",
+    /** Окно отправки открыто: экран может предложить следующий шаг (например, страницу обращений). */
+    onShared: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -46,6 +48,7 @@ fun DiagnosticShareButton(
                         context.startActivity(
                             Intent.createChooser(shareIntent, "Передать диагностику"),
                         )
+                        onShared()
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: ActivityNotFoundException) {
