@@ -157,6 +157,22 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!--
+          External control (opt-in, Tasker and similar). Disabled here, so nothing is exported or
+          visible to other apps until the owner turns it on in Settings; the app then enables this
+          component at runtime. Every call must also carry the owner's secret token.
+        -->
+        <receiver
+            android:name=".vpn.ExternalControlReceiver"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.zapretkvn.android.control.START" />
+                <action android:name="io.github.zapretkvn.android.control.STOP" />
+                <action android:name="io.github.zapretkvn.android.control.TOGGLE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

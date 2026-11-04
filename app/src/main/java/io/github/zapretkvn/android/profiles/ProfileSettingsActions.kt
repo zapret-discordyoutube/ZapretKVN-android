@@ -42,6 +42,10 @@ class ProfileSettingsActions internal constructor(
 
     fun setConnectOnLaunch(enabled: Boolean) = apply { settingsStore.setConnectOnLaunch(enabled) }
 
+    fun setExternalControlEnabled(enabled: Boolean) = apply { settingsStore.setExternalControlEnabled(enabled) }
+
+    fun regenerateExternalControlToken() = apply { settingsStore.regenerateExternalControlToken() }
+
     fun setServiceCheck(id: ServiceId, enabled: Boolean) = apply { settingsStore.setServiceCheck(id, enabled) }
 
     fun setDnsMode(mode: DnsMode) = apply("Смена режима DNS") { settingsStore.setDnsMode(mode) }

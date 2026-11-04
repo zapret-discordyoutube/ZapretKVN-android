@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.network.NetworkAutomationSettings
 import io.github.zapretkvn.android.network.TrustedWifiName
+import io.github.zapretkvn.android.ui.ExternalControlSettings
 import io.github.zapretkvn.android.ui.NetworkTransportSetting
 import io.github.zapretkvn.core.designsystem.CardTitle
 import io.github.zapretkvn.core.designsystem.Spacing
@@ -53,6 +54,10 @@ fun AutomationScreen(
     onAddCurrentWifi: () -> Unit,
     onAddWifi: (String) -> Unit,
     onRemoveWifi: (String) -> Unit,
+    externalControl: ExternalControlSettings = ExternalControlSettings(),
+    onExternalControlChange: (Boolean) -> Unit = {},
+    onExternalControlNewToken: () -> Unit = {},
+    onCopyExternalControlToken: () -> Unit = {},
 ) {
     var editWifiName by rememberSaveable { mutableStateOf(false) }
     if (editWifiName) {
@@ -211,8 +216,72 @@ fun AutomationScreen(
                 }
             }
         }
+        item(key = "external-control", contentType = "card") {
+            ZapretCard(contentPadding = PaddingValues(top = Spacing.l, bottom = Spacing.l), verticalSpacing = 0.dp) {
+                Column(
+                    modifier = Modifier.padding(horizontal = Spacing.l),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    CardTitle("Внешнее управление")
+                }
+                SwitchRow(
+                    title = "Разрешить другим приложениям",
+                    subtitle = if (externalControl.enabled) "Включено" else "Выключено: команды не принимаются",
+                    checked = externalControl.enabled,
+                    onCheckedChange = onExternalControlChange,
+                    modifier = Modifier.testTag("external-control-enabled"),
+                    switchDescription = "Внешнее управление VPN",
+                )
+                Column(
+                    modifier = Modifier.padding(horizontal = Spacing.l),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.m),
+                ) {
+                    HintText(
+                        "Для Tasker и подобных. Пока переключатель выключен, приложение не принимает " +
+                            "команды и другие приложения его приёмник не видят. Каждая команда должна " +
+                            "содержать ваш секрет, иначе она молча отбрасывается.",
+                    )
+                    if (externalControl.enabled && externalControl.token.isNotEmpty()) {
+                        Text(
+                            "Секрет: ${maskedToken(externalControl.token)}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.testTag("external-control-token"),
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(Spacing.s),
+                            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+                        ) {
+                            Button(
+                                onClick = onCopyExternalControlToken,
+                                modifier = Modifier.heightIn(min = 48.dp).testTag("external-control-copy"),
+                            ) { Text("Скопировать секрет") }
+                            OutlinedButton(
+                                onClick = onExternalControlNewToken,
+                                modifier = Modifier.heightIn(min = 48.dp).testTag("external-control-new-token"),
+                            ) { Text("Новый секрет") }
+                        }
+                        HintText(
+                            "Отправьте broadcast прямо на пакет Zapret KVN (явный адресат, не общий " +
+                                "вызов) с действием io.github.zapretkvn.android.control.START, STOP или " +
+                                "TOGGLE и полем token. Запуск из фона работает, если VPN уже хотя бы раз " +
+                                "включали вручную. Новый секрет сразу отключает старый.",
+                        )
+                    }
+                }
+            }
+        }
     }
 }
+
+/** Секрет на экране виден только концом: целиком он попадает лишь в буфер обмена. */
+internal fun maskedToken(token: String): String {
+    val tail = token.takeLast(TOKEN_VISIBLE_TAIL)
+    return "•".repeat((token.length - tail.length).coerceAtLeast(0).coerceAtMost(TOKEN_MASK_DOTS)) + tail
+}
+
+private const val TOKEN_VISIBLE_TAIL = 6
+private const val TOKEN_MASK_DOTS = 12
 
 @Composable
 private fun NetworkSwitch(

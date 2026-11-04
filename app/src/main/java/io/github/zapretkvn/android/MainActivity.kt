@@ -39,6 +39,7 @@ import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.core.designsystem.ZapretTheme
 import io.github.zapretkvn.android.updates.UpdateState
+import io.github.zapretkvn.android.vpn.ExternalControlComponent
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 
@@ -115,6 +116,7 @@ class MainActivity : ComponentActivity() {
             checkServicesDirect = container.directServiceChecker::check,
         )
         observeUpdates()
+        syncExternalControlComponent(container)
         if (savedInstanceState == null) connectOnLaunchIfEnabled(container)
         val initialSettings = profilesViewModel.state.value.settings
         val initialAppearance = initialSettings.themeMode to initialSettings.dynamicColor
@@ -168,6 +170,20 @@ class MainActivity : ComponentActivity() {
             if (settings.connectOnLaunch && vpnController.state.value is VpnConnectionState.Stopped) {
                 requestVpnStart(profileId)
             }
+        }
+    }
+
+    /**
+     * Приёмник внешнего управления включён в системе ровно тогда, когда включён
+     * переключатель: следим за настройкой и при каждом открытии приложения сверяем
+     * состояние (оно переживает перезапуск, а после очистки данных настройка снова выключена).
+     */
+    private fun syncExternalControlComponent(container: AppContainer) {
+        lifecycleScope.launch {
+            container.uiSettingsStore.settings
+                .map { it.externalControl.enabled }
+                .distinctUntilChanged()
+                .collect { enabled -> ExternalControlComponent.apply(applicationContext, enabled) }
         }
     }
 

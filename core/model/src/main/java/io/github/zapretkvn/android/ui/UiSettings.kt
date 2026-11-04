@@ -30,6 +30,8 @@ data class UiSettings(
     val slowServerSwitch: Boolean = true,
     /** Подключаться к активному профилю при открытии приложения (как «Подключаться при запуске» на ПК). */
     val connectOnLaunch: Boolean = false,
+    /** Внешнее управление VPN из других приложений: выключено, приёмник отключён в манифесте. */
+    val externalControl: ExternalControlSettings = ExternalControlSettings(),
     /** Цвета обоев (Material You). По умолчанию — фирменная яркая палитра. */
     val dynamicColor: Boolean = false,
     /** Какие сервисы проверяет карточка «Доступность сервисов»; по умолчанию — набор каталога. */

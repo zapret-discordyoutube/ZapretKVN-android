@@ -90,6 +90,10 @@ class UiSettingsStore(
                 ),
                 slowServerSwitch = preferences[SLOW_SERVER_SWITCH] ?: true,
                 connectOnLaunch = preferences[CONNECT_ON_LAUNCH] ?: false,
+                externalControl = ExternalControlSettings(
+                    enabled = preferences[EXTERNAL_CONTROL_ENABLED] ?: false,
+                    token = preferences[EXTERNAL_CONTROL_TOKEN].orEmpty(),
+                ),
                 // Нет записи — набор по умолчанию, миграция не нужна.
                 serviceChecks = ServiceSelection.parse(preferences[SERVICE_CHECKS]),
                 favoriteServers = preferences[FAVORITE_SERVERS].orEmpty(),
@@ -204,6 +208,21 @@ class UiSettingsStore(
         dataStore.edit { it[CONNECT_ON_LAUNCH] = enabled }
     }
 
+    /** Включить внешнее управление; секрет создаётся при первом включении и дальше хранится. */
+    suspend fun setExternalControlEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[EXTERNAL_CONTROL_ENABLED] = enabled
+            if (enabled && preferences[EXTERNAL_CONTROL_TOKEN].isNullOrEmpty()) {
+                preferences[EXTERNAL_CONTROL_TOKEN] = ExternalControl.newToken()
+            }
+        }
+    }
+
+    /** Новый секрет: прежний сразу перестаёт приниматься. */
+    suspend fun regenerateExternalControlToken() {
+        dataStore.edit { it[EXTERNAL_CONTROL_TOKEN] = ExternalControl.newToken() }
+    }
+
     suspend fun setSlowServerSwitch(enabled: Boolean) {
         dataStore.edit { it[SLOW_SERVER_SWITCH] = enabled }
     }
@@ -291,6 +310,8 @@ class UiSettingsStore(
         val SUBSCRIPTION_DEVICE_ID = stringPreferencesKey("subscription_device_id")
         val SLOW_SERVER_SWITCH = booleanPreferencesKey("slow_server_switch")
         val CONNECT_ON_LAUNCH = booleanPreferencesKey("connect_on_launch")
+        val EXTERNAL_CONTROL_ENABLED = booleanPreferencesKey("external_control_enabled")
+        val EXTERNAL_CONTROL_TOKEN = stringPreferencesKey("external_control_token")
         val SERVICE_CHECKS = stringSetPreferencesKey("service_check_ids")
         val FAVORITE_SERVERS = stringSetPreferencesKey("favorite_servers")
         val SUBSCRIPTION_AUTO_UPDATE_HOURS = intPreferencesKey("subscription_auto_update_hours")
