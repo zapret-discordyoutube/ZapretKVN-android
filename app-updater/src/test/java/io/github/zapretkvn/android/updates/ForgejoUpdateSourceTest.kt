@@ -222,6 +222,69 @@ class ForgejoUpdateSourceTest {
         assertEquals(url, ForgejoHttpsClient.validatedUrl(url))
     }
 
+    @Test
+    fun `github list is used only when every forgejo name and entry page failed`() {
+        val githubBase = "https://github.com/zapret-discordyoutube/ZapretKVN-android"
+        val toGithub = { text: String -> text.replace("https://git.zapret.moe/$REPOSITORY", githubBase) }
+        val http = FakeHttp().apply {
+            text[GITHUB_LIST] = "[${toGithub(release(prerelease = false))}]"
+            text["$githubBase/releases/download/v1.2.3/release-metadata.json"] = metadata(SHA)
+            text["$githubBase/releases/download/v1.2.3/app.sha256"] = "$SHA  $APK"
+        }
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a"))
+            .latest(UpdateChannel.Stable)
+        assertEquals("v1.2.3", candidate.release.tag)
+        assertTrue(candidate.apkAsset.downloadUrl.startsWith("$githubBase/releases/download/"))
+        // Сначала спрошены имена Forgejo, GitHub — последним.
+        assertTrue(http.asked.indexOfFirst { it.contains("git.zapret.moe") } < http.asked.indexOf(GITHUB_LIST))
+    }
+
+    @Test
+    fun `github is not asked while a forgejo name answers`() {
+        val http = FakeHttp().apply {
+            text[LIST] = "[${release(prerelease = false)}]"
+            text[METADATA_URL] = metadata(SHA)
+            text[CHECKSUM_URL] = "$SHA  $APK"
+        }
+        ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        assertFalse(http.asked.any { it.contains("api.github.com") })
+    }
+
+    @Test
+    fun `github release pointing at another repository is refused`() {
+        val http = FakeHttp().apply {
+            text[GITHUB_LIST] = "[${
+                release(prerelease = false).replace(
+                    "https://git.zapret.moe/$REPOSITORY",
+                    "https://github.com/someone-else/ZapretKVN-android",
+                )
+            }]"
+        }
+        assertThrows(UpdateException::class.java) {
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        }
+    }
+
+    @Test
+    fun `when github is silent too the original forgejo failure is reported`() {
+        val http = FakeHttp()
+        val error = assertThrows(UpdateException::class.java) {
+            ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        }
+        assertTrue(error.message.orEmpty().contains("missing"))
+        assertTrue(http.asked.contains(GITHUB_LIST))
+    }
+
+    @Test
+    fun `github api host is allowed only as an https metadata host`() {
+        assertEquals(
+            "https://api.github.com/repos/x/y/releases",
+            ForgejoHttpsClient.validatedUrl("https://api.github.com/repos/x/y/releases"),
+        )
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("http://api.github.com/x") }
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://api.github.com.evil.example/x") }
+    }
+
     private class FakeHttp : UpdateHttpClient {
         val text = mutableMapOf<String, String>()
         val asked = mutableListOf<String>()
@@ -237,6 +300,7 @@ class ForgejoUpdateSourceTest {
         const val REPOSITORY = "zapretkvn/ZapretKVN-android"
         const val APPLICATION_ID = "io.github.zapretkvn.android"
         const val LIST = "https://git.zapret.moe/api/v1/repos/$REPOSITORY/releases?limit=20"
+        const val GITHUB_LIST = "https://api.github.com/repos/zapret-discordyoutube/ZapretKVN-android/releases?per_page=20"
         const val METADATA_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/release-metadata.json"
         const val CHECKSUM_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/app.sha256"
         const val APK_URL = "https://git.zapret.moe/$REPOSITORY/releases/download/v1.2.3/app"

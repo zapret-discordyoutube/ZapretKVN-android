@@ -265,7 +265,8 @@ class ForgejoHttpsClient(
                 throw UpdateException("Forgejo вернул некорректный URL.", error)
             }
             val host = uri.host?.lowercase()
-            val allowedHost = ForgejoHosts.isKnown(host) || host in ForgejoHosts.GITHUB_DOWNLOAD_HOSTS
+            val allowedHost = ForgejoHosts.isKnown(host) || host in ForgejoHosts.GITHUB_DOWNLOAD_HOSTS ||
+                host == ForgejoHosts.GITHUB_API_HOST
             if (uri.scheme != "https" || !allowedHost || uri.userInfo != null ||
                 uri.fragment != null || uri.port !in setOf(-1, 443)
             ) {
@@ -308,6 +309,14 @@ class ForgejoUpdateSource(
     // Имя, под которым ответил список выпусков: с него же берутся файлы выпуска.
     @Volatile
     private var answeredHost: String = ForgejoHosts.BUILT_IN.first()
+
+    // Список выпусков взят с GitHub: ни одно имя Forgejo и ни одна входная страница не помогли
+    // (решение владельца 2026-11-04). Файлы выпуска тогда ожидаются на github.com того же репозитория.
+    @Volatile
+    private var answeredGithub: Boolean = false
+
+    private val githubRepository: String
+        get() = "${ForgejoHosts.GITHUB_OWNER}/${repository.substringAfter('/')}"
 
     override fun latest(channel: UpdateChannel): UpdateCandidate {
         val releases = UpdateJson.releases(readReleaseList())
@@ -358,12 +367,26 @@ class ForgejoUpdateSource(
             }
             if (fresh.isNotEmpty()) break
         }
+        readGithubReleaseList()?.let { return it }
         throw failure ?: UpdateException("Не удалось связаться с Forgejo.", retryViaVpn = true)
+    }
+
+    /** Тот же список выпусков у GitHub, когда Forgejo недоступен целиком; null — и он не ответил. */
+    private fun readGithubReleaseList(): String? = try {
+        val text = http.readText(
+            "https://${ForgejoHosts.GITHUB_API_HOST}/repos/$githubRepository/releases?per_page=20",
+            MAX_RELEASE_JSON_BYTES,
+        )
+        answeredGithub = true
+        text
+    } catch (_: UpdateException) {
+        null
     }
 
     private fun readReleaseListFrom(host: String): String {
         val text = http.readText("https://$host/api/v1/repos/$repository/releases?limit=20", MAX_RELEASE_JSON_BYTES)
         answeredHost = host
+        answeredGithub = false
         return text
     }
 
@@ -407,9 +430,13 @@ class ForgejoUpdateSource(
 
     private fun releaseAssetUrl(value: String): String {
         val trusted = ForgejoHttpsClient.validatedUrl(value)
-        val expectedPrefix = "https://$answeredHost/$repository/releases/download/"
+        val expectedPrefix = if (answeredGithub) {
+            "https://github.com/$githubRepository/releases/download/"
+        } else {
+            "https://$answeredHost/$repository/releases/download/"
+        }
         if (!trusted.startsWith(expectedPrefix)) {
-            throw UpdateException("Forgejo вернул asset из другого репозитория.")
+            throw UpdateException("Выпуск вернул asset из другого репозитория.")
         }
         return trusted
     }
@@ -459,6 +486,9 @@ object ForgejoHosts {
      * SHA-256 из метаданных выпуска и подпись, поэтому к именам Forgejo добавлены только хосты загрузки GitHub.
      */
     const val GITHUB_OWNER = "zapret-discordyoutube"
+
+    /** Только список выпусков, когда не отвечает ни одно имя Forgejo; файлы выпуска качаются с хостов загрузки. */
+    const val GITHUB_API_HOST = "api.github.com"
     val GITHUB_DOWNLOAD_HOSTS = setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
 
     /** Адрес того же файла выпуска на GitHub по адресу на Forgejo (`/<owner>/<repo>/releases/download/<tag>/<file>`); null — не выходит. */
