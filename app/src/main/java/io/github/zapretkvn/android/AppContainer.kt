@@ -131,7 +131,14 @@ class AppContainer(
         // Ни один путь не ответил — один раз проверить по стадиям и назвать виновника.
         diagnose = { host, port ->
             FetchJudge.judge(
-                FetchProbes.collect(host, port, nonVpnNetwork(appContext), vpnNetwork(appContext)),
+                FetchProbes.collect(
+                    host,
+                    port,
+                    nonVpnNetwork(appContext),
+                    vpnNetwork(appContext),
+                    // Без единого профиля VPN не включить: совет другой (сначала одиночный ключ).
+                    serversAvailable = profileStore.profiles.value.isNotEmpty(),
+                ),
             )
         },
         log = subscriptionFetchJournal::add,

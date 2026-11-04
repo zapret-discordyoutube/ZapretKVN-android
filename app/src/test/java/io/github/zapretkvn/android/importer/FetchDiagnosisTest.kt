@@ -49,6 +49,49 @@ class FetchDiagnosisTest {
     }
 
     @Test
+    fun `probable block with profiles says to connect and add the subscription again and keeps the note`() {
+        val d = FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, null, serversAvailable = true))
+        assertTrue(d.advice.contains("Подключитесь к любому серверу"))
+        assertTrue(d.advice.contains("добавьте подписку снова"))
+        assertTrue(d.advice.contains("Через VPN не пробовали"))
+        // Автоповтора после подключения на Android нет: обещать его нельзя.
+        assertFalse(d.advice.contains("повторит загрузку само"))
+        assertFalse(d.advice.contains("Включите VPN"))
+    }
+
+    @Test
+    fun `probable block without any profile asks for a single key and not for a vpn`() {
+        val d = FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, null, serversAvailable = false))
+        assertEquals(Culprit.Block, d.culprit)
+        assertFalse(d.certain)
+        assertTrue(d.advice.contains("хотя бы один сервер"))
+        assertTrue(d.advice.contains("одиночный ключ"))
+        assertTrue(d.advice.contains("не подписку"))
+        assertTrue(d.advice.contains("«Буфер»"))
+        assertTrue(d.advice.contains("добавьте подписку снова"))
+        assertFalse(d.advice.contains("Включите VPN"))
+        assertFalse(d.advice.contains("Через VPN не пробовали"))
+    }
+
+    @Test
+    fun `the server flag changes nothing once the vpn is connected or for other verdicts`() {
+        for (flag in listOf(true, false)) {
+            val blocked = FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, ok to ok, serversAvailable = flag))
+            assertEquals(Culprit.Block, blocked.culprit)
+            assertTrue(blocked.certain)
+            val server = FetchJudge.judge(Evidence(host, 443, fail("tcp") to ok, fail("tcp") to ok, serversAvailable = flag))
+            assertEquals(Culprit.Server, server.culprit)
+        }
+    }
+
+    @Test
+    fun `evidence carries whether any profile exists`() {
+        val prober = { _: android.net.Network?, _: String, _: Int -> ok }
+        assertFalse(FetchProbes.collect(host, 443, null, null, prober, serversAvailable = false).serversAvailable)
+        assertTrue(FetchProbes.collect(host, 443, null, null, prober).serversAvailable)
+    }
+
+    @Test
     fun `vpn up but control fails through it is the vpn`() {
         val broken = fail("tcp")
         val d = verdict(fail("tcp") to ok, broken to broken)

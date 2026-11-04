@@ -82,6 +82,8 @@ data class Evidence(
     val port: Int,
     val direct: Pair<HostProbe, HostProbe>?,   // (сервер, контроль)
     val vpn: Pair<HostProbe, HostProbe>?,      // null — VPN не подключён
+    /** Есть ли в приложении хоть один профиль: без него VPN не включить и совет «подключитесь» тупиковый. */
+    val serversAvailable: Boolean = true,
 )
 
 data class Diagnosis(
@@ -102,6 +104,17 @@ data class Diagnosis(
 
 object FetchJudge {
     const val CONTROL_HOST = "www.gstatic.com"
+
+    /** Совет, когда сервер подписки режут по имени, а профили в приложении есть. */
+    const val ADVICE_CONNECT_THEN_REPEAT =
+        "Подключитесь к любому серверу и добавьте подписку снова: через него она откроется. " +
+            "Если и так не откроется, сервер подписки выключен."
+
+    /** Совет без единого профиля: сначала нужен хотя бы один одиночный ключ, а не подписка. */
+    const val ADVICE_NO_SERVERS =
+        "Сначала нужен хотя бы один сервер, через который можно дойти до сервера подписки: добавьте любой " +
+            "одиночный ключ (ссылку vless://, hysteria2:// и подобные, не подписку; на вкладке «Серверы» кнопка " +
+            "«Буфер»), подключитесь и добавьте подписку снова: она загрузится через этот сервер."
 
     fun describeFailure(probe: HostProbe, route: String): String {
         if (probe.failed.isEmpty()) return "$route соединение и TLS проходят, но ответа на запрос нет"
@@ -190,7 +203,7 @@ object FetchJudge {
                 )
                 else -> done(
                     Culprit.Block, false, where,
-                    "Включите VPN — приложение повторит загрузку само. Если и так не откроется, сервер подписки выключен.$vpnNote",
+                    if (ev.serversAvailable) ADVICE_CONNECT_THEN_REPEAT + vpnNote else ADVICE_NO_SERVERS,
                 )
             }
         }
@@ -303,6 +316,7 @@ object FetchProbes {
         directNetwork: Network?,
         vpnNetwork: Network?,
         prober: (Network?, String, Int) -> HostProbe = { network, probeHost, probePort -> probe(network, probeHost, probePort) },
+        serversAvailable: Boolean = true,
     ): Evidence {
         val pool = Executors.newFixedThreadPool(4)
         try {
@@ -320,6 +334,7 @@ object FetchProbes {
                 host, port,
                 direct[0].get() to direct[1].get(),
                 vpn?.let { it[0].get() to it[1].get() },
+                serversAvailable,
             )
         } finally {
             pool.shutdownNow()
