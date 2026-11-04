@@ -106,8 +106,11 @@ internal class ImportService(
         sourceDescription = sourceDescription,
     )
 
-    suspend fun urlRequest(url: String, identity: SubscriptionIdentityInput): ImportRequest {
-        val subscription = resolveSubscription(url, identity)
+    suspend fun urlRequest(url: String, identity: SubscriptionIdentityInput): ImportRequest =
+        requestFor(resolveSubscription(url, identity))
+
+    /** Запрос импорта по уже разобранному источнику: так повторяется подписка, запомненная при отказе. */
+    suspend fun requestFor(subscription: SubscriptionSource): ImportRequest {
         val raw = fetch(subscription)
         return ImportRequest(
             raw = raw,

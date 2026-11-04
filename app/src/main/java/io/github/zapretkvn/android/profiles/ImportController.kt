@@ -2,8 +2,11 @@ package io.github.zapretkvn.android.profiles
 
 import android.net.Uri
 import io.github.zapretkvn.android.importer.ImportException
+import io.github.zapretkvn.android.importer.SubscriptionUnreachableException
+import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Импорт профилей (файл, буфер, QR, ссылка на подписку), предпросмотр и ручное обновление подписки.
@@ -18,7 +21,11 @@ internal class ImportController(
     private val store: ProfileStore,
     private val vpn: ProfilesVpnPort,
     private val settings: ProfilesSettingsPort,
+    /** Очередь подписок, до сервера которых не дошли без VPN; `null` — запоминать нечем (как раньше). */
+    private val pending: PendingSubscriptions? = null,
 ) {
+    private val retryLock = Mutex()
+
     fun importDocument(uri: Uri) = operations.run {
         preview(service.documentRequest(uri))
     }
@@ -52,8 +59,62 @@ internal class ImportController(
 
     fun importUrl(url: String, identity: SubscriptionIdentityInput = SubscriptionIdentityInput()) =
         operations.run {
-            preview(service.urlRequest(url, identity))
+            try {
+                preview(service.urlRequest(url, identity))
+            } catch (error: SubscriptionUnreachableException) {
+                // До сервера подписки не дойти без VPN, а VPN ещё нет: ссылка не теряется, она повторится
+                // сама, когда VPN подключится (retryPendingSubscriptions). Отказ при этом показывается как есть.
+                val queue = pending
+                if (queue != null && error.vpnUntried && !queue.remember(service.resolveSubscription(url, identity))) {
+                    throw SubscriptionUnreachableException(
+                        error.message.orEmpty() + " Но в ожидании уже ${PendingSubscriptions.DEFAULT_LIMIT} подписок: " +
+                            "эта не запомнена, добавьте её снова после подключения.",
+                        error,
+                        true,
+                    )
+                }
+                throw error
+            }
         }
+
+    /**
+     * Повторяет подписки, запомненные при отказе без VPN: вызывается, когда VPN подключился. Загрузка идёт
+     * обычным путём (напрямую, затем через сеть по умолчанию, то есть через туннель), профиль создаётся как
+     * при подтверждении предпросмотра, но без вопросов: человек уже добавил эту ссылку.
+     *
+     * Подписка, до которой всё ещё не дошли, остаётся в ожидании. Подписка, на которую сервер ответил
+     * (ссылка отозвана, лимит устройств, формат не подошёл), из ожидания убирается: повтор не поможет,
+     * а причина показывается сообщением.
+     */
+    suspend fun retryPendingSubscriptions() {
+        val queue = pending ?: return
+        // Подключение могло мигнуть дважды: две попытки не тянут одну подписку одновременно.
+        if (!retryLock.tryLock()) return
+        try {
+            for ((id, source) in queue.all()) {
+                try {
+                    val preview = service.preview(service.requestFor(source), state.value.profiles)
+                    val metadata = committer.create(preview.suggestedName, preview, hasActiveProfile())
+                    queue.forget(id)
+                    state.update { it.copy(refreshableProfileIds = it.refreshableProfileIds + metadata.id) }
+                    operations.showMessage(
+                        "Запомненная подписка загружена: профиль «${metadata.name}». Подключение не менялось.",
+                    )
+                } catch (error: SubscriptionUnreachableException) {
+                    // Всё ещё не дошли до сервера подписки: остаётся в ожидании.
+                } catch (error: ImportException) {
+                    queue.forget(id)
+                    operations.showMessage(error.message ?: "Сервер отклонил запомненную подписку.")
+                } catch (error: ProfileStoreException) {
+                    // Хранилище не приняло профиль: подписка остаётся в ожидании до следующего подключения.
+                } catch (error: IOException) {
+                    // Сеть оборвалась посреди загрузки: то же.
+                }
+            }
+        } finally {
+            retryLock.unlock()
+        }
+    }
 
     fun refreshSubscription(profileId: String) = operations.run {
         val preview = service.refreshPreview(profileId, state.value.profiles)

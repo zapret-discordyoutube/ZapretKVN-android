@@ -10,12 +10,15 @@ import io.github.zapretkvn.android.network.probes.ServerLatencyEntries
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.routing.RuleSetAssetManager
 import io.github.zapretkvn.android.ui.UiSettingsStore
+import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -46,6 +49,7 @@ internal class ProfilesModule(
             ruleSetAssets: RuleSetAssetManager,
             serverLatencyStore: ServerLatencyStore?,
             serverCountryStore: ServerCountryStore?,
+            pendingSubscriptionStore: SubscriptionSourceStore? = null,
         ): ProfilesModule {
             val state = MutableStateFlow(ProfilesUiState())
             val operations = ProfilesOperations(state, scope)
@@ -96,7 +100,18 @@ internal class ProfilesModule(
                 store = store,
                 vpn = vpn,
                 settings = settingsPort,
+                pending = pendingSubscriptionStore?.let(::PendingSubscriptions),
             )
+            if (pendingSubscriptionStore != null) {
+                // Запомненные при отказе без VPN подписки повторяются, как только VPN подключился
+                // (и при запуске, если он уже подключён). Работает, пока жив экран приложения.
+                scope.launch {
+                    vpnController.state
+                        .map { it is VpnConnectionState.Connected }
+                        .distinctUntilChanged()
+                        .collect { connected -> if (connected) imports.retryPendingSubscriptions() }
+                }
+            }
             return ProfilesModule(
                 state = state,
                 operations = operations,

@@ -69,6 +69,16 @@ sealed interface ImportCandidate {
 
 open class ImportException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * Ни один маршрут не получил ответа сервера подписки. [vpnUntried] — маршрут через VPN не пробовали,
+ * потому что VPN не подключён: подписку стоит запомнить и повторить, когда он появится.
+ */
+class SubscriptionUnreachableException(
+    message: String,
+    cause: Throwable? = null,
+    val vpnUntried: Boolean = false,
+) : ImportException(message, cause)
+
 /** Сервер отключает проверку сертификата без отпечатка: одиночная ссылка отвергается, в подписке пропускается. */
 class InsecureTlsImportException : ImportException(TlsVerificationPolicy.IMPORT_MESSAGE)
 

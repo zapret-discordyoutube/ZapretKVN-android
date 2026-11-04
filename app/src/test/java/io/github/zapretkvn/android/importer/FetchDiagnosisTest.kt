@@ -52,10 +52,8 @@ class FetchDiagnosisTest {
     fun `probable block with profiles says to connect and add the subscription again and keeps the note`() {
         val d = FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, null, serversAvailable = true))
         assertTrue(d.advice.contains("Подключитесь к любому серверу"))
-        assertTrue(d.advice.contains("добавьте подписку снова"))
+        assertTrue(d.advice.contains("подписка запомнена и загрузится через него сама"))
         assertTrue(d.advice.contains("Через VPN не пробовали"))
-        // Автоповтора после подключения на Android нет: обещать его нельзя.
-        assertFalse(d.advice.contains("повторит загрузку само"))
         assertFalse(d.advice.contains("Включите VPN"))
     }
 
@@ -68,7 +66,7 @@ class FetchDiagnosisTest {
         assertTrue(d.advice.contains("одиночный ключ"))
         assertTrue(d.advice.contains("не подписку"))
         assertTrue(d.advice.contains("«Буфер»"))
-        assertTrue(d.advice.contains("добавьте подписку снова"))
+        assertTrue(d.advice.contains("запомненная подписка загрузится через этот сервер сама"))
         assertFalse(d.advice.contains("Включите VPN"))
         assertFalse(d.advice.contains("Через VPN не пробовали"))
     }
@@ -82,6 +80,13 @@ class FetchDiagnosisTest {
             val server = FetchJudge.judge(Evidence(host, 443, fail("tcp") to ok, fail("tcp") to ok, serversAvailable = flag))
             assertEquals(Culprit.Server, server.culprit)
         }
+    }
+
+    @Test
+    fun `a diagnosis without the vpn route marks the failure as not final`() {
+        assertTrue(FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, null)).vpnUntried)
+        assertFalse(FetchJudge.judge(Evidence(host, 443, fail("tls") to ok, ok to ok)).vpnUntried)
+        assertFalse(FetchJudge.judge(Evidence(host, 443, fail("tcp") to ok, fail("tcp") to ok)).vpnUntried)
     }
 
     @Test

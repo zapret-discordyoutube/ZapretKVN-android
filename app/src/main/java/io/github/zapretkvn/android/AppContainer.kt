@@ -151,6 +151,10 @@ class AppContainer(
     val subscriptionSourceStore = SubscriptionSourceStore(
         File(appContext.noBackupFilesDir, "subscriptions"),
     )
+    // Подписки, не загрузившиеся только из-за отсутствия VPN: повторяются, когда он подключится.
+    val pendingSubscriptionStore = SubscriptionSourceStore(
+        File(appContext.noBackupFilesDir, "pending-subscriptions"),
+    )
     val appSelectionStore = AppSelectionStore(appContext)
     val appCatalog = AppCatalog(appContext)
     val vpnAppScopePreflight = VpnAppScopePreflight(
@@ -354,6 +358,7 @@ class AppContainer(
             ruleSetAssetManager,
             serverLatencyStore,
             serverCountryStore,
+            pendingSubscriptionStore,
         )
 
     val appsViewModelFactory: AppsViewModel.Factory

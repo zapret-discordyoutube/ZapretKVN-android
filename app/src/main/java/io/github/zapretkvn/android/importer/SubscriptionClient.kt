@@ -93,7 +93,7 @@ class HttpSubscriptionFetcher(
             val diagnosis = runCatching { diagnose?.invoke(host, port) }.getOrNull()
                 ?: throw transport
             diagnosis.logLines.forEach(log)
-            throw ImportException(diagnosis.message(), transport)
+            throw SubscriptionUnreachableException(diagnosis.message(), transport, diagnosis.vpnUntried)
         }
     }
 

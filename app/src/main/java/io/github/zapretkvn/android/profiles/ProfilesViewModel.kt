@@ -111,6 +111,7 @@ class ProfilesViewModel internal constructor(
         private val ruleSetAssets: RuleSetAssetManager,
         private val serverLatencyStore: ServerLatencyStore? = null,
         private val serverCountryStore: ServerCountryStore? = null,
+        private val pendingSubscriptionStore: SubscriptionSourceStore? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -129,6 +130,7 @@ class ProfilesViewModel internal constructor(
                     ruleSetAssets = ruleSetAssets,
                     serverLatencyStore = serverLatencyStore,
                     serverCountryStore = serverCountryStore,
+                    pendingSubscriptionStore = pendingSubscriptionStore,
                 )
             } as T
         }

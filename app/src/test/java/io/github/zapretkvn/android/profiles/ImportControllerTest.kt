@@ -3,9 +3,11 @@ package io.github.zapretkvn.android.profiles
 import android.net.Uri
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.importer.ImportException
 import io.github.zapretkvn.android.importer.SubscriptionFetcher
 import io.github.zapretkvn.android.importer.SubscriptionSource
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
+import io.github.zapretkvn.android.importer.SubscriptionUnreachableException
 import io.github.zapretkvn.android.routing.InstalledRuleSets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,8 +34,10 @@ class ImportControllerTest {
     private val vpn = FakeVpnPort()
     private val settings = FakeSettingsPort()
     private var feed = ""
+    private var fetchFailure: Throwable? = null
     private lateinit var store: ProfileStore
     private lateinit var sources: SubscriptionSourceStore
+    private lateinit var pending: PendingSubscriptions
     private lateinit var controller: ImportController
     private lateinit var service: ImportService
 
@@ -49,6 +53,10 @@ class ImportControllerTest {
         store = ProfileStore(temporaryFolder.newFolder("profiles"), JsonSyntaxValidator, JvmAtomicProfileWriter())
         store.initialize()
         sources = SubscriptionSourceStore(temporaryFolder.newFolder("subs"), JvmAtomicProfileWriter())
+        pending = PendingSubscriptions(
+            SubscriptionSourceStore(temporaryFolder.newFolder("pending"), JvmAtomicProfileWriter()),
+            limit = 2,
+        )
         val installed = InstalledRuleSets(
             1,
             mapOf("zapret-ru-domains" to "/rs/domains.srs", "zapret-ru-ip" to "/rs/ip.srs"),
@@ -63,7 +71,7 @@ class ImportControllerTest {
                 override fun readClipboard(): String = feed
                 override suspend fun readQrImage(uri: Uri): String = error("не используется")
             },
-            subscriptionFetcher = SubscriptionFetcher { feed },
+            subscriptionFetcher = SubscriptionFetcher { fetchFailure?.let { throw it }; feed },
             subscriptionSourceStore = sources,
             settings = settings,
             vpn = vpn,
@@ -78,11 +86,130 @@ class ImportControllerTest {
             store = store,
             vpn = vpn,
             settings = settings,
+            pending = pending,
         )
     }
 
+    private fun unreachable(vpnUntried: Boolean) = SubscriptionUnreachableException(
+        "Не удалось загрузить подписку. Виноват: блокировка сети или провайдера (вероятно).",
+        java.io.IOException("timeout"),
+        vpnUntried,
+    )
+
     private suspend fun idle() {
         awaitCondition { !state.value.busy }
+    }
+
+    @Test
+    fun `subscription that is unreachable only because the vpn is down is remembered`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = true)
+
+        controller.importUrl("https://sub.example/list?token=abc")
+        idle()
+
+        val remembered = pending.all()
+        assertEquals(1, remembered.size)
+        assertEquals("https://sub.example/list?token=abc", remembered.single().second.url)
+        assertTrue(state.value.message.orEmpty().contains("блокировка сети"))
+        assertNull(state.value.importPreview)
+        assertTrue(store.profiles.value.isEmpty())
+    }
+
+    @Test
+    fun `unreachable with the vpn already tried is not remembered`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = false)
+
+        controller.importUrl("https://sub.example/list")
+        idle()
+
+        assertTrue(pending.all().isEmpty())
+    }
+
+    @Test
+    fun `an answer of the server is final and not remembered`() = runBlocking {
+        setUp()
+        fetchFailure = ImportException("Не удалось загрузить подписку. Виноват: сервер подписки (бот). Ответ сервера: 404")
+
+        controller.importUrl("https://sub.example/revoked")
+        idle()
+
+        assertTrue(pending.all().isEmpty())
+        assertTrue(state.value.message.orEmpty().contains("404"))
+    }
+
+    @Test
+    fun `a full queue says so instead of promising a retry`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = true)
+        for (name in listOf("a", "b", "c")) {
+            controller.importUrl("https://sub.example/$name")
+            idle()
+        }
+
+        assertEquals(2, pending.all().size)
+        assertTrue(state.value.message.orEmpty().contains("эта не запомнена"))
+    }
+
+    @Test
+    fun `remembered subscription becomes a profile when the vpn is up`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = true)
+        controller.importUrl("https://sub.example/list")
+        idle()
+        assertEquals(1, pending.all().size)
+
+        fetchFailure = null
+        feed = "$one\n$two"
+        controller.retryPendingSubscriptions()
+
+        assertTrue(pending.all().isEmpty())
+        val profiles = store.profiles.value
+        assertEquals(1, profiles.size)
+        assertTrue(state.value.refreshableProfileIds.contains(profiles.single().id))
+        assertTrue(state.value.message.orEmpty().startsWith("Запомненная подписка загружена"))
+        assertEquals(profiles.single().id, settings.settings.value.activeProfileId)
+        assertEquals("https://sub.example/list", sources.get(profiles.single().id)?.url)
+    }
+
+    @Test
+    fun `retry keeps the subscription while the server is still unreachable`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = true)
+        controller.importUrl("https://sub.example/list")
+        idle()
+
+        controller.retryPendingSubscriptions()
+
+        assertEquals(1, pending.all().size)
+        assertTrue(store.profiles.value.isEmpty())
+    }
+
+    @Test
+    fun `retry drops a subscription the server refuses and says why`() = runBlocking {
+        setUp()
+        fetchFailure = unreachable(vpnUntried = true)
+        controller.importUrl("https://sub.example/list")
+        idle()
+        fetchFailure = ImportException("Ответ сервера: лимит устройств исчерпан")
+
+        controller.retryPendingSubscriptions()
+
+        assertTrue(pending.all().isEmpty())
+        assertTrue(store.profiles.value.isEmpty())
+        assertTrue(state.value.message.orEmpty().contains("лимит устройств"))
+    }
+
+    @Test
+    fun `retry with an empty queue changes nothing`() = runBlocking {
+        setUp()
+        feed = "$one"
+
+        controller.retryPendingSubscriptions()
+
+        assertTrue(store.profiles.value.isEmpty())
+        assertNull(state.value.message)
     }
 
     @Test

@@ -92,6 +92,8 @@ data class Diagnosis(
     val where: String,
     val advice: String = "",
     val logLines: List<String> = emptyList(),
+    /** Маршрут через VPN не пробовали, потому что VPN не подключён: такой отказ не окончательный. */
+    val vpnUntried: Boolean = false,
 ) {
     fun message(): String {
         val who = if (certain) culprit.headline else "${culprit.headline} (вероятно)"
@@ -107,14 +109,14 @@ object FetchJudge {
 
     /** Совет, когда сервер подписки режут по имени, а профили в приложении есть. */
     const val ADVICE_CONNECT_THEN_REPEAT =
-        "Подключитесь к любому серверу и добавьте подписку снова: через него она откроется. " +
+        "Подключитесь к любому серверу: подписка запомнена и загрузится через него сама, пока приложение открыто. " +
             "Если и так не откроется, сервер подписки выключен."
 
     /** Совет без единого профиля: сначала нужен хотя бы один одиночный ключ, а не подписка. */
     const val ADVICE_NO_SERVERS =
         "Сначала нужен хотя бы один сервер, через который можно дойти до сервера подписки: добавьте любой " +
             "одиночный ключ (ссылку vless://, hysteria2:// и подобные, не подписку; на вкладке «Серверы» кнопка " +
-            "«Буфер»), подключитесь и добавьте подписку снова: она загрузится через этот сервер."
+            "«Буфер») и подключитесь: запомненная подписка загрузится через этот сервер сама, пока приложение открыто."
 
     fun describeFailure(probe: HostProbe, route: String): String {
         if (probe.failed.isEmpty()) return "$route соединение и TLS проходят, но ответа на запрос нет"
@@ -161,7 +163,7 @@ object FetchJudge {
         val vpnNote = if (ev.vpn == null) " Через VPN не пробовали: он не подключён." else ""
 
         fun done(culprit: Culprit, certain: Boolean, where: String, advice: String = "") =
-            Diagnosis(culprit, certain, where, advice, logLines(ev, culprit, certain))
+            Diagnosis(culprit, certain, where, advice, logLines(ev, culprit, certain), vpnUntried = ev.vpn == null)
 
         if (vControl != null && !vControl.ok) {
             return if (!dControl.ok) {
