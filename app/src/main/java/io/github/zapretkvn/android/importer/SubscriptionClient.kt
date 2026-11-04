@@ -46,23 +46,55 @@ class HttpSubscriptionFetcher(
     // Direct path through the browser transport (Chrome on the wire); null result —
     // the transport is unavailable in this build and HttpURLConnection is used.
     private val browserDirect: ((url: String, headers: Map<String, String>) -> Reply?)? = null,
+    // Когда ни один путь не ответил: проверка по стадиям и вывод, где оборвалось и кто виноват.
+    // null — как раньше, сырой текст сетевого исключения.
+    private val diagnose: ((host: String, port: Int) -> Diagnosis?)? = null,
+    // Строки журнала загрузки (адрес замаскирован, путь и токен не пишутся никогда).
+    private val log: (String) -> Unit = {},
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
+        val url = validatedUrl(source.url)
+        val parsed = URI(url)
+        val host = parsed.host.orEmpty()
+        val port = if (parsed.port > 0) parsed.port else if (parsed.scheme.equals("https", true)) 443 else 80
+        val tag = FetchMasking.hostTag(host, port)
+        val started = System.nanoTime()
+        fun elapsed() = "%.1f".format((System.nanoTime() - started) / 1e9)
         // Ссылка без шифрования: токен в адресе и список серверов в ответе провайдер
         // прочитал бы целиком. Такая ссылка идёт только через туннель, напрямую — никогда.
-        if (exposesCleartext(validatedUrl(source.url))) return fetchVia(source, Path.Tunnel)
-        if (directAvailable()) {
+        if (exposesCleartext(url)) {
+            log("subscription $tag: http:// — только через туннель")
+            return fetchVia(source, Path.Tunnel)
+        }
+        val direct = directAvailable()
+        log("subscription $tag: загрузка начата, прямой путь=${if (direct) "есть" else "нет"}")
+        if (direct) {
             try {
-                return fetchVia(source, Path.Direct)
+                return fetchVia(source, Path.Direct).also { log("subscription $tag: ответ получен напрямую за ${elapsed()} с") }
             } catch (transport: IOException) {
                 // No response reached us on the direct (non-VPN) path — only
                 // this "no answer" case is retried through the default network,
                 // which is the VPN tunnel when connected. A real HTTP answer
                 // (ImportException, e.g. a 404 for a revoked link) is
                 // authoritative and propagates instead of being masked here.
+                log(
+                    "subscription $tag: ответа нет напрямую за ${elapsed()} с: " +
+                        "${FetchMasking.redactHost(transport.message.orEmpty(), host)} [${transport.javaClass.simpleName}]",
+                )
             }
         }
-        return fetchVia(source, Path.Default)
+        try {
+            return fetchVia(source, Path.Default).also { log("subscription $tag: ответ получен через сеть по умолчанию за ${elapsed()} с") }
+        } catch (transport: IOException) {
+            log(
+                "subscription $tag: ответа нет и по умолчанию за ${elapsed()} с: " +
+                    "${FetchMasking.redactHost(transport.message.orEmpty(), host)} [${transport.javaClass.simpleName}]",
+            )
+            val diagnosis = runCatching { diagnose?.invoke(host, port) }.getOrNull()
+                ?: throw transport
+            diagnosis.logLines.forEach(log)
+            throw ImportException(diagnosis.message(), transport)
+        }
     }
 
     private enum class Path { Direct, Default, Tunnel }
@@ -101,10 +133,15 @@ class HttpSubscriptionFetcher(
                 return@repeat
             }
             if (reply.status !in 200..299) {
-                throw ImportException(SubscriptionIdentity.describeHttpFailure(reply.status, reply.headerNames))
+                throw ImportException(
+                    FetchJudge.answeredMessage(
+                        reply.status,
+                        SubscriptionIdentity.describeHttpFailure(reply.status, reply.headerNames),
+                    ),
+                )
             }
             SubscriptionIdentity.describeHwidRefusal(reply.status, reply.headerNames)
-                ?.let { throw ImportException(it) }
+                ?.let { throw ImportException(FetchJudge.answeredMessage(reply.status, it)) }
             val body = reply.body ?: throw ImportException("Подписка больше 4 МБ.")
             return body.toString(Charsets.UTF_8)
         }

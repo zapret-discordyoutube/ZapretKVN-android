@@ -187,3 +187,31 @@ class SubscriptionDirectFallbackTest {
         }
     }
 }
+
+class SubscriptionDiagnosisHookTest {
+    @Test
+    fun `when no path answers the user gets the diagnosis, not the raw exception, and the log is masked`() {
+        val lines = mutableListOf<String>()
+        val fetcher = HttpSubscriptionFetcher(
+            openConnection = { _, _ -> throw IOException("handshake timed out to sub.example.com") },
+            directAvailable = { true },
+            diagnose = { host, port ->
+                FetchJudge.judge(
+                    Evidence(host, port, HostProbe(false, "tls", "timeout") to HostProbe(true), null),
+                )
+            },
+            log = { lines += it },
+        )
+        val error = assertThrows(ImportException::class.java) {
+            fetcher.fetch(SubscriptionSource("https://sub.example.com/secret-token-123/sub"))
+        }
+        val message = error.message.orEmpty()
+        assertTrue(message, message.contains("Виноват: блокировка сети или провайдера (вероятно)"))
+        assertFalse(message.contains("handshake timed out"))
+        val joined = lines.joinToString("\n")
+        assertFalse(joined, joined.contains("secret-token-123"))
+        assertFalse(joined, joined.contains("sub.example.com"))
+        assertTrue(joined, joined.contains(FetchMasking.hostTag("sub.example.com", 443)))
+        assertTrue(joined, joined.contains("вердикт block"))
+    }
+}

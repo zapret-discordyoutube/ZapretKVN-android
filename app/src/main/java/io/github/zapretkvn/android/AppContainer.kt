@@ -18,6 +18,9 @@ import io.github.zapretkvn.android.diagnostics.DiagnosticExporter
 import io.github.zapretkvn.android.engines.singbox.LibboxRuntime
 import io.github.zapretkvn.android.importer.AndroidImportReader
 import io.github.zapretkvn.android.importer.DeviceIdentity
+import io.github.zapretkvn.android.diagnostics.SubscriptionFetchJournal
+import io.github.zapretkvn.android.importer.FetchJudge
+import io.github.zapretkvn.android.importer.FetchProbes
 import io.github.zapretkvn.android.importer.HttpSubscriptionFetcher
 import io.github.zapretkvn.android.importer.SubscriptionIdentity
 import io.github.zapretkvn.android.importer.SubscriptionSourceStore
@@ -98,6 +101,7 @@ class AppContainer(
     )
     val uiSettingsStore = UiSettingsStore(appContext)
     val importReader = AndroidImportReader(appContext)
+    val subscriptionFetchJournal = SubscriptionFetchJournal()
     val subscriptionFetcher = HttpSubscriptionFetcher(
         device = DeviceIdentity(
             os = "Android",
@@ -124,6 +128,13 @@ class AppContainer(
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
         // Напрямую — стеком Chromium: провайдер видит обычный Chrome, а не Conscrypt.
         browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
+        // Ни один путь не ответил — один раз проверить по стадиям и назвать виновника.
+        diagnose = { host, port ->
+            FetchJudge.judge(
+                FetchProbes.collect(host, port, nonVpnNetwork(appContext), vpnNetwork(appContext)),
+            )
+        },
+        log = subscriptionFetchJournal::add,
     )
     init {
         // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
@@ -145,6 +156,7 @@ class AppContainer(
         settingsStore = uiSettingsStore,
         vpnController = vpnController,
         crashStore = appCrashStore,
+        subscriptionFetchJournal = subscriptionFetchJournal,
     ).also(DiagnosticExporter::cleanupStaleFiles)
     val appForeground = AppForeground(appContext as Application)
     // Обновления идут напрямую даже при включённом VPN; через VPN — только если прямой путь не сработал.

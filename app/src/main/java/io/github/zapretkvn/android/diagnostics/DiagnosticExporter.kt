@@ -44,6 +44,7 @@ class DiagnosticExporter(
     private val settingsStore: UiSettingsStore,
     private val vpnController: VpnController,
     private val crashStore: AppCrashStore,
+    private val subscriptionFetchJournal: SubscriptionFetchJournal = SubscriptionFetchJournal(),
 ) {
     private val appContext = context.applicationContext
     private val exportDirectory = File(appContext.cacheDir, DIRECTORY_NAME)
@@ -107,6 +108,8 @@ class DiagnosticExporter(
                     put("occurrences", record.occurrences)
                 }
             }))
+            // Загрузка подписок: адрес замаскирован, путь и токен ссылки не пишутся.
+            put("subscription_fetch", JsonArray(subscriptionFetchJournal.snapshot().map { JsonPrimitive(DiagnosticReportRedactor.redact(it)) }))
             put("created_at", isoTimestamp(now))
             put("created_at_epoch_ms", now)
             put(

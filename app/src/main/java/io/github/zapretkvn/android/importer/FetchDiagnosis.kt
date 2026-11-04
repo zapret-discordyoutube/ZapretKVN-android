@@ -1,0 +1,328 @@
+package io.github.zapretkvn.android.importer
+
+import android.net.Network
+import java.io.EOFException
+import java.io.IOException
+import java.net.ConnectException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import java.security.MessageDigest
+import java.security.cert.CertificateException
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
+
+/**
+ * Где оборвалась загрузка подписки и кто виноват. Те же правила и слова, что в Windows
+ * (`xray_fluent/network/fetch_diagnosis.py`): клиент не знает виновника точно и выводит
+ * его из улик — стадий DNS → TCP → TLS сервера подписки и нейтрального контрольного узла
+ * по каждому маршруту, прямому и через VPN.
+ *
+ * Адрес в журнал и в сообщения попадает только маской ([FetchMasking]); путь и токен
+ * ссылки не пишутся никогда.
+ */
+enum class Culprit(val headline: String) {
+    Server("сервер подписки (бот)"),
+    Refused("сервер подписки отказал приложению (бан клиента)"),
+    Block("блокировка сети или провайдера"),
+    Vpn("VPN"),
+    Network("интернет-подключение телефона"),
+}
+
+object FetchMasking {
+    /** `url.gl***.com` — виден облик адреса, но не весь адрес. */
+    fun maskHost(host: String): String {
+        val text = host.trim().trim('[', ']').lowercase()
+        if (text.isEmpty()) return ""
+        if (text.matches(Regex("""\d{1,3}(\.\d{1,3}){3}"""))) {
+            val parts = text.split('.')
+            return "${parts[0]}.${parts[1]}.*.*"
+        }
+        if (':' in text) return text.substringBefore(':') + ":****"
+        val labels = text.split('.')
+        if (labels.size == 1) return labels[0].take(2) + "***"
+        val masked = labels.dropLast(1).map { if (it.length <= 3) it else it.take(2) + "***" }
+        return (masked + labels.last()).joinToString(".")
+    }
+
+    fun fingerprint(host: String): String =
+        MessageDigest.getInstance("SHA-256").digest(host.trim().lowercase().toByteArray())
+            .joinToString("") { "%02x".format(it) }.take(6)
+
+    /** Метка сервера для журнала: маска, порт и отпечаток (`url.gl***.com:443#3fa9c2`). */
+    fun hostTag(host: String, port: Int = 443): String = "${maskHost(host)}:$port#${fingerprint(host)}"
+
+    /** Заменить адрес сервера в чужом тексте ошибки его меткой. */
+    fun redactHost(text: String, host: String): String =
+        if (host.isBlank()) text else text.replace(host, "${maskHost(host)}#${fingerprint(host)}", ignoreCase = true)
+}
+
+/** Итог проверки одного узла по одному маршруту. [failed] пуст, если все стадии пройдены. */
+data class HostProbe(
+    val ok: Boolean,
+    val failed: String = "",   // "dns" | "tcp" | "tls"
+    val how: String = "",      // "timeout" | "reset" | "refused" | "dns" | "cert" | "tls_error" | "error"
+    val timings: List<Pair<String, Int>> = emptyList(),
+    val detail: String = "",
+) {
+    fun timingsText(): String =
+        timings.joinToString(" · ") { "${it.first} ${it.second} мс" }.ifEmpty { "нет замеров" }
+}
+
+data class Evidence(
+    val host: String,
+    val port: Int,
+    val direct: Pair<HostProbe, HostProbe>?,   // (сервер, контроль)
+    val vpn: Pair<HostProbe, HostProbe>?,      // null — VPN не подключён
+)
+
+data class Diagnosis(
+    val culprit: Culprit,
+    val certain: Boolean,
+    val where: String,
+    val advice: String = "",
+    val logLines: List<String> = emptyList(),
+) {
+    fun message(): String {
+        val who = if (certain) culprit.headline else "${culprit.headline} (вероятно)"
+        return buildString {
+            append("Не удалось загрузить подписку. Виноват: $who. Где оборвалось: $where.")
+            if (advice.isNotBlank()) append(' ').append(advice)
+        }
+    }
+}
+
+object FetchJudge {
+    const val CONTROL_HOST = "www.gstatic.com"
+
+    fun describeFailure(probe: HostProbe, route: String): String {
+        if (probe.failed.isEmpty()) return "$route соединение и TLS проходят, но ответа на запрос нет"
+        return when (probe.failed) {
+            "dns" -> "$route не нашёлся адрес сервера (DNS)"
+            "tcp" -> when (probe.how) {
+                "refused" -> "$route сервер отклонил TCP-соединение"
+                "reset" -> "$route TCP-соединение оборвали сразу"
+                else -> "$route TCP-соединение не устанавливается: сервер молчит"
+            }
+            "tls" -> when (probe.how) {
+                "cert" -> "$route сертификат сервера не прошёл проверку (подмена или просрочен)"
+                "reset" -> "$route TCP есть, но рукопожатие TLS оборвали сразу — типичная блокировка по имени сервера (SNI)"
+                "timeout" -> "$route TCP есть, но рукопожатие TLS повисло — типичная блокировка по имени сервера (SNI)"
+                else -> "$route TCP есть, но защищённое соединение (TLS) не установилось"
+            }
+            else -> "$route соединение с сервером не удалось (${probe.failed})"
+        }
+    }
+
+    private fun logLines(ev: Evidence, verdict: Culprit, certain: Boolean): List<String> {
+        val tag = FetchMasking.hostTag(ev.host, ev.port)
+        val lines = mutableListOf<String>()
+        for ((label, pair) in listOf("напрямую" to ev.direct, "через VPN" to ev.vpn)) {
+            if (pair == null) {
+                lines += "diagnosis $tag: $label: не пробовали (VPN не подключён)"
+                continue
+            }
+            for ((name, probe) in listOf("сервер" to pair.first, "контроль" to pair.second)) {
+                val state = if (probe.ok) "ok" else
+                    "сбой на ${probe.failed} (${probe.how}${if (probe.detail.isNotEmpty()) ", " + probe.detail else ""})"
+                lines += "diagnosis $tag: $label, $name: $state; ${probe.timingsText()}"
+            }
+        }
+        lines += "diagnosis $tag: вердикт ${verdict.name.lowercase()}${if (certain) "" else " (вероятно)"}"
+        return lines
+    }
+
+    /** Вывести виновника из проб. Чистая функция: проба сети здесь не делается. */
+    fun judge(ev: Evidence): Diagnosis {
+        val (dTarget, dControl) = requireNotNull(ev.direct) { "нет проб напрямую" }
+        val vTarget = ev.vpn?.first
+        val vControl = ev.vpn?.second
+        val vpnNote = if (ev.vpn == null) " Через VPN не пробовали: он не подключён." else ""
+
+        fun done(culprit: Culprit, certain: Boolean, where: String, advice: String = "") =
+            Diagnosis(culprit, certain, where, advice, logLines(ev, culprit, certain))
+
+        if (vControl != null && !vControl.ok) {
+            return if (!dControl.ok) {
+                done(
+                    Culprit.Network, true,
+                    describeFailure(dControl, "напрямую") + "; через VPN то же: " + describeFailure(vControl, "через VPN"),
+                    "Проверьте интернет на телефоне.",
+                )
+            } else {
+                done(
+                    Culprit.Vpn, true, describeFailure(vControl, "через VPN"),
+                    "Контрольный сайт напрямую открывается, через VPN — нет: смените сервер VPN или отключите его и обновите подписку напрямую.",
+                )
+            }
+        }
+        if (!dControl.ok) {
+            return when {
+                vTarget != null && vTarget.ok -> done(
+                    Culprit.Block, true, describeFailure(dTarget, "напрямую"),
+                    "Через VPN сервер подписки открывается: обновите подписку при включённом VPN.",
+                )
+                vTarget != null -> done(Culprit.Server, false, describeFailure(vTarget, "через VPN"))
+                else -> done(
+                    Culprit.Network, true, describeFailure(dControl, "напрямую"),
+                    "Контрольный сайт тоже не открывается: проверьте интернет.$vpnNote",
+                )
+            }
+        }
+        if (!dTarget.ok) {
+            val where = describeFailure(dTarget, "напрямую")
+            return when {
+                vTarget != null && vTarget.ok -> done(
+                    Culprit.Block, true, where,
+                    "Через VPN сервер подписки открывается: обновите подписку при включённом VPN.",
+                )
+                vTarget != null -> done(
+                    Culprit.Server, true, where + "; " + describeFailure(vTarget, "через VPN"),
+                    "Сервер недоступен и напрямую, и через VPN.",
+                )
+                else -> done(
+                    Culprit.Block, false, where,
+                    "Включите VPN — приложение повторит загрузку само. Если и так не откроется, сервер подписки выключен.$vpnNote",
+                )
+            }
+        }
+        return done(
+            Culprit.Server, false, "соединение и TLS проходят, но ответа на запрос нет",
+            "Сервер принимает соединение и молчит; провайдер мог резать сам запрос. Проверьте ссылку подписки у провайдера.$vpnNote",
+        )
+    }
+
+    /** Виновник для ответа сервера с кодом: сервер ответил — сеть ни при чём. */
+    fun blameForHttp(status: Int?, text: String = ""): Pair<Culprit, String> {
+        val lowered = text.lowercase()
+        return when {
+            status == 401 || status == 403 || "hwid" in lowered || "лимит устройств" in lowered ||
+                "идентификатор устройства" in lowered ->
+                Culprit.Refused to "Сервер подписки ответил отказом клиенту"
+            status == 404 || status == 410 ->
+                Culprit.Server to "Сервер подписки (бот) не знает эту ссылку: она недействительна или подписка удалена"
+            status == 429 -> Culprit.Server to "Сервер подписки (бот) ограничил частоту запросов"
+            status != null && status >= 500 -> Culprit.Server to "Сервер подписки (бот) сломан или перегружен"
+            else -> Culprit.Server to "Сервер подписки ответил, но тело не подошло"
+        }
+    }
+
+    fun answeredMessage(status: Int?, text: String): String {
+        val (culprit, phrase) = blameForHttp(status, text)
+        return "Не удалось загрузить подписку. Виноват: ${culprit.headline}. $phrase. Ответ сервера: $text"
+    }
+}
+
+/** Пробы стадий DNS → TCP → TLS по выбранной сети (null — сеть по умолчанию). */
+object FetchProbes {
+    const val PROBE_TIMEOUT_MILLIS = 4_000
+
+    fun classify(error: Throwable): String {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is CertificateException || current is SSLPeerUnverifiedException) return "cert"
+            current = current.cause
+        }
+        val text = error.message.orEmpty().lowercase()
+        return when {
+            error is UnknownHostException -> "dns"
+            error is SocketTimeoutException || "timed out" in text -> "timeout"
+            error is ConnectException && ("refused" in text || "econnrefused" in text) -> "refused"
+            error is EOFException || "reset" in text || "connection closed" in text || "broken pipe" in text -> "reset"
+            error is SSLHandshakeException || error is SSLException -> "tls_error"
+            error is SocketException -> "error"
+            else -> "error"
+        }
+    }
+
+    fun probe(network: Network?, host: String, port: Int = 443, timeoutMillis: Int = PROBE_TIMEOUT_MILLIS): HostProbe {
+        val deadline = System.nanoTime() + timeoutMillis * 1_000_000L
+        fun remaining() = ((deadline - System.nanoTime()) / 1_000_000L).toInt()
+        val timings = mutableListOf<Pair<String, Int>>()
+        var started = System.nanoTime()
+        fun elapsed() = ((System.nanoTime() - started) / 1_000_000L).toInt()
+
+        val addresses = try {
+            if (network != null) network.getAllByName(host).toList() else InetAddress.getAllByName(host).toList()
+        } catch (error: IOException) {
+            return HostProbe(false, "dns", "dns", timings, error.javaClass.simpleName)
+        }
+        timings += "dns" to elapsed()
+
+        started = System.nanoTime()
+        var socket: Socket? = null
+        var last: Throwable = IOException("нет адресов")
+        for (address in addresses.take(3)) {
+            val left = remaining()
+            if (left <= 0) {
+                last = SocketTimeoutException("общий срок пробы вышел")
+                break
+            }
+            val candidate = network?.socketFactory?.createSocket() ?: Socket()
+            try {
+                candidate.connect(InetSocketAddress(address, port), left)
+                socket = candidate
+                break
+            } catch (error: IOException) {
+                runCatching { candidate.close() }
+                last = error
+            }
+        }
+        if (socket == null) return HostProbe(false, "tcp", classify(last), timings, last.javaClass.simpleName)
+        timings += "tcp" to elapsed()
+
+        started = System.nanoTime()
+        try {
+            val left = remaining().coerceAtLeast(100)
+            socket.soTimeout = left
+            val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory)
+                .createSocket(socket, host, port, true) as SSLSocket
+            tls.soTimeout = left
+            tls.startHandshake()
+            tls.close()
+        } catch (error: IOException) {
+            runCatching { socket.close() }
+            return HostProbe(false, "tls", classify(error), timings, error.javaClass.simpleName)
+        }
+        timings += "tls" to elapsed()
+        return HostProbe(true, timings = timings)
+    }
+
+    /** Сервер и контроль по каждому маршруту — параллельно. */
+    fun collect(
+        host: String,
+        port: Int,
+        directNetwork: Network?,
+        vpnNetwork: Network?,
+        prober: (Network?, String, Int) -> HostProbe = { network, probeHost, probePort -> probe(network, probeHost, probePort) },
+    ): Evidence {
+        val pool = Executors.newFixedThreadPool(4)
+        try {
+            val direct = listOf(
+                pool.submit(Callable { prober(directNetwork, host, port) }),
+                pool.submit(Callable { prober(directNetwork, FetchJudge.CONTROL_HOST, 443) }),
+            )
+            val vpn = vpnNetwork?.let {
+                listOf(
+                    pool.submit(Callable { prober(it, host, port) }),
+                    pool.submit(Callable { prober(it, FetchJudge.CONTROL_HOST, 443) }),
+                )
+            }
+            return Evidence(
+                host, port,
+                direct[0].get() to direct[1].get(),
+                vpn?.let { it[0].get() to it[1].get() },
+            )
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+}
