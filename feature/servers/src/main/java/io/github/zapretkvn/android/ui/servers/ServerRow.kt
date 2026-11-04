@@ -41,10 +41,12 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.core.designsystem.FlagBadge
 import io.github.zapretkvn.core.designsystem.Monogram
 import io.github.zapretkvn.core.designsystem.Spacing
+import io.github.zapretkvn.core.designsystem.Tone
 import io.github.zapretkvn.core.designsystem.ZapretIcons
 import io.github.zapretkvn.core.designsystem.toneColor
 
@@ -58,6 +60,10 @@ import io.github.zapretkvn.core.designsystem.toneColor
  * [onClick] == null — строка справочная (группа выбирается автоматически).
  * [onFavorite] — долгое нажатие добавляет в избранное или убирает (звёздочка у имени);
  * для TalkBack то же самое — отдельным действием строки.
+ *
+ * [compact] — одна строка до ~44 dp: название в одну строку (с «…»), метка вроде «★ Лучший»
+ * рядом с ним, справа только задержка. Протокол и адрес не показываются; озвучка для
+ * TalkBack ([ServerRowUi.a11y]) остаётся полной.
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -67,6 +73,7 @@ fun ServerRow(
     onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
     onFavorite: (() -> Unit)? = null,
+    compact: Boolean = false,
 ) {
     val shape = cardShape(position)
     val container = if (row.selected) {
@@ -112,8 +119,8 @@ fun ServerRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = ROW_MIN_HEIGHT)
-                .padding(horizontal = Spacing.l, vertical = Spacing.s),
+                .heightIn(min = if (compact) COMPACT_ROW_MIN_HEIGHT else ROW_MIN_HEIGHT)
+                .padding(horizontal = Spacing.l, vertical = if (compact) Spacing.xs else Spacing.s),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
@@ -135,10 +142,24 @@ fun ServerRow(
                         row.title,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 3,
+                        maxLines = if (compact) 1 else 3,
+                        overflow = if (compact) TextOverflow.Ellipsis else TextOverflow.Clip,
+                        modifier = if (compact) Modifier.weight(1f, fill = false) else Modifier,
                     )
+                    if (compact) {
+                        row.badge?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(start = Spacing.s),
+                            )
+                        }
+                    }
                 }
-                FlowRow(
+                if (!compact) FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                     itemVerticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -166,7 +187,7 @@ fun ServerRow(
                     if (wide) LatencyInline(row.latency)
                 }
             }
-            if (!wide) LatencyBlock(row.latency)
+            if (compact) LatencyCompact(row.latency) else if (!wide) LatencyBlock(row.latency)
         }
         if (position == RowPosition.First || position == RowPosition.Middle) RowDivider()
     }
@@ -174,6 +195,7 @@ fun ServerRow(
 
 private const val WIDE_FONT_SCALE = 1.5f
 private val ROW_MIN_HEIGHT = 56.dp
+private val COMPACT_ROW_MIN_HEIGHT = 44.dp
 
 /** Скругления карточки по положению строки; соседние строки склеиваются в одну карточку. */
 @Composable
@@ -234,6 +256,26 @@ private fun LatencyBlock(latency: LatencyDisplay) {
                 toneColor(latency.tone)
             },
             textAlign = TextAlign.End,
+        )
+    }
+}
+
+/**
+ * Задержка компактной строки: одно число цветом тона; пока замера нет или он не удался,
+ * вместо числа короткое слово. Слово для озвучки уже есть в [ServerRowUi.a11y].
+ */
+@Composable
+private fun LatencyCompact(latency: LatencyDisplay) {
+    val color = if (latency.tone == Tone.Neutral) MaterialTheme.colorScheme.onSurfaceVariant else toneColor(latency.tone)
+    if (latency.value == DASH) {
+        Text(latency.word, style = MaterialTheme.typography.labelSmall, color = color, textAlign = TextAlign.End, maxLines = 1)
+    } else {
+        Text(
+            latency.value,
+            style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
+            color = color,
+            textAlign = TextAlign.End,
+            maxLines = 1,
         )
     }
 }

@@ -96,6 +96,8 @@ fun ServerList(
     contentPadding: PaddingValues = PaddingValues(horizontal = Spacing.screen, vertical = Spacing.s),
     testTag: String = SERVER_LIST_TAG,
     leading: (@Composable () -> Unit)? = null,
+    /** Компактные строки серверов (настройка вкладки «Серверы»); по умолчанию обычные. */
+    compact: Boolean = false,
 ) {
     LazyColumn(
         state = listState,
@@ -103,7 +105,7 @@ fun ServerList(
         contentPadding = contentPadding,
     ) {
         if (leading != null) item(key = "leading", contentType = "leading") { leading() }
-        serverItems(model.items, actions, tools)
+        serverItems(model.items, actions, tools, compact)
     }
 }
 
@@ -111,6 +113,7 @@ private fun LazyListScope.serverItems(
     list: List<ServerListItem>,
     actions: ServerListActions,
     tools: ServerTools?,
+    compact: Boolean,
 ) {
     items(list, key = { it.key }, contentType = { it.contentType }) { item ->
         when (item) {
@@ -132,6 +135,7 @@ private fun LazyListScope.serverItems(
                 },
                 onFavorite = actions.onFavorite?.let { toggle -> { toggle(item.row.tag, !item.row.favorite) } },
                 modifier = if (item.animate) Modifier.animateItem(fadeInSpec = tween(Motion.QUICK), placementSpec = null) else Modifier,
+                compact = compact,
             )
             is ServerListItem.FoundProbe -> FoundProbeBar(item, actions)
             is ServerListItem.Note -> Text(

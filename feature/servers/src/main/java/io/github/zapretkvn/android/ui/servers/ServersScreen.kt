@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -61,6 +62,8 @@ class ServersScreenActions(
     val onFavorite: (serverTag: String, favorite: Boolean) -> Unit,
     /** Выбрана сортировка: сохраняется в настройках и переживает перезапуск. */
     val onSort: (ServerSort) -> Unit = {},
+    /** Переключён «Компактные строки»: сохраняется в настройках. */
+    val onCompact: (Boolean) -> Unit = {},
 )
 
 /**
@@ -82,6 +85,8 @@ fun ServersScreen(
     scrollToTop: Int = 0,
     /** Сохранённая сортировка; настройки читаются асинхронно, поэтому может прийти позже. */
     savedSort: ServerSort = ServerSort.Subscription,
+    /** Сохранённый вид строк: компактные или обычные. */
+    compactRows: Boolean = false,
 ) {
     var sort by rememberSaveable(savedSort) { mutableStateOf(savedSort) }
     // Порядок фиксируется в момент выбора сортировки: замеры строку не переставляют.
@@ -123,7 +128,11 @@ fun ServersScreen(
                         }
                     }
                     if (content != null && content.groups.sumOf { it.rows.size } > 1) {
-                        SortMenu(sort) { chosen ->
+                        SortMenu(
+                            current = sort,
+                            compact = compactRows,
+                            onCompact = actions.onCompact,
+                        ) { chosen ->
                             sort = chosen
                             order = ArrayList(frozenOrder(content.groups, chosen))
                             actions.onSort(chosen)
@@ -179,7 +188,7 @@ fun ServersScreen(
                 }
             }
             is ServersUi.Content -> key(ui.profileId) {
-                ServersBody(ui, order, sort, filter, { filter = it }, actions, scrollToTop)
+                ServersBody(ui, order, sort, filter, { filter = it }, actions, scrollToTop, compactRows)
             }
         }
     }
@@ -226,11 +235,17 @@ private fun SearchBar(query: String, onQuery: (String) -> Unit, onClose: () -> U
     }
 }
 
+/** Меню «⋮» вкладки «Серверы»: сортировка и вид строк. */
 @Composable
-private fun SortMenu(current: ServerSort, onChoose: (ServerSort) -> Unit) {
+private fun SortMenu(
+    current: ServerSort,
+    compact: Boolean,
+    onCompact: (Boolean) -> Unit,
+    onChoose: (ServerSort) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     IconButton(onClick = { open = true }) {
-        Icon(ZapretIcons.More, contentDescription = "Сортировка")
+        Icon(ZapretIcons.More, contentDescription = "Сортировка и вид")
     }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
         ServerSort.entries.forEach { sort ->
@@ -248,6 +263,18 @@ private fun SortMenu(current: ServerSort, onChoose: (ServerSort) -> Unit) {
                 ),
             )
         }
+        HorizontalDivider()
+        DropdownMenuItem(
+            text = { Text("Компактные строки") },
+            onClick = {
+                open = false
+                onCompact(!compact)
+            },
+            trailingIcon = {
+                if (compact) Icon(ZapretIcons.Ok, contentDescription = "включено")
+            },
+            modifier = Modifier.testTag("servers-compact-toggle"),
+        )
     }
 }
 
@@ -260,6 +287,7 @@ private fun ServersBody(
     onFilter: (ServerFilter) -> Unit,
     actions: ServersScreenActions,
     scrollToTop: Int,
+    compact: Boolean,
 ) {
     var toggled by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
     var sections by rememberSaveable(stateSaver = SectionStateSaver) { mutableStateOf(SectionState()) }
@@ -333,6 +361,7 @@ private fun ServersBody(
             tools = tools,
             listState = listState,
             modifier = Modifier.fillMaxSize(),
+            compact = compact,
         )
         if (farDown) {
             SmallFloatingActionButton(

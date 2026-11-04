@@ -99,6 +99,7 @@ class UiSettingsStore(
                 favoriteServers = preferences[FAVORITE_SERVERS].orEmpty(),
                 subscriptionAutoUpdateHours = SubscriptionAutoUpdate.normalize(preferences[SUBSCRIPTION_AUTO_UPDATE_HOURS]),
                 serverSort = preferences[SERVER_SORT] ?: "Subscription",
+                compactServerRows = preferences[COMPACT_SERVER_ROWS] ?: false,
             )
         }
 
@@ -127,6 +128,10 @@ class UiSettingsStore(
 
     suspend fun setServerSort(name: String) {
         dataStore.edit { it[SERVER_SORT] = name }
+    }
+
+    suspend fun setCompactServerRows(enabled: Boolean) {
+        dataStore.edit { it[COMPACT_SERVER_ROWS] = enabled }
     }
 
     suspend fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) {
@@ -282,6 +287,7 @@ class UiSettingsStore(
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val SERVER_SORT = stringPreferencesKey("server_sort")
+        val COMPACT_SERVER_ROWS = booleanPreferencesKey("compact_server_rows")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val ACTIVE_PROFILE_ID = stringPreferencesKey("active_profile_id")
         val RAW_EDITOR_LINE_WRAP = booleanPreferencesKey("raw_editor_line_wrap")

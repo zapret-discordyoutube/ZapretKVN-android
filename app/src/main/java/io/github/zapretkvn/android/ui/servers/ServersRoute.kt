@@ -153,6 +153,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
                 }
             },
             onSort = { sort -> deps.profiles.settings.setServerSort(sort.name) },
+            onCompact = { enabled -> deps.profiles.settings.setCompactServerRows(enabled) },
         )
     }
     ServersScreen(
@@ -163,6 +164,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
         contentPadding = padding,
         scrollToTop = nav.navigator.reselections(AppTab.Servers),
         savedSort = ServerSort.entries.firstOrNull { it.name == state.settings.serverSort } ?: ServerSort.Subscription,
+        compactRows = state.settings.compactServerRows,
     )
 }
 

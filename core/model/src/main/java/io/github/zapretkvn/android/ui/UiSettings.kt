@@ -42,6 +42,8 @@ data class UiSettings(
     val subscriptionAutoUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
     /** Сортировка вкладки «Серверы» (имя варианта ServerSort); переживает перезапуск. */
     val serverSort: String = "Subscription",
+    /** Компактные строки на вкладке «Серверы»: одна строка с названием и задержкой, без протокола и адреса. */
+    val compactServerRows: Boolean = false,
 )
 
 /** Как часто фоновое задание обновляет подписки. */
