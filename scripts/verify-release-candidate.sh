@@ -98,9 +98,31 @@ expected_exported = {
         "android.permission.BIND_QUICK_SETTINGS_TILE",
     ),
     ("receiver", "androidx.profileinstaller.ProfileInstallReceiver", "android.permission.DUMP"),
+    # Внешнее управление (docs/VPN_HIDING_ARCHITECTURE.md, инвариант 7): единственный экспортируемый
+    # приёмник приложения; проверка ниже требует, чтобы он поставлялся выключенным.
+    ("receiver", "io.github.zapretkvn.android.vpn.external.ExternalControlReceiver", None),
 }
 if exported != expected_exported:
     raise SystemExit(f"Unexpected exported components: {sorted(exported ^ expected_exported, key=str)}")
+
+external_control = [
+    node for node in application.findall("receiver")
+    if node.get(android + "name") == "io.github.zapretkvn.android.vpn.external.ExternalControlReceiver"
+]
+external_actions = sorted(
+    action.get(android + "name")
+    for node in external_control
+    for intent_filter in node.findall("intent-filter")
+    for action in intent_filter.findall("action")
+)
+if (
+    len(external_control) != 1
+    or external_control[0].get(android + "enabled") != "false"
+    or external_actions != sorted(
+        "io.github.zapretkvn.android.control." + name for name in ("START", "STOP", "TOGGLE")
+    )
+):
+    raise SystemExit("External-control receiver must ship disabled (enabled=false) with only START, STOP and TOGGLE")
 
 vpn = [item for item in components if item[0] == "service" and item[3] == "android.permission.BIND_VPN_SERVICE"]
 if len(vpn) != 1 or vpn[0][1] != "io.github.zapretkvn.android.vpn.ZapretVpnService" or vpn[0][2] != "false":
