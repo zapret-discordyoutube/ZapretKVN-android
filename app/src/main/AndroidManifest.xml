@@ -164,7 +164,7 @@
           component at runtime. Every call must also carry the owner's secret token.
         -->
         <receiver
-            android:name=".vpn.ExternalControlReceiver"
+            android:name=".vpn.external.ExternalControlReceiver"
             android:enabled="false"
             android:exported="true">
             <intent-filter>

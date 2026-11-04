@@ -1,13 +1,8 @@
 package io.github.zapretkvn.android.ui.settings
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
-import android.os.PersistableBundle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.PaddingValues
@@ -95,19 +90,7 @@ internal fun AutomationRoute(deps: AppDependencies, padding: PaddingValues) {
         externalControl = settings.externalControl,
         onExternalControlChange = deps.profiles.settings::setExternalControlEnabled,
         onExternalControlNewToken = deps.profiles.settings::regenerateExternalControlToken,
-        onCopyExternalControlToken = { copySecret(context, settings.externalControl.token) },
     )
-}
-
-/** Кладёт секрет в буфер обмена; на Android 13+ с пометкой «чувствительное», чтобы он не светился на экране. */
-private fun copySecret(context: Context, secret: String) {
-    val clip = ClipData.newPlainText("Zapret KVN", secret)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        clip.description.extras = PersistableBundle().apply {
-            putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
-        }
-    }
-    context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
 }
 
 @Composable

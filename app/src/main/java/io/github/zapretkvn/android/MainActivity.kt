@@ -39,7 +39,7 @@ import io.github.zapretkvn.android.routing.RoutingViewModel
 import io.github.zapretkvn.android.ui.ThemeMode
 import io.github.zapretkvn.core.designsystem.ZapretTheme
 import io.github.zapretkvn.android.updates.UpdateState
-import io.github.zapretkvn.android.vpn.ExternalControlComponent
+import io.github.zapretkvn.android.vpn.external.ExternalControlComponent
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnController
 

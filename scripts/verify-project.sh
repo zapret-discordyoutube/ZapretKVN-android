@@ -432,13 +432,33 @@ if (
 ):
     raise SystemExit("Expected exactly one non-exported update-check JobService without intent filters")
 receivers = application.findall("receiver")
+install_receivers = [node for node in receivers if node.get(android + "name") == ".updates.UpdateInstallReceiver"]
+external_receivers = [node for node in receivers if node.get(android + "name") == ".vpn.external.ExternalControlReceiver"]
 if (
-    len(receivers) != 1
-    or receivers[0].get(android + "name") != ".updates.UpdateInstallReceiver"
-    or receivers[0].get(android + "exported") != "false"
-    or receivers[0].findall("intent-filter")
+    len(receivers) != 2
+    or len(install_receivers) != 1
+    or len(external_receivers) != 1
+    or install_receivers[0].get(android + "exported") != "false"
+    or install_receivers[0].findall("intent-filter")
 ):
-    raise SystemExit("Expected exactly one non-exported install-result receiver without intent filters")
+    raise SystemExit(
+        "Expected exactly one non-exported install-result receiver without intent filters, "
+        "plus the opt-in external-control receiver (docs/VPN_HIDING_ARCHITECTURE.md, invariant 7)"
+    )
+# Инвариант 7: единственный экспортируемый приёмник поставляется выключенным и принимает только три действия.
+external_actions = sorted(
+    action.get(android + "name")
+    for intent_filter in external_receivers[0].findall("intent-filter")
+    for action in intent_filter.findall("action")
+)
+if (
+    external_receivers[0].get(android + "enabled") != "false"
+    or external_receivers[0].get(android + "exported") != "true"
+    or external_actions != sorted(
+        "io.github.zapretkvn.android.control." + name for name in ("START", "STOP", "TOGGLE")
+    )
+):
+    raise SystemExit("External-control receiver must ship disabled (enabled=false) and accept only START, STOP and TOGGLE")
 
 quick_settings_tiles = [
     node for node in application.findall("service")

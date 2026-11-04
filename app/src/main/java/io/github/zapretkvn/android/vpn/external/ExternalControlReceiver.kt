@@ -1,4 +1,4 @@
-package io.github.zapretkvn.android.vpn
+package io.github.zapretkvn.android.vpn.external
 
 import android.Manifest
 import android.content.BroadcastReceiver

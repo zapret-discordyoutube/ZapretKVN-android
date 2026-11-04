@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -57,7 +58,6 @@ fun AutomationScreen(
     externalControl: ExternalControlSettings = ExternalControlSettings(),
     onExternalControlChange: (Boolean) -> Unit = {},
     onExternalControlNewToken: () -> Unit = {},
-    onCopyExternalControlToken: () -> Unit = {},
 ) {
     var editWifiName by rememberSaveable { mutableStateOf(false) }
     if (editWifiName) {
@@ -242,22 +242,31 @@ fun AutomationScreen(
                             "содержать ваш секрет, иначе она молча отбрасывается.",
                     )
                     if (externalControl.enabled && externalControl.token.isNotEmpty()) {
-                        Text(
-                            "Секрет: ${maskedToken(externalControl.token)}",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.testTag("external-control-token"),
-                        )
+                        // Не rememberSaveable: показанный секрет не должен пережить поворот экрана.
+                        var revealed by remember { mutableStateOf(false) }
+                        // Приложение само ничего не кладёт в буфер обмена (проверка verify-project.sh):
+                        // целиком секрет виден только по кнопке, и скопировать его можно выделением.
+                        SelectionContainer {
+                            Text(
+                                "Секрет: ${if (revealed) externalControl.token else maskedToken(externalControl.token)}",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.testTag("external-control-token"),
+                            )
+                        }
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(Spacing.s),
                             verticalArrangement = Arrangement.spacedBy(Spacing.s),
                         ) {
                             Button(
-                                onClick = onCopyExternalControlToken,
-                                modifier = Modifier.heightIn(min = 48.dp).testTag("external-control-copy"),
-                            ) { Text("Скопировать секрет") }
+                                onClick = { revealed = !revealed },
+                                modifier = Modifier.heightIn(min = 48.dp).testTag("external-control-reveal"),
+                            ) { Text(if (revealed) "Скрыть секрет" else "Показать секрет") }
                             OutlinedButton(
-                                onClick = onExternalControlNewToken,
+                                onClick = {
+                                    revealed = false
+                                    onExternalControlNewToken()
+                                },
                                 modifier = Modifier.heightIn(min = 48.dp).testTag("external-control-new-token"),
                             ) { Text("Новый секрет") }
                         }
@@ -274,7 +283,7 @@ fun AutomationScreen(
     }
 }
 
-/** Секрет на экране виден только концом: целиком он попадает лишь в буфер обмена. */
+/** Секрет на экране виден только концом; целиком — по кнопке «Показать секрет». */
 internal fun maskedToken(token: String): String {
     val tail = token.takeLast(TOKEN_VISIBLE_TAIL)
     return "•".repeat((token.length - tail.length).coerceAtLeast(0).coerceAtMost(TOKEN_MASK_DOTS)) + tail

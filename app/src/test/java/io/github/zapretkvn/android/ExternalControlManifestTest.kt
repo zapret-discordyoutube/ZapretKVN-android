@@ -27,7 +27,7 @@ class ExternalControlManifestTest {
     private fun Element.android(name: String): String = getAttributeNS(androidNamespace, name)
 
     private fun controlReceiver(): Element {
-        val found = receivers().firstOrNull { it.android("name") == ".vpn.ExternalControlReceiver" }
+        val found = receivers().firstOrNull { it.android("name") == ".vpn.external.ExternalControlReceiver" }
         assertNotNull("ExternalControlReceiver must be declared in the manifest", found)
         return found!!
     }
@@ -47,6 +47,6 @@ class ExternalControlManifestTest {
     @Test
     fun noOtherReceiverIsExported() {
         val exported = receivers().filter { it.android("exported") == "true" }.map { it.android("name") }
-        assertEquals(listOf(".vpn.ExternalControlReceiver"), exported)
+        assertEquals(listOf(".vpn.external.ExternalControlReceiver"), exported)
     }
 }
