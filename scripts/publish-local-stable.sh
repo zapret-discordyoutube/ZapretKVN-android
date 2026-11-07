@@ -27,6 +27,11 @@ TELEGRAM_PUBLISHER="${ZAPRET_KVN_TG_PUBLISHER:-${HOME:?HOME is required}/zapretg
 # side: kvn-state, kvn-publish ...) and the three APKs travel there by rsync.
 # Empty: the bot runs on this machine, as before.
 BOT_BRIDGE="${ZAPRET_KVN_BOT_BRIDGE:-}"
+# F-Droid repository (since 2026-11-07 in CT 204, reached over ssh): the same three APKs as one tar on
+# stdin, `ssh <alias> publish vX.Y.Z`. The receiver checks the names and the version, runs
+# `zapret-fdroid publish-local` and `verify`, and returns the exit code; nothing stays behind on failure.
+# Empty alias: the step is skipped (the periodic F-Droid synchronizer picks the release up from Forgejo).
+FDROID_RECEIVER="${ZAPRET_KVN_FDROID_RECEIVER:-}"
 # Bot-owned publish ledger; consulted after a publisher timeout to tell a false
 # client timeout (the bot finished the upload anyway) from a real failure.
 TELEGRAM_PUBLISHER_STATE="${ZAPRET_KVN_TG_STATE:-${HOME:?HOME is required}/zapretgpt/data/zapretkvn_publisher_state.json}"
@@ -306,6 +311,42 @@ fi
     "$TAG" \
     "$OUTPUT_DIR" \
     "$RELEASE_REPOSITORY"
+
+# F-Droid comes after the verified Forgejo release and before Telegram. It never fails the release:
+# the Forgejo release is immutable and the periodic F-Droid synchronizer retries the same assets.
+publish_to_fdroid() {
+    local marker="$OUTPUT_DIR/.fdroid-published" abi
+    local apk_names=()
+    if [[ "${ZAPRET_SKIP_FDROID:-0}" == 1 ]]; then
+        echo "Skipping F-Droid (ZAPRET_SKIP_FDROID=1)."
+        return 0
+    fi
+    if [[ -f "$marker" ]]; then
+        echo "F-Droid already has $TAG; skipping."
+        return 0
+    fi
+    if [[ -z "$FDROID_RECEIVER" ]]; then
+        echo "F-Droid receiver is not configured (ZAPRET_KVN_FDROID_RECEIVER); the periodic synchronizer will pick $TAG up from Forgejo."
+        return 0
+    fi
+    for abi in arm64-v8a armeabi-v7a x86_64; do
+        apk_names+=("Zapret-KVN-$TAG-$abi.apk")
+        [[ -s "$OUTPUT_DIR/Zapret-KVN-$TAG-$abi.apk" ]] || {
+            echo "F-Droid step: missing $OUTPUT_DIR/Zapret-KVN-$TAG-$abi.apk" >&2
+            return 1
+        }
+    done
+    echo "Publishing $TAG to F-Droid through $FDROID_RECEIVER ..."
+    if tar -C "$OUTPUT_DIR" -cf - "${apk_names[@]}" \
+        | timeout 1800 ssh -o BatchMode=yes -o ConnectTimeout=20 "$FDROID_RECEIVER" publish "$TAG"; then
+        : > "$marker"
+        echo "F-Droid published $TAG."
+    else
+        echo "WARNING: the F-Droid step failed for $TAG; the Forgejo release stays; the synchronizer retries, or run this script again." >&2
+        return 1
+    fi
+}
+publish_to_fdroid || echo "F-Droid step incomplete (see above); continuing with Telegram." >&2
 
 # Telegram announcement is the mandatory final step of a stable release (unless
 # explicitly skipped): the Forgejo release is now visible, so announce it once
