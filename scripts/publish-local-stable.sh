@@ -345,10 +345,19 @@ else
     if [[ -n "$BOT_BRIDGE" ]]; then
         # Bot reads the bundle from its own disk: push the three APKs, then publish over ssh
         # (the remote shell re-parses the line, so every argument is quoted).
-        rsync -t --partial "$OUTPUT_DIR"/Zapret-KVN-"$TAG"-*.apk "$BOT_BRIDGE:android/$TAG/" || {
-            echo "Could not push the APKs to the bot bridge." >&2
+        # The bridge accepts only an exact file name (android/vX.Y.Z/Zapret-KVN-vX.Y.Z-<abi>.apk),
+        # never a directory target, so the APKs go one by one.
+        bridge_apks=("$OUTPUT_DIR"/Zapret-KVN-"$TAG"-*.apk)
+        [[ -e "${bridge_apks[0]}" ]] || {
+            echo "No APKs to push to the bot bridge in $OUTPUT_DIR" >&2
             exit 1
         }
+        for bridge_apk in "${bridge_apks[@]}"; do
+            rsync -t --partial "$bridge_apk" "$BOT_BRIDGE:android/$TAG/$(basename "$bridge_apk")" || {
+                echo "Could not push $(basename "$bridge_apk") to the bot bridge." >&2
+                exit 1
+            }
+        done
         bridge_command=(ssh "$BOT_BRIDGE" kvn-publish android "${TAG#v}")
         for bridge_arg in "${telegram_changes[@]}"; do
             bridge_command+=("$(printf '%q' "$bridge_arg")")
