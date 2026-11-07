@@ -7,7 +7,7 @@ BUNDLE_DIR="${2:?test bundle directory is required}"
 REPOSITORY="${3:-${ZAPRET_UPDATE_REPOSITORY:-zapretkvn/ZapretKVN-android}}"
 BASE_URL="${ZAPRET_FORGEJO_URL:-https://git.zapret.moe}"
 API_URL="$BASE_URL/api/v1"
-TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-/home/codex-pve/.config/forgejo/zapret-kvn-android-release-token}"
+TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.config/forgejo/zapret-kvn-android-release-token}"
 
 "$PROJECT_ROOT/scripts/derive-test-version.sh" "$TAG" >/dev/null
 "$PROJECT_ROOT/scripts/verify-test-bundle.sh" "$TAG" "$BUNDLE_DIR"

@@ -21,14 +21,24 @@ FORGEJO_TOKEN_FILE="${ZAPRET_FORGEJO_TOKEN_FILE:-${HOME:?HOME is required}/.conf
 # release notes (create-release-bundle.sh).
 RELEASE_CHANGES_FILE="${ZAPRET_RELEASE_CHANGES_FILE:-$PROJECT_ROOT/scripts/release-changes.txt}"
 # Host-local ZapretGPT delivery helper that posts the Telegram announcement.
-TELEGRAM_PUBLISHER="${ZAPRET_KVN_TG_PUBLISHER:-/home/codex-pve/zapretgpt/scripts/publish_zapretkvn_stable.py}"
+TELEGRAM_PUBLISHER="${ZAPRET_KVN_TG_PUBLISHER:-${HOME:?HOME is required}/zapretgpt/scripts/publish_zapretkvn_stable.py}"
+# The bot may live in another container (since 2026-11-07: CT 202 on US2-7). Then
+# ZAPRET_KVN_BOT_BRIDGE is the ssh alias of its bridge (a forced command on the bot
+# side: kvn-state, kvn-publish ...) and the three APKs travel there by rsync.
+# Empty: the bot runs on this machine, as before.
+BOT_BRIDGE="${ZAPRET_KVN_BOT_BRIDGE:-}"
 # Bot-owned publish ledger; consulted after a publisher timeout to tell a false
 # client timeout (the bot finished the upload anyway) from a real failure.
-TELEGRAM_PUBLISHER_STATE="${ZAPRET_KVN_TG_STATE:-/home/codex-pve/zapretgpt/data/zapretkvn_publisher_state.json}"
+TELEGRAM_PUBLISHER_STATE="${ZAPRET_KVN_TG_STATE:-${HOME:?HOME is required}/zapretgpt/data/zapretkvn_publisher_state.json}"
 
 # Succeeds when the bot ledger already records an Android artifact for this tag.
 telegram_album_recorded() {
-    python3 - "$TELEGRAM_PUBLISHER_STATE" "android|$TAG|" <<'PY'
+    local state_source="$TELEGRAM_PUBLISHER_STATE"
+    if [[ -n "$BOT_BRIDGE" ]]; then
+        state_source="$(mktemp)"
+        ssh "$BOT_BRIDGE" kvn-state > "$state_source" 2>/dev/null || { rm -f "$state_source"; return 1; }
+    fi
+    python3 - "$state_source" "android|$TAG|" <<'PY'
 import json, sys
 path, prefix = sys.argv[1], sys.argv[2]
 try:
@@ -40,6 +50,9 @@ published = data.get("published", data)
 keys = published.keys() if isinstance(published, dict) else published
 sys.exit(0 if any(isinstance(k, str) and k.startswith(prefix) for k in keys) else 1)
 PY
+    local status=$?
+    [[ -n "$BOT_BRIDGE" ]] && rm -f "$state_source"
+    return $status
 }
 
 if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$APPROVAL" != --final-gate-approved ]]; then
@@ -309,10 +322,17 @@ else
         echo "Missing changelog source: $RELEASE_CHANGES_FILE" >&2
         exit 1
     }
-    [[ -f "$TELEGRAM_PUBLISHER" ]] || {
-        echo "Telegram publisher not found: $TELEGRAM_PUBLISHER" >&2
-        exit 1
-    }
+    if [[ -z "$BOT_BRIDGE" ]]; then
+        [[ -f "$TELEGRAM_PUBLISHER" ]] || {
+            echo "Telegram publisher not found: $TELEGRAM_PUBLISHER" >&2
+            exit 1
+        }
+    else
+        ssh "$BOT_BRIDGE" kvn-check >/dev/null || {
+            echo "Bot bridge check failed: $BOT_BRIDGE" >&2
+            exit 1
+        }
+    fi
     telegram_changes=()
     while IFS= read -r change_line || [[ -n "$change_line" ]]; do
         [[ -z "${change_line// }" || "$change_line" == \#* ]] && continue
@@ -322,7 +342,22 @@ else
         echo "No changelog items to announce in $RELEASE_CHANGES_FILE" >&2
         exit 1
     fi
-    if python3 "$TELEGRAM_PUBLISHER" android "${TAG#v}" "${telegram_changes[@]}"; then
+    if [[ -n "$BOT_BRIDGE" ]]; then
+        # Bot reads the bundle from its own disk: push the three APKs, then publish over ssh
+        # (the remote shell re-parses the line, so every argument is quoted).
+        rsync -t --partial "$OUTPUT_DIR"/Zapret-KVN-"$TAG"-*.apk "$BOT_BRIDGE:android/$TAG/" || {
+            echo "Could not push the APKs to the bot bridge." >&2
+            exit 1
+        }
+        bridge_command=(ssh "$BOT_BRIDGE" kvn-publish android "${TAG#v}")
+        for bridge_arg in "${telegram_changes[@]}"; do
+            bridge_command+=("$(printf '%q' "$bridge_arg")")
+        done
+        publish_command=("${bridge_command[@]}")
+    else
+        publish_command=(python3 "$TELEGRAM_PUBLISHER" android "${TAG#v}" "${telegram_changes[@]}")
+    fi
+    if "${publish_command[@]}"; then
         : > "$telegram_marker"
         echo "Telegram announcement published for $TAG."
     else
