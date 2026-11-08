@@ -311,6 +311,8 @@ internal class CoreSession(
                 proxyConnections = proxy?.connections,
             ),
         )
+        // Снимок потоков через прокси: прямым вызовом в момент отсчёта, без подписки на соединения (I6-05).
+        RuntimeLog.flows(runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull())
         RuntimeLog.traffic(
             uplinkTotal,
             downlinkTotal,

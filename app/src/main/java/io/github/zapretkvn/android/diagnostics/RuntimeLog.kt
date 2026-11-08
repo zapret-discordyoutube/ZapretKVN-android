@@ -1,6 +1,8 @@
 package io.github.zapretkvn.android.diagnostics
 
 import io.github.zapretkvn.runtimelog.CoreLogLayers
+import io.github.zapretkvn.runtimelog.FlowSnap
+import io.github.zapretkvn.runtimelog.FlowTracker
 import io.github.zapretkvn.runtimelog.LogLayer
 import io.github.zapretkvn.runtimelog.LogStoreInfo
 import io.github.zapretkvn.runtimelog.RuntimeLogStore
@@ -8,6 +10,15 @@ import io.github.zapretkvn.runtimelog.TrafficStallTracker
 import io.github.zapretkvn.runtimelog.ZipExtra
 import java.io.File
 import java.io.OutputStream
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 
 /**
  * Подробный журнал работы на диске (модуль `:runtime-log`), точка входа для приложения.
@@ -25,6 +36,8 @@ object RuntimeLog {
     private var store: RuntimeLogStore? = null
 
     private val stall = TrafficStallTracker()
+    private val flowTracker = FlowTracker()
+    private var closedCursor = 0L
     private val stallLock = Any()
     private var lastNetworkLine: String? = null
 
@@ -64,9 +77,57 @@ object RuntimeLog {
         store?.log(LogLayer.Network, 4, text)
     }
 
+    /** Сколько потоков просить у ядра за один снимок. */
+    const val FLOW_LIMIT = 300
+
+    /** Курсор закрытых потоков: ядро отдаёт только закрытые позже этой метки (мс). */
+    fun flowCursor(): Long = synchronized(stallLock) { closedCursor }
+
+    /**
+     * Снимок потоков через прокси из ядра (`CommandServer.proxyFlows`, JSON): закрытые потоки с байтами и временем
+     * жизни, топ потоков по входящему, потоки, которые «ждут ответ». `null` и пустая строка (ядро не запущено)
+     * пропускаются; битый JSON не должен ронять отсчёт трафика.
+     */
+    fun flows(json: String?) {
+        val target = store ?: return
+        if (json.isNullOrEmpty()) return
+        val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return
+        val active = root["active"].snaps()
+        val closed = root["closed"].snaps()
+        val lines = synchronized(stallLock) {
+            closed.maxOfOrNull { it.closedAtEpochMillis }?.let { if (it > closedCursor) closedCursor = it }
+            flowTracker.onSnapshot(System.currentTimeMillis(), active, closed)
+        }
+        lines.forEach { target.log(LogLayer.Traffic, it.level, it.text) }
+    }
+
+    private fun JsonElement?.snaps(): List<FlowSnap> =
+        (this as? JsonArray).orEmpty().mapNotNull { element ->
+            val flow = element as? JsonObject ?: return@mapNotNull null
+            fun text(key: String) = (flow[key] as? JsonPrimitive)?.contentOrNull.orEmpty()
+            fun number(key: String) = (flow[key] as? JsonPrimitive)?.longOrNull ?: 0L
+            val id = text("id").ifEmpty { return@mapNotNull null }
+            FlowSnap(
+                id = id,
+                network = text("net"),
+                domain = text("domain"),
+                destination = text("dest"),
+                packageName = text("pkg"),
+                outbound = text("out"),
+                createdAtEpochMillis = number("created"),
+                closedAtEpochMillis = number("closed"),
+                uplink = number("up"),
+                downlink = number("down"),
+            )
+        }
+
     /** Новая сессия VPN: счётчики идут с нуля, прежнее подвисание закрыто. */
     fun sessionStarted(generation: Long) {
-        synchronized(stallLock) { stall.reset() }
+        synchronized(stallLock) {
+            stall.reset()
+            flowTracker.reset()
+            closedCursor = 0L
+        }
         store?.log(LogLayer.Traffic, 4, "сессия $generation: счётчики с нуля")
     }
 
