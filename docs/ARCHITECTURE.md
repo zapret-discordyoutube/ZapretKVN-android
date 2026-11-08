@@ -10,8 +10,9 @@
 | Последний аудит | 25 июля 2026 года |
 | Минимальная ОС | Android 8.0, API 26 |
 | Устройства MVP | Только телефоны |
-| Ядро | `sing-box-extended` tag `v1.13.14-extended-2.5.2` |
-| Точный commit | `ff11f007ec798136a5de258f947a4f34011a37ea` |
+| Ядро (прокладка) | `sing-box-extended` tag `v1.14.3-extended-2.7.3` (актуальный пин: `core.properties`) |
+| Точный commit | `d9442d14b19ddd02605bf3ee893a171947038e19` |
+| Родные ядра в `libbox` | Hysteria2: официальный клиент `apernet/hysteria` `app/v2.13.0` (патч 0003, вместо `sing-quic/hysteria*`); VLESS: Xray-core `v1.260327.0` (патч 0004, `protocol/xraycore`); WireGuard/AWG: Amnezia (патчи 0001 и 0005). Все слинкованы в общий `libbox.so`, без sidecar-процессов и второго TUN; сокеты защищает пакетный dialer sing-box |
 | Текущий workspace | Android app + изолированные `app-updater`/`network-bootstrap`/import libraries, один VPN service, pinned libbox и packaged `.srs` |
 
 ## Порядок доверия

@@ -5,6 +5,16 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
+/**
+ * Где исполняется официальный клиент Hysteria 2.
+ *
+ * Android всегда [Native]: это НЕ собственная реализация sing-box, а официальный клиент
+ * `github.com/apernet/hysteria/core/v2` (тег в `core.properties`, патч 0003), слинкованный
+ * в `libbox` и использующий пакетный dialer sing-box (сокеты защищены `VpnService.protect`).
+ * [OfficialHysteriaSidecar] выбирает Windows (процесс `hysteria.exe` + локальный SOCKS); на
+ * Android значение не назначается и нужно только общим золотым векторам
+ * (`hysteria_golden_vectors.json`: `windows_execution`).
+ */
 internal enum class HysteriaExecutionKind(val wireValue: String) {
     Native("native"),
     OfficialHysteriaSidecar("official_hysteria_sidecar"),
