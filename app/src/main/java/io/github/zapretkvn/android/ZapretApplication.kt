@@ -22,7 +22,8 @@ class ZapretApplication : Application() {
         crashStore.install()
         RuntimeLog.install(
             File(noBackupFilesDir, "runtime-log"),
-            "приложение ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${Build.VERSION.RELEASE} API ${Build.VERSION.SDK_INT}, " +
+            historyFile = File(noBackupFilesDir, "speed-history.txt"),
+            startupLine = "приложение ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}), Android ${Build.VERSION.RELEASE} API ${Build.VERSION.SDK_INT}, " +
                 "${Build.MANUFACTURER} ${Build.MODEL}, ${Build.SUPPORTED_ABIS.firstOrNull()}",
         )
         // DoH имён серверов — стеком Chromium (как браузер), GET ?dns=. Ядро загружается

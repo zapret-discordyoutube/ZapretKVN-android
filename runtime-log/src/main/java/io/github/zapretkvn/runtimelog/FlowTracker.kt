@@ -46,9 +46,11 @@ class FlowTracker(
     }
 
     private val flows = LinkedHashMap<String, State>()
+    private var lastSnapshotAt = -1L
 
     fun reset() {
         flows.clear()
+        lastSnapshotAt = -1L
     }
 
     /** [closed] в порядке «самые новые первыми», как отдаёт ядро; [active] любой. */
@@ -80,7 +82,12 @@ class FlowTracker(
                 -1L
             }
             // Средняя скорость вниз за всю жизнь потока: по ней сравниваются кеш-узлы YouTube и серверы.
-            val average = if (livedMillis >= 1_000 && down > 0) ", ср. вниз ${formatBytes(down * 1_000 / livedMillis)}/с" else ""
+            val average = if (livedMillis >= 1_000 && down > 0) {
+                ", ср. вниз ${formatBytes(down * 1_000 / livedMillis)}/с" +
+                    (SpeedClass.ofFlow(down, livedMillis)?.let { " (${it.label})" } ?: "")
+            } else {
+                ""
+            }
             lines += FlowLine(
                 4,
                 "закрыт ${snap.network.ifBlank { "?" }} $name (${snap.packageName.ifBlank { "?" }}, ${snap.outbound.ifBlank { "?" }}): " +
@@ -89,11 +96,13 @@ class FlowTracker(
         }
         // Потоки, которых нет ни среди живых, ни среди закрытых (запись закрытия вытеснена), забываем.
         flows.keys.retainAll(activeIds)
-        lines += windowLines(nowMillis)
+        val windowMillis = if (lastSnapshotAt > 0) nowMillis - lastSnapshotAt else 0L
+        lastSnapshotAt = nowMillis
+        lines += windowLines(nowMillis, windowMillis)
         return lines
     }
 
-    private fun windowLines(nowMillis: Long): List<FlowLine> {
+    private fun windowLines(nowMillis: Long, windowMillis: Long): List<FlowLine> {
         val result = ArrayList<FlowLine>(2)
         val totalDown = flows.values.sumOf { it.windowDown }
         val totalUp = flows.values.sumOf { it.windowUp }
@@ -102,7 +111,10 @@ class FlowTracker(
             4,
             "потоки: живых ${flows.size}, за окно вверх ${formatBytes(totalUp)}, вниз ${formatBytes(totalDown)}" +
                 if (top.isEmpty()) "" else "; топ по входящему: " + top.joinToString(", ") {
-                    "${it.name} ${it.snap.network} ↓${formatBytes(it.windowDown)} (${ageOf(it, nowMillis)})"
+                    val grade = SpeedClass.ofFlow(it.windowDown, windowMillis)?.let { speed ->
+                        ", ${formatBytes(it.windowDown * 1_000 / windowMillis)}/с ${speed.label}"
+                    }.orEmpty()
+                    "${it.name} ${it.snap.network} ↓${formatBytes(it.windowDown)} (${ageOf(it, nowMillis)}$grade)"
                 },
         )
         val waiting = flows.values.filter {

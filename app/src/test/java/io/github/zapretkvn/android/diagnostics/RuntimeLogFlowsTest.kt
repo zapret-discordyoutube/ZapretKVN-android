@@ -21,7 +21,11 @@ class RuntimeLogFlowsTest {
         @BeforeClass
         @JvmStatic
         fun install() {
-            RuntimeLog.install(File(temp.newFolder("runtime-log"), "x"), "test start")
+            RuntimeLog.install(
+                File(temp.newFolder("runtime-log"), "x"),
+                "test start",
+                File(temp.newFolder("history"), "speed-history.txt"),
+            )
         }
     }
 
@@ -92,6 +96,44 @@ class RuntimeLogFlowsTest {
         RuntimeLog.tunnelStats("hy2-a: tunnel quic: rtt min=78ms latest=91ms\nhy2-b: tunnel quic: rtt min=40ms latest=44ms\n\n")
         val text = logText()
         assertTrue(text, "hy2-a: tunnel quic: rtt min=78ms" in text && "hy2-b: tunnel quic: rtt min=40ms" in text)
+    }
+
+    @Test
+    fun `tunnel statistics lines get a channel grade`() {
+        RuntimeLog.tunnelStats(
+            "hy2-g: tunnel quic: rtt min=51ms latest=54ms smoothed=56ms dev=3ms; total sent 1703 pkts 1MB, recv 9 pkts 1MB, lost 1 pkts",
+        )
+        RuntimeLog.tunnelStats(
+            "hy2-b: tunnel quic: rtt min=51ms latest=54ms smoothed=300ms dev=3ms; total sent 1000 pkts 1MB, recv 9 pkts 1MB, lost 1 pkts",
+        )
+        val text = logText()
+        assertTrue(text, "hy2-g: tunnel quic: rtt min=51ms" in text && "канал: хороший" in text)
+        assertTrue(text, "канал: плохой" in text)
+    }
+
+    @Test
+    fun `a closed googlevideo flow goes into the speed history and is shown in the summary`() {
+        RuntimeLog.sessionStarted(9)
+        val created = System.currentTimeMillis() - 40_000
+        val closed = created + 20_000
+        // 100 КБ за 20 с = 5 КБ/с: «очень медленно»; три таких потока делают узел «известным медленным»
+        val flows = (1..3).joinToString(",") { n ->
+            """{"id":"c$n","net":"tcp","domain":"rr$n---sn-slowtest.googlevideo.com","dest":"74.125.11.74:443","pkg":"app.youtube",
+                "out":"HistoryServer","created":$created,"closed":$closed,"up":50000,"down":102400}"""
+        }
+        RuntimeLog.flows("""{"at":0,"active":[],"closed":[$flows]}""")
+        val summary = RuntimeLog.historySummary().joinToString("\n")
+        assertTrue(summary, "история HistoryServer: YouTube ср." in summary && "очень медленно" in summary)
+        assertTrue(summary, "медленные узлы: sn-slowtest" in summary)
+        // и эта сводка попадает в журнал при старте следующей сессии
+        RuntimeLog.sessionStarted(10)
+        assertTrue(logText().contains("история HistoryServer:"))
+        // а файл истории едет в архив диагностики
+        val out = ByteArrayOutputStream()
+        RuntimeLog.writeZip(out, emptyList())
+        val names = mutableListOf<String>()
+        ZipInputStream(out.toByteArray().inputStream()).use { zip -> generateSequence { zip.nextEntry }.forEach { names += it.name } }
+        assertTrue(names.toString(), "speed-history.txt" in names)
     }
 
     @Test

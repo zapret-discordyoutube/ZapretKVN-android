@@ -25,7 +25,7 @@ class FlowTrackerTest {
         val closed = lines.first().text
         assertTrue(closed, closed.startsWith("закрыт tcp rr2.sn-x.googlevideo.com (app.youtube, hysteria2)"))
         assertTrue(closed, "жил 12.5с" in closed && "вверх 2КБ" in closed && "вниз 1.0МБ" in closed)
-        assertTrue("average speed over the lifetime: $closed", "ср. вниз 82КБ/с" in closed)
+        assertTrue("average speed over the lifetime: $closed", "ср. вниз 82КБ/с (медленно)" in closed)
         assertTrue("window summary follows", lines.last().text.startsWith("потоки: живых 0"))
     }
 
@@ -50,6 +50,15 @@ class FlowTrackerTest {
         assertTrue(second, "вниз 488КБ" in second)
         val third = tracker.onSnapshot(15_000, listOf(snap("a", down = 1_500_000)), emptyList()).first().text
         assertTrue(third, "вниз 0Б" in third && "топ" !in third)
+    }
+
+    @Test
+    fun `the window line grades the speed of the top flows`() {
+        val tracker = FlowTracker()
+        tracker.onSnapshot(5_000, listOf(snap("a", domain = "fast.example", down = 0)), emptyList())
+        val text = tracker.onSnapshot(10_000, listOf(snap("a", domain = "fast.example", down = 4_000_000)), emptyList()).first().text
+        // 4 000 000 Б за 5 с = 781 КБ/с: «быстро»
+        assertTrue(text, "781КБ/с быстро" in text)
     }
 
     @Test

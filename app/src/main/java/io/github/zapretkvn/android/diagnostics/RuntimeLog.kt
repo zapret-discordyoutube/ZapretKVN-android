@@ -7,6 +7,8 @@ import io.github.zapretkvn.runtimelog.StalledFlowPolicy
 import io.github.zapretkvn.runtimelog.LogLayer
 import io.github.zapretkvn.runtimelog.LogStoreInfo
 import io.github.zapretkvn.runtimelog.RuntimeLogStore
+import io.github.zapretkvn.runtimelog.SpeedHistory
+import io.github.zapretkvn.runtimelog.TunnelGrade
 import io.github.zapretkvn.runtimelog.TrafficStallTracker
 import io.github.zapretkvn.runtimelog.ZipExtra
 import java.io.File
@@ -38,7 +40,9 @@ object RuntimeLog {
 
     private val stall = TrafficStallTracker()
     private val flowTracker = FlowTracker()
-    private val stalledPolicy = StalledFlowPolicy()
+    @Volatile
+    private var history: SpeedHistory? = null
+    private val stalledPolicy = StalledFlowPolicy(knownSlow = { server, domain -> history?.isKnownSlow(server, domain) == true })
 
     @Volatile
     private var resetStalledEnabled = true
@@ -47,16 +51,26 @@ object RuntimeLog {
     private var lastNetworkLine: String? = null
 
     /** Каталог внутри `noBackupFilesDir`: журнал не должен уезжать в резервные копии Android. */
-    fun install(directory: File, startupLine: String) {
+    fun install(directory: File, startupLine: String, historyFile: File? = null) {
         synchronized(this) {
             if (store != null) return
+            history = SpeedHistory(historyFile)
             store = RuntimeLogStore(
                 directory = directory,
                 transform = { record -> record.copy(text = SecretRedactor.redactInline(record.text)) },
             )
         }
         app(4, startupLine)
+        logHistorySummary()
     }
+
+    /** Сводка истории скоростей в журнал: по серверу итог по YouTube, медленные и быстрые узлы кеша. */
+    private fun logHistorySummary() {
+        val target = store ?: return
+        history?.summary()?.forEach { target.log(LogLayer.Traffic, 4, it) }
+    }
+
+    fun historySummary(): List<String> = history?.summary().orEmpty()
 
     fun info(): LogStoreInfo? = store?.info()
 
@@ -100,6 +114,10 @@ object RuntimeLog {
         val active = root["active"].snaps()
         val closed = root["closed"].snaps()
         val now = System.currentTimeMillis()
+        closed.forEach { flow ->
+            val lived = if (flow.createdAtEpochMillis > 0 && flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis - flow.createdAtEpochMillis else 0L
+            history?.recordFlow(flow.outbound, flow.domain, flow.destination, flow.downlink, lived)
+        }
         val (lines, stalled) = synchronized(stallLock) {
             closed.maxOfOrNull { it.closedAtEpochMillis }?.let { if (it > closedCursor) closedCursor = it }
             flowTracker.onSnapshot(now, active, closed) to
@@ -114,6 +132,8 @@ object RuntimeLog {
                     "вверх ${FlowTracker.formatBytes(flow.uplink)}, вниз ${FlowTracker.formatBytes(flow.downlink)}; плеер откроет новое соединение",
             )
         }
+        stalled.forEach { history?.recordReset(it.outbound, it.domain, it.destination) }
+        history?.flushIfDirty()
         return stalled.map { it.id }
     }
 
@@ -126,7 +146,10 @@ object RuntimeLog {
     fun tunnelStats(text: String?) {
         val target = store ?: return
         if (text.isNullOrEmpty()) return
-        text.lineSequence().filter(String::isNotBlank).forEach { target.log(LogLayer.Outbound, 4, it) }
+        text.lineSequence().filter(String::isNotBlank).forEach { line ->
+            // К каждой строке добавляется оценка канала: что у туннеля нормально, а что плохо.
+            target.log(LogLayer.Outbound, 4, TunnelGrade.of(line)?.let { "$line; канал: $it" } ?: line)
+        }
     }
 
     private fun JsonElement?.snaps(): List<FlowSnap> =
@@ -157,6 +180,7 @@ object RuntimeLog {
             stalledPolicy.reset()
             closedCursor = 0L
         }
+        logHistorySummary()
         store?.log(LogLayer.Traffic, 4, "сессия $generation: счётчики с нуля")
     }
 
@@ -207,13 +231,15 @@ object RuntimeLog {
 
     /** Архив для выгрузки: сводка диагностики и все сегменты журнала. */
     fun writeZip(output: OutputStream, extraEntries: List<ZipExtra>) {
+        history?.flushIfDirty(force = true)
+        val withHistory = history?.render()?.let { extraEntries + ZipExtra("speed-history.txt", it.toByteArray(Charsets.UTF_8)) } ?: extraEntries
         val target = store
         if (target != null) {
-            target.writeZip(output, extraEntries)
+            target.writeZip(output, withHistory)
         } else {
             // Журнал ещё не установлен (ранний вызов): архив всё равно получается, но без журнала.
             java.util.zip.ZipOutputStream(output).use { zip ->
-                extraEntries.forEach { extra ->
+                withHistory.forEach { extra ->
                     zip.putNextEntry(java.util.zip.ZipEntry(extra.name))
                     zip.write(extra.bytes)
                     zip.closeEntry()

@@ -200,3 +200,68 @@ The behaviour has a switch, "Сбрасывать зависшие соедин�
 the start of a session, so a change applies from the next connection. Limits worth knowing: a pre-opened idle
 connection that received only a short TLS answer can match the rule and is reset too, which only costs the player
 one reconnect; and because snapshots come every ~5 s, the reset happens between 8 and 13 s after the flow was created.
+
+## Speed reference: what is high and what is not
+
+The log grades speeds with `SpeedClass`. The thresholds follow what YouTube video needs (approximate bitrates:
+360p about 0.7 Mbit/s = 90 KB/s, 720p 2.5-4 Mbit/s = 300-500 KB/s, 1080p 5-8 Mbit/s = 600-1000 KB/s, 4K from
+20 Mbit/s). Playback starts smoothly only when the download is faster than the bitrate; otherwise the spinner turns
+while the buffer fills.
+
+| Class (log word) | Per-flow speed | What it means for video |
+| --- | --- | --- |
+| `быстро` (fast) | from 600 KB/s | 1080p and above with room to spare |
+| `норма` (normal) | 200-600 KB/s | 720p plays, 1080p is at the limit |
+| `медленно` (slow) | 50-200 KB/s | enough for 360p-480p; start and seeking are slow |
+| `очень медленно` (very slow) | below 50 KB/s | not enough even for 360p; the buffer does not fill |
+
+A flow is graded only after it moved at least 64 KB and lived at least 1 s, because the handshake and the ramp-up say
+nothing about the path. Closed-flow lines show the average over the whole life of the flow with its class; the top
+flows of a window show the speed of that window.
+
+The tunnel line gets a channel grade from the QUIC statistics (`TunnelGrade`): `хороший` (good) when loss is below 1 %
+and the smoothed round-trip time below 120 ms, `средний` (medium) for 1-3 % loss or 120-250 ms, `плохой` (bad) from
+3 % loss or 250 ms. Real figures from the field archives: a healthy tunnel showed 51-71 ms and 1 lost packet out of
+1703 (0.06 %), and carried about 1 MB/s at the start.
+
+How to read the two together. A good channel with a very slow flow means the problem is not the tunnel: it is the
+server or cache node on the other end (or the app). In the 0.5.38 archive the same Hipge tunnel (good channel)
+carried one YouTube cache node at 120-160 KB/s and two others at 4-7 KB/s in the same minute.
+
+### How to speed up further
+
+1. Choose the server by YouTube performance, not by ping: the log summary (below) shows the average speed per
+   server and per cache node. A server whose YouTube average is `медленно` or worse is the wrong server for video even
+   if its channel grade is good.
+2. Let the app cut bad flows (the reset of stalled and trickling flows): the player reconnects at once and often lands
+   on a better cache node. The longer the app runs, the earlier it cuts nodes it has seen slow.
+3. Keep QUIC blocked only if it helps on your server; the field test on 0.5.36 showed it was not the cause.
+4. Compare servers with the numbers in the archive (`speed-history.txt` and the `история …` lines) instead of by feel.
+
+## Speed history ("the more you use the app, the smarter it gets")
+
+Owner decision of 2026-11-08: keep the history, store it compactly, show it in the logs. `SpeedHistory` keeps one
+record per pair (server, target) instead of one per flow: flows, graded flows, bytes and time, a running average speed
+(EWMA, weight 0.3 for the newest flow), the number of slow and fast flows, the number of resets and the last day seen.
+The target of a YouTube video flow is the cache node (`yt:sn-1giz7n7l`, the `sn-…` part of the host name
+`rr2---sn-1giz7n7l.googlevideo.com`), for other names the last two labels of the domain, for flows without a name the
+/24 network of the address.
+
+- **Nothing is deleted.** When there are more than 4,000 records, the least informative ones (fewest flows, longest
+  unseen) are merged into the record `*другие` ("other") of the same server, so the totals survive.
+- **Compact file:** `noBackupFilesDir/speed-history.txt`, one tab-separated line per record, written atomically and at
+  most once a minute. A damaged file is ignored and rebuilt. The file is also put into the diagnostics archive.
+- **Shown in the log:** at the start of every session the `F` layer gets `история скоростей: …` and, per server,
+  `история <server>: YouTube ср. …/с (class), оценённых потоков N, медленных M, быстрых K, сбросов R; медленные узлы: …;
+  быстрые узлы: …`.
+- **It changes behaviour:** a cache node that was slow before for this server (at least 3 graded flows, running average
+  below 50 KB/s, at least 70 % slow flows) is "known slow", and a trickling flow to it is cut after one window from
+  6 s of age instead of two windows from 10 s.
+
+## Trickling flows
+
+Besides flows that received almost nothing, the policy cuts flows that keep sending more than they receive. Rule:
+`googlevideo.com`, TCP, at least 10 s old, under 3 MB received in total, and in two consecutive windows at least 8 KB
+sent with no more received than sent. Healthy video downloads are the opposite (a lot received, little sent); a player
+pause sends nothing. Reason: in the 0.5.38 archive the flows to `74.125.162.225` and `74.125.11.74` trickled at 4-7 KB/s
+for 25 s and one of them sent 203 KB while receiving 81 KB, so the old rule (at most 4 KB received) never fired.
