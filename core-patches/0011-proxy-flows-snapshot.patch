@@ -1,0 +1,236 @@
+diff --git a/common/trafficcontrol/proxy_flows.go b/common/trafficcontrol/proxy_flows.go
+new file mode 100644
+index 00000000..6ad06254
+--- /dev/null
++++ b/common/trafficcontrol/proxy_flows.go
+@@ -0,0 +1,102 @@
++package trafficcontrol
++
++import (
++	"encoding/json"
++	"sort"
++	"time"
++
++	"github.com/gofrs/uuid/v5"
++)
++
++// FlowSnapshot — один поток через прокси для подробного журнала приложения.
++type FlowSnapshot struct {
++	ID          string `json:"id"`
++	Network     string `json:"net,omitempty"`
++	Domain      string `json:"domain,omitempty"`
++	Destination string `json:"dest,omitempty"`
++	Package     string `json:"pkg,omitempty"`
++	Outbound    string `json:"out,omitempty"`
++	CreatedAt   int64  `json:"created"`
++	ClosedAt    int64  `json:"closed,omitempty"`
++	Upload      int64  `json:"up"`
++	Download    int64  `json:"down"`
++}
++
++func flowSnapshotOf(metadata *TrackerMetadata) FlowSnapshot {
++	snapshot := FlowSnapshot{
++		ID:          metadata.ID.String(),
++		Network:     metadata.Metadata.Network,
++		Domain:      metadata.Metadata.Domain,
++		Destination: metadata.Metadata.Destination.String(),
++		Outbound:    metadata.Outbound,
++		Upload:      metadata.Upload.Load(),
++		Download:    metadata.Download.Load(),
++	}
++	if snapshot.Domain == "" {
++		snapshot.Domain = metadata.Metadata.Destination.Fqdn
++	}
++	if !metadata.CreatedAt.IsZero() {
++		snapshot.CreatedAt = metadata.CreatedAt.UnixMilli()
++	}
++	if !metadata.ClosedAt.IsZero() {
++		snapshot.ClosedAt = metadata.ClosedAt.UnixMilli()
++	}
++	if owner := metadata.Metadata.ProcessInfo; owner != nil && len(owner.AndroidPackageNames) > 0 {
++		snapshot.Package = owner.AndroidPackageNames[0]
++	}
++	return snapshot
++}
++
++// ProxyFlows — потоки только через прокси: активные (тяжёлые по входящему первыми, не больше limit)
++// и закрытые после closedAfterMillis (из хранимых последних, самые новые не больше limit).
++// Вызывается приложением прямо в момент своего отсчёта: подписки на соединения нет
++// (инвариант I6-05, как у ProxyTotal).
++func (m *Manager) ProxyFlows(closedAfterMillis int64, limit int) (active []FlowSnapshot, closed []FlowSnapshot) {
++	if limit <= 0 {
++		limit = 1
++	}
++	m.connections.Range(func(_ uuid.UUID, tracker Tracker) bool {
++		metadata := tracker.Metadata()
++		if IsProxyOutboundType(metadata.OutboundType) {
++			active = append(active, flowSnapshotOf(metadata))
++		}
++		return true
++	})
++	sort.Slice(active, func(i, j int) bool { return active[i].Download > active[j].Download })
++	if len(active) > limit {
++		active = active[:limit]
++	}
++	m.closedConnectionsAccess.Lock()
++	values := m.closedConnections.Array()
++	m.closedConnectionsAccess.Unlock()
++	for i := len(values) - 1; i >= 0; i-- {
++		metadata := values[i]
++		if metadata.ClosedAt.UnixMilli() <= closedAfterMillis {
++			break
++		}
++		if IsProxyOutboundType(metadata.OutboundType) {
++			closed = append(closed, flowSnapshotOf(&metadata))
++			if len(closed) >= limit {
++				break
++			}
++		}
++	}
++	return active, closed
++}
++
++// ProxyFlowsJSON — тот же снимок одной строкой JSON: `{"at":мс,"active":[…],"closed":[…]}`.
++func (m *Manager) ProxyFlowsJSON(closedAfterMillis int64, limit int) ([]byte, error) {
++	active, closed := m.ProxyFlows(closedAfterMillis, limit)
++	return json.Marshal(struct {
++		At     int64          `json:"at"`
++		Active []FlowSnapshot `json:"active"`
++		Closed []FlowSnapshot `json:"closed"`
++	}{time.Now().UnixMilli(), nonNil(active), nonNil(closed)})
++}
++
++func nonNil(flows []FlowSnapshot) []FlowSnapshot {
++	if flows == nil {
++		return []FlowSnapshot{}
++	}
++	return flows
++}
+diff --git a/common/trafficcontrol/proxy_flows_test.go b/common/trafficcontrol/proxy_flows_test.go
+new file mode 100644
+index 00000000..428988ff
+--- /dev/null
++++ b/common/trafficcontrol/proxy_flows_test.go
+@@ -0,0 +1,77 @@
++package trafficcontrol
++
++import (
++	"encoding/json"
++	"testing"
++	"time"
++
++	"github.com/gofrs/uuid/v5"
++)
++
++func closedFlow(outboundType string, closedAt time.Time, up, down int64) TrackerMetadata {
++	id, _ := uuid.NewV4()
++	return TrackerMetadata{
++		ID: id, OutboundType: outboundType, CreatedAt: closedAt.Add(-3 * time.Second), ClosedAt: closedAt,
++		Upload: atomicOf(up), Download: atomicOf(down),
++	}
++}
++
++func TestProxyFlowsListsOnlyProxyFlowsHeaviestFirst(t *testing.T) {
++	m := NewManager(nil)
++	trackerWith(m, "hysteria2", 10, 100)
++	trackerWith(m, "direct", 1, 99999)
++	trackerWith(m, "vless", 20, 5000)
++	trackerWith(m, "dns", 1, 1)
++	active, closed := m.ProxyFlows(0, 10)
++	if len(closed) != 0 {
++		t.Fatalf("closed = %d, want 0", len(closed))
++	}
++	if len(active) != 2 || active[0].Download != 5000 || active[1].Download != 100 {
++		t.Fatalf("active = %+v, want the two proxy flows by download desc", active)
++	}
++}
++
++func TestProxyFlowsLimitAndClosedCursor(t *testing.T) {
++	m := NewManager(nil)
++	for i := 0; i < 5; i++ {
++		trackerWith(m, "hysteria2", 1, int64(i))
++	}
++	active, _ := m.ProxyFlows(0, 3)
++	if len(active) != 3 {
++		t.Fatalf("limit not applied: %d", len(active))
++	}
++	base := time.Now().Add(-time.Minute)
++	m.closedConnections.PushBack(closedFlow("hysteria2", base.Add(1*time.Second), 1, 10))
++	m.closedConnections.PushBack(closedFlow("direct", base.Add(2*time.Second), 1, 20))
++	m.closedConnections.PushBack(closedFlow("vless", base.Add(3*time.Second), 2, 30))
++	_, closed := m.ProxyFlows(base.Add(1*time.Second).UnixMilli(), 10)
++	if len(closed) != 1 || closed[0].Download != 30 {
++		t.Fatalf("closed after cursor = %+v, want only the newest proxy flow", closed)
++	}
++	_, all := m.ProxyFlows(0, 10)
++	if len(all) != 2 {
++		t.Fatalf("closed proxy flows = %d, want 2 (direct is excluded)", len(all))
++	}
++	if all[0].ClosedAt <= all[1].ClosedAt {
++		t.Fatalf("closed flows must be newest first: %+v", all)
++	}
++}
++
++func TestProxyFlowsJSONIsValidAndNeverNull(t *testing.T) {
++	m := NewManager(nil)
++	data, err := m.ProxyFlowsJSON(0, 5)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var decoded struct {
++		At     int64            `json:"at"`
++		Active []map[string]any `json:"active"`
++		Closed []map[string]any `json:"closed"`
++	}
++	if err := json.Unmarshal(data, &decoded); err != nil {
++		t.Fatalf("invalid json %q: %v", data, err)
++	}
++	if decoded.At == 0 || decoded.Active == nil || decoded.Closed == nil {
++		t.Fatalf("decoded = %+v from %s, want at set and empty arrays instead of null", decoded, data)
++	}
++}
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index c3b1fd04..79aa46a4 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -511,6 +511,18 @@ func (s *StartedService) ProxyTraffic() (uplinkTotal int64, downlinkTotal int64,
+ 	return uplinkTotal, downlinkTotal, active, true
+ }
+ 
++// ProxyFlowsJSON — снимок потоков через прокси (см. trafficcontrol.Manager.ProxyFlows). Ошибка вместо флага
++// доступности: gobind принимает у метода только второй результат типа error.
++func (s *StartedService) ProxyFlowsJSON(closedAfterMillis int64, limit int) ([]byte, error) {
++	s.serviceAccess.RLock()
++	nowService := s.instance
++	s.serviceAccess.RUnlock()
++	if nowService == nil || nowService.trafficManager == nil {
++		return nil, E.New("service is not started")
++	}
++	return nowService.trafficManager.ProxyFlowsJSON(closedAfterMillis, limit)
++}
++
+ func (s *StartedService) readStatus() *Status {
+ 	var status Status
+ 	status.Memory = memory.Total()
+diff --git a/experimental/libbox/command_server.go b/experimental/libbox/command_server.go
+index e0b2bd5b..34f578f8 100644
+--- a/experimental/libbox/command_server.go
++++ b/experimental/libbox/command_server.go
+@@ -250,6 +250,17 @@ func (s *CommandServer) ProxyTraffic() *ProxyTraffic {
+ 	return &ProxyTraffic{UplinkTotal: uplink, DownlinkTotal: downlink, Connections: active, Available: available}
+ }
+ 
++// ProxyFlows — снимок потоков через прокси одной строкой JSON: `{"at":мс,"active":[…],"closed":[…]}`.
++// Пустая строка — ядро ещё не запущено. Вызывается приложением прямо в момент своего отсчёта
++// трафика: подписки на соединения (CommandConnections) нет, как у ProxyTraffic.
++func (s *CommandServer) ProxyFlows(closedAfterMillis int64, limit int32) string {
++	data, err := s.StartedService.ProxyFlowsJSON(closedAfterMillis, int(limit))
++	if err != nil {
++		return ""
++	}
++	return string(data)
++}
++
+ func (s *CommandServer) NeedWIFIState() bool {
+ 	instance := s.StartedService.Instance()
+ 	if instance == nil || instance.Box() == nil {
