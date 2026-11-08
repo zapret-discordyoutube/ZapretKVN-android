@@ -618,9 +618,16 @@ object RuntimeConfigBuilder {
      * чего соединение идёт с адреса узла и получает региональный отказ.
      *
      * Поэтому здесь именно `udp`/`tcp` на 53 через выбранный proxy outbound.
-     * Транспорт по TCP — не «безопаснее», а резерв для сетей, где UDP через
-     * прокси не проходит. Пара идёт `sequential`: параллельная гонка не даёт
-     * выигрыша на одном и том же resolver'е.
+     * TCP — не «безопаснее», а страховка от потери UDP-датаграммы в туннеле.
+     *
+     * Пара идёт `parallel`, а не `sequential`: у `sequential` UDP получает ровно
+     * половину общего бюджета (5 с из 10), и потерянный запрос стоит эти 5 с, прежде
+     * чем начнётся TCP. Для YouTube это заметно: каждое видео открывает новые
+     * имена `rrN---sn-….googlevideo.com`, и каждое ждало бы таймаут (диагностика
+     * 0.5.33: `zapret-node-dns-udp: context deadline exceeded` через 5,0 с, затем
+     * TCP отвечал за 0,8 с). Оба транспорта ведут к одному resolver'у узла, поэтому
+     * гонка не смешивает политики: побеждает первый корректный ответ, проигравший
+     * отменяется.
      */
     private fun secureDnsServers(proxyTag: String): List<JsonObject> = listOf(
         nodeDnsServer(NODE_DNS_UDP_TAG, "udp", proxyTag),
@@ -632,7 +639,7 @@ object RuntimeConfigBuilder {
                 "servers",
                 JsonArray(listOf(NODE_DNS_UDP_TAG, NODE_DNS_TCP_TAG).map(::JsonPrimitive)),
             )
-            put("strategy", "sequential")
+            put("strategy", "parallel")
         },
     )
 

@@ -32,7 +32,7 @@
 | `experimental/libbox/dns.go` | platform transport принимает raw DNS, а при `Raw=false` — только A/AAAA | API 29+ использовать `DnsResolver.rawQuery`, API 26–28 — `Network.getAllByName()` |
 | `common/dialer/default.go`, `route/network.go` | при `route.auto_detect_interface=true` platform control вызывается для исходящих сокетов и возвращает ошибку в dialer | требовать этот флаг; не игнорировать `protect(fd) == false`, а выбрасывать ошибку в libbox |
 | `dns/transport/udp.go`, `dns/transport/tcp.go` | literal `server` задаёт адрес соединения, `detour` использует указанный outbound | обычный DNS на 53 действительно уходит внутрь туннеля и попадает под перенаправление узла |
-| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `sequential` внутри managed-этапа перебирает только два транспорта до одного и того же resolver'а узла; системный DNS разрешён только последним кандидатом Auto с предупреждением |
+| `dns/transport/fallback/strategy.go` | `sequential` переходит дальше только при transport/Go-ошибке и использует тот же context; зависший первый сервер может исчерпать весь deadline. `parallel` запускает все перечисленные транспорты в общем bounded context | разные источники DNS нельзя надёжно объединить этим transport: Auto выполняет конечные чистые app-level попытки, а `parallel` внутри managed-этапа гоняет только два транспорта до одного и того же resolver'а узла; системный DNS разрешён только последним кандидатом Auto с предупреждением |
 | `dns/client.go` | общий DNS timeout — 10 секунд; кэш при `independent_cache=false` не включает tag транспорта | DNS-выбор одного домена должен быть детерминированным, а при смене режима/сети кэш сбрасывается |
 | `dns/router.go` | `ResetNetwork()` очищает DNS response cache и сбрасывает транспорты, но не очищает `dnsReverseMapping` | для полного сброса DNS-состояния в MVP нужен перезапуск core |
 | `dns/transport/hosts/hosts.go` и dialer | `hosts.predefined` работает как resolver для `outbound.domain_resolver`, не меняя hostname назначения | last-known-good overlay сохраняет TLS/Reality SNI и HTTP Host |
@@ -342,9 +342,12 @@ origin через тот же узел и получает региональн�
 `1.0.0.1`) из перенаправления исключены, поэтому ставить их сюда нельзя — запрос
 ушёл бы к настоящему Cloudflare.
 
-Транспорты перечислены `sequential`: сначала UDP, затем TCP на случай сетей, где
-UDP через прокси не проходит. Гонка `parallel` на одном и том же resolver'е
-выигрыша не даёт.
+Транспорты идут `parallel`: UDP и TCP одновременно, побеждает первый корректный
+ответ. С `sequential` потерянная UDP-датаграмма в туннеле Hysteria стоила 5,0 с
+(половина бюджета 10 с) до начала TCP, а YouTube на каждое видео открывает новые
+имена `rrN---sn-….googlevideo.com` (диагностика 0.5.33: UDP `deadline exceeded` через
+5,0 с, затем TCP отвечал за 0,8 с). Оба транспорта ведут к одному resolver'у узла,
+поэтому гонка не смешивает разные политики.
 
 Что это не закрывает: встроенный DoH приложения (Chrome, Firefox) уходит на 443 и
 перехвату не поддаётся; DoT на 853 к **внешнему** резолверу намеренно не блокируется,
@@ -387,7 +390,7 @@ downgrade strict-DNS не происходит, отбивается лишь о
           "zapret-node-dns-udp",
           "zapret-node-dns-tcp"
         ],
-        "strategy": "sequential"
+        "strategy": "parallel"
       }
     ],
     "rules": [
@@ -433,7 +436,7 @@ downgrade strict-DNS не происходит, отбивается лишь о
 
 Адрес указан числом, имён внутри managed DNS нет вообще — цикл «резолвер, который надо резолвить» невозможен по построению. `detour` всегда заменяется тегом выбранного proxy/selector outbound, а не фиксированной строкой `proxy`.
 
-Только этот managed-этап использует extended `fallback`. Оба транспорта ведут к одному resolver'у узла, поэтому стратегия `sequential`: TCP пробуется, лишь когда UDP через прокси не прошёл. Периодического трафика, отдельного health-loop и plaintext fallback мимо туннеля нет; `bootstrap`-путь остаётся отдельным и в цепочку `zapret-secure-dns` не входит.
+Только этот managed-этап использует extended `fallback`. Оба транспорта ведут к одному resolver'у узла, поэтому стратегия `parallel`: UDP и TCP стартуют вместе, первый корректный ответ выигрывает, проигравший отменяется (в логе ядра остаётся INFO-строка `dns/fallback[…]: resolve failed … context canceled`, она не считается отказом сервера: детекторы читают только `dns: exchange failed`). Периодического трафика, отдельного health-loop и plaintext fallback мимо туннеля нет; `bootstrap`-путь остаётся отдельным и в цепочку `zapret-secure-dns` не входит.
 
 `fallback` не оценивает DNS RCODE: `NXDOMAIN`, `SERVFAIL` или `REFUSED` являются корректным DNS-пакетом и завершают перебор. Для одного и того же resolver'а узла это и есть нужное поведение. Пользовательский режим «Из JSON» сохраняет явно заданную стратегию без подмены.
 
@@ -633,7 +636,7 @@ IP-only rule-set не вставляется в DNS-правила: адрес �
 - Auto с direct-final;
 - `port: 53 → hijack-dns`;
 - runtime `exact probe domains → selected outbound` без process/package lookup;
-- `fallback/sequential` над UDP/TCP-транспортами DNS узла;
+- `fallback/parallel` над UDP/TCP-транспортами DNS узла;
 - runtime `hosts.predefined` + `outbound.domain_resolver`.
 
 Воспроизводимый audit-test временно копируется в `dns/transport/fallback` exact pinned checkout и запускается скриптом сборки без изменения сохранённого source tree. Он подтвердил: первый success не вызывает резервный transport; transport error вызывает; зависший первый transport исчерпывает общий context, поэтому второй получает уже истёкший deadline; `NXDOMAIN`, `SERVFAIL` и `REFUSED` без Go-ошибки не запускают следующий transport. Также подтверждены `172.19.0.1/30 → 172.19.0.2`, отказ для `/32`, полный capture обеих IP-family и потеря `172.19.0.2` при исключении RFC1918 `172.16.0.0/12`. Повторный `go test ./dns/... ./route/rule ./experimental/libbox` прошёл. В upstream fallback test-файлов нет; наш audit закрывает поведенческую часть P15, но не заменяет сравнение энергии и cache-burst на физических устройствах.

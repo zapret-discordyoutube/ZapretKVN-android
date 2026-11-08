@@ -847,7 +847,9 @@ class RuntimeConfigBuilderTest {
         // Узел перенаправляет DNS туннеля на 53 в собственный resolver и
         // подменяет там адреса управляемых имён. DoH этого перехвата не видит и
         // возвращает настоящий origin.
-        assertEquals("sequential", fallback.string("strategy"))
+        // UDP и TCP до одного resolver'а идут гонкой: потерянная UDP-датаграмма не должна
+        // стоить 5 секунд на каждое новое имя (googlevideo.com).
+        assertEquals("parallel", fallback.string("strategy"))
         assertEquals(
             listOf("zapret-node-dns-udp", "zapret-node-dns-tcp"),
             (fallback["servers"] as JsonArray).map { (it as JsonPrimitive).content },
