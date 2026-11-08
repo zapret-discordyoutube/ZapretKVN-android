@@ -5,5 +5,4 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Российские сайты и локальные адреса открываются, даже если VPN-сервер не отвечает: их имена теперь разрешает система телефона, а не сервер
-Быстрее замечается обрыв соединения с сервером Hysteria2 (сброс QUIC): приложение проверяет сервер и при необходимости переключается на запасной
+YouTube и другие сайты открываются быстрее: DNS через сервер идёт по UDP и TCP одновременно, потерянный пакет больше не задерживает каждое новое имя на 5 секунд
