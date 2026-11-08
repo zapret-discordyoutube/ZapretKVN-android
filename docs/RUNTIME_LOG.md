@@ -154,3 +154,49 @@ traffic sample (about every 5 s, only while the screen is on or diagnostics are 
   not a verdict: a flow may be waiting while the player fills its buffer.
 
 This shows which YouTube flows download and how fast, which hang, and how long each one lives.
+
+The closed-flow line also carries the average download speed over the whole life of the flow
+(`ср. вниз 82КБ/с`, "avg down 82 KB/s"). It exists so that YouTube cache hosts, and servers, can be compared with
+numbers.
+
+## Tunnel QUIC statistics
+
+Patch `core-patches/0012-hysteria2-tunnel-stats.patch` lets the core report the state of the QUIC connection of the
+tunnel itself: round-trip time (min, latest, smoothed, deviation), packets and bytes sent and received, and lost
+packets, with the figures for the last window and the share of lost packets. The app asks for it
+(`CommandServer.tunnelStats()`) at its own traffic sample, so there is no timer inside the core and nothing wakes
+the phone while the screen is off. The `O` layer then gets one line per Hysteria2 server:
+
+```text
+<server tag>: tunnel quic: rtt min=78ms latest=91ms smoothed=85ms dev=9ms; total sent … pkts …, recv … pkts …, lost … pkts; last 5.0s: sent … , recv …, lost N (x.xx% of sent)
+```
+
+How it works: the Hysteria client does not expose its QUIC connection, so the patch reads the private field
+through reflection inside the connection callback, where the wrapper's lock is held. Any change in the layout of a
+new Hysteria version produces an error and the statistics simply disappear; it never panics. The test
+`TestQuicConnOfReachesTheTunnelConnectionOfARealClient` starts a real Hysteria server and client in one process and
+proves the accessor works against the real library. Use the numbers to compare servers: a path with a high lost
+share or a high RTT explains slow flows without guessing.
+
+## Resetting stalled YouTube flows
+
+Owner decision of 2026-11-08: a YouTube connection that is stuck should be cut at once, so that the player opens a
+new one instead of waiting for its own long timeout. Patch `core-patches/0013-proxy-flows-close.patch` adds
+`CommandServer.closeFlows(ids)`, which closes the listed proxy flows (direct and service flows are never touched).
+It is a direct call, like `proxyFlows`: there is no subscription to connections (`I6-05` is respected).
+
+`StalledFlowPolicy` decides which flows are stalled. A flow is reset only if **all** of these hold: it is TCP, its
+name is `googlevideo.com` or a subdomain, it is at least 8 seconds old, it has received at most 4 KB, and it has
+sent something (the request left). Flows without a name, UDP flows and every other site are left alone. At most
+3 flows are reset per snapshot (oldest first) and at most 30 per session, which is a fuse in case the rule matches
+healthy flows by mistake. Each reset writes a line to the `F` layer:
+
+```text
+сброс зависшего потока <name> tcp: жил 8.4с, вверх 1КБ, вниз 647Б; плеер откроет новое соединение
+```
+
+("reset of a stalled flow … lived 8.4 s, up 1 KB, down 647 B; the player will open a new connection").
+The behaviour has a switch, "Сбрасывать зависшие соединения YouTube" (Settings → Advanced, on by default), read at
+the start of a session, so a change applies from the next connection. Limits worth knowing: a pre-opened idle
+connection that received only a short TLS answer can match the rule and is reset too, which only costs the player
+one reconnect; and because snapshots come every ~5 s, the reset happens between 8 and 13 s after the flow was created.

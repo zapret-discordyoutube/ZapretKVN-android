@@ -1,26 +1,26 @@
 # network-bootstrap
 
-Узкий Android library-модуль для bootstrap до создания TUN. Он владеет только:
+A narrow Android library module for the bootstrap that happens before the TUN is created. It owns only:
 
-- выбором текущей non-VPN сети;
-- согласованием `NetworkCapabilities` и `LinkProperties`;
-- короткой стабилизацией snapshot и повторами при реальной смене network identity, validation/Private DNS или списка DNS-серверов;
-- системным `DnsResolver`/`Network.getAllByName()`;
-- стабильными support-кодами и безопасной технической причиной.
+- choosing the current non-VPN network;
+- reconciling `NetworkCapabilities` and `LinkProperties`;
+- a short stabilization of the snapshot and retries when the network identity, the validation/Private DNS state or the list of DNS servers really changes;
+- the system `DnsResolver` / `Network.getAllByName()`;
+- stable support codes and a safe technical reason.
 
-Модуль не знает о профилях, Compose, `libbox`, VPN allowlist, runtime JSON или LKG-кэше. Эти решения остаются в `app`. Он также не решает, что считать пригодной сетью: ожидание принимает предикат, потому что во время перехода Wi‑Fi ↔ cellular Android публикует кандидата задолго до того, как тот годится для bootstrap. Критерий зрелости и политика восстановления живут в `app`.
+The module knows nothing about profiles, Compose, `libbox`, the VPN allowlist, runtime JSON or the LKG cache. Those decisions stay in `app`. It also does not decide what counts as a usable network: the wait accepts a predicate, because during a Wi-Fi ↔ cellular transition Android publishes a candidate long before it is good enough for bootstrap. The maturity criterion and the recovery policy live in `app`.
 
-| Код | Значение |
+| Code | Meaning |
 |---|---|
-| `NET-101` | Android не предоставил underlying-сеть |
-| `NET-102` | Сеть менялась во время bootstrap и не стабилизировалась |
+| `NET-101` | Android did not provide an underlying network |
+| `NET-102` | The network changed during bootstrap and did not stabilize |
 | `DNS-101` | DNS timeout |
-| `DNS-102` | Имя не найдено / NXDOMAIN |
-| `DNS-103` | DNS отказал / REFUSED |
-| `DNS-104` | Успешный ответ без адресов |
-| `DNS-105` | Системная ошибка Android resolver (`DnsException`/errno) |
-| `DNS-106` | Другой DNS RCODE |
+| `DNS-102` | Name not found / NXDOMAIN |
+| `DNS-103` | DNS refused / REFUSED |
+| `DNS-104` | Successful answer without addresses |
+| `DNS-105` | System error of the Android resolver (`DnsException`/errno) |
+| `DNS-106` | Other DNS RCODE |
 
-Коды `NET-110`, `DNS-110`, `VPN-1xx` и `VPN-2xx` принадлежат `app`: они описывают captive portal, strict Private DNS, deadline подключения и проверки поверх готового TUN.
+The codes `NET-110`, `DNS-110`, `VPN-1xx` and `VPN-2xx` belong to `app`: they describe the captive portal, strict Private DNS, the connection deadline and the checks on top of a ready TUN.
 
-`NET-101` и `NET-102` больше не означают конец сессии: `app` трактует их как транзиентные и переподключается сам в ограниченной серии попыток. Остальные коды остаются терминальными. Текст ошибки может уточняться, но смысл опубликованного кода не меняется.
+`NET-101` and `NET-102` no longer mean the end of the session: `app` treats them as transient and reconnects by itself in a bounded series of attempts. The other codes stay terminal. The text of an error may be refined, but the meaning of a published code does not change.

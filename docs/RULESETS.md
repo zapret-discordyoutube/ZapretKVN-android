@@ -1,23 +1,23 @@
-# Встроенные rule-set
+# Built-in rule sets
 
-`zapret-ru-domains.json` — небольшой исходный список доменных зон России и отдельных
-сайтов, которые должны идти через `direct`. Binary `.srs` собирается точным audit CLI
-из `core.properties`.
+`zapret-ru-domains.json` is a small source list of Russian domain zones and individual
+sites that must go through `direct`. The binary `.srs` is built by the exact audit CLI
+from `core.properties`.
 
-`zapret-ru-ip.srs` берётся из закреплённого snapshot `SagerNet/sing-geoip@eb32cd6ed4a16fcb3bf9a36ccebf28e45716ae84`; ожидаемый SHA-256 — `bdca5cdb44cdcf0940001e5952386822a6f4ffa8b2c8eea00340aa6f585c7f9d`.
+`zapret-ru-ip.srs` comes from the pinned snapshot `SagerNet/sing-geoip@eb32cd6ed4a16fcb3bf9a36ccebf28e45716ae84`; the expected SHA-256 is `bdca5cdb44cdcf0940001e5952386822a6f4ffa8b2c8eea00340aa6f585c7f9d`.
 
-Оба файла доставляются только вместе с APK. Runtime-загрузки наборов нет: они обновляются только вместе с APK (фоновая проверка и скачивание самого APK описаны в ARCHITECTURE.md).
+Both files are delivered only together with the APK. There is no runtime download of the sets: they are updated only together with the APK (the background check and download of the APK itself are described in ARCHITECTURE.md).
 
-## Таблица «IP → страна» (флаги серверов)
+## The "IP → country" table (server flags)
 
-`app/src/main/assets/geoip/country.bin` — офлайн-таблица DB-IP «IP to Country Lite» (CC BY 4.0, «IP Geolocation by DB-IP», <https://db-ip.com>). Приложение определяет по ней страну по адресу самого сервера, чтобы показать флаг, когда его нет в имени. Источник, месяц, SHA-256 и размеры — в `app/src/main/assets/geoip/manifest.json`; формат файла описан в начале `scripts/build-geoip-country.py`.
+`app/src/main/assets/geoip/country.bin` is the offline DB-IP "IP to Country Lite" table (CC BY 4.0, "IP Geolocation by DB-IP", <https://db-ip.com>). The app uses it to find the country by the address of the server itself, to show a flag when the name has none. The source, the month, the SHA-256 and the sizes are in `app/src/main/assets/geoip/manifest.json`; the file format is described at the top of `scripts/build-geoip-country.py`.
 
-Обновление — вручную перед выпуском, не в приложении:
+It is updated by hand before a release, not in the app:
 
 ```bash
-python3 -I scripts/build-geoip-country.py          # текущий месяц, при отсутствии — предыдущий
-python3 -I scripts/build-geoip-country.py --check  # файл соответствует manifest.json
-bash scripts/verify-project.sh                     # проверка хэша, размера (до 3 МиБ) и атрибуции
+python3 -I scripts/build-geoip-country.py          # the current month, the previous one if it is missing
+python3 -I scripts/build-geoip-country.py --check  # the file matches manifest.json
+bash scripts/verify-project.sh                     # checks the hash, the size (up to 3 MiB) and the attribution
 ```
 
-После обновления поправьте месяц в `docs/THIRD_PARTY_NOTICES.md` и скопируйте его в `app/src/main/res/raw/third_party_notices.txt` (файлы должны быть побайтово равны). Загрузки таблицы во время работы нет.
+After an update, fix the month in `docs/THIRD_PARTY_NOTICES.md` and copy it to `app/src/main/res/raw/third_party_notices.txt` (the files must be byte-for-byte equal). The table is never downloaded while the app runs.

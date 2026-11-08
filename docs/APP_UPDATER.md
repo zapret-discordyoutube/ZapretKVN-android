@@ -1,18 +1,18 @@
 # app-updater
 
-Изолированный модуль обновления APK. Он не зависит от UI, профилей, libbox или
-реализации VPN в `app`.
+An isolated module for APK updates. It does not depend on the UI, profiles, libbox or the VPN
+implementation in `app`.
 
-- `ForgejoUpdateSource.kt` — HTTPS-клиент одного маршрута (Range, нейтральный User-Agent, кэш редиректа) и разбор Forgejo Releases.
-- `UpdateModels.kt` — release metadata, состояния (`Checking`, `Downloading` с экономией, `Ready`/`Installing`, `Failure`) и строгий JSON parser.
-- `ZipDirectory.kt`, `DeltaPlan.kt` — чистый разбор ZIP/APK (EOCD, центральный каталог, APK Signing Block), план повторного использования записей и склейка диапазонов; без сети и Android.
-- `ApkDownloader.kt` — дельта-загрузка по HTTP Range против установленного APK, полная загрузка с докачкой `.part`, проверка SHA-256.
-- `UpdateRouter.kt` — выбор маршрута (прямой / через временный VPN) без промежуточных сообщений; гонка при включённом VPN; запомненный маршрут в `updater_prefs` (`UpdatePrefs.kt`).
-- `ApkUpdateVerifier.kt` — package/version/minSdk/signing policy.
-- `UpdateController.kt` — проверка, автоскачивание (Stable), политика мобильной сети (`UpdateAutoDownloadPolicy`), передача установщику, cache cleanup; состояние для плашки и страницы настроек.
-- `UpdateContracts.kt`, `UpdateVpnFallback.kt` — узкие callback-контракты: установщик, уведомления, окружение (VPN/сеть/экран), VPN lease.
+- `ForgejoUpdateSource.kt` — an HTTPS client for a single route (Range, a neutral User-Agent, a redirect cache) and the parsing of Forgejo Releases.
+- `UpdateModels.kt` — release metadata, the states (`Checking`, `Downloading` with the savings, `Ready`/`Installing`, `Failure`) and a strict JSON parser.
+- `ZipDirectory.kt`, `DeltaPlan.kt` — pure parsing of ZIP/APK (EOCD, the central directory, the APK Signing Block), the plan for reusing entries and range merging; no network and no Android.
+- `ApkDownloader.kt` — a delta download over HTTP Range against the installed APK, a full download that resumes `.part`, SHA-256 verification.
+- `UpdateRouter.kt` — route selection (direct / through a temporary VPN) without intermediate messages; a race when the VPN is on; the remembered route in `updater_prefs` (`UpdatePrefs.kt`).
+- `ApkUpdateVerifier.kt` — the package/version/minSdk/signing policy.
+- `UpdateController.kt` — the check, the automatic download (Stable), the mobile network policy (`UpdateAutoDownloadPolicy`), the hand-over to the installer, the cache cleanup; the state for the banner and the settings page.
+- `UpdateContracts.kt`, `UpdateVpnFallback.kt` — narrow callback contracts: the installer, notifications, the environment (VPN/network/screen), the VPN lease.
 
-Реализация контрактов находится в `app/src/main/java/io/github/zapretkvn/android/updates/`
+The contracts are implemented in `app/src/main/java/io/github/zapretkvn/android/updates/`
 (`AppUpdateVpnFallback`, `PackageInstallerUpdateInstaller`, `UpdateInstallReceiver`, `UpdateCheckJob`,
-`AndroidUpdateNotifier`), потому что только product-модуль владеет `VpnService`, `PackageInstaller`,
-уведомлениями и `JobScheduler`.
+`AndroidUpdateNotifier`), because only the product module owns `VpnService`, `PackageInstaller`,
+notifications and `JobScheduler`.
