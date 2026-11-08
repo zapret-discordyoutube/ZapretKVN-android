@@ -1,0 +1,74 @@
+diff --git a/protocol/hysteria2/handshake_log_test.go b/protocol/hysteria2/handshake_log_test.go
+new file mode 100644
+index 00000000..c393bdd0
+--- /dev/null
++++ b/protocol/hysteria2/handshake_log_test.go
+@@ -0,0 +1,30 @@
++package hysteria2
++
++import (
++	"testing"
++
++	hyclient "github.com/apernet/hysteria/core/v2/client"
++)
++
++func TestDescribeHandshake(t *testing.T) {
++	cases := []struct {
++		name string
++		info hyclient.HandshakeInfo
++		up   int
++		down int
++		want string
++	}{
++		{"bbr", hyclient.HandshakeInfo{UDPEnabled: true, Tx: 0}, 0, 0,
++			"udp=true, congestion=BBR, configured up/down=0/0 Mbps, ech=false"},
++		{"brutal", hyclient.HandshakeInfo{UDPEnabled: true, Tx: 12_500_000}, 100, 200,
++			"udp=true, congestion=Brutal 100 Mbit/s, configured up/down=100/200 Mbps, ech=false"},
++		{"udp off with ech", hyclient.HandshakeInfo{UDPEnabled: false, ECHAccepted: true}, 50, 50,
++			"udp=false, congestion=BBR, configured up/down=50/50 Mbps, ech=true"},
++	}
++	for _, c := range cases {
++		info := c.info
++		if got := describeHandshake(&info, c.up, c.down); got != c.want {
++			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
++		}
++	}
++}
+diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
+index f60d78c1..45421720 100644
+--- a/protocol/hysteria2/outbound.go
++++ b/protocol/hysteria2/outbound.go
+@@ -12,6 +12,7 @@ import (
+ 	"net"
+ 	"net/netip"
+ 	"os"
++	"strconv"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -149,10 +150,24 @@ func applyHysteria2URI(options option.Hysteria2OutboundOptions) (option.Hysteria
+ 
+ func (h *Outbound) newClient() (hyclient.Client, error) {
+ 	return hyclient.NewReconnectableClient(h.clientConfig, func(_ hyclient.Client, info *hyclient.HandshakeInfo, count int) {
+-		h.logger.Debug("official Hysteria2 connected to ", info.ServerAddr, ", attempt ", count)
++		h.logger.Debug("official Hysteria2 connected to ", info.ServerAddr, ", attempt ", count, ", ",
++			describeHandshake(info, h.options.UpMbps, h.options.DownMbps))
+ 	}, true)
+ }
+ 
++// describeHandshake: условия, о которых клиент и сервер договорились при рукопожатии. По ним в журнале
++// видно, работает ли UDP, какое управление перегрузкой (BBR или Brutal на заданной скорости) и принят ли ECH.
++func describeHandshake(info *hyclient.HandshakeInfo, upMbps, downMbps int) string {
++	congestion := "BBR"
++	if info.Tx > 0 {
++		congestion = "Brutal " + strconv.FormatUint(info.Tx*8/1_000_000, 10) + " Mbit/s"
++	}
++	return "udp=" + strconv.FormatBool(info.UDPEnabled) +
++		", congestion=" + congestion +
++		", configured up/down=" + strconv.Itoa(upMbps) + "/" + strconv.Itoa(downMbps) + " Mbps" +
++		", ech=" + strconv.FormatBool(info.ECHAccepted)
++}
++
+ func (h *Outbound) clientConfig() (*hyclient.Config, error) {
+ 	factory, serverAddr, err := newProtectedConnFactory(h.ctx, h.dialer, h.options)
+ 	if err != nil {
