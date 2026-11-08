@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.vpn
 
 import android.os.SystemClock
 import io.github.zapretkvn.android.diagnostics.MAX_CONNECTION_FAILURE_KINDS
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.diagnostics.ConnectionFailureKey
 import io.github.zapretkvn.android.diagnostics.CoreLogNoise
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticClassifier
@@ -103,6 +104,8 @@ internal class ConnectionDiagnosticsRecorder(
         profileId: String? = null,
     ) {
         if (generation != currentGeneration()) return
+        RuntimeLog.sessionStarted(generation)
+        RuntimeLog.app(4, "подключение $generation: запуск ($trigger)")
         val elapsed = SystemClock.elapsedRealtime()
         val epoch = System.currentTimeMillis()
         val initialRuntimeMap = DiagnosticRuntimeMap.profileOnly(profileId)
@@ -155,6 +158,7 @@ internal class ConnectionDiagnosticsRecorder(
     ) {
         val elapsed = SystemClock.elapsedRealtime()
         val epoch = System.currentTimeMillis()
+        RuntimeLog.app(4, "стадия $key: начало ($label)")
         mutable.update { current ->
             val attempt = current.connectionAttempt
                 ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
@@ -205,6 +209,10 @@ internal class ConnectionDiagnosticsRecorder(
         val safeDetail = detail
             ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
             ?.takeIf(String::isNotBlank)
+        RuntimeLog.app(
+            if (status == DiagnosticStageStatus.Success) 4 else 3,
+            "стадия $key: ${status.code} за ${durationMillis.coerceAtLeast(0L)}мс${detail?.let { ", $it" }.orEmpty()}",
+        )
         mutable.update { current ->
             val attempt = current.connectionAttempt
                 ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
@@ -269,6 +277,10 @@ internal class ConnectionDiagnosticsRecorder(
         val safeDetail = detail
             ?.let { sanitizeDiagnosticText(it, MAX_DIAGNOSTIC_STAGE_DETAIL_CHARS) }
             ?.takeIf(String::isNotBlank)
+        RuntimeLog.app(
+            if (status == DiagnosticStageStatus.Success) 4 else 3,
+            "стадия $key: ${status.code}${detail?.let { ", $it" }.orEmpty()}",
+        )
         mutable.update { current ->
             val attempt = current.connectionAttempt
                 ?.takeIf { it.generation == generation && it.outcome == DiagnosticAttemptOutcome.Running }
@@ -430,6 +442,11 @@ internal class ConnectionDiagnosticsRecorder(
 
     internal fun publishDiagnosticNetwork(generation: Long, state: UnderlyingNetworkState) {
         if (generation < currentGeneration()) return
+        RuntimeLog.network(
+            "сеть: ${if (state.network != null) "есть" else "нет"} ${state.transport} ${state.interfaceName} " +
+                "validated=${state.validated} metered=${state.metered} captive=${state.captivePortal} " +
+                "privateDns=${state.privateDnsMode.name.lowercase()}/${state.privateDnsActive}",
+        )
         mutable.update {
             it.copy(
                 generation = generation,
@@ -678,6 +695,7 @@ internal class ConnectionDiagnosticsRecorder(
             stage = failureStage,
             target = failureTarget,
         )
+        RuntimeLog.app(2, "ОТКАЗ подключения: $safe")
         val line = DiagnosticLogLine(
             level = 2,
             message = safe,
@@ -778,6 +796,7 @@ internal class ConnectionDiagnosticsRecorder(
             ?.stages
             ?.lastOrNull { it.status == DiagnosticStageStatus.Running }
             ?.key
+        RuntimeLog.app(level, message)
         val line = DiagnosticLogLine(
             level = level,
             message = message.take(MAX_DIAGNOSTIC_LOG_LINE_CHARS),

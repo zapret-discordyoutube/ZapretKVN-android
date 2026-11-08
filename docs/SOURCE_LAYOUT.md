@@ -55,7 +55,8 @@ Gradle-модули тоже не создаются; исключения — `
 сторы, ViewModel и `AppContainer`.
 
 Существующие `app-updater`, `network-bootstrap`, `wireguard-import`
-остаются независимыми библиотеками. Тесты перенесённых компонентов также
+остаются независимыми библиотеками; к ним добавлен `runtime-log` (подробный журнал на диске,
+см. `RUNTIME_LOG.md`): только JDK, без Android API и без зависимости от `app`. Тесты перенесённых компонентов также
 распределены по соответствующим пакетам.
 
 ## Windows
@@ -77,7 +78,7 @@ ADB необязателен; сборка instrumentation APK не считае
 ```text
 :app ──► :feature:{home,servers,routing,settings} ──► :core:designsystem ──► :core:ui-model ──► :core:model
 :app ──► :app-updater ──► :core:model
-:app ──► :core:{designsystem,ui-model,model}, :network-bootstrap, :wireguard-import
+:app ──► :core:{designsystem,ui-model,model}, :network-bootstrap, :runtime-log, :wireguard-import
 ```
 
 - `:core:model` — только данные, enum, sealed-типы и тривиальные чистые функции

@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.FileProvider
+import io.github.zapretkvn.runtimelog.ZipExtra
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.JsonConfig
@@ -65,7 +66,11 @@ class DiagnosticExporter(
             }
             val target = File(exportDirectory, FILE_NAME)
             try {
-                target.writeText(report, Charsets.UTF_8)
+                // Одно действие — один архив: сводка (адреса закрыты, как раньше) и весь подробный
+                // журнал работы на диске (с доменами и IP-адресами, решение владельца 2026-11-08).
+                target.outputStream().buffered().use { stream ->
+                    RuntimeLog.writeZip(stream, listOf(ZipExtra(REPORT_ENTRY_NAME, report.toByteArray(Charsets.UTF_8))))
+                }
             } catch (error: Throwable) {
                 target.delete()
                 throw error
@@ -78,7 +83,7 @@ class DiagnosticExporter(
             file,
         )
         Intent(Intent.ACTION_SEND).apply {
-            type = "application/json"
+            type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "Zapret KVN — диагностика")
             clipData = ClipData.newRawUri("Zapret KVN diagnostic", uri)
@@ -92,7 +97,7 @@ class DiagnosticExporter(
         val (network, decoy) = readCurrentNetwork(diagnostics.network)
         val now = System.currentTimeMillis()
         val root = buildJsonObject {
-            put("report_version", 11)
+            put("report_version", 12)
             put("runtime_errors", JsonArray(vpnController.runtimeErrors.entries.value.map { record ->
                 buildJsonObject {
                     val failure = record.failure
@@ -261,12 +266,31 @@ class DiagnosticExporter(
                     put("credentials_included", false)
                     put("installed_packages_included", false)
                     put("external_ip_included", false)
-                    put("runtime_log_persisted", false)
+                    // Подробный журнал лежит на диске и уходит в архив рядом с этим файлом; в нём
+                    // домены и IP-адреса сохранены как есть (секреты закрыты всегда).
+                    put("runtime_log_persisted", true)
+                    put("runtime_log_in_archive", true)
+                    put("runtime_log_contains_domains_and_ips", true)
                     put("anr_trace_included", false)
                 },
             )
+            put("runtime_log", runtimeLogJson())
         }
         return DiagnosticReportRedactor.redact(JsonConfig.format(root))
+    }
+
+    /** Сводка подробного журнала: только числа, содержимого строк здесь нет. */
+    private fun runtimeLogJson(): JsonObject = buildJsonObject {
+        val info = RuntimeLog.info()
+        put("available", info != null)
+        if (info == null) return@buildJsonObject
+        put("total_bytes", info.totalBytes)
+        put("max_total_bytes", info.maxTotalBytes)
+        put("segments", info.segmentCount)
+        info.oldestEpochMillis?.let { put("oldest_epoch_ms", it) }
+        put("written_lines", info.writtenLines)
+        put("dropped_lines", info.droppedLines)
+        put("filtered_noise_lines", info.filteredLines)
     }
 
     /** Состояние основной сети и проверка подмены DNS на ней — только при экспорте по кнопке. */
@@ -650,7 +674,8 @@ class DiagnosticExporter(
 
     companion object {
         const val DIRECTORY_NAME = "diagnostics"
-        const val FILE_NAME = "zapret-kvn-diagnostic.json"
+        const val FILE_NAME = "zapret-kvn-diagnostic.zip"
+        const val REPORT_ENTRY_NAME = "diagnostic.json"
         private const val NETWORK_TIMEOUT_MILLIS = 2_000L
     }
 }

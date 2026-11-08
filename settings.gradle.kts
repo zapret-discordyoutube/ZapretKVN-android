@@ -18,6 +18,7 @@ rootProject.name = "ZapretKVN"
 include(":app")
 include(":app-updater")
 include(":network-bootstrap")
+include(":runtime-log")
 include(":wireguard-import")
 include(":core:ui-model")
 include(":core:model")

@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.vpn.runtime
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.OutboundDescription
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.SelectorGroup
 import io.github.zapretkvn.android.diagnostics.CoreDiagnosticBatchCollector
@@ -310,6 +311,14 @@ internal class CoreSession(
                 proxyConnections = proxy?.connections,
             ),
         )
+        RuntimeLog.traffic(
+            uplinkTotal,
+            downlinkTotal,
+            connections,
+            proxy?.uplinkTotal,
+            proxy?.downlinkTotal,
+            proxy?.connections,
+        )
         controller.recordSessionTraffic(
             generation,
             now,
@@ -615,6 +624,8 @@ internal class CoreSession(
                 generation = generation,
                 onLogs = onLogs,
                 onEntry = { level, message ->
+                    // Подробный журнал на диске: весь поток ядра, без отбора по числу строк.
+                    RuntimeLog.core(level, message)
                     controller.recordCoreFailure(generation, level, message)
                     // Важные строки копятся всегда, а не только пока открыта диагностика.
                     controller.recordCoreLine(generation, level, message)

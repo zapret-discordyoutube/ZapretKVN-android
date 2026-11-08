@@ -143,7 +143,7 @@ class DiagnosticExportInstrumentedTest {
 
             val report = exporter.createReport()
             JsonConfig.parse(report)
-            assertTrue("\"report_version\": 11" in report)
+            assertTrue("\"report_version\": 12" in report)
             assertTrue(BuildConfig.CORE_COMMIT in report)
             assertTrue(BuildConfig.CORE_PATCH_SHA256 in report)
             assertTrue("\"private_dns_mode\"" in report)
@@ -174,7 +174,8 @@ class DiagnosticExportInstrumentedTest {
             assertTrue("\"outbound_tag\": \"hy2-prod\"" in report)
             assertTrue("\"protocol\": \"hysteria2\"" in report)
             assertTrue("\"endpoint\": \"ep-" in report)
-            assertTrue("\"runtime_log_persisted\": false" in report)
+            assertTrue("\"runtime_log_persisted\": true" in report)
+            assertTrue("\"runtime_log_contains_domains_and_ips\": true" in report)
             assertTrue("\"support_code\": \"DNS-200\"" in report)
             assertEquals(
                 2,
@@ -204,14 +205,26 @@ class DiagnosticExportInstrumentedTest {
 
             val share = exporter.createShareIntent()
             assertEquals(Intent.ACTION_SEND, share.action)
-            assertEquals("application/json", share.type)
+            assertEquals("application/zip", share.type)
             assertTrue(share.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
             val uri = share.clipData?.getItemAt(0)?.uri
             assertNotNull(uri)
-            val sharedReport = context.contentResolver.openInputStream(checkNotNull(uri))
-                ?.bufferedReader()
-                ?.use { it.readText() }
+            // Выгрузка — один архив: сводка diagnostic.json и подробный журнал рядом.
+            var sharedReport: String? = null
+            val entryNames = mutableListOf<String>()
+            context.contentResolver.openInputStream(checkNotNull(uri))?.use { raw ->
+                java.util.zip.ZipInputStream(raw).use { zip ->
+                    generateSequence { zip.nextEntry }.forEach { entry ->
+                        entryNames += entry.name
+                        val bytes = zip.readBytes()
+                        if (entry.name == DiagnosticExporter.REPORT_ENTRY_NAME) {
+                            sharedReport = String(bytes, Charsets.UTF_8)
+                        }
+                    }
+                }
+            }
             assertNotNull(sharedReport)
+            assertTrue("log-format.txt" in entryNames)
             assertFalse("super-secret" in checkNotNull(sharedReport))
             assertTrue(File(directory, DiagnosticExporter.FILE_NAME).isFile)
 
