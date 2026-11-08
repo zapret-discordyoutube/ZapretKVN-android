@@ -1,143 +1,156 @@
-# Подробный журнал работы (`runtime-log`)
+# Detailed runtime log (`runtime-log`)
 
-Решения владельца 2026-11-08: писать подробный журнал на диск; ничего не выбрасывать, пока файл не
-вырос до 100 МБ; шум отбрасывать, полезное сохранять; домены и IP-адреса сохранять; писать быстро и
-компактно; больше строк по слоям, чтобы быстрее находить ошибку и место подвисания; выгрузка
-диагностики одним архивом со всеми файлами.
+Owner decisions of 2026-11-08: write a detailed log to disk; drop nothing until the file reaches 100 MB;
+discard noise and keep everything useful; keep domains and IP addresses; write quickly and compactly; log
+more lines per layer so that errors and the place where playback hangs are found faster; export the
+diagnostics as one archive containing all files.
 
-Зачем. Диагностика в памяти (`DiagnosticState`) держит 200 строк, из ядра до 48 за пачку, и при
-нехватке места вытесняет «обычное». Этого хватает, чтобы понять, почему не подключилось, но не
-хватает, чтобы найти место, где завис уже работающий поток (видео в YouTube). Журнал на диске пишет
-весь поток ядра и события приложения подряд, без отбора по числу строк.
+Why. The in-memory diagnostics (`DiagnosticState`) keep 200 lines, at most 48 core lines per batch, and
+evict the "ordinary" lines when space runs out. That is enough to understand why a connection did not come
+up, but not enough to find the moment where an already working stream (YouTube video) hung. The disk log
+writes the whole core stream and all app events in order, with no selection by line count.
 
-## Где лежит
+The log lines themselves are written in Russian (the code writes them that way); this document quotes them
+literally so that `grep` keeps working, and glosses them in English.
 
-`noBackupFilesDir/runtime-log/log-NNNNNN.zkvn`: вне резервных копий Android, в личной папке
-приложения. Сегменты по 4 МБ; сумма не превышает 100 МБ (`RuntimeLogStore.DEFAULT_MAX_TOTAL_BYTES`):
-перед открытием нового сегмента удаляется старейший, чтобы сумма вместе с новым сегментом помещалась.
-Один сегмент текущей сессии открывается при старте приложения, после перезапуска нумерация
-продолжается, прежние сегменты остаются (и подрезаются по потолку при старте).
+## Where it lives
 
-## Слои
+`noBackupFilesDir/runtime-log/log-NNNNNN.zkvn`: outside Android backups, in the app's private folder.
+Segments are 4 MB each; the total never exceeds 100 MB (`RuntimeLogStore.DEFAULT_MAX_TOTAL_BYTES`): before a
+new segment is opened the oldest one is deleted, so the total including the new segment fits. A segment is
+opened when the app starts; after a restart the numbering continues and the previous segments stay (and are
+trimmed to the cap at startup).
 
-| Буква | Слой | Что пишется |
+## Layers
+
+| Letter | Layer | What is written |
 | --- | --- | --- |
-| `A` | app | события приложения: запуск, стадии подключения с длительностью, решения «Путь», отказы |
-| `N` | network | сеть Android: транспорт, интерфейс, validated/metered/captive, Private DNS (повтор подряд не пишется) |
-| `D` | dns | строки ядра `dns:` и `dns/…`: запросы, ответы с временем, отказы, `context canceled` проигравшей ветки |
-| `R` | routing | строки ядра `router:`, `route`, `rule…`: пакет приложения, правило, outbound |
-| `T` | tun | строки ядра `inbound/tun`: входящие соединения и пакеты |
-| `O` | outbound | строки ядра `outbound/…`, Hysteria, Xray: исходящие соединения, разрывы, `stateless reset` |
-| `F` | traffic | отсчёт трафика раз в ~5 с и границы подвисания |
-| `C` | core | остальное из ядра |
+| `A` | app | app events: start, connection stages with their duration, "Путь" (path) decisions, failures |
+| `N` | network | Android network: transport, interface, validated/metered/captive, Private DNS (an identical repeat is not written) |
+| `D` | dns | core lines `dns:` and `dns/…`: queries, answers with timing, failures, `context canceled` of the losing branch |
+| `R` | routing | core lines `router:`, `route`, `rule…`: app package, rule, outbound |
+| `T` | tun | core lines `inbound/tun`: incoming connections and packets |
+| `O` | outbound | core lines `outbound/…`, Hysteria, Xray: outgoing connections, drops, `stateless reset` |
+| `F` | traffic | traffic sample every ~5 s, flow lines and the borders of "no incoming" windows |
+| `C` | core | everything else from the core |
 
-Слой строки ядра определяет `CoreLogLayers.classify` по телу строки. Уровень берётся у ядра:
-0 panic, 1 fatal, 2 error, 3 warn, 4 info, 5 debug, 6 trace. Через поток приходят все уровни
-независимо от `log.level` в конфиге: в `log/observable.go` ядра строка отбрасывается по уровню, только
-если нет ни платформенного писателя, ни подписчика, а приложение всегда подключено подписчиком.
+The layer of a core line is decided by `CoreLogLayers.classify` from the body of the line. The level comes
+from the core: 0 panic, 1 fatal, 2 error, 3 warn, 4 info, 5 debug, 6 trace. All levels arrive through the
+stream regardless of `log.level` in the config: in the core's `log/observable.go` a line is dropped by level
+only when there is neither a platform writer nor a subscriber, and the app is always connected as a subscriber.
 
-## Формат строки
+## Line format
 
-Первая строка сегмента: `#zkvn-log 1 <старт, epoch мс> <номер>`. Дальше по записи на строку:
+The first line of a segment: `#zkvn-log 1 <start, epoch ms> <number>`. After that, one record per line:
 
 ```text
-<мс от начала сегмента, base36> <буква слоя><цифра уровня> <текст>
+<ms since segment start, base36> <layer letter><level digit> <text>
 ```
 
-Пример: `1k2z D5 INFO[0840] [3650259972 91ms] dns: exchanged rr3---sn-x.googlevideo.com. A 142.250.1.5`.
-В тексте экранируются только `\`, перевод строки и возврат каретки. Время в виде смещения занимает 3–6
-знаков вместо 13. Сжатие происходит при выгрузке (zip, уровень 3), там текст уменьшается в разы.
+Example: `1k2z D5 INFO[0840] [3650259972 91ms] dns: exchanged rr3---sn-x.googlevideo.com. A 142.250.1.5`.
+Only `\`, line feed and carriage return are escaped in the text. The time is an offset, so it takes 3-6
+characters instead of 13. Compression happens at export (zip, level 3), where the text shrinks several times.
 
-## Что не пишется (шум)
+## What is not written (noise)
 
-Только `TRACE connection: … upload closed` и `… download closed` из ядра (`LogNoiseFilter.Default`): по
-две строки на каждое закрытое соединение без сведений, длительность видна по строкам `outbound` и по
-отсчётам трафика. Всё остальное, включая DEBUG и другие TRACE, пишется. Число отброшенного шума
-считается и попадает в сводку (`filtered_noise_lines`).
+Only `TRACE connection: … upload closed` and `… download closed` from the core (`LogNoiseFilter.Default`):
+two lines per closed connection with no information; the duration is visible in the `outbound` lines and in the
+traffic samples. Everything else, including DEBUG and other TRACE lines, is written. The number of discarded
+noise lines is counted and appears in the summary (`filtered_noise_lines`).
 
-## Окна «нет входящего»
+## "No incoming" windows
 
-`TrafficStallTracker` смотрит на счётчики: соединения есть, исходящий трафик идёт, входящего меньше 8 КБ
-за окно два окна подряд. Тогда в слой `F` пишется
-`НЕТ ВХОДЯЩЕГО: … с <начало первого плохого окна>`, а когда поток вернулся (больше 64 КБ за окно) или
-затих, `НЕТ ВХОДЯЩЕГО закончилось через N мс`. Это может быть замершее видео, а может быть пауза плеера с
-набранным буфером: по счётчикам их не различить, поэтому событие только метит границы, а решение
-принимает человек (что он видел на экране в это время). Счёт идёт по счётчикам через прокси, если они
-есть: прямой трафик маскирует мёртвый туннель. Разрешение окна ~5 с; строки ядра `D`, `O` вокруг этого
-времени показывают причину: потерянный DNS, `stateless reset`, закрытие соединения.
+`TrafficStallTracker` watches the counters: connections exist, outgoing traffic flows, incoming traffic is
+below 8 KB per window for two windows in a row. Then the `F` layer gets
+`НЕТ ВХОДЯЩЕГО: … с <start of the first bad window>` ("NO INCOMING: … since …"), and when the flow returns
+(more than 64 KB per window) or fades away, `НЕТ ВХОДЯЩЕГО закончилось через N мс` ("… ended after N ms").
+This may be a frozen video, or a player pause with a full buffer: the counters cannot tell them apart, so the
+event only marks the borders and a person decides (what was on the screen at that time). The count uses the
+through-proxy counters when they exist: direct traffic would mask a dead tunnel. The window resolution is
+about 5 s; the `D` and `O` core lines around that time show the cause: a lost DNS query, `stateless reset`, a
+closed connection.
 
-## Как читать
+## How to read
 
-Распаковать архив, в `runtime-log/` лежат сегменты. Слой: `grep -h ' D' log-*.zkvn`. Подвисания:
-`grep -h 'НЕТ ВХОДЯЩЕГО' log-*.zkvn`, затем строки рядом по времени: смещение base36 переводится в мс
-(`int(x, 36)`) и прибавляется к началу сегмента из заголовка.
+Unpack the archive; the segments are in `runtime-log/`. A layer: `grep -h ' D' log-*.zkvn`. The windows:
+`grep -h 'НЕТ ВХОДЯЩЕГО' log-*.zkvn`, then the lines nearby in time: convert the base36 offset to ms
+(`int(x, 36)`) and add it to the start time from the segment header. A ready reader for this format lives in
+the task journals directory: `/root/.agent-todo/zapret-kvn/tools/read_runtime_log.py`.
 
-## Приватность
+## Privacy
 
-- Домены и IP-адреса сохраняются как есть, в том числе адрес VPN-сервера и список открытых сайтов.
-- Секреты маскируются всегда: ссылки с протоколом, ключи, токены, заголовки авторизации, UUID, блоки
-  PEM (`SecretRedactor.redactInline`). Маскирование идёт на потоке записи, поэтому `log()` не ждёт.
-- JSON-сводка `diagnostic.json` по-прежнему без адресов серверов; её поля `privacy.runtime_log_persisted`,
-  `runtime_log_in_archive`, `runtime_log_contains_domains_and_ips` честно говорят, что журнал на диске и в
-  архиве есть и что в нём домены и IP.
-- Экран «Диагностика» предупреждает об этом перед отправкой. Архив уходит только по нажатию кнопки.
+- Domains and IP addresses are kept as they are, including the VPN server address and the list of opened sites.
+- Secrets are always masked: links with a scheme, keys, tokens, authorization headers, UUIDs, PEM blocks
+  (`SecretRedactor.redactInline`). Masking runs on the writer thread, so `log()` never waits.
+- The JSON summary `diagnostic.json` still contains no server addresses; its fields
+  `privacy.runtime_log_persisted`, `runtime_log_in_archive` and `runtime_log_contains_domains_and_ips` state
+  honestly that the log is on disk and in the archive and that it contains domains and IPs.
+- The "Diagnostics" screen warns about this before sending. The archive leaves the device only when the user
+  presses the button.
 
-## Выгрузка
+## Export
 
-Кнопка «Экспортировать диагностику» создаёт один архив `zapret-kvn-diagnostic.zip` во временной папке
-кэша (`cacheDir/diagnostics`, удаляется при следующем запуске): `diagnostic.json`, `log-format.txt` и
-`runtime-log/log-*.zkvn`. Размер текущего сегмента фиксируется в начале, поэтому журнал можно писать
-во время выгрузки.
+The "Export diagnostics" button creates a single archive `zapret-kvn-diagnostic.zip` in a temporary cache
+folder (`cacheDir/diagnostics`, removed at the next start): `diagnostic.json`, `log-format.txt` and
+`runtime-log/log-*.zkvn`. The size of the current segment is fixed at the beginning, so the log can keep being
+written during the export.
 
-## Устойчивость
+## Robustness
 
-- `log()` не блокирует: очередь на 32 768 записей, пишет отдельный поток. Переполнение считается
-  (`dropped_lines`), а в журнал пишется строка «очередь переполнена, потеряно строк: N».
-- Сбой записи на диск не роняет VPN: строки считаются потерянными, повтор открытия сегмента не чаще
-  раза в 5 с.
-- Сбой маскирования не пропускает сырую строку: вместо неё пишется «строка не записана».
+- `log()` never blocks: a queue of 32,768 records, written by a separate thread. An overflow is counted
+  (`dropped_lines`) and a line "очередь переполнена, потеряно строк: N" ("queue overflowed, N lines lost") is
+  written to the log.
+- A disk write failure does not take the VPN down: the lines count as lost, and re-opening the segment is
+  retried at most once every 5 s.
+- A masking failure never lets a raw line through: "строка не записана" ("line not written") is written
+  instead.
 
-## Связанное исправление ядра
+## Related core fix
 
-Патч `core-patches/0009-hysteria2-serialize-udp-send.patch`: `hyPacketConn.WriteTo` сериализует запись в
-сессию Hysteria2. Официальный клиент помечает `Send` как непотокобезопасный (общий `SendBuf`), а общий
-UDP-транспорт DNS пишет в одну сессию параллельно (A и AAAA каждого имени): без замка два запроса
-затирали буфер друг друга, один уходил дважды, другой пропадал и ждал таймаут (это и был «потерянный»
-UDP, на фоне которого TCP отвечал мгновенно). Тест `TestPacketConnSerializesConcurrentSends` падает без
-замка (16 одновременных входов в `Send`) и проходит с ним под `-race`. Протокол и официальный клиент не
-меняются: исправлена обвязка sing-box.
+Patch `core-patches/0009-hysteria2-serialize-udp-send.patch`: `hyPacketConn.WriteTo` serializes writes into
+the Hysteria2 session. The official client marks `Send` as not thread-safe (a shared `SendBuf`), and the shared
+UDP DNS transport writes into one session in parallel (A and AAAA of every name): without a lock two queries
+overwrote each other's buffer, one went out twice and the other vanished and waited for a timeout (that was
+the "lost" UDP while TCP answered instantly). The test `TestPacketConnSerializesConcurrentSends` fails without
+the lock (16 simultaneous entries into `Send`) and passes with it under `-race`. The protocol and the official
+client are unchanged: the sing-box glue was fixed.
 
-## Условия соединения Hysteria
+## Hysteria connection conditions
 
-Патч `core-patches/0010-hysteria2-handshake-log.patch` дописывает в строку `official Hysteria2 connected …`
-условия рукопожатия: `udp=` (включён ли UDP на сервере), `congestion=` (BBR или Brutal и скорость, о которой
-договорились), `configured up/down=` (скорости из подписки) и `ech=`. Нужно, чтобы объяснить низкую скорость
-или потери: Brutal на завышенной скорости душит поток, а `udp=false` отправляет QUIC в никуда.
+Patch `core-patches/0010-hysteria2-handshake-log.patch` appends the handshake conditions to the line
+`official Hysteria2 connected …`: `udp=` (whether UDP is enabled on the server), `congestion=` (BBR, or Brutal
+with the agreed rate), `configured up/down=` (the speeds from the subscription) and `ech=`. It exists to
+explain low speed or loss: Brutal at an overstated rate chokes the flow, and `udp=false` sends QUIC nowhere.
+Note: the secret redactor masks the value after `ech=`, so it shows as `•••`.
 
-## Блокировка QUIC
+## QUIC blocking
 
-Настройка «Блокировать QUIC (UDP 443)» (Настройки → Дополнительно, включена по умолчанию, решение владельца
-2026-11-08) добавляет в runtime-копию правило `{"network":"udp","port":443,"action":"reject"}` после
-служебных правил (hijack-dns и др.) и перед пользовательскими, в любом режиме DNS. Профиль на диске не
-меняется. Причина: видео шло по QUIC внутри датаграмм Hysteria2 (QUIC внутри QUIC), плеер за 14 с
-перебирал семь хостов `googlevideo.com`; отказ на UDP 443 мгновенно уводит приложения на TCP. Применяется
-при следующем подключении. Свой внешний QUIC-туннель Hysteria сюда не попадает: сокет сервера защищён и идёт
-мимо TUN.
+The setting "Блокировать QUIC (UDP 443)" ("Block QUIC (UDP 443)", Settings → Advanced, on by default, owner
+decision of 2026-11-08) adds the rule `{"network":"udp","port":443,"action":"reject"}` to the runtime copy,
+after the service rules (hijack-dns and others) and before the user rules, in every DNS mode. The profile on
+disk does not change. Reason: video went over QUIC inside Hysteria2 datagrams (QUIC inside QUIC) and the player
+tried seven `googlevideo.com` hosts in 14 s; rejecting UDP 443 moves apps to TCP at once. It applies at the next
+connection. Hysteria's own outer QUIC tunnel is not affected: the server socket is protected and bypasses the
+TUN. Result of the field test (0.5.36): blocking QUIC did **not** speed YouTube up, so QUIC is not the cause.
 
-## Потоки через прокси
+## Flows through the proxy
 
-Счётчики всего трафика не показывают, какой именно поток что получил. Патч
-`core-patches/0011-proxy-flows-snapshot.patch` добавляет в ядро `CommandServer.proxyFlows(закрытые после, лимит)`:
-снимок потоков через прокси одной строкой JSON (активные, самые тяжёлые по входящему первыми, и закрытые после
-курсора с итоговыми байтами). Приложение зовёт его само в момент отсчёта трафика (~5 с, только пока экран горит
-или открыта диагностика), рядом с `proxyTraffic()`. **Подписки на соединения нет**: инвариант `I6-05` («никогда
-не включать `CommandConnections`», проверяется `scripts/verify-project.sh`) соблюдён.
+The counters of all traffic do not show which flow received what. Patch
+`core-patches/0011-proxy-flows-snapshot.patch` adds `CommandServer.proxyFlows(closedAfter, limit)` to the core:
+a snapshot of the flows through the proxy as one JSON string (active ones, heaviest by incoming bytes first,
+and flows closed after the cursor with their final byte counts). The app calls it itself at the moment of its
+traffic sample (about every 5 s, only while the screen is on or diagnostics are open), next to
+`proxyTraffic()`. **There is no subscription to connections**: invariant `I6-05` ("never enable
+`CommandConnections`", checked by `scripts/verify-project.sh`) is respected.
 
-`FlowTracker` сравнивает итоги потока с прошлым снимком и пишет в слой `F`:
+`FlowTracker` compares the totals of a flow with the previous snapshot and writes to the `F` layer:
 
-- `закрыт tcp <имя> (<приложение>, <outbound>): жил 12.5с, вверх 2КБ, вниз 1.0МБ` — на каждый закрытый поток;
-- `потоки: живых N, за окно вверх …, вниз …; топ по входящему: <имя> tcp ↓3.0МБ (жив 8.2с), …` — на каждый снимок;
-- `ждут ответ (N): <имя> tcp жив 40.0с, вверх 4КБ, всего вниз 12КБ` (уровень 3) — потоки старше 10 с, которые за окно
-  отправили данные и ничего не получили. Это описание, а не приговор: поток может ждать, пока плеер доберёт буфер.
+- `закрыт tcp <name> (<app>, <outbound>): жил 12.5с, вверх 2КБ, вниз 1.0МБ` ("closed … lived 12.5 s, up
+  2 KB, down 1.0 MB") for every closed flow;
+- `потоки: живых N, за окно вверх …, вниз …; топ по входящему: <name> tcp ↓3.0МБ (жив 8.2с), …` ("flows: N
+  alive, in the window up …, down …; top by incoming: …") for every snapshot;
+- `ждут ответ (N): <name> tcp жив 40.0с, вверх 4КБ, всего вниз 12КБ` ("waiting for an answer (N): …", level 3)
+  for flows older than 10 s that sent data during the window and received nothing. This is a description,
+  not a verdict: a flow may be waiting while the player fills its buffer.
 
-Так видно, какие из потоков YouTube качают и с какой скоростью, а какие висят, и сколько живёт каждый.
+This shows which YouTube flows download and how fast, which hang, and how long each one lives.
