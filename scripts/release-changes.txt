@@ -5,4 +5,5 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Подробный журнал диагностики теперь показывает по каждому потоку, сколько байт он получил и сколько прожил, и какие потоки ждут ответ: так найдём причину медленного YouTube
+YouTube: зависшие соединения с видео-серверами сбрасываются сразу, и плеер пробует снова, не дожидаясь долгого таймаута (выключается в «Дополнительно»)
+В журнал диагностики добавлены задержка и потери туннеля и средняя скорость каждого соединения: так видно, какие серверы и узлы YouTube медленные
