@@ -1,0 +1,103 @@
+diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
+index 10df1b25..f60d78c1 100644
+--- a/protocol/hysteria2/outbound.go
++++ b/protocol/hysteria2/outbound.go
+@@ -552,6 +552,12 @@ func certificatePin(value string) ([]byte, error) {
+ 
+ type hyPacketConn struct {
+ 	conn hyclient.HyUDPConn
++	// Официальный клиент: «Send is not thread-safe, as it uses a shared SendBuf».
++	// Одну такую сессию делят все запросы общего UDP-транспорта DNS (A и AAAA каждого имени
++	// уходят одновременно), без замка два запроса затирают буфер друг друга: один уходит
++	// дважды, другой пропадает и ждёт таймаут. Сериализация здесь, в обвязке sing-box;
++	// сам протокол и официальный клиент не меняются.
++	sendAccess sync.Mutex
+ }
+ 
+ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+@@ -564,7 +570,10 @@ func (c *hyPacketConn) ReadFrom(buffer []byte) (int, net.Addr, error) {
+ }
+ 
+ func (c *hyPacketConn) WriteTo(buffer []byte, address net.Addr) (int, error) {
+-	err := c.conn.Send(buffer, M.SocksaddrFromNet(address).String())
++	destination := M.SocksaddrFromNet(address).String()
++	c.sendAccess.Lock()
++	err := c.conn.Send(buffer, destination)
++	c.sendAccess.Unlock()
+ 	if err != nil {
+ 		return 0, normalizeCloseError(err)
+ 	}
+diff --git a/protocol/hysteria2/packet_conn_send_test.go b/protocol/hysteria2/packet_conn_send_test.go
+new file mode 100644
+index 00000000..ee404d5f
+--- /dev/null
++++ b/protocol/hysteria2/packet_conn_send_test.go
+@@ -0,0 +1,68 @@
++package hysteria2
++
++import (
++	"net"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++// sendProbe ведёт себя как сессия официального клиента: Send нельзя вызывать параллельно.
++type sendProbe struct {
++	inFlight   atomic.Int32
++	maxSeen    atomic.Int32
++	sent       atomic.Int32
++	overlapped atomic.Bool
++}
++
++func (p *sendProbe) Receive() ([]byte, string, error) { select {} }
++
++func (p *sendProbe) Send(_ []byte, _ string) error {
++	now := p.inFlight.Add(1)
++	if now > 1 {
++		p.overlapped.Store(true)
++	}
++	for {
++		seen := p.maxSeen.Load()
++		if now <= seen || p.maxSeen.CompareAndSwap(seen, now) {
++			break
++		}
++	}
++	time.Sleep(200 * time.Microsecond) // окно, в котором второй Send затёр бы общий буфер
++	p.inFlight.Add(-1)
++	p.sent.Add(1)
++	return nil
++}
++
++func (p *sendProbe) Close() error { return nil }
++
++// Параллельные запросы DNS идут в одну сессию Hysteria2: обвязка обязана пускать в Send по одному.
++func TestPacketConnSerializesConcurrentSends(t *testing.T) {
++	probe := &sendProbe{}
++	conn := &hyPacketConn{conn: probe}
++	address := &net.UDPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 53}
++
++	const writers, perWriter = 16, 20
++	var wait sync.WaitGroup
++	for i := 0; i < writers; i++ {
++		wait.Add(1)
++		go func() {
++			defer wait.Done()
++			for j := 0; j < perWriter; j++ {
++				if _, err := conn.WriteTo([]byte("query"), address); err != nil {
++					t.Errorf("WriteTo: %v", err)
++					return
++				}
++			}
++		}()
++	}
++	wait.Wait()
++
++	if probe.overlapped.Load() || probe.maxSeen.Load() != 1 {
++		t.Fatalf("Send was entered concurrently: max in flight %d", probe.maxSeen.Load())
++	}
++	if got := probe.sent.Load(); got != writers*perWriter {
++		t.Fatalf("sent %d datagrams, want %d", got, writers*perWriter)
++	}
++}
