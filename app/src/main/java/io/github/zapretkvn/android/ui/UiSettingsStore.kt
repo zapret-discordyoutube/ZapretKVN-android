@@ -59,6 +59,7 @@ class UiSettingsStore(
                 proxyIpv4Only = preferences[PROXY_IPV4_ONLY] ?: true,
                 blockQuic = preferences[BLOCK_QUIC] ?: true,
                 resetStalledFlows = preferences[RESET_STALLED_FLOWS] ?: true,
+                youtubeSwitch = preferences[YOUTUBE_SWITCH] ?: false,
                 dnsOverride = DnsOverride(
                     enabled = preferences[DNS_OVERRIDE_ENABLED] ?: true,
                     hostname = preferences[DNS_OVERRIDE_HOSTNAME] ?: DnsOverride.DEFAULT_HOSTNAME,
@@ -169,6 +170,10 @@ class UiSettingsStore(
 
     suspend fun setResetStalledFlows(enabled: Boolean) {
         dataStore.edit { it[RESET_STALLED_FLOWS] = enabled }
+    }
+
+    suspend fun setYoutubeSwitch(enabled: Boolean) {
+        dataStore.edit { it[YOUTUBE_SWITCH] = enabled }
     }
 
     suspend fun setDnsOverrideEnabled(enabled: Boolean) {
@@ -306,6 +311,7 @@ class UiSettingsStore(
         val PROXY_IPV4_ONLY = booleanPreferencesKey("proxy_ipv4_only")
         val BLOCK_QUIC = booleanPreferencesKey("block_quic")
         val RESET_STALLED_FLOWS = booleanPreferencesKey("reset_stalled_flows")
+        val YOUTUBE_SWITCH = booleanPreferencesKey("youtube_switch")
         val DNS_OVERRIDE_ENABLED = booleanPreferencesKey("dns_override_enabled")
         val DNS_OVERRIDE_HOSTNAME = stringPreferencesKey("dns_override_hostname")
         val DNS_OVERRIDE_IPV4 = stringPreferencesKey("dns_override_ipv4")

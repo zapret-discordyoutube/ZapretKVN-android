@@ -265,3 +265,45 @@ Besides flows that received almost nothing, the policy cuts flows that keep send
 sent with no more received than sent. Healthy video downloads are the opposite (a lot received, little sent); a player
 pause sends nothing. Reason: in the 0.5.38 archive the flows to `74.125.162.225` and `74.125.11.74` trickled at 4-7 KB/s
 for 25 s and one of them sent 203 KB while receiving 81 KB, so the old rule (at most 4 KB received) never fired.
+
+## Recognizing a slow video stream fast, and moving to a faster server
+
+Owner decisions of 2026-11-08: recognize a slow video stream at once, "even faster", and redirect to a faster
+server, as an option. The design has four parts, each with one job.
+
+**1. Faster sampling.** The coordinator runs a loop that asks the core for the flow snapshot (`proxyFlows`) every
+4 s while the screen is on, and every 1.5 s while a `googlevideo.com` flow exists. With the screen off there is no
+loop at all (I6-03). The window line in the log is still written about every 4 s, so the log does not grow.
+
+**2. The detector (`SlowVideoDetector`, pure, tested on the numbers of the field archives).** A *slow video flow* is a
+TCP flow to `googlevideo.com` (not `redirector.`), at least 4 s old, that has received from 16 KB to 256 KB, has sent at
+least 3 KB, and runs below 40 KB/s in the last window. A healthy flow takes 550-600 KB in its first 3 s, so it is never
+slow; an idle pre-connected flow has received less than 16 KB, so it is not a video flow yet. *Starving* means: there is
+a slow video flow, no healthy flow (from 120 KB/s) beside it, the total video speed of the window is below 60 KB/s, and
+this holds in 2 consecutive samples (about 3 s at the fast rate). The log writes `ВИДЕО ГОЛОДАЕТ: …` when it starts and
+`видео снова идёт …` when it ends. In the 0.5.39 archive the stuck flow `74.125.11.70` would be recognized about 6-8 s
+after it started, instead of never.
+
+**3. Names for the flows.** The detector and the history need the host name, but the flow record often has none (the
+player connects to an address from an earlier answer). `DnsAddressBook` learns `address -> googlevideo name` from the
+`dns: exchanged A …` lines of the core itself and fills the name in (entries expire after an hour, at most 2,000).
+
+**4. The switch (`YoutubeSwitchEngine`), optional.** Setting "Менять сервер при медленном YouTube" (Settings → Advanced,
+**off by default**: a switch can change the exit country). When it is on and the verdict is *starving*:
+
+1. the current server is marked "bad for YouTube" for 30 minutes;
+2. candidates are taken from the same profile group: valid, not in maintenance, no failed ping, not marked, and not
+   with a bad history; first servers with a good YouTube average from the speed history (best first), then servers
+   without history by ping; at most 2 per episode;
+3. the shared `ServerSwitcher` makes a trial switch (nothing saved), the old video flows are closed so the player
+   reconnects through the new server, and the detector is reset;
+4. the new server is verified **on live video**, not with a download of a foreign file: a healthy video flow within
+   15 s commits the choice and announces it; starving again marks that server too and tries the next candidate;
+   silence (the video never started, for example the user left) is inconclusive and the previous server comes back;
+5. if every candidate is slow, the original server comes back.
+
+Guards: 90 s of cooldown after an episode, at most 3 switches in 10 minutes, no episode while another switching
+operation or the lifecycle is busy. This engine is separate from the "smart check": it is not blocked by the 30 minutes
+after a manual server choice (the user turned this option on on purpose) and it does not use the generic download probe.
+The tests use a fake host and cover: commit, second candidate after a starving first one, all candidates slow, silence,
+a refused commit, a failed trial, no candidate, candidate filtering and ordering, the gate and the slow marks.

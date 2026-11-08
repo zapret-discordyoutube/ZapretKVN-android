@@ -1,12 +1,14 @@
 package io.github.zapretkvn.android.diagnostics
 
 import io.github.zapretkvn.runtimelog.CoreLogLayers
+import io.github.zapretkvn.runtimelog.DnsAddressBook
 import io.github.zapretkvn.runtimelog.FlowSnap
 import io.github.zapretkvn.runtimelog.FlowTracker
 import io.github.zapretkvn.runtimelog.StalledFlowPolicy
 import io.github.zapretkvn.runtimelog.LogLayer
 import io.github.zapretkvn.runtimelog.LogStoreInfo
 import io.github.zapretkvn.runtimelog.RuntimeLogStore
+import io.github.zapretkvn.runtimelog.SlowVideoDetector
 import io.github.zapretkvn.runtimelog.SpeedHistory
 import io.github.zapretkvn.runtimelog.TunnelGrade
 import io.github.zapretkvn.runtimelog.TrafficStallTracker
@@ -40,6 +42,10 @@ object RuntimeLog {
 
     private val stall = TrafficStallTracker()
     private val flowTracker = FlowTracker()
+    private val addressBook = DnsAddressBook()
+    private val videoDetector = SlowVideoDetector()
+    private var lastWindowLineAt = 0L
+    private var lastStarving = false
     @Volatile
     private var history: SpeedHistory? = null
     private val stalledPolicy = StalledFlowPolicy(knownSlow = { server, domain -> history?.isKnownSlow(server, domain) == true })
@@ -76,6 +82,8 @@ object RuntimeLog {
 
     /** Строка ядра как есть: слой определяется по телу строки, уровень приходит от ядра. */
     fun core(level: Int, line: String) {
+        // Ответы DNS по googlevideo запоминаются: поток к такому адресу без имени получит имя из книги.
+        addressBook.observe(line)
         store?.log(CoreLogLayers.classify(line), level, line)
     }
 
@@ -107,22 +115,35 @@ object RuntimeLog {
      * жизни, топ потоков по входящему, потоки, которые «ждут ответ». `null` и пустая строка (ядро не запущено)
      * пропускаются; битый JSON не должен ронять отсчёт трафика.
      */
-    fun flows(json: String?): List<String> {
-        val target = store ?: return emptyList()
-        if (json.isNullOrEmpty()) return emptyList()
-        val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return emptyList()
-        val active = root["active"].snaps()
-        val closed = root["closed"].snaps()
+    /** Итог одной выборки потоков: что закрыть как зависшее и вердикт по видео (для переключения сервера). */
+    class FlowSample(val stalledIds: List<String>, val verdict: SlowVideoDetector.Verdict)
+
+    private val emptySample = FlowSample(emptyList(), SlowVideoDetector.Verdict.Idle)
+
+    fun flows(json: String?): FlowSample {
+        val target = store ?: return emptySample
+        if (json.isNullOrEmpty()) return emptySample
+        val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return emptySample
+        // Имя потока без имени берётся из ответов DNS (адрес -> googlevideo): иначе политика и история его не узнают.
+        val active = root["active"].snaps().map(addressBook::enrich)
+        val closed = root["closed"].snaps().map(addressBook::enrich)
         val now = System.currentTimeMillis()
         closed.forEach { flow ->
             val lived = if (flow.createdAtEpochMillis > 0 && flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis - flow.createdAtEpochMillis else 0L
             history?.recordFlow(flow.outbound, flow.domain, flow.destination, flow.downlink, lived)
         }
-        val (lines, stalled) = synchronized(stallLock) {
+        val (lines, stalled, verdict) = synchronized(stallLock) {
             closed.maxOfOrNull { it.closedAtEpochMillis }?.let { if (it > closedCursor) closedCursor = it }
-            flowTracker.onSnapshot(now, active, closed) to
-                if (resetStalledEnabled) stalledPolicy.pick(now, active) else emptyList()
+            // Выборка при видео идёт каждые 1,5 с, а строку окна достаточно писать раз в ~5 с.
+            val emitWindow = now - lastWindowLineAt >= WINDOW_LINE_MILLIS
+            if (emitWindow) lastWindowLineAt = now
+            Triple(
+                flowTracker.onSnapshot(now, active, closed, emitWindow),
+                if (resetStalledEnabled) stalledPolicy.pick(now, active) else emptyList(),
+                videoDetector.onSnapshot(now, active),
+            )
         }
+        logVideoVerdict(target, verdict)
         lines.forEach { target.log(LogLayer.Traffic, it.level, it.text) }
         stalled.forEach { flow ->
             target.log(
@@ -134,8 +155,43 @@ object RuntimeLog {
         }
         stalled.forEach { history?.recordReset(it.outbound, it.domain, it.destination) }
         history?.flushIfDirty()
-        return stalled.map { it.id }
+        return FlowSample(stalled.map { it.id }, verdict)
     }
+
+    private const val WINDOW_LINE_MILLIS = 4_000L
+
+    /** Границы голодания видео в журнал: когда началось и когда прошло. */
+    private fun logVideoVerdict(target: RuntimeLogStore, verdict: SlowVideoDetector.Verdict) {
+        val starving = verdict.starving
+        val wasStarving = synchronized(stallLock) { lastStarving.also { lastStarving = starving } }
+        if (starving && !wasStarving) {
+            target.log(
+                LogLayer.Traffic,
+                3,
+                "ВИДЕО ГОЛОДАЕТ: видеопотоков ${verdict.videoFlows}, медленных ${verdict.slowFlows.size}, " +
+                    "суммарно ${FlowTracker.formatBytes(verdict.videoBytesPerSecond)}/с",
+            )
+        } else if (!starving && wasStarving) {
+            target.log(LogLayer.Traffic, 3, "видео снова идёт (${if (verdict.healthy) "здорово" else "не голодает"})")
+        }
+    }
+
+    /** Идёт ли видео googlevideo: тогда ядро опрашивается чаще. */
+    fun videoActive(): Boolean = synchronized(stallLock) { videoDetector.videoActive }
+
+    /** Идентификаторы видеопотоков последнего снимка (закрываются после смены сервера). */
+    fun videoFlowIds(): List<String> = synchronized(stallLock) { videoDetector.videoFlowIds }
+
+    /** Забыть накопленные отсчёты детектора: после смены сервера судить надо только по новым потокам. */
+    fun resetVideoDetector() {
+        synchronized(stallLock) {
+            videoDetector.reset()
+            lastStarving = false
+        }
+    }
+
+    /** Средняя скорость сервера по видео YouTube из истории; `null`, если оценок мало. */
+    fun youtubeAverage(server: String): Long? = history?.youtubeAverage(server)
 
     /** Включает или выключает сброс зависших потоков YouTube; вызывается при старте сессии из настроек. */
     fun configure(resetStalledFlows: Boolean) {
@@ -178,6 +234,10 @@ object RuntimeLog {
             stall.reset()
             flowTracker.reset()
             stalledPolicy.reset()
+            videoDetector.reset()
+            lastStarving = false
+            // Новая сессия начинает с чистого окна: первый снимок обязан дать строку окна.
+            lastWindowLineAt = 0L
             closedCursor = 0L
         }
         logHistorySummary()

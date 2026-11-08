@@ -54,7 +54,7 @@ class FlowTracker(
     }
 
     /** [closed] в порядке «самые новые первыми», как отдаёт ядро; [active] любой. */
-    fun onSnapshot(nowMillis: Long, active: List<FlowSnap>, closed: List<FlowSnap>): List<FlowLine> {
+    fun onSnapshot(nowMillis: Long, active: List<FlowSnap>, closed: List<FlowSnap>, emitWindow: Boolean = true): List<FlowLine> {
         val lines = ArrayList<FlowLine>()
         val activeIds = HashSet<String>(active.size * 2)
         for (snap in active) {
@@ -96,9 +96,12 @@ class FlowTracker(
         }
         // Потоки, которых нет ни среди живых, ни среди закрытых (запись закрытия вытеснена), забываем.
         flows.keys.retainAll(activeIds)
-        val windowMillis = if (lastSnapshotAt > 0) nowMillis - lastSnapshotAt else 0L
-        lastSnapshotAt = nowMillis
-        lines += windowLines(nowMillis, windowMillis)
+        // При частой выборке (видео идёт) строка окна пишется не на каждый снимок: счётчики окна копятся дальше.
+        if (emitWindow) {
+            val windowMillis = if (lastSnapshotAt > 0) nowMillis - lastSnapshotAt else 0L
+            lastSnapshotAt = nowMillis
+            lines += windowLines(nowMillis, windowMillis)
+        }
         return lines
     }
 

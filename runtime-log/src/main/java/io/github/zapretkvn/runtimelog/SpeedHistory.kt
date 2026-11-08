@@ -133,6 +133,22 @@ class SpeedHistory(
         }
     }
 
+    /**
+     * Средняя скорость сервера по видео YouTube, байт/с, или `null`, если оценённых потоков меньше
+     * [MIN_GRADED_TO_JUDGE]. По ней выбирается, на какой сервер уходить при медленном YouTube.
+     */
+    @Synchronized
+    fun youtubeAverage(server: String): Long? {
+        val video = entries.values.filter { it.server == server && it.target.startsWith("yt:") }
+        if (video.sumOf { it.graded } < MIN_GRADED_TO_JUDGE) return null
+        val millis = video.sumOf { it.millis }
+        return if (millis > 0) video.sumOf { it.bytes } * 1_000 / millis else null
+    }
+
+    /** Все серверы, по которым есть записи (для ранжирования кандидатов). */
+    @Synchronized
+    fun servers(): Set<String> = entries.values.map { it.server }.toSet()
+
     /** Весь файл истории одной строкой (для записи на диск и для архива диагностики). */
     @Synchronized
     fun render(): String {

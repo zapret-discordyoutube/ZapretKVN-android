@@ -289,6 +289,26 @@ internal class CoreSession(
         return totals.downlinkTotal > 0
     }
 
+    /**
+     * Выборка потоков через прокси: журнал, история, вердикт по видео и закрытие зависших потоков YouTube (плеер
+     * получает сброс и открывает новое соединение, не дожидаясь своего долгого таймаута). Прямые вызовы ядра, подписки
+     * на соединения нет (I6-05). Зовёт цикл координатора: редко, пока видео нет, и каждые 1,5 с, пока оно идёт.
+     */
+    fun sampleFlows(): RuntimeLog.FlowSample {
+        if (closing.get()) return RuntimeLog.FlowSample(emptyList(), io.github.zapretkvn.runtimelog.SlowVideoDetector.Verdict.Idle)
+        val sample = RuntimeLog.flows(
+            runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull(),
+        )
+        if (sample.stalledIds.isNotEmpty()) closeFlows(sample.stalledIds)
+        return sample
+    }
+
+    /** Закрывает потоки через прокси по идентификаторам из снимка; возвращает число закрытых. */
+    fun closeFlows(ids: List<String>): Int {
+        if (ids.isEmpty()) return 0
+        return runCatching { server?.closeFlows(ids.joinToString("\n")) ?: 0 }.getOrDefault(0)
+    }
+
     private fun acceptTraffic(uplinkTotal: Long, downlinkTotal: Long, connections: Int, throttle: Boolean) {
         if (closing.get()) return
         val now = android.os.SystemClock.elapsedRealtime()
@@ -312,12 +332,6 @@ internal class CoreSession(
             ),
         )
         // Снимок потоков через прокси: прямым вызовом в момент отсчёта, без подписки на соединения (I6-05).
-        val stalledFlows = RuntimeLog.flows(
-            runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull(),
-        )
-        // Зависшие потоки YouTube закрываются сразу: плеер получает сброс и открывает новое соединение,
-        // не дожидаясь своего долгого таймаута. Прямой вызов ядра, подписки на соединения нет (I6-05).
-        if (stalledFlows.isNotEmpty()) runCatching { server?.closeFlows(stalledFlows.joinToString("\n")) }
         RuntimeLog.tunnelStats(runCatching { server?.tunnelStats() }.getOrNull())
         RuntimeLog.traffic(
             uplinkTotal,

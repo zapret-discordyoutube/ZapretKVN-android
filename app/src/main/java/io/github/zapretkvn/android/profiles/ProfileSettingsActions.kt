@@ -58,6 +58,9 @@ class ProfileSettingsActions internal constructor(
     /** Без перезапуска: настройка читается при старте сессии и действует со следующего подключения. */
     fun setResetStalledFlows(enabled: Boolean) = apply { settingsStore.setResetStalledFlows(enabled) }
 
+    /** Без перезапуска: координатор читает настройку из потока настроек и действует сразу. */
+    fun setYoutubeSwitch(enabled: Boolean) = apply { settingsStore.setYoutubeSwitch(enabled) }
+
     fun setBlockQuic(enabled: Boolean) =
         apply("Смена блокировки QUIC") { settingsStore.setBlockQuic(enabled) }
 

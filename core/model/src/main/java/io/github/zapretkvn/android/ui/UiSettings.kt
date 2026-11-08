@@ -33,6 +33,12 @@ data class UiSettings(
      * открывает новое соединение, не дожидаясь своего долгого таймаута (владелец 2026-11-08).
      */
     val resetStalledFlows: Boolean = true,
+    /**
+     * Менять сервер, когда он плох именно для YouTube (видео голодает, а общая скорость нормальная): приложение пробует
+     * другой сервер профиля и оставляет его, если видео там пошло. Выключено по умолчанию: смена сервера может сменить
+     * страну выхода (владелец 2026-11-08: «по желанию»).
+     */
+    val youtubeSwitch: Boolean = false,
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),

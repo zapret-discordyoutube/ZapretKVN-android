@@ -14,10 +14,12 @@ fun AdvancedScreen(
     rawEditorLineWrap: Boolean,
     blockQuic: Boolean,
     resetStalledFlows: Boolean,
+    youtubeSwitch: Boolean,
     onOpenPage: (SettingsPage) -> Unit,
     onRawEditorLineWrapChange: (Boolean) -> Unit,
     onBlockQuicChange: (Boolean) -> Unit,
     onResetStalledFlowsChange: (Boolean) -> Unit,
+    onYoutubeSwitchChange: (Boolean) -> Unit,
 ) {
     SettingsPageList(contentPadding, tag = "settings-page-advanced") {
         item(key = "pages", contentType = "rows") {
@@ -57,6 +59,16 @@ fun AdvancedScreen(
                     checked = resetStalledFlows,
                     onCheckedChange = onResetStalledFlowsChange,
                     switchDescription = "Сбрасывать зависшие соединения YouTube",
+                )
+                RowDivider()
+                SwitchRow(
+                    title = "Менять сервер при медленном YouTube",
+                    subtitle = "Если видео голодает на текущем сервере, приложение пробует другой сервер профиля и оставляет его, " +
+                        "когда видео там пошло; иначе возвращает прежний. Сервер может сменить страну выхода. Выключено по умолчанию.",
+                    icon = ZapretIcons.Shield,
+                    checked = youtubeSwitch,
+                    onCheckedChange = onYoutubeSwitchChange,
+                    switchDescription = "Менять сервер при медленном YouTube",
                 )
             }
         }

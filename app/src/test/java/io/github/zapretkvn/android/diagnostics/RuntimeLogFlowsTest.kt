@@ -72,7 +72,7 @@ class RuntimeLogFlowsTest {
     fun `a stalled googlevideo flow is returned for closing and the reset is logged`() {
         RuntimeLog.configure(true)
         RuntimeLog.sessionStarted(2)
-        val ids = RuntimeLog.flows(stalledSnapshot("stalled-1"))
+        val ids = RuntimeLog.flows(stalledSnapshot("stalled-1")).stalledIds
         assertEquals(listOf("stalled-1"), ids)
         val text = logText()
         assertTrue(text, "сброс зависшего потока rr5.sn-x.googlevideo.com tcp" in text)
@@ -82,10 +82,34 @@ class RuntimeLogFlowsTest {
     fun `healthy flows other sites and a disabled switch return nothing`() {
         RuntimeLog.configure(true)
         RuntimeLog.sessionStarted(3)
-        assertTrue("healthy", RuntimeLog.flows(stalledSnapshot("healthy", down = 5_000_000)).isEmpty())
-        assertTrue("other site", RuntimeLog.flows(stalledSnapshot("other", domain = "sponsor.ajay.app")).isEmpty())
+        assertTrue("healthy", RuntimeLog.flows(stalledSnapshot("healthy", down = 5_000_000)).stalledIds.isEmpty())
+        assertTrue("other site", RuntimeLog.flows(stalledSnapshot("other", domain = "sponsor.ajay.app")).stalledIds.isEmpty())
         RuntimeLog.configure(false)
-        assertTrue("switched off", RuntimeLog.flows(stalledSnapshot("off")).isEmpty())
+        assertTrue("switched off", RuntimeLog.flows(stalledSnapshot("off")).stalledIds.isEmpty())
+        RuntimeLog.configure(true)
+    }
+
+    private fun videoSnapshot(id: String, up: Long, down: Long): String {
+        val created = System.currentTimeMillis() - 6_000
+        return """{"at":0,"active":[{"id":"$id","net":"tcp","domain":"rr1.sn-slow.googlevideo.com","dest":"74.125.11.70:443",
+            "pkg":"app.youtube","out":"hy2","created":$created,"up":$up,"down":$down}],"closed":[]}"""
+    }
+
+    @Test
+    fun `two snapshots of a starving video stream give the starving verdict, a log line and the ids to drop`() {
+        RuntimeLog.configure(false) // сброс отключён: проверяется только вердикт
+        RuntimeLog.sessionStarted(20)
+        assertFalse(RuntimeLog.videoActive())
+        val first = RuntimeLog.flows(videoSnapshot("v1", 9_000, 30_000))
+        assertFalse("one observation is not enough", first.verdict.starving)
+        assertTrue(RuntimeLog.videoActive())
+        val second = RuntimeLog.flows(videoSnapshot("v1", 18_000, 34_000))
+        assertTrue("second observation confirms: ${second.verdict}", second.verdict.starving)
+        assertEquals(listOf("v1"), RuntimeLog.videoFlowIds())
+        assertTrue(logText(), "ВИДЕО ГОЛОДАЕТ" in logText())
+        RuntimeLog.resetVideoDetector()
+        assertFalse(RuntimeLog.videoActive())
+        assertTrue(RuntimeLog.videoFlowIds().isEmpty())
         RuntimeLog.configure(true)
     }
 

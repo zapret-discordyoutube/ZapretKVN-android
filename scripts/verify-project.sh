@@ -271,6 +271,11 @@ expected = [
     # не больше MAX_ATTEMPTS подряд и MAX_TOTAL_ATTEMPTS на серию); ожидание сети
     # событийное и таймера не добавляет.
     ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/RecoveryCoordinator.kt", 1),
+    # Выборка потоков через прокси (журнал, история скоростей, вердикт по видео YouTube): один цикл на сессию, и
+    # только пока экран горит (погас экран или сессия сменилась, цикл отменяется, I6-03). Пауза 4 с, а пока идёт видео
+    # googlevideo 1,5 с: так медленный видеопоток узнаётся за секунды. Каждый шаг это один прямой вызов ядра
+    # (proxyFlows), без подписки на соединения (I6-05) и без сетевых запросов приложения.
+    ("app/src/main/java/io/github/zapretkvn/android/vpn/runtime/ServerSwitchCoordinator.kt", 1),
     # Видимое время сессии на Главной: тикает, только пока таймер на экране.
     ("feature/home/src/main/java/io/github/zapretkvn/android/ui/home/HomeScreen.kt", 1),
     # Подпись «проверено 2 мин назад» на карточке сервисов обновляется раз в 30 с, пока карточка
@@ -288,7 +293,7 @@ if delays != expected:
 print(
     "Production delay calls are limited to visible session time, server-list redraw throttle, probe stagger, "
     "service-check pauses, card age label, update queue listener pauses, "
-    "network debounce, bounded recovery backoff and bootstrap settle."
+    "network debounce, bounded recovery backoff, the screen-on flow sampling loop and bootstrap settle."
 )
 PY
 

@@ -171,6 +171,12 @@ internal class VpnRuntime(
                 .distinctUntilChanged()
                 .collect { post(Message.SmartSwitchSetting(it)) }
         }
+        scope.launch {
+            container.uiSettingsStore.settings
+                .map { it.youtubeSwitch }
+                .distinctUntilChanged()
+                .collect { post(Message.YoutubeSwitchSetting(it)) }
+        }
     }
 
     // ---- Внешний API: потокобезопасная постановка в очередь. ----
@@ -315,6 +321,7 @@ internal class VpnRuntime(
         data object CoreStop : Message
         data class AutomationSettings(val settings: NetworkAutomationSettings) : Message
         data class SmartSwitchSetting(val enabled: Boolean) : Message
+        data class YoutubeSwitchSetting(val enabled: Boolean) : Message
         data class AttemptNetwork(val token: Long, val identity: String?) : Message
         data class PauseAtStart(
             val token: Long,
@@ -364,6 +371,7 @@ internal class VpnRuntime(
             Message.CoreStop -> onCoreStop()
             is Message.AutomationSettings -> automation.onSettingsChanged(message.settings)
             is Message.SmartSwitchSetting -> switching.onSmartSwitchSetting(message.enabled)
+            is Message.YoutubeSwitchSetting -> switching.onYoutubeSwitchSetting(message.enabled)
             is Message.AttemptNetwork -> if (message.token == controller.currentGeneration()) {
                 recovery.onAttemptNetwork(message.identity)
             }

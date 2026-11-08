@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.vpn.runtime
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.diagnostics.VpnFailureStates
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.engines.failover.LatencyHint
@@ -10,16 +11,26 @@ import io.github.zapretkvn.android.engines.failover.SlowServerSwitchEngine
 import io.github.zapretkvn.android.engines.failover.SlowServerSwitchPolicy
 import io.github.zapretkvn.android.engines.failover.SlowSwitchGate
 import io.github.zapretkvn.android.engines.failover.SlowSwitchSnapshot
+import io.github.zapretkvn.android.engines.failover.YoutubeSwitchEngine
+import io.github.zapretkvn.android.engines.failover.YoutubeSwitchGate
+import io.github.zapretkvn.android.engines.failover.YoutubeSwitchOutcome
+import io.github.zapretkvn.android.engines.failover.YoutubeSwitchPolicy
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import io.github.zapretkvn.runtimelog.SlowVideoDetector
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Операции актора, нужные смене сервера работающей сессии. */
 internal interface ServerSwitchOps : RuntimeActorOps {
@@ -73,6 +84,14 @@ internal class ServerSwitchCoordinator(
     /** Антифлап «умной проверки» переживает переподключения. */
     private val smartPolicy = SlowServerSwitchPolicy { clock() }
 
+    /** Антифлап и метки «плох для YouTube»: тоже переживают переподключения. */
+    private val youtubePolicy = YoutubeSwitchPolicy { clock() }
+
+    /** Вердикты по видео для проверки кандидата после переключения (только последний нужен). */
+    private val videoVerdicts = Channel<SlowVideoDetector.Verdict>(Channel.CONFLATED)
+
+    private var videoJob: Job? = null
+
     /** Пассивный детектор «подключено, но данные не идут»; без таймеров и своих запросов. */
     private val stallDetector = StallDetector()
 
@@ -83,6 +102,7 @@ internal class ServerSwitchCoordinator(
 
     // Читаются из потоков libbox/Android: только volatile-флаги.
     @Volatile private var smartSwitchEnabled = true
+    @Volatile private var youtubeSwitchEnabled = false
     @Volatile private var screenInteractive = true
 
     // ---- Общее ----
@@ -540,19 +560,84 @@ internal class ServerSwitchCoordinator(
         sessions.active()?.let(::applySpeedMonitor)
     }
 
+    /** Настройка «переключать сервер при медленном YouTube» (по умолчанию выключена). */
+    fun onYoutubeSwitchSetting(enabled: Boolean) {
+        youtubeSwitchEnabled = enabled
+    }
+
     /** Экран включился или погас: монитор скорости нужен, только пока он горит. */
     fun onScreenInteractive(interactive: Boolean) {
         screenInteractive = interactive
         postToActor {
             // Погасший экран: данные не идут, это не обрыв. Окна детектора начинаются заново.
             stallDetector.reset()
-            sessions.active()?.let(::applySpeedMonitor)
+            sessions.active()?.let { session ->
+                applySpeedMonitor(session)
+                applyVideoLoop(session)
+            }
         }
+    }
+
+    /**
+     * Цикл выборки потоков: пока экран горит, раз в [VIDEO_IDLE_MILLIS], а пока идёт видео googlevideo, каждые
+     * [VIDEO_FAST_MILLIS]. С погасшим экраном цикла нет вовсе: у сервиса нет периодической работы (I6-03).
+     */
+    private fun applyVideoLoop(session: CoreSession) {
+        if (!screenInteractive || !isCurrent(session)) {
+            videoJob?.cancel()
+            videoJob = null
+            return
+        }
+        if (videoJob?.isActive == true) return
+        videoJob = scope.launch {
+            while (isActive) {
+                delay(if (RuntimeLog.videoActive()) VIDEO_FAST_MILLIS else VIDEO_IDLE_MILLIS)
+                val verdict = withContext(Dispatchers.IO) { runCatching { session.sampleFlows().verdict }.getOrNull() }
+                if (verdict != null) postToActor { onVideoVerdict(session, verdict) }
+            }
+        }
+    }
+
+    /**
+     * Вердикт по видео из цикла выборки. Здесь он и кормит проверку кандидата, и, при включённой настройке, запускает
+     * переключение, когда видео голодает на текущем сервере.
+     */
+    private fun onVideoVerdict(session: CoreSession, verdict: SlowVideoDetector.Verdict) {
+        if (!isCurrent(session)) {
+            videoJob?.cancel()
+            videoJob = null
+            return
+        }
+        videoVerdicts.trySend(verdict)
+        if (!youtubeSwitchEnabled || !verdict.starving) return
+        if (youtubePolicy.gate(enabled = true, busy = smartBusy() || operationActive()) != YoutubeSwitchGate.Ready) return
+        runOperation(Operation.Smart) { previous ->
+            previous?.cancelAndJoin()
+            RuntimeLog.resetVideoDetector()
+            val outcome = YoutubeSwitchEngine(
+                policy = youtubePolicy,
+                host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
+                youtubeAverage = RuntimeLog::youtubeAverage,
+            ).runEpisode()
+            timeline("Переключение при медленном YouTube: ${youtubeOutcomeText(outcome)}.")
+        }
+    }
+
+    private fun youtubeOutcomeText(outcome: YoutubeSwitchOutcome): String = when (outcome) {
+        YoutubeSwitchOutcome.Gone -> "сессия закончилась"
+        YoutubeSwitchOutcome.NoCandidates -> "запасного сервера нет"
+        is YoutubeSwitchOutcome.Switched -> "выбран ${server(outcome.serverId)}"
+        YoutubeSwitchOutcome.Inconclusive -> "видео не пошло, прежний сервер возвращён"
+        YoutubeSwitchOutcome.AllCandidatesSlow -> "запасные серверы тоже медленные, прежний возвращён"
+        YoutubeSwitchOutcome.TrialFailed -> "переключение не удалось"
+        YoutubeSwitchOutcome.CommitRefused -> "выбор не сохранён, прежний сервер возвращён"
     }
 
     /** Сессия стала активной: привязать антифлап к профилю и открыть монитор скорости. */
     fun onSessionActivated(session: CoreSession) {
         smartPolicy.bindProfile(session.profileId)
+        youtubePolicy.bindProfile(session.profileId)
+        applyVideoLoop(session)
         // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
         stallDetector.reset(keepCooldown = false)
         pathStatus = PathStatus.Ok
@@ -604,6 +689,14 @@ internal class ServerSwitchCoordinator(
     }
 
     private fun smartBusy(): Boolean = ops.lifecycleBusy() || supervisor.busy
+
+    private companion object {
+        /** Опрос потоков пока видео идёт: так медленный видеопоток узнаётся за секунды, а не за десять. */
+        const val VIDEO_FAST_MILLIS = 1_500L
+
+        /** Опрос потоков пока видео нет: история и журнал не требуют частого. */
+        const val VIDEO_IDLE_MILLIS = 4_000L
+    }
 
     /** Выполнить блок в акторе и дождаться результата (для задач «умной проверки»). */
     private suspend fun <T> ask(block: () -> T): T {

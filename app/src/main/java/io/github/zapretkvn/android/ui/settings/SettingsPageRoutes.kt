@@ -186,9 +186,11 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
         rawEditorLineWrap = settings.rawEditorLineWrap,
         blockQuic = settings.blockQuic,
         resetStalledFlows = settings.resetStalledFlows,
+        youtubeSwitch = settings.youtubeSwitch,
         onOpenPage = { page -> nav.openSettingsPage(page.id) },
         onRawEditorLineWrapChange = deps.profiles.settings::setRawEditorLineWrap,
         onBlockQuicChange = deps.profiles.settings::setBlockQuic,
         onResetStalledFlowsChange = deps.profiles.settings::setResetStalledFlows,
+        onYoutubeSwitchChange = deps.profiles.settings::setYoutubeSwitch,
     )
 }
