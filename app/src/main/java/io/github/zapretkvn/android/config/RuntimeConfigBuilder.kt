@@ -363,6 +363,11 @@ object RuntimeConfigBuilder {
         val androidViaNode = mode == DnsMode.Android &&
             androidDnsProxiedViaNode &&
             selectedProxyTag != null
+        // «DNS узла» (явный и этап «Автоматически»): доменная часть маршрута повторяется в DNS,
+        // как описано в DNS_ARCHITECTURE.md. Имена direct (российские домены), LAN и имена
+        // VPN-серверов разрешает системный DNS и не зависит от узла; проксируемые идут к DNS узла.
+        // Без выбранного proxy делить нечего (такой запуск отклоняется раньше).
+        val secureWithLocalDirect = mode == DnsMode.Secure && selectedProxyTag != null
         val next = root.toMutableMap()
         var dns = (root["dns"] as? JsonObject)?.toMutableMap() ?: mutableMapOf()
         val profileServers = (dns["servers"] as? JsonArray)?.toList().orEmpty()
@@ -409,9 +414,16 @@ object RuntimeConfigBuilder {
                 } else {
                     androidDnsRules(root, selectedProxyTag, proxyIpv4Only)
                 }
-                DnsMode.Secure -> listOf(
-                    catchAllDnsRule(SECURE_DNS_TAG, ipv4Only = proxyIpv4Only),
-                )
+                DnsMode.Secure -> if (secureWithLocalDirect) {
+                    androidTunnelDnsRules(
+                        root,
+                        checkNotNull(selectedProxyTag),
+                        proxyIpv4Only,
+                        bootstrapHost,
+                    )
+                } else {
+                    listOf(catchAllDnsRule(SECURE_DNS_TAG, ipv4Only = proxyIpv4Only))
+                }
                 DnsMode.Automatic -> automaticDnsRules(
                     root,
                     checkNotNull(selectedProxyTag),
@@ -434,7 +446,11 @@ object RuntimeConfigBuilder {
                     } else {
                         ANDROID_DNS_TAG
                     }
-                    DnsMode.Secure -> SECURE_DNS_TAG
+                    DnsMode.Secure -> if (secureWithLocalDirect) {
+                        automaticFinal(root, checkNotNull(selectedProxyTag))
+                    } else {
+                        SECURE_DNS_TAG
+                    }
                     DnsMode.Automatic -> automaticFinal(root, checkNotNull(selectedProxyTag))
                     DnsMode.FromJson -> error("unreachable")
                 },

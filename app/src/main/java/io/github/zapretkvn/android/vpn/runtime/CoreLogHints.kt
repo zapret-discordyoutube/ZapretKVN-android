@@ -28,8 +28,8 @@ internal object CoreLogHints {
      * Нетегированные отказы DNS по таймауту: `dns: exchange failed for имя. IN A: ... deadline exceeded`.
      * В них нет `outbound/тип[тег]`, поэтому на сервер они не указывают и сами
      * по себе проверку не запускают: это лишь вход [StallDetector], который
-     * сверяет их с ростом входящего трафика. Отказы без таймаута (закрытый
-     * канал, NXDOMAIN, отмена запроса приложением) не считаются.
+     * сверяет их с ростом входящего трафика. Считаются таймауты и QUIC `stateless reset`;
+     * отказы другого рода (закрытый канал, NXDOMAIN, отмена запроса приложением) нет.
      */
     fun dnsFailures(messages: List<String>): DnsFailureHint? {
         var names: MutableSet<String>? = null
@@ -44,7 +44,9 @@ internal object CoreLogHints {
     }
 
     private val DNS_FAILURE = Regex("""dns: (?:exchange|lookup) failed(?: for (\S*))?""")
-    private val DNS_TIMEOUT = Regex("""timeout|deadline|timed out""", RegexOption.IGNORE_CASE)
+    // QUIC `stateless reset`: узел потерял состояние соединения и больше не отвечает на него,
+    // для DNS через туннель это тот же отказ, что и таймаут (запрос не получает ответа).
+    private val DNS_TIMEOUT = Regex("""timeout|deadline|timed out|stateless reset""", RegexOption.IGNORE_CASE)
     private const val MAX_DNS_NAMES_PER_BATCH = 16
 }
 

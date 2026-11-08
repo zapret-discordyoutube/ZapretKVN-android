@@ -938,6 +938,38 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
+    fun `secure DNS resolves direct names on Android DNS and proxied names on the node`() {
+        val stored = validConfig().replace(
+            "\"auto_detect_interface\":true,\"final\":\"zapret-proxy\"",
+            "\"auto_detect_interface\":true,\"rules\":[" +
+                "{\"domain_suffix\":[\".ru\"],\"action\":\"route\",\"outbound\":\"direct\"}," +
+                "{\"domain_suffix\":[\".proxy.test\"],\"action\":\"route\",\"outbound\":\"zapret-proxy\"}" +
+                "],\"final\":\"zapret-proxy\"",
+        )
+        // Рантайм никогда не получает Automatic: цепочка уже разрешена в Secure, поэтому
+        // проверяется именно этот режим (им же заканчивается явный «DNS узла через VPN»).
+        val result = RuntimeConfigBuilder.build(
+            stored,
+            options = RuntimeConfigOptions(dnsMode = DnsMode.Secure, proxyIpv4Only = false),
+        ) as RuntimeConfigResult.Ready
+        val dns = (JsonConfig.parse(result.json) as JsonObject)["dns"] as JsonObject
+        val rules = (dns["rules"] as JsonArray).map { it as JsonObject }
+
+        val direct = rules.first { it["domain_suffix"]?.toString()?.contains(".ru") == true }
+        val proxied = rules.first { it["domain_suffix"]?.toString()?.contains(".proxy.test") == true }
+        assertEquals("zapret-android-dns", direct.string("server"))
+        assertEquals("zapret-secure-dns", proxied.string("server"))
+        // Остальное идёт к DNS узла; DNS Android не становится общим финалом.
+        assertEquals("zapret-secure-dns", (dns["final"] as JsonPrimitive).content)
+        // Однословные имена и .local не покидают телефон и не зависят от узла.
+        assertTrue(
+            rules.any {
+                it.string("server") == "zapret-android-dns" && it["domain_regex"] != null
+            },
+        )
+    }
+
+    @Test
     fun `optional IPv4 only filters proxy DNS without changing direct rules or stored JSON`() {
         val stored = validConfig().replace(
             "\"auto_detect_interface\":true,\"final\":\"zapret-proxy\"",

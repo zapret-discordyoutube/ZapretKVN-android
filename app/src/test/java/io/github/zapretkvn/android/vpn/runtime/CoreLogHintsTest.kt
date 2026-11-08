@@ -20,6 +20,37 @@ class CoreLogHintsTest {
     }
 
     @Test
+    fun `hysteria QUIC stateless reset is a hint for the server, a bare close is not`() {
+        // Строки из диагностики 0.5.30: узел потерял состояние QUIC-соединения.
+        val hints = CoreLogHints.from(
+            listOf(
+                "ERROR[5840] [3445756364 2ms] outbound/hysteria2[Hipge]: connection closed: received a stateless reset",
+                "ERROR[5841] [3445756365 2ms] outbound/hysteria2[Hipge]: connection closed: received a stateless reset",
+                "ERROR[5842] [3445756366 2ms] outbound/hysteria2[Hipge]: connection closed",
+            ),
+        )
+        assertEquals(listOf(PathHint("Hipge", "hysteria2", HysteriaFailureCode.TARGET_NETWORK_TIMEOUT)), hints)
+    }
+
+    @Test
+    fun `dns failures caused by a stateless reset are counted like timeouts`() {
+        val hint = CoreLogHints.dnsFailures(
+            listOf(
+                "ERROR[6719] [3053563629 296ms] dns: exchange failed for a.example. IN A: dial TCP connection: connection closed: received a stateless reset",
+                "ERROR[6720] [3053563630 300ms] dns: exchange failed for b.example. IN A: dial TCP connection: connection closed: received a stateless reset",
+                "ERROR[6721] dns: exchange failed for c.example. IN A: rcode: NXDOMAIN",
+            ),
+        )
+        assertEquals(setOf("a.example.", "b.example."), hint?.names)
+        // Тегированной подсказки о сервере такая строка не создаёт: имя сервера в ней нет.
+        assertTrue(
+            CoreLogHints.from(
+                listOf("ERROR[6719] dns: exchange failed for a.example. IN A: dial TCP connection: connection closed: received a stateless reset"),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
     fun `selector-level lines name the group, not a server`() {
         val hints = CoreLogHints.from(
             listOf(

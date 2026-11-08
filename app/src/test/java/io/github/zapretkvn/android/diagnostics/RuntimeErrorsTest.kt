@@ -25,6 +25,15 @@ class RuntimeErrorsTest {
     }
 
     @Test
+    fun `QUIC stateless reset is a recoverable server failure while a plain connection close stays unclassified`() {
+        assertEquals(
+            "TARGET_NETWORK_TIMEOUT",
+            HysteriaFailureClassifier.classify("outbound/hysteria2[a]: connection closed: received a stateless reset")?.name,
+        )
+        assertNull(HysteriaFailureClassifier.classify("outbound/hysteria2[a]: connection closed"))
+    }
+
+    @Test
     fun `dns sink connection failures are recorded but never surfaced as the tunnel error`() {
         val message =
             "ERROR[0005] [3288805208 5.0s] connection: open connection to 172.19.0.2:853 " +

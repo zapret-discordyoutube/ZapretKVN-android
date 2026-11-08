@@ -70,7 +70,7 @@
     {
       "code": "TARGET_NETWORK_TIMEOUT",
       "action": "recover_once",
-      "pattern": "(?:no recent network activity|i/o timeout|network timeout|deadline exceeded|handshake timeout|SocketTimeoutException|operation timed out)"
+      "pattern": "(?:no recent network activity|i/o timeout|network timeout|deadline exceeded|handshake timeout|SocketTimeoutException|operation timed out|received a stateless reset)"
     },
     {
       "code": "TARGET_CONNECTION_REFUSED",
