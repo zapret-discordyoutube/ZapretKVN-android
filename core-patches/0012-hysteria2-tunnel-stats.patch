@@ -1,0 +1,344 @@
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 79aa46a4..8c5f9860 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -8,6 +8,7 @@ import (
+ 	"os"
+ 	"runtime"
+ 	runtimeDebug "runtime/debug"
++	"strings"
+ 	"sync"
+ 	"time"
+ 
+@@ -523,6 +524,26 @@ func (s *StartedService) ProxyFlowsJSON(closedAfterMillis int64, limit int) ([]b
+ 	return nowService.trafficManager.ProxyFlowsJSON(closedAfterMillis, limit)
+ }
+ 
++// TunnelStatsText — по строке статистики QUIC-соединения туннеля на каждый исходящий узел, который её умеет
++// (Hysteria2). Пусто, если соединений ещё нет. Ошибка вместо флага: gobind принимает только второй результат error.
++func (s *StartedService) TunnelStatsText() (string, error) {
++	s.serviceAccess.RLock()
++	nowService := s.instance
++	s.serviceAccess.RUnlock()
++	if nowService == nil || nowService.outboundManager == nil {
++		return "", E.New("service is not started")
++	}
++	var lines []string
++	for _, outbound := range nowService.outboundManager.Outbounds() {
++		if reporter, loaded := outbound.(interface{ TunnelStats() string }); loaded {
++			if line := reporter.TunnelStats(); line != "" {
++				lines = append(lines, line)
++			}
++		}
++	}
++	return strings.Join(lines, "\n"), nil
++}
++
+ func (s *StartedService) readStatus() *Status {
+ 	var status Status
+ 	status.Memory = memory.Total()
+diff --git a/experimental/libbox/command_server.go b/experimental/libbox/command_server.go
+index 34f578f8..7c6dcafb 100644
+--- a/experimental/libbox/command_server.go
++++ b/experimental/libbox/command_server.go
+@@ -261,6 +261,16 @@ func (s *CommandServer) ProxyFlows(closedAfterMillis int64, limit int32) string
+ 	return string(data)
+ }
+ 
++// TunnelStats — строки статистики QUIC-соединения туннеля (задержка, потери). Пустая строка — нет соединения или
++// ядро не запущено. Вызывается приложением в момент отсчёта трафика, без подписки и без таймера в ядре.
++func (s *CommandServer) TunnelStats() string {
++	text, err := s.StartedService.TunnelStatsText()
++	if err != nil {
++		return ""
++	}
++	return text
++}
++
+ func (s *CommandServer) NeedWIFIState() bool {
+ 	instance := s.StartedService.Instance()
+ 	if instance == nil || instance.Box() == nil {
+diff --git a/protocol/hysteria2/outbound.go b/protocol/hysteria2/outbound.go
+index 45421720..0f8c7bfc 100644
+--- a/protocol/hysteria2/outbound.go
++++ b/protocol/hysteria2/outbound.go
+@@ -15,11 +15,13 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	hyclient "github.com/apernet/hysteria/core/v2/client"
+ 	hyobfs "github.com/apernet/hysteria/extras/v2/obfs"
+ 	"github.com/apernet/hysteria/extras/v2/transport/udphop"
++	"github.com/apernet/quic-go"
+ 	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/adapter/outbound"
+ 	"github.com/sagernet/sing-box/common/dialer"
+@@ -60,6 +62,13 @@ type Outbound struct {
+ 	access sync.RWMutex
+ 	client hyclient.Client
+ 	closed bool
++
++	// QUIC-соединение туннеля для статистики (см. TunnelStats); обновляется при каждом (пере)подключении.
++	tunnelConn        atomic.Pointer[quic.Conn]
++	statsAccess       sync.Mutex
++	statsPrevious     quic.ConnectionStats
++	statsPreviousAt   time.Time
++	statsPreviousConn *quic.Conn
+ }
+ 
+ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2OutboundOptions) (adapter.Outbound, error) {
+@@ -149,7 +158,12 @@ func applyHysteria2URI(options option.Hysteria2OutboundOptions) (option.Hysteria
+ }
+ 
+ func (h *Outbound) newClient() (hyclient.Client, error) {
+-	return hyclient.NewReconnectableClient(h.clientConfig, func(_ hyclient.Client, info *hyclient.HandshakeInfo, count int) {
++	return hyclient.NewReconnectableClient(h.clientConfig, func(connected hyclient.Client, info *hyclient.HandshakeInfo, count int) {
++		if conn, err := quicConnOf(connected); err == nil {
++			h.tunnelConn.Store(conn)
++		} else {
++			h.logger.Debug("tunnel statistics unavailable: ", err)
++		}
+ 		h.logger.Debug("official Hysteria2 connected to ", info.ServerAddr, ", attempt ", count, ", ",
+ 			describeHandshake(info, h.options.UpMbps, h.options.DownMbps))
+ 	}, true)
+diff --git a/protocol/hysteria2/tunnel_stats.go b/protocol/hysteria2/tunnel_stats.go
+new file mode 100644
+index 00000000..62349c50
+--- /dev/null
++++ b/protocol/hysteria2/tunnel_stats.go
+@@ -0,0 +1,105 @@
++package hysteria2
++
++import (
++	"errors"
++	"fmt"
++	"reflect"
++	"time"
++	"unsafe"
++
++	hyclient "github.com/apernet/hysteria/core/v2/client"
++	"github.com/apernet/quic-go"
++)
++
++// quicConnOf достаёт QUIC-соединение туннеля из клиента Hysteria. Клиент его не отдаёт, поэтому читается
++// закрытое поле: у переподключаемой обёртки это `client` (а в нём `*clientImpl` с полем `conn`). Вызывать
++// только из обратного вызова подключения: там замок обёртки уже держится, и поле читается без гонки.
++// Любое несоответствие раскладки (новая версия Hysteria) даёт ошибку, а не панику: статистика просто пропадает.
++func quicConnOf(client hyclient.Client) (conn *quic.Conn, err error) {
++	defer func() {
++		if recovered := recover(); recovered != nil {
++			conn, err = nil, fmt.Errorf("unexpected hysteria client layout: %v", recovered)
++		}
++	}()
++	value := reflect.ValueOf(client)
++	if value.Kind() != reflect.Pointer || value.IsNil() {
++		return nil, errors.New("hysteria client is not a pointer")
++	}
++	value = value.Elem()
++	if inner := value.FieldByName("client"); inner.IsValid() {
++		inner = reflect.NewAt(inner.Type(), unsafe.Pointer(inner.UnsafeAddr())).Elem()
++		value = reflect.ValueOf(inner.Interface())
++		if value.Kind() != reflect.Pointer || value.IsNil() {
++			return nil, errors.New("inner hysteria client is not connected")
++		}
++		value = value.Elem()
++	}
++	field := value.FieldByName("conn")
++	if !field.IsValid() {
++		return nil, errors.New("hysteria client has no conn field")
++	}
++	pointer := reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem().Interface()
++	conn, ok := pointer.(*quic.Conn)
++	if !ok || conn == nil {
++		return nil, errors.New("conn field is not a QUIC connection")
++	}
++	return conn, nil
++}
++
++// TunnelStats — одна строка о QUIC-соединении туннеля: задержка и потери за время с прошлого вызова. Вызывается
++// приложением в момент его отсчёта трафика, таймера внутри ядра нет (экран выключен: телефон не будим).
++func (h *Outbound) TunnelStats() string {
++	conn := h.tunnelConn.Load()
++	if conn == nil || conn.Context().Err() != nil {
++		return ""
++	}
++	current := conn.ConnectionStats()
++	now := time.Now()
++	h.statsAccess.Lock()
++	previous, previousAt, same := h.statsPrevious, h.statsPreviousAt, h.statsPreviousConn == conn
++	h.statsPrevious, h.statsPreviousAt, h.statsPreviousConn = current, now, conn
++	h.statsAccess.Unlock()
++	return h.Tag() + ": " + formatTunnelStats(previous, same, current, now.Sub(previousAt))
++}
++
++func formatTunnelStats(previous quic.ConnectionStats, hasPrevious bool, current quic.ConnectionStats, window time.Duration) string {
++	text := fmt.Sprintf("tunnel quic: rtt min=%s latest=%s smoothed=%s dev=%s; total sent %d pkts %s, recv %d pkts %s, lost %d pkts",
++		current.MinRTT.Round(time.Millisecond), current.LatestRTT.Round(time.Millisecond),
++		current.SmoothedRTT.Round(time.Millisecond), current.MeanDeviation.Round(time.Millisecond),
++		current.PacketsSent, humanBytes(current.BytesSent), current.PacketsReceived, humanBytes(current.BytesReceived), current.PacketsLost)
++	if !hasPrevious || window <= 0 {
++		return text
++	}
++	sent := deltaUint(current.PacketsSent, previous.PacketsSent)
++	received := deltaUint(current.PacketsReceived, previous.PacketsReceived)
++	lost := deltaUint(current.PacketsLost, previous.PacketsLost)
++	percent := 0.0
++	if sent > 0 {
++		percent = float64(lost) * 100 / float64(sent)
++	}
++	seconds := window.Seconds()
++	return text + fmt.Sprintf("; last %.1fs: sent %d pkts %s (%s/s), recv %d pkts %s (%s/s), lost %d (%.2f%% of sent)",
++		seconds,
++		sent, humanBytes(deltaUint(current.BytesSent, previous.BytesSent)), humanBytes(uint64(float64(deltaUint(current.BytesSent, previous.BytesSent))/seconds)),
++		received, humanBytes(deltaUint(current.BytesReceived, previous.BytesReceived)), humanBytes(uint64(float64(deltaUint(current.BytesReceived, previous.BytesReceived))/seconds)),
++		lost, percent)
++}
++
++// deltaUint: PacketsLost не монотонен (потерянный пакет может прийти позже), поэтому отрицательное приращение это 0.
++func deltaUint(current uint64, previous uint64) uint64 {
++	if current < previous {
++		return 0
++	}
++	return current - previous
++}
++
++func humanBytes(value uint64) string {
++	switch {
++	case value < 1024:
++		return fmt.Sprintf("%dB", value)
++	case value < 1024*1024:
++		return fmt.Sprintf("%.0fKB", float64(value)/1024)
++	default:
++		return fmt.Sprintf("%.1fMB", float64(value)/(1024*1024))
++	}
++}
+diff --git a/protocol/hysteria2/tunnel_stats_test.go b/protocol/hysteria2/tunnel_stats_test.go
+new file mode 100644
+index 00000000..13879df2
+--- /dev/null
++++ b/protocol/hysteria2/tunnel_stats_test.go
+@@ -0,0 +1,121 @@
++package hysteria2
++
++import (
++	"crypto/ecdsa"
++	"crypto/elliptic"
++	"crypto/rand"
++	"crypto/tls"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"math/big"
++	"net"
++	"strings"
++	"testing"
++	"time"
++
++	hyclient "github.com/apernet/hysteria/core/v2/client"
++	hyserver "github.com/apernet/hysteria/core/v2/server"
++	"github.com/apernet/quic-go"
++)
++
++type staticAuth struct{}
++
++func (staticAuth) Authenticate(net.Addr, string, uint64) (bool, string) { return true, "test" }
++
++type udpFactory struct{}
++
++func (udpFactory) New(net.Addr) (net.PacketConn, error) {
++	return net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++}
++
++func selfSignedCertificate(t *testing.T) tls.Certificate {
++	t.Helper()
++	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++	if err != nil {
++		t.Fatal(err)
++	}
++	template := &x509.Certificate{
++		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"},
++		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
++		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
++	}
++	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
++}
++
++// Настоящий сервер и клиент Hysteria в одном процессе: доказывает, что обратный вызов подключения достаёт
++// QUIC-соединение туннеля через закрытые поля, и что статистика после обмена не пуста.
++func TestQuicConnOfReachesTheTunnelConnectionOfARealClient(t *testing.T) {
++	serverConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	server, err := hyserver.NewServer(&hyserver.Config{
++		TLSConfig:     hyserver.TLSConfig{Certificates: []tls.Certificate{selfSignedCertificate(t)}},
++		Conn:          serverConn,
++		Authenticator: staticAuth{},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	go func() { _ = server.Serve() }()
++	defer server.Close()
++
++	var found *quic.Conn
++	var foundErr error
++	client, err := hyclient.NewReconnectableClient(func() (*hyclient.Config, error) {
++		return &hyclient.Config{
++			ConnFactory: udpFactory{},
++			ServerAddr:  serverConn.LocalAddr(),
++			Auth:        "password",
++			TLSConfig:   hyclient.TLSConfig{ServerName: "localhost", InsecureSkipVerify: true},
++		}, nil
++	}, func(connected hyclient.Client, _ *hyclient.HandshakeInfo, _ int) {
++		found, foundErr = quicConnOf(connected)
++	}, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer client.Close()
++	if foundErr != nil || found == nil {
++		t.Fatalf("quicConnOf failed: %v", foundErr)
++	}
++	stats := found.ConnectionStats()
++	if stats.PacketsSent == 0 || stats.PacketsReceived == 0 {
++		t.Fatalf("the handshake must have moved packets both ways: %+v", stats)
++	}
++	if text := formatTunnelStats(stats, false, stats, time.Second); !strings.Contains(text, "tunnel quic: rtt") {
++		t.Fatalf("unexpected text %q", text)
++	}
++}
++
++func TestQuicConnOfRejectsUnknownLayouts(t *testing.T) {
++	if _, err := quicConnOf(nil); err == nil {
++		t.Fatal("nil client must be an error")
++	}
++	type notAClient struct{ hyclient.Client }
++	if _, err := quicConnOf(&notAClient{}); err == nil {
++		t.Fatal("a foreign layout must be an error, not a panic")
++	}
++}
++
++func TestFormatTunnelStatsReportsTheWindowAndNeverGoesNegative(t *testing.T) {
++	previous := quic.ConnectionStats{PacketsSent: 1000, PacketsReceived: 2000, BytesSent: 1_000_000, BytesReceived: 2_500_000, PacketsLost: 50}
++	current := quic.ConnectionStats{
++		MinRTT: 78 * time.Millisecond, LatestRTT: 91 * time.Millisecond, SmoothedRTT: 85 * time.Millisecond, MeanDeviation: 9 * time.Millisecond,
++		PacketsSent: 1100, PacketsReceived: 2900, BytesSent: 1_100_000, BytesReceived: 3_400_000,
++		PacketsLost: 40, // потерянный пакет пришёл позже: счётчик пошёл назад
++	}
++	text := formatTunnelStats(previous, true, current, 5*time.Second)
++	for _, want := range []string{"rtt min=78ms latest=91ms smoothed=85ms dev=9ms", "last 5.0s: sent 100 pkts", "recv 900 pkts", "lost 0 (0.00% of sent)"} {
++		if !strings.Contains(text, want) {
++			t.Errorf("%q missing in %q", want, text)
++		}
++	}
++	if without := formatTunnelStats(previous, false, current, 5*time.Second); strings.Contains(without, "last ") {
++		t.Errorf("no window text without a previous sample: %q", without)
++	}
++}

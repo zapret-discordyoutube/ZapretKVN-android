@@ -9,3 +9,5 @@ a45c8d4d29968282748d81f503092f8b077cfda7b5a8e59e24dd4561b8c032fd  core-patches/0
 bbd07c6e839799cd3cd4762d00f3532cb63ef1854e3a2bfc68763acb72c93f22  core-patches/0009-hysteria2-serialize-udp-send.patch
 48af1761ace8b2252865f81d53a07041cb6656331824ffff85d685a6da5bb6fe  core-patches/0010-hysteria2-handshake-log.patch
 212264daa02c0ce48d456c36304c1ce6963460f8055134eaa9ee6971625e72e8  core-patches/0011-proxy-flows-snapshot.patch
+75e6d5a5576ae2cf830e5aa3320f61e8c7189e5dabb5062ce0141bf037197f1b  core-patches/0012-hysteria2-tunnel-stats.patch
+b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0013-proxy-flows-close.patch

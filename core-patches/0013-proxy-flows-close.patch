@@ -1,0 +1,142 @@
+diff --git a/common/trafficcontrol/close_flows_test.go b/common/trafficcontrol/close_flows_test.go
+new file mode 100644
+index 00000000..39c13424
+--- /dev/null
++++ b/common/trafficcontrol/close_flows_test.go
+@@ -0,0 +1,56 @@
++package trafficcontrol
++
++import (
++	"net"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing/common/bufio"
++)
++
++func trackerOnPipe(t *testing.T, m *Manager, outboundType string) (*connTracker, net.Conn) {
++	t.Helper()
++	client, remote := net.Pipe()
++	tracker := trackerWith(m, outboundType, 10, 20)
++	tracker.ExtendedConn = bufio.NewExtendedConn(client)
++	return tracker, remote
++}
++
++func TestCloseFlowsClosesProxyFlowsOnly(t *testing.T) {
++	m := NewManager(nil)
++	proxy, proxyRemote := trackerOnPipe(t, m, "hysteria2")
++	direct, directRemote := trackerOnPipe(t, m, "direct")
++	defer proxyRemote.Close()
++	defer directRemote.Close()
++
++	closed := m.CloseFlows([]string{proxy.metadata.ID.String(), direct.metadata.ID.String(), "not-a-uuid", "", " "})
++	if closed != 1 {
++		t.Fatalf("closed = %d, want 1 (only the proxy flow)", closed)
++	}
++	if m.Connection(proxy.metadata.ID) != nil {
++		t.Fatal("the closed proxy flow must leave the manager")
++	}
++	if m.Connection(direct.metadata.ID) == nil {
++		t.Fatal("a direct flow must stay")
++	}
++	_ = proxyRemote.SetReadDeadline(time.Now().Add(time.Second))
++	if _, err := proxyRemote.Read(make([]byte, 1)); err == nil {
++		t.Fatal("the other end of the closed flow must see the connection closed")
++	}
++}
++
++func TestCloseFlowsIgnoresUnknownIdsAndRepeats(t *testing.T) {
++	m := NewManager(nil)
++	proxy, remote := trackerOnPipe(t, m, "vless")
++	defer remote.Close()
++	id := proxy.metadata.ID.String()
++	if got := m.CloseFlows([]string{"00000000-0000-0000-0000-000000000000"}); got != 0 {
++		t.Fatalf("unknown id closed %d flows", got)
++	}
++	if got := m.CloseFlows([]string{id}); got != 1 {
++		t.Fatalf("first close = %d, want 1", got)
++	}
++	if got := m.CloseFlows([]string{id}); got != 0 {
++		t.Fatalf("repeated close = %d, want 0", got)
++	}
++}
+diff --git a/common/trafficcontrol/proxy_flows.go b/common/trafficcontrol/proxy_flows.go
+index 6ad06254..a79f5d20 100644
+--- a/common/trafficcontrol/proxy_flows.go
++++ b/common/trafficcontrol/proxy_flows.go
+@@ -3,6 +3,7 @@ package trafficcontrol
+ import (
+ 	"encoding/json"
+ 	"sort"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/gofrs/uuid/v5"
+@@ -100,3 +101,24 @@ func nonNil(flows []FlowSnapshot) []FlowSnapshot {
+ 	}
+ 	return flows
+ }
++
++// CloseFlows закрывает перечисленные потоки через прокси: приложение получает сброс и сразу открывает новое
++// соединение, вместо того чтобы ждать свой долгий таймаут на зависшем. Возвращает число закрытых. Чужие
++// идентификаторы, прямые и служебные потоки не трогаются: закрыть можно только поток через прокси.
++func (m *Manager) CloseFlows(ids []string) int {
++	closed := 0
++	for _, raw := range ids {
++		id, err := uuid.FromString(strings.TrimSpace(raw))
++		if err != nil {
++			continue
++		}
++		tracker := m.Connection(id)
++		if tracker == nil || !IsProxyOutboundType(tracker.Metadata().OutboundType) {
++			continue
++		}
++		if err := tracker.Close(); err == nil {
++			closed++
++		}
++	}
++	return closed
++}
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 8c5f9860..6aca9d07 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -544,6 +544,17 @@ func (s *StartedService) TunnelStatsText() (string, error) {
+ 	return strings.Join(lines, "\n"), nil
+ }
+ 
++// CloseFlowsText закрывает потоки через прокси по идентификаторам (по одному на строку) и возвращает число закрытых.
++func (s *StartedService) CloseFlowsText(ids string) (int, error) {
++	s.serviceAccess.RLock()
++	nowService := s.instance
++	s.serviceAccess.RUnlock()
++	if nowService == nil || nowService.trafficManager == nil {
++		return 0, E.New("service is not started")
++	}
++	return nowService.trafficManager.CloseFlows(strings.Split(ids, "\n")), nil
++}
++
+ func (s *StartedService) readStatus() *Status {
+ 	var status Status
+ 	status.Memory = memory.Total()
+diff --git a/experimental/libbox/command_server.go b/experimental/libbox/command_server.go
+index 7c6dcafb..08bc176c 100644
+--- a/experimental/libbox/command_server.go
++++ b/experimental/libbox/command_server.go
+@@ -271,6 +271,16 @@ func (s *CommandServer) TunnelStats() string {
+ 	return text
+ }
+ 
++// CloseFlows закрывает потоки через прокси по идентификаторам из снимка ProxyFlows (по одному на строку) и возвращает
++// число закрытых; ноль, если ядро не запущено. Прямой вызов, как ProxyFlows: подписки на соединения нет.
++func (s *CommandServer) CloseFlows(ids string) int32 {
++	closed, err := s.StartedService.CloseFlowsText(ids)
++	if err != nil {
++		return 0
++	}
++	return int32(closed)
++}
++
+ func (s *CommandServer) NeedWIFIState() bool {
+ 	instance := s.StartedService.Instance()
+ 	if instance == nil || instance.Box() == nil {
