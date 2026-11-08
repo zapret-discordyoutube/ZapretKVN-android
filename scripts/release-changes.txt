@@ -5,5 +5,4 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-YouTube и браузеры по умолчанию уходят с QUIC на TCP (настройка «Блокировать QUIC» в разделе «Дополнительно»): видео через VPN должно стартовать быстрее и идти ровнее
-В журнал диагностики добавлены условия соединения Hysteria2 и пометки «нет входящего трафика»: так проще найти причину подвисаний
+Подробный журнал диагностики теперь показывает по каждому потоку, сколько байт он получил и сколько прожил, и какие потоки ждут ответ: так найдём причину медленного YouTube
