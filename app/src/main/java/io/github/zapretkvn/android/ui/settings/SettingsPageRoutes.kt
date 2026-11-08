@@ -185,8 +185,10 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
         hidingSummary = vpnHidingSummary(settings.vpnHiding),
         rawEditorLineWrap = settings.rawEditorLineWrap,
         blockQuic = settings.blockQuic,
+        resetStalledFlows = settings.resetStalledFlows,
         onOpenPage = { page -> nav.openSettingsPage(page.id) },
         onRawEditorLineWrapChange = deps.profiles.settings::setRawEditorLineWrap,
         onBlockQuicChange = deps.profiles.settings::setBlockQuic,
+        onResetStalledFlowsChange = deps.profiles.settings::setResetStalledFlows,
     )
 }

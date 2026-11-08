@@ -384,9 +384,11 @@ internal class SessionStarter(
         }
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
+        RuntimeLog.configure(uiSettings.resetStalledFlows)
         RuntimeLog.app(
             4,
-            "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic}",
+            "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic} " +
+                "resetStalledFlows=${uiSettings.resetStalledFlows}",
         )
         val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(

@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.diagnostics
 import io.github.zapretkvn.runtimelog.CoreLogLayers
 import io.github.zapretkvn.runtimelog.FlowSnap
 import io.github.zapretkvn.runtimelog.FlowTracker
+import io.github.zapretkvn.runtimelog.StalledFlowPolicy
 import io.github.zapretkvn.runtimelog.LogLayer
 import io.github.zapretkvn.runtimelog.LogStoreInfo
 import io.github.zapretkvn.runtimelog.RuntimeLogStore
@@ -37,6 +38,10 @@ object RuntimeLog {
 
     private val stall = TrafficStallTracker()
     private val flowTracker = FlowTracker()
+    private val stalledPolicy = StalledFlowPolicy()
+
+    @Volatile
+    private var resetStalledEnabled = true
     private var closedCursor = 0L
     private val stallLock = Any()
     private var lastNetworkLine: String? = null
@@ -88,17 +93,40 @@ object RuntimeLog {
      * жизни, топ потоков по входящему, потоки, которые «ждут ответ». `null` и пустая строка (ядро не запущено)
      * пропускаются; битый JSON не должен ронять отсчёт трафика.
      */
-    fun flows(json: String?) {
-        val target = store ?: return
-        if (json.isNullOrEmpty()) return
-        val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return
+    fun flows(json: String?): List<String> {
+        val target = store ?: return emptyList()
+        if (json.isNullOrEmpty()) return emptyList()
+        val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull() ?: return emptyList()
         val active = root["active"].snaps()
         val closed = root["closed"].snaps()
-        val lines = synchronized(stallLock) {
+        val now = System.currentTimeMillis()
+        val (lines, stalled) = synchronized(stallLock) {
             closed.maxOfOrNull { it.closedAtEpochMillis }?.let { if (it > closedCursor) closedCursor = it }
-            flowTracker.onSnapshot(System.currentTimeMillis(), active, closed)
+            flowTracker.onSnapshot(now, active, closed) to
+                if (resetStalledEnabled) stalledPolicy.pick(now, active) else emptyList()
         }
         lines.forEach { target.log(LogLayer.Traffic, it.level, it.text) }
+        stalled.forEach { flow ->
+            target.log(
+                LogLayer.Traffic,
+                3,
+                "сброс зависшего потока ${flow.domain} tcp: жил ${FlowTracker.formatDuration(now - flow.createdAtEpochMillis)}, " +
+                    "вверх ${FlowTracker.formatBytes(flow.uplink)}, вниз ${FlowTracker.formatBytes(flow.downlink)}; плеер откроет новое соединение",
+            )
+        }
+        return stalled.map { it.id }
+    }
+
+    /** Включает или выключает сброс зависших потоков YouTube; вызывается при старте сессии из настроек. */
+    fun configure(resetStalledFlows: Boolean) {
+        resetStalledEnabled = resetStalledFlows
+    }
+
+    /** Статистика QUIC-соединения туннеля из ядра (`CommandServer.tunnelStats`): по строке на сервер Hysteria2. */
+    fun tunnelStats(text: String?) {
+        val target = store ?: return
+        if (text.isNullOrEmpty()) return
+        text.lineSequence().filter(String::isNotBlank).forEach { target.log(LogLayer.Outbound, 4, it) }
     }
 
     private fun JsonElement?.snaps(): List<FlowSnap> =
@@ -126,6 +154,7 @@ object RuntimeLog {
         synchronized(stallLock) {
             stall.reset()
             flowTracker.reset()
+            stalledPolicy.reset()
             closedCursor = 0L
         }
         store?.log(LogLayer.Traffic, 4, "сессия $generation: счётчики с нуля")

@@ -55,6 +55,9 @@ class ProfileSettingsActions internal constructor(
     fun setProxyIpv4Only(enabled: Boolean) =
         apply("Смена IP-стратегии DNS") { settingsStore.setProxyIpv4Only(enabled) }
 
+    /** Без перезапуска: настройка читается при старте сессии и действует со следующего подключения. */
+    fun setResetStalledFlows(enabled: Boolean) = apply { settingsStore.setResetStalledFlows(enabled) }
+
     fun setBlockQuic(enabled: Boolean) =
         apply("Смена блокировки QUIC") { settingsStore.setBlockQuic(enabled) }
 

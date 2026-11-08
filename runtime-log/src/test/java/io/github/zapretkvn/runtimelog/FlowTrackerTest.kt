@@ -25,6 +25,7 @@ class FlowTrackerTest {
         val closed = lines.first().text
         assertTrue(closed, closed.startsWith("закрыт tcp rr2.sn-x.googlevideo.com (app.youtube, hysteria2)"))
         assertTrue(closed, "жил 12.5с" in closed && "вверх 2КБ" in closed && "вниз 1.0МБ" in closed)
+        assertTrue("average speed over the lifetime: $closed", "ср. вниз 82КБ/с" in closed)
         assertTrue("window summary follows", lines.last().text.startsWith("потоки: живых 0"))
     }
 

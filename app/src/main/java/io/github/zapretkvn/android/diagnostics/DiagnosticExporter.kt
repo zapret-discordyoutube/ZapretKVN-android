@@ -190,6 +190,7 @@ class DiagnosticExporter(
                     put("mode", settings.dnsMode.name)
                     put("proxy_ipv4_only", settings.proxyIpv4Only)
                     put("block_quic", settings.blockQuic)
+                    put("reset_stalled_flows", settings.resetStalledFlows)
                     put(
                         "override_active",
                         settings.dnsOverride.enabled && settings.dnsMode != DnsMode.FromJson,

@@ -58,6 +58,42 @@ class RuntimeLogFlowsTest {
         assertTrue(text, "потоки: живых 1" in text && "rr2.sn-x.googlevideo.com tcp ↓3.0МБ" in text)
     }
 
+    private fun stalledSnapshot(id: String, domain: String = "rr5.sn-x.googlevideo.com", down: Long = 647): String {
+        val created = System.currentTimeMillis() - 20_000
+        return """{"at":0,"active":[{"id":"$id","net":"tcp","domain":"$domain","dest":"74.125.11.74:443",
+            "pkg":"app.youtube","out":"hy2","created":$created,"up":900,"down":$down}],"closed":[]}"""
+    }
+
+    @Test
+    fun `a stalled googlevideo flow is returned for closing and the reset is logged`() {
+        RuntimeLog.configure(true)
+        RuntimeLog.sessionStarted(2)
+        val ids = RuntimeLog.flows(stalledSnapshot("stalled-1"))
+        assertEquals(listOf("stalled-1"), ids)
+        val text = logText()
+        assertTrue(text, "сброс зависшего потока rr5.sn-x.googlevideo.com tcp" in text)
+    }
+
+    @Test
+    fun `healthy flows other sites and a disabled switch return nothing`() {
+        RuntimeLog.configure(true)
+        RuntimeLog.sessionStarted(3)
+        assertTrue("healthy", RuntimeLog.flows(stalledSnapshot("healthy", down = 5_000_000)).isEmpty())
+        assertTrue("other site", RuntimeLog.flows(stalledSnapshot("other", domain = "sponsor.ajay.app")).isEmpty())
+        RuntimeLog.configure(false)
+        assertTrue("switched off", RuntimeLog.flows(stalledSnapshot("off")).isEmpty())
+        RuntimeLog.configure(true)
+    }
+
+    @Test
+    fun `tunnel statistics lines are written one per server and blank input is ignored`() {
+        RuntimeLog.tunnelStats(null)
+        RuntimeLog.tunnelStats("")
+        RuntimeLog.tunnelStats("hy2-a: tunnel quic: rtt min=78ms latest=91ms\nhy2-b: tunnel quic: rtt min=40ms latest=44ms\n\n")
+        val text = logText()
+        assertTrue(text, "hy2-a: tunnel quic: rtt min=78ms" in text && "hy2-b: tunnel quic: rtt min=40ms" in text)
+    }
+
     @Test
     fun `broken empty or null snapshots do not throw and do not move the cursor`() {
         val cursor = RuntimeLog.flowCursor()

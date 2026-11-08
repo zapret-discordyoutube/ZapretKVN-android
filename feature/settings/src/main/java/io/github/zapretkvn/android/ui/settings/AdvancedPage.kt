@@ -13,9 +13,11 @@ fun AdvancedScreen(
     hidingSummary: String,
     rawEditorLineWrap: Boolean,
     blockQuic: Boolean,
+    resetStalledFlows: Boolean,
     onOpenPage: (SettingsPage) -> Unit,
     onRawEditorLineWrapChange: (Boolean) -> Unit,
     onBlockQuicChange: (Boolean) -> Unit,
+    onResetStalledFlowsChange: (Boolean) -> Unit,
 ) {
     SettingsPageList(contentPadding, tag = "settings-page-advanced") {
         item(key = "pages", contentType = "rows") {
@@ -45,6 +47,16 @@ fun AdvancedScreen(
                     checked = blockQuic,
                     onCheckedChange = onBlockQuicChange,
                     switchDescription = "Блокировать QUIC (UDP 443)",
+                )
+                RowDivider()
+                SwitchRow(
+                    title = "Сбрасывать зависшие соединения YouTube",
+                    subtitle = "Если видео-сервер YouTube принял запрос, но за 8 секунд почти ничего не прислал, соединение " +
+                        "закрывается сразу, и плеер пробует снова, не дожидаясь своего долгого таймаута. Со следующего подключения.",
+                    icon = ZapretIcons.Shield,
+                    checked = resetStalledFlows,
+                    onCheckedChange = onResetStalledFlowsChange,
+                    switchDescription = "Сбрасывать зависшие соединения YouTube",
                 )
             }
         }

@@ -312,7 +312,13 @@ internal class CoreSession(
             ),
         )
         // Снимок потоков через прокси: прямым вызовом в момент отсчёта, без подписки на соединения (I6-05).
-        RuntimeLog.flows(runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull())
+        val stalledFlows = RuntimeLog.flows(
+            runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull(),
+        )
+        // Зависшие потоки YouTube закрываются сразу: плеер получает сброс и открывает новое соединение,
+        // не дожидаясь своего долгого таймаута. Прямой вызов ядра, подписки на соединения нет (I6-05).
+        if (stalledFlows.isNotEmpty()) runCatching { server?.closeFlows(stalledFlows.joinToString("\n")) }
+        RuntimeLog.tunnelStats(runCatching { server?.tunnelStats() }.getOrNull())
         RuntimeLog.traffic(
             uplinkTotal,
             downlinkTotal,

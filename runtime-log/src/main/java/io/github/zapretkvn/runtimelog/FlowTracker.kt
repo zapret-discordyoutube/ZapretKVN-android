@@ -74,15 +74,17 @@ class FlowTracker(
             val up = maxOf(snap.uplink, state?.uplink ?: 0)
             val down = maxOf(snap.downlink, state?.downlink ?: 0)
             val name = snap.domain.ifBlank { snap.destination }.ifBlank { state?.name ?: "?" }
-            val lived = if (snap.createdAtEpochMillis > 0 && snap.closedAtEpochMillis > 0) {
-                formatDuration((snap.closedAtEpochMillis - snap.createdAtEpochMillis).coerceAtLeast(0))
+            val livedMillis = if (snap.createdAtEpochMillis > 0 && snap.closedAtEpochMillis > 0) {
+                (snap.closedAtEpochMillis - snap.createdAtEpochMillis).coerceAtLeast(0)
             } else {
-                "?"
+                -1L
             }
+            // Средняя скорость вниз за всю жизнь потока: по ней сравниваются кеш-узлы YouTube и серверы.
+            val average = if (livedMillis >= 1_000 && down > 0) ", ср. вниз ${formatBytes(down * 1_000 / livedMillis)}/с" else ""
             lines += FlowLine(
                 4,
                 "закрыт ${snap.network.ifBlank { "?" }} $name (${snap.packageName.ifBlank { "?" }}, ${snap.outbound.ifBlank { "?" }}): " +
-                    "жил $lived, вверх ${formatBytes(up)}, вниз ${formatBytes(down)}",
+                    "жил ${if (livedMillis >= 0) formatDuration(livedMillis) else "?"}, вверх ${formatBytes(up)}, вниз ${formatBytes(down)}$average",
             )
         }
         // Потоки, которых нет ни среди живых, ни среди закрытых (запись закрытия вытеснена), забываем.

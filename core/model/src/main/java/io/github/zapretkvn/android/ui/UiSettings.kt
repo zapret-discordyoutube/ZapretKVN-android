@@ -28,6 +28,11 @@ data class UiSettings(
      * TCP (владелец 2026-11-08: включено по умолчанию).
      */
     val blockQuic: Boolean = true,
+    /**
+     * Сразу закрывать зависшие потоки YouTube (googlevideo.com: запрос ушёл, за 8 с почти ничего не пришло): плеер
+     * открывает новое соединение, не дожидаясь своего долгого таймаута (владелец 2026-11-08).
+     */
+    val resetStalledFlows: Boolean = true,
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
