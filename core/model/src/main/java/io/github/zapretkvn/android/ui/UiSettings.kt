@@ -22,6 +22,12 @@ data class UiSettings(
     val hideServerAddresses: Boolean = true,
     val dnsMode: DnsMode = DnsMode.FromJson,
     val proxyIpv4Only: Boolean = true,
+    /**
+     * Отвечать отказом на UDP 443 (QUIC/HTTP3): приложения мгновенно уходят на TCP. QUIC внутри
+     * датаграмм Hysteria2 это QUIC внутри QUIC: видео YouTube стартует и идёт заметно хуже, чем по
+     * TCP (владелец 2026-11-08: включено по умолчанию).
+     */
+    val blockQuic: Boolean = true,
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),

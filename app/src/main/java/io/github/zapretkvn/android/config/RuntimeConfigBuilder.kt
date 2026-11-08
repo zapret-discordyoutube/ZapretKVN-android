@@ -55,6 +55,11 @@ internal object ManagedHealthProbe {
 data class RuntimeConfigOptions(
     val dnsMode: DnsMode = DnsMode.FromJson,
     val proxyIpv4Only: Boolean = true,
+    /**
+     * Отказ на UDP 443 (QUIC/HTTP3) в runtime-копии: клиент сразу откатывается на TCP. Правило
+     * ставится после служебных правил и перед пользовательскими, в любом режиме DNS.
+     */
+    val blockQuic: Boolean = false,
     val dnsOverride: DnsOverride = DnsOverride(),
     val bootstrapHost: BootstrapHostOverlay? = null,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
@@ -287,6 +292,7 @@ object RuntimeConfigBuilder {
             blockedPackages = blockedPackages,
             androidDnsProxiedViaNode = options.androidDnsProxiedViaNode,
             privateDnsRoute = options.privateDnsRoute,
+            blockQuic = options.blockQuic,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         return dnsOverlay as RuntimeConfigResult.Ready
@@ -357,6 +363,7 @@ object RuntimeConfigBuilder {
         blockedPackages: Set<String>,
         androidDnsProxiedViaNode: Boolean,
         privateDnsRoute: PrivateDnsRoute?,
+        blockQuic: Boolean,
     ): RuntimeConfigResult {
         // «DNS Android» с выбранным proxy отправляет проксируемые имена к DNS узла;
         // без proxy (или с отключённым флагом) все имена остаются на системном DNS.
@@ -496,7 +503,8 @@ object RuntimeConfigBuilder {
             fromJsonNeedsAndroidFallback ||
             selectedProxyTag != null ||
             blockedPackages.isNotEmpty() ||
-            privateDnsRoute != null
+            privateDnsRoute != null ||
+            blockQuic
         ) {
             val route = (root["route"] as? JsonObject)?.toMutableMap()
                 ?: return invalid("В конфигурации отсутствует route.")
@@ -523,6 +531,7 @@ object RuntimeConfigBuilder {
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
                     add(healthProbeRule(proxyTag, healthCheckPackageName))
                 }
+                if (blockQuic) add(quicRejectRule())
             }
             route["rules"] = JsonArray(generatedRouteRules + existing)
             // sing-box >= 1.14 removed implicit domain resolution in dial fields:
@@ -835,6 +844,13 @@ object RuntimeConfigBuilder {
         put("action", "route")
         put("server", server)
         if (ipv4Only) put("strategy", IPV4_ONLY_STRATEGY)
+    }
+
+    /** `reject` по умолчанию отвечает отказом сразу: QUIC-клиент не ждёт таймаут, а идёт по TCP. */
+    private fun quicRejectRule(): JsonObject = buildJsonObject {
+        put("network", "udp")
+        put("port", 443)
+        put("action", "reject")
     }
 
     private fun hijackDnsRule(): JsonObject = buildJsonObject {

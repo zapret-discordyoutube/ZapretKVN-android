@@ -271,6 +271,52 @@ class RuntimeConfigBuilderTest {
         assertFalse("release runtime must not synthesize a traffic manager", "experimental" in root)
     }
 
+    private fun routeRulesOf(json: String): List<JsonObject> =
+        (((JsonConfig.parse(json) as JsonObject)["route"] as JsonObject)["rules"] as? JsonArray).orEmpty()
+            .map { it as JsonObject }
+
+    private fun isQuicReject(rule: JsonObject): Boolean =
+        rule.string("action") == "reject" &&
+            rule.string("network") == "udp" &&
+            (rule["port"] as? JsonPrimitive)?.content == "443"
+
+    @Test
+    fun `block quic adds one udp 443 reject after the service rules and before the user rules`() {
+        for (mode in listOf(DnsMode.Automatic, DnsMode.Secure, DnsMode.Android, DnsMode.FromJson)) {
+            val on = RuntimeConfigBuilder.build(
+                validConfig(),
+                options = RuntimeConfigOptions(dnsMode = mode, blockQuic = true),
+            ) as RuntimeConfigResult.Ready
+            val off = RuntimeConfigBuilder.build(
+                validConfig(),
+                options = RuntimeConfigOptions(dnsMode = mode, blockQuic = false),
+            ) as RuntimeConfigResult.Ready
+            val withQuic = routeRulesOf(on.json)
+            val without = routeRulesOf(off.json)
+
+            assertEquals("mode $mode: exactly one reject", 1, withQuic.count(::isQuicReject))
+            assertEquals("mode $mode: nothing else changes", without, withQuic.filterNot(::isQuicReject))
+            assertEquals("mode $mode: switch off adds nothing", 0, without.count(::isQuicReject))
+            // Служебные правила (hijack-dns и др.) остаются выше отказа, пользовательские ниже.
+            val quicAt = withQuic.indexOfFirst(::isQuicReject)
+            val hijackAt = withQuic.indexOfFirst { it.string("action") == "hijack-dns" }
+            if (hijackAt >= 0) assertTrue("mode $mode: DNS hijack stays above the QUIC reject", hijackAt < quicAt)
+        }
+    }
+
+    @Test
+    fun `block quic is off in the builder by default and the stored profile stays untouched`() {
+        val stored = validConfig()
+        val built = RuntimeConfigBuilder.build(stored, options = RuntimeConfigOptions(dnsMode = DnsMode.Automatic))
+            as RuntimeConfigResult.Ready
+        assertEquals(0, routeRulesOf(built.json).count(::isQuicReject))
+        val before = stored
+        RuntimeConfigBuilder.build(stored, options = RuntimeConfigOptions(blockQuic = true))
+        // Правило живёт только в runtime-копии: сохранённый текст профиля тот же, что был.
+        assertEquals(before, stored)
+        assertEquals(validConfig(), stored)
+    }
+
     @Test
     fun `updater route is temporary package scoped and uses selected proxy`() {
         val stored = validConfig()

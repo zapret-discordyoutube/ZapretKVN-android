@@ -103,12 +103,12 @@ object RuntimeLog {
             is TrafficStallTracker.Event.Started -> target.log(
                 LogLayer.Traffic,
                 3,
-                "ПОДВИСАНИЕ: исходящий трафик идёт, входящего почти нет с ${event.sinceEpochMillis}, соединений ${step.connections}",
+                "НЕТ ВХОДЯЩЕГО: исходящий идёт, входящего меньше 8 КБ за окно с ${event.sinceEpochMillis}, соединений ${step.connections} (подвисание или пауза плеера)",
             )
             is TrafficStallTracker.Event.Ended -> target.log(
                 LogLayer.Traffic,
                 3,
-                "ПОДВИСАНИЕ закончилось через ${event.durationMillis}мс, " +
+                "НЕТ ВХОДЯЩЕГО закончилось через ${event.durationMillis}мс, " +
                     if (event.recovered) "поток вернулся" else "трафик затих",
             )
             null -> Unit

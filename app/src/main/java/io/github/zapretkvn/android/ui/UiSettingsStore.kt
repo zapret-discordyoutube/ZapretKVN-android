@@ -57,6 +57,7 @@ class UiSettingsStore(
                     ?.let { stored -> DnsMode.entries.firstOrNull { it.name == stored } }
                     ?: DnsMode.FromJson,
                 proxyIpv4Only = preferences[PROXY_IPV4_ONLY] ?: true,
+                blockQuic = preferences[BLOCK_QUIC] ?: true,
                 dnsOverride = DnsOverride(
                     enabled = preferences[DNS_OVERRIDE_ENABLED] ?: true,
                     hostname = preferences[DNS_OVERRIDE_HOSTNAME] ?: DnsOverride.DEFAULT_HOSTNAME,
@@ -159,6 +160,10 @@ class UiSettingsStore(
 
     suspend fun setProxyIpv4Only(enabled: Boolean) {
         dataStore.edit { it[PROXY_IPV4_ONLY] = enabled }
+    }
+
+    suspend fun setBlockQuic(enabled: Boolean) {
+        dataStore.edit { it[BLOCK_QUIC] = enabled }
     }
 
     suspend fun setDnsOverrideEnabled(enabled: Boolean) {
@@ -294,6 +299,7 @@ class UiSettingsStore(
         val HIDE_SERVER_ADDRESSES = booleanPreferencesKey("hide_server_addresses")
         val DNS_MODE = stringPreferencesKey("dns_mode")
         val PROXY_IPV4_ONLY = booleanPreferencesKey("proxy_ipv4_only")
+        val BLOCK_QUIC = booleanPreferencesKey("block_quic")
         val DNS_OVERRIDE_ENABLED = booleanPreferencesKey("dns_override_enabled")
         val DNS_OVERRIDE_HOSTNAME = stringPreferencesKey("dns_override_hostname")
         val DNS_OVERRIDE_IPV4 = stringPreferencesKey("dns_override_ipv4")

@@ -320,3 +320,9 @@ Exact core benchmark production assets: load 1 114 мкс, 758 624 allocatio
 - [проверенный снимок `geoip-ru.srs`](https://raw.githubusercontent.com/SagerNet/sing-geoip/5605651c12ed5b2fcf3b5de580c041eb9d8d938e/geoip-ru.srs)
 - [v2rayNG: отдельный экран per-app](https://github.com/2dust/v2rayNG/blob/1b13fadce7aea2e6ddcac346caa55d123042c985/V2rayNG/app/src/main/java/com/v2ray/ang/ui/perappproxy/PerAppProxyActivity.kt)
 - [v2rayNG: отдельный экран destination routing](https://github.com/2dust/v2rayNG/blob/1b13fadce7aea2e6ddcac346caa55d123042c985/V2rayNG/app/src/main/java/com/v2ray/ang/ui/routing/RoutingSettingActivity.kt)
+
+## Блокировка QUIC (UDP 443)
+
+Сгенерированное правило `{"network":"udp","port":443,"action":"reject"}` (настройка «Блокировать QUIC»,
+включена по умолчанию) живёт только в runtime-копии: после служебных правил и перед пользовательскими, в
+любом режиме DNS, профиль на диске не меняется. Подробности и причина: `RUNTIME_LOG.md`, раздел «Блокировка QUIC».

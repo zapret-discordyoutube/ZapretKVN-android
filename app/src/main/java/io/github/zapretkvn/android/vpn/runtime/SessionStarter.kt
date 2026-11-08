@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.vpn.runtime
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.apps.AllowedApplicationSink
 import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.apps.DisallowedApplicationSink
@@ -383,6 +384,10 @@ internal class SessionStarter(
         }
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
+        RuntimeLog.app(
+            4,
+            "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic}",
+        )
         val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(
                 effectiveConfig,
@@ -390,6 +395,7 @@ internal class SessionStarter(
                 options = RuntimeConfigOptions(
                     dnsMode = dnsMode,
                     proxyIpv4Only = uiSettings.proxyIpv4Only,
+                    blockQuic = uiSettings.blockQuic,
                     dnsOverride = uiSettings.dnsOverride,
                     bootstrapHost = preparedBootstrap.overlay,
                     vpnHiding = vpnHiding,

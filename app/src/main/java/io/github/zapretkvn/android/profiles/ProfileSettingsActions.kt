@@ -55,6 +55,9 @@ class ProfileSettingsActions internal constructor(
     fun setProxyIpv4Only(enabled: Boolean) =
         apply("Смена IP-стратегии DNS") { settingsStore.setProxyIpv4Only(enabled) }
 
+    fun setBlockQuic(enabled: Boolean) =
+        apply("Смена блокировки QUIC") { settingsStore.setBlockQuic(enabled) }
+
     fun setDnsOverrideEnabled(enabled: Boolean) =
         apply("Смена DNS-переопределения") { settingsStore.setDnsOverrideEnabled(enabled) }
 
