@@ -5,5 +5,6 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Медленный видеопоток YouTube узнаётся за секунды: опрос потоков ускоряется, пока идёт видео, а потоки без имени получают имя из ответов DNS
-Новая настройка «Менять сервер при медленном YouTube» (выключена): приложение пробует другой сервер, оставляет его, если видео пошло, иначе возвращает прежний
+Ядро Xray (VLESS) обновлено с 26.3.27 до 26.11.9: свежие исправления и протоколы
+Встроенные ядра собираются на Go 1.27.3
+Xray 26.11 не принимает VLESS и Trojan без TLS, Reality или шифрования на публичный адрес: для таких серверов включите TLS или Reality

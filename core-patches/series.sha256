@@ -11,3 +11,4 @@ bbd07c6e839799cd3cd4762d00f3532cb63ef1854e3a2bfc68763acb72c93f22  core-patches/0
 212264daa02c0ce48d456c36304c1ce6963460f8055134eaa9ee6971625e72e8  core-patches/0011-proxy-flows-snapshot.patch
 75e6d5a5576ae2cf830e5aa3320f61e8c7189e5dabb5062ce0141bf037197f1b  core-patches/0012-hysteria2-tunnel-stats.patch
 b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0013-proxy-flows-close.patch
+35319c53af44d36ee3dbe1010a324d1c550e455fe389259baa2b7512dba662f9  core-patches/0014-xray-core-v26-11-9.patch

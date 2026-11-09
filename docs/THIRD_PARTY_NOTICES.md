@@ -20,8 +20,8 @@ is recorded separately from the upstream revision, and is reversed after compila
 ## Xray core
 
 - Source: <https://github.com/XTLS/Xray-core>
-- Module: `github.com/xtls/xray-core@v1.260327.0` (v26.3.27).
-- Pinned commit: `d2758a023cd7f4174a5a5fa4ff66e487d4342ba0`.
+- Module: `github.com/xtls/xray-core@v1.260327.1-0.20261109052709-676eaf66f8f0` (v26.11.9).
+- Pinned commit: `676eaf66f8f05d4d558ee7a74b4736623d3feeb9`.
 - License: Mozilla Public License 2.0, retained in `res/raw/xray_core_license.txt`.
 
 The official VLESS implementation is linked into `libbox.so`. The local patchset
