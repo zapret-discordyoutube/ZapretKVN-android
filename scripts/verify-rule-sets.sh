@@ -12,7 +12,16 @@ trap 'rm -rf -- "$TMP_DIR"' EXIT
 "$CLI" rule-set compile \
     "$PROJECT_ROOT/rulesets/zapret-ru-domains.json" \
     -o "$TMP_DIR/zapret-ru-domains.srs"
-cmp -s "$TMP_DIR/zapret-ru-domains.srs" "$ASSETS/zapret-ru-domains.srs" || {
+# Compare the format header and the DECOMPRESSED payload, not the compressed bytes: the .srs body is a zlib stream and
+# the Go compressor changed its output between toolchains (Go 1.26.8 -> 1.27.3 gave a 3-byte different stream for
+# identical content, 2026-11-09). The content guarantee is the same: the packaged rule set equals the compiled source.
+python3 - "$TMP_DIR/zapret-ru-domains.srs" "$ASSETS/zapret-ru-domains.srs" <<'PY' || {
+import sys, zlib
+def parts(path):
+    data = open(path, "rb").read()
+    return data[:4], zlib.decompress(data[4:])
+sys.exit(0 if parts(sys.argv[1]) == parts(sys.argv[2]) else 1)
+PY
     echo "Packaged RU domain rule-set is not reproducible from pinned source/CLI." >&2
     exit 1
 }
