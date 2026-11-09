@@ -152,7 +152,16 @@ object RuntimeConfigBuilder {
             is RuntimeHardeningResult.Ready -> hardened.root
             is RuntimeHardeningResult.Blocked -> return invalid(hardened.message)
         }
-        val root = hardenedRoot
+        // Серверы-заглушки провайдера и VLESS без защиты на публичный адрес Xray 26.11 не соберёт: они убираются из
+        // рантайм-конфига, иначе запуск останавливается целиком. Если не остаётся ни одного сервера группы или убран
+        // выбранный сервер, называется причина (CFG-121).
+        val stripped = PlainTransportPolicy.strip(hardenedRoot)
+        val root = stripped.root
+        if (stripped.removed.isNotEmpty() &&
+            (PlainTransportPolicy.hasEmptyGroup(root) || BootstrapConfig.selectedProxyTag(config) in stripped.removed)
+        ) {
+            return RuntimeConfigResult.Invalid(PlainTransportPolicy.RUNTIME_MESSAGE, PlainTransportPolicy.FAILURE_CODE)
+        }
 
         findForbiddenField(root)?.let { field ->
             return invalid("Поле '$field' несовместимо с Android VPN и запрещено в MVP.")

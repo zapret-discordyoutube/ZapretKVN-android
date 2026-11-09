@@ -5,6 +5,5 @@
 # Rules: 1-6 items, one per line; each <= 180 chars; total joined <= 700 chars;
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
-Ядро Xray (VLESS) обновлено с 26.3.27 до 26.11.9: свежие исправления и протоколы
-Встроенные ядра собираются на Go 1.27.3
-Xray 26.11 не принимает VLESS и Trojan без TLS, Reality или шифрования на публичный адрес: для таких серверов включите TLS или Reality
+Информационные серверы провайдера («осталось N дней», адрес 0.0.0.0) больше не останавливают запуск VPN с новым ядром Xray 26.11
+VLESS без TLS и Reality на публичный адрес Xray 26.11 не принимает: при импорте такая ссылка отвергается с пояснением, в подписке пропускается, при запуске показывается код CFG-121

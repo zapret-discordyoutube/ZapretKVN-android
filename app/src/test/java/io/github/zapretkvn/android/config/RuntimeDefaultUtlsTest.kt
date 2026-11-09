@@ -86,7 +86,7 @@ class RuntimeDefaultUtlsTest {
         assertNull(quicTransport.utls())
 
         val disabledTls = runtimeOutbound(
-            """{"type":"vless","tag":"server-a","server":"example.com","server_port":443,""" +
+            """{"type":"vless","tag":"server-a","server":"192.168.1.2","server_port":443,""" +
                 """"uuid":"00000000-0000-0000-0000-000000000000","tls":{"enabled":false}}""",
         )
         assertNull(disabledTls.utls())

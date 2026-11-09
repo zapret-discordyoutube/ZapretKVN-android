@@ -17,6 +17,7 @@ import io.github.zapretkvn.android.profiles.ProtocolOutboundBuilders
 import io.github.zapretkvn.android.profiles.TlsSettings
 import io.github.zapretkvn.android.profiles.TransportSettings
 import io.github.zapretkvn.wireguardimport.WireGuardConfigParser
+import io.github.zapretkvn.android.config.PlainTransportPolicy
 import io.github.zapretkvn.android.config.TlsVerificationPolicy
 import io.github.zapretkvn.wireguardimport.WireGuardImportException
 import java.io.ByteArrayOutputStream
@@ -406,6 +407,11 @@ object ShareLinkParser {
                 "VLESS с транспортом '${query["type"]}' (HTTP/2) больше не поддерживается Xray-core. " +
                     "Попросите у провайдера ссылку с type=xhttp.",
             )
+        }
+        // Xray 26.11 не строит VLESS без TLS/Reality/шифрования на публичный адрес и остановил бы запуск всего профиля.
+        // Заглушки провайдера (0.0.0.0) разбираются ниже как информационные узлы; в рантайм-конфиг они не попадают.
+        if (host != "0.0.0.0" && PlainTransportPolicy.violatesLink(link)) {
+            throw ImportException(PlainTransportPolicy.IMPORT_MESSAGE)
         }
         return ProtocolOutboundBuilders.vless(
             uri = link,

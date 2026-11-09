@@ -261,3 +261,12 @@ format, но это не extended URI. Его также нельзя объяв
 Checkbox исследовательского пункта означает завершённый аудит, а не наличие
 формата в приложении. Реальная поддержка отмечается только отдельной задачей и
 после прохождения её gate.
+
+## Plain VLESS and provider stub servers under Xray 26.11 (added 2026-11-09)
+
+Xray 26.11 refuses to build a VLESS outbound without TLS, Reality or encryption unless the server address is private
+(`requiresTransportSecurity`), and sing-box builds every outbound at start, so one such server stopped the whole profile.
+`PlainTransportPolicy` repeats that rule: an import of such a link fails with a clear message (in a subscription the server is
+skipped with a warning), provider stub servers (`vless://…@0.0.0.0:1?security=none`, kept as information nodes) are removed from the
+RUNTIME config together with their group entries (the stored profile is unchanged), and a profile whose selected server or whole
+group is affected stops with code `CFG-121`. Windows mirrors the rule in `xray_outbound_compat.py`.
