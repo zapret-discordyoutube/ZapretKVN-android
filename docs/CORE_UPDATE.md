@@ -87,3 +87,12 @@ scripts/prepare-stable-core.sh vMAJOR.MINOR.PATCH
 ставится в `~/.local/share/toolchains/go-X.Y.Z` (SHA-256 из
 `https://go.dev/dl/?mode=json`), `/usr/local/bin/go` переключается после коммита
 пинов, в `.forgejo/workflows/*.yml` меняется `go-version`.
+
+## Xray pin (added 2026-11-09)
+
+Android builds Xray from source, so its pin is moved by hand: edit `XRAY_CORE_MODULE` / `XRAY_CORE_COMMIT` in `core.properties`
+(Xray stopped publishing Go-module tags after `v1.260327.0`, so use the commit's pseudo-version from
+`go list -m -json github.com/xtls/xray-core@<commit>`), add a NEW core patch for any source or `go.mod` change (see `0014`), and
+check which Go version the release needs (`go` line of its `go.mod`; the pair shares one toolchain). The freeze
+(`windows/scripts/prepare_core_release.py`) now compares the Android commit with the commit of the Windows-selected Xray tag and
+stops when Android lags, so the pin cannot fall behind silently again.
