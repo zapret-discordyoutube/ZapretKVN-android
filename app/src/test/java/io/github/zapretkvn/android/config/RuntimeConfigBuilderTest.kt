@@ -304,6 +304,22 @@ class RuntimeConfigBuilderTest {
         }
     }
 
+    @Test
+    fun `the QUIC reject stays above the forced proxy rule so UDP 443 to YouTube is still rejected`() {
+        for (mode in listOf(DnsMode.Automatic, DnsMode.Secure, DnsMode.Android)) {
+            val built = RuntimeConfigBuilder.build(
+                validConfig(),
+                options = RuntimeConfigOptions(dnsMode = mode, blockQuic = true),
+            ) as RuntimeConfigResult.Ready
+            val rules = routeRulesOf(built.json)
+            val quicAt = rules.indexOfFirst(::isQuicReject)
+            val forcedAt = rules.indexOfFirst(::isForcedProxy)
+            assertTrue("mode $mode: QUIC reject exists", quicAt >= 0)
+            assertTrue("mode $mode: forced rule exists", forcedAt >= 0)
+            assertTrue("mode $mode: QUIC reject above the forced rule (field 0.5.46)", quicAt < forcedAt)
+        }
+    }
+
     private fun isForcedProxy(rule: JsonObject): Boolean = ForcedProxyDomains.isForcedRule(rule)
 
     @Test

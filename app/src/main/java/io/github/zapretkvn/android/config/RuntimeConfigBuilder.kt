@@ -539,10 +539,14 @@ object RuntimeConfigBuilder {
                 selectedProxyTag?.let { proxyTag ->
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
                     add(healthProbeRule(proxyTag, healthCheckPackageName))
+                }
+                // Отказ для QUIC обязан стоять выше правила по именам: то правило не ограничено сетью и иначе
+                // увело бы UDP 443 к YouTube в туннель (поле 0.5.46: UDP-потоки к googlevideo жили 30-45 с, плеер ждал).
+                if (blockQuic) add(quicRejectRule())
+                selectedProxyTag?.let { proxyTag ->
                     // Имена, которые блокируются и с российским адресом, идут через VPN раньше RU-direct.
                     add(ForcedProxyDomains.rule(proxyTag))
                 }
-                if (blockQuic) add(quicRejectRule())
             }
             route["rules"] = JsonArray(generatedRouteRules + existing)
             // sing-box >= 1.14 removed implicit domain resolution in dial fields:
