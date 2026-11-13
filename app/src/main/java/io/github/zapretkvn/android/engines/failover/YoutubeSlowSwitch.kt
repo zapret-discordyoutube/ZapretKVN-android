@@ -146,13 +146,17 @@ internal interface YoutubeSwitchHost {
 
     fun log(message: String)
 
-    fun announce(fromId: String, toId: String)
+    /** [restartVideo]: выбор не проверен видео, плеер держит ссылки мёртвого кластера и ждёт перезапуска видео. */
+    fun announce(fromId: String, toId: String, restartVideo: Boolean = false)
 }
 
 internal sealed interface YoutubeSwitchOutcome {
     data object Gone : YoutubeSwitchOutcome
     data object NoCandidates : YoutubeSwitchOutcome
     data class Switched(val serverId: String) : YoutubeSwitchOutcome
+
+    /** Мёртвый кластер: запасной сервер оставлен без проверки видео, плееру нужен перезапуск видео. */
+    data class SwitchedUnverified(val serverId: String) : YoutubeSwitchOutcome
     data object Inconclusive : YoutubeSwitchOutcome
     data object AllCandidatesSlow : YoutubeSwitchOutcome
     data object TrialFailed : YoutubeSwitchOutcome
@@ -165,7 +169,13 @@ internal class YoutubeSwitchEngine(
     private val youtubeAverage: (String) -> Long?,
     private val hintsOf: (SlowSwitchSnapshot) -> Map<String, LatencyHint> = { it.hints },
 ) {
-    suspend fun runEpisode(): YoutubeSwitchOutcome {
+    /**
+     * [keepOnSilent]: эпизод начался с вердикта «мёртвый кластер». Запущенный плеер держит ссылки именно этого кластера
+     * (YouTube выбирает кластер по адресу запроса /player, а ссылка подписана) и не откроет видеопоток через новый сервер,
+     * пока видео не перезапустят. Тишина тогда не значит «пользователь ушёл», и запасной сервер остаётся: перезапущенное
+     * видео получит другой кластер. Если запасной сервер окажется плох, обычный путь голодания переключит его снова.
+     */
+    suspend fun runEpisode(keepOnSilent: Boolean = false): YoutubeSwitchOutcome {
         val snapshot = host.snapshot() ?: return YoutubeSwitchOutcome.Gone
         val original = snapshot.currentId
         policy.markSlow(original)
@@ -200,7 +210,16 @@ internal class YoutubeSwitchEngine(
                     policy.markSlow(candidate.id)
                     current = candidate.id
                 }
-                VideoOutcome.Silent -> {
+                VideoOutcome.Silent -> if (keepOnSilent) {
+                    if (!host.commit(candidate.id)) {
+                        host.restore(original)
+                        policy.onEpisodeEnd()
+                        return YoutubeSwitchOutcome.CommitRefused
+                    }
+                    host.announce(original, candidate.id, restartVideo = true)
+                    policy.onEpisodeEnd()
+                    return YoutubeSwitchOutcome.SwitchedUnverified(candidate.id)
+                } else {
                     // Видео не пошло вовсе (пользователь ушёл): судить не по чему, прежний выбор пользователя возвращается.
                     host.restore(original)
                     policy.onEpisodeEnd()

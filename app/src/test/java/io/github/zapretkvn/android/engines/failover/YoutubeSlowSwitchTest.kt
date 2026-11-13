@@ -34,7 +34,9 @@ class YoutubeSlowSwitchTest {
         }
         override suspend fun restore(id: String) { calls += "restore:$id" }
         override fun log(message: String) { calls += "log" }
-        override fun announce(fromId: String, toId: String) { calls += "announce:$fromId->$toId" }
+        override fun announce(fromId: String, toId: String, restartVideo: Boolean) {
+            calls += "announce:$fromId->$toId" + if (restartVideo) ":restart" else ""
+        }
     }
 
     private fun snapshot(current: String, vararg others: String) =
@@ -82,6 +84,32 @@ class YoutubeSlowSwitchTest {
         assertEquals(YoutubeSwitchOutcome.Inconclusive, engine(host).runEpisode())
         assertEquals("restore:Hipge", host.calls.last())
         assertFalse(host.calls.any { it.startsWith("commit") })
+    }
+
+    @Test
+    fun `silence after a dead cluster keeps the candidate and asks for a video restart`() = runTest {
+        val host = FakeHost(snapshot("Hipge", "Senge"), mutableListOf(VideoOutcome.Silent))
+        assertEquals(YoutubeSwitchOutcome.SwitchedUnverified("Senge"), engine(host).runEpisode(keepOnSilent = true))
+        assertEquals(
+            listOf("trial:Hipge->Senge", "drop", "verify:Silent", "commit:Senge", "announce:Hipge->Senge:restart"),
+            host.calls,
+        )
+    }
+
+    @Test
+    fun `silence after a dead cluster with a refused commit still restores the original`() = runTest {
+        val host = FakeHost(snapshot("Hipge", "Senge"), mutableListOf(VideoOutcome.Silent), commitOk = false)
+        assertEquals(YoutubeSwitchOutcome.CommitRefused, engine(host).runEpisode(keepOnSilent = true))
+        assertEquals("restore:Hipge", host.calls.last())
+        assertFalse(host.calls.any { it.startsWith("announce") })
+    }
+
+    @Test
+    fun `a starving candidate after a dead cluster still moves on to the next one`() = runTest {
+        val host = FakeHost(snapshot("Hipge", "Senge", "Fiege"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Silent))
+        val outcome = engine(host).runEpisode(keepOnSilent = true)
+        assertTrue(outcome is YoutubeSwitchOutcome.SwitchedUnverified)
+        assertEquals(2, host.calls.count { it.startsWith("trial") })
     }
 
     @Test

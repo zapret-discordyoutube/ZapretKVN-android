@@ -623,7 +623,7 @@ internal class ServerSwitchCoordinator(
                 policy = youtubePolicy,
                 host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
                 youtubeAverage = RuntimeLog::youtubeAverage,
-            ).runEpisode()
+            ).runEpisode(keepOnSilent = verdict.deadCluster)
             timeline("Переключение при медленном YouTube ($cause): ${youtubeOutcomeText(outcome)}.")
         }
     }
@@ -651,6 +651,7 @@ internal class ServerSwitchCoordinator(
         YoutubeSwitchOutcome.Gone -> "сессия закончилась"
         YoutubeSwitchOutcome.NoCandidates -> "запасного сервера нет"
         is YoutubeSwitchOutcome.Switched -> "выбран ${server(outcome.serverId)}"
+        is YoutubeSwitchOutcome.SwitchedUnverified -> "выбран ${server(outcome.serverId)}, перезапустите видео"
         YoutubeSwitchOutcome.Inconclusive -> "видео не пошло, прежний сервер возвращён"
         YoutubeSwitchOutcome.AllCandidatesSlow -> "запасные серверы тоже медленные, прежний возвращён"
         YoutubeSwitchOutcome.TrialFailed -> "переключение не удалось"

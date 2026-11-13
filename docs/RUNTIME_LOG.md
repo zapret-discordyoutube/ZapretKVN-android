@@ -325,6 +325,19 @@ line per episode saying that the cluster is dead and the server is not changed. 
 кластер YouTube sn-8ph2xajvh снова отвечает (был мёртв 2м10с)
 ```
 
+**Field result of 0.5.44 and the 0.5.45 change (2026-11-13).** On the phone the detector fired 6 ms after the third silent
+flow and the engine switched to another server, but it rolled back after 15 s ("видео не пошло") three times: the player
+that was already running held the URLs of the dead cluster (a media URL is signed and names its cluster in `mn=`; a cache
+answers 400 for another cluster's host name and 302 for a backup cluster, measured on 2026-11-13, so the app cannot remap
+host names), opened no video flow through the new server, and `verifyVideo` returned `Silent`, which the engine reads as
+"the user left". A new `/player` request is needed, which only a restarted video makes. Since 0.5.45 an episode that began
+with a **dead-cluster** verdict runs with `keepOnSilent`: when the video stays silent the candidate server is **kept** (committed),
+the announcement and notification say "Перезапустите видео", and the timeline line ends with "выбран <server>, перезапустите
+видео". The restarted video gets a cluster for the new exit address; if that server is slow too, the normal starving path
+switches again (cooldown 90 s, 3 switches per 10 min). A starving candidate is still skipped, a refused commit still restores
+the original server, and an episode that began with plain starving keeps the old rule (silence restores). Off switch: the same
+option "Менять сервер при медленном YouTube".
+
 The timeline line of the switch names the reason: `Переключение при медленном YouTube (кластер sn-8ph2xajvh не отвечает): выбран <server>.`
 A switch does not always help: if the new server is handed a dead cluster too, the next candidate is tried within the
 same limits. The tests (`DeadVideoClusterTrackerTest`, `RuntimeLogFlowsTest`) use the numbers of the 0.5.43 archive.

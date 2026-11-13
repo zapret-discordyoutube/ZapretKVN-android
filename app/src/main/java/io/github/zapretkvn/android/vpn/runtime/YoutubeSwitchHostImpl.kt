@@ -100,13 +100,17 @@ internal class YoutubeSwitchHostImpl(
         controller.publishDiagnosticInfo(redact(message))
     }
 
-    override fun announce(fromId: String, toId: String) {
+    override fun announce(fromId: String, toId: String, restartVideo: Boolean) {
         val server = redact(toId)
         context.announce(
             session,
-            "YouTube на сервере ${redact(fromId)} шёл медленно: выбран сервер $server.",
+            if (restartVideo) {
+                "Кластер YouTube на сервере ${redact(fromId)} не отвечает: выбран сервер $server. Перезапустите видео."
+            } else {
+                "YouTube на сервере ${redact(fromId)} шёл медленно: выбран сервер $server."
+            },
             // Пользователь обычно в другом приложении: сообщение видно и в уведомлении.
-            "YouTube медленный, выбран сервер $server",
+            if (restartVideo) "YouTube завис, выбран сервер $server: перезапустите видео" else "YouTube медленный, выбран сервер $server",
         )
     }
 

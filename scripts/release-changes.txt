@@ -6,3 +6,4 @@
 # blank lines and lines starting with '#' are ignored. Edit per release before
 # publishing (the worktree must be clean, so commit this with the release prep).
 Раздел «Предыдущий сбой» больше не называет сбоем обновление приложения или остановку пользователем: сбоем считается только настоящая авария
+Если кластер YouTube не отвечает, а видео уже зависло, приложение теперь оставляет запасной сервер и просит перезапустить видео: новое видео пойдёт
