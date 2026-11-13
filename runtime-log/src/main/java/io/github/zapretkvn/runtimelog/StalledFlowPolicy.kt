@@ -15,15 +15,19 @@ package io.github.zapretkvn.runtimelog
  * на видео-узле значит, что узел не отдаёт данные, а плеер напрасно шлёт запросы. Пауза плеера (буфер полон) в
  * это не попадает: запросов в паузе нет.
  *
- * За один снимок сбрасывается не больше [maxPerSnapshot] потоков, самые старые первыми, а за сессию не больше
- * [maxPerSession]: предохранитель, если признак ошибочно совпал со здоровыми потоками.
+ * За один снимок сбрасывается не больше [maxPerSnapshot] потоков, самые старые первыми, а за скользящее окно
+ * [capWindowMillis] не больше [maxPerWindow]: предохранитель, если признак ошибочно совпал со здоровыми потоками.
+ * Раньше предохранитель был один на всю сессию (30): в поле (архив 0.5.43, 2026-11-13) он кончился через 40 минут,
+ * и дальше зависшие потоки к мёртвому кластеру висели до долгого таймаута плеера (30 с). Окно возвращает сброс,
+ * когда прежние сбросы вышли из окна, а ложное срабатывание по-прежнему ограничено числом в окне.
  */
 class StalledFlowPolicy(
     private val hostSuffixes: List<String> = listOf("googlevideo.com"),
     private val minAgeMillis: Long = 8_000,
     private val maxDownlinkBytes: Long = 4_096,
     private val maxPerSnapshot: Int = 3,
-    private val maxPerSession: Int = 30,
+    private val maxPerWindow: Int = 30,
+    private val capWindowMillis: Long = 5 * 60_000,
     private val trickleMinAgeMillis: Long = 10_000,
     private val trickleMaxTotalDownlinkBytes: Long = 3L * 1024 * 1024,
     private val trickleMinWindowUplinkBytes: Long = 8_192,
@@ -35,7 +39,7 @@ class StalledFlowPolicy(
     private val knownSlow: (server: String, domain: String) -> Boolean = { _, _ -> false },
     private val knownSlowMinAgeMillis: Long = 6_000,
 ) {
-    private var resetInSession = 0
+    private val resetTimes = ArrayDeque<Long>()
 
     /** Итоги потока в прошлом снимке и число подряд «сочащихся» окон. */
     private class Seen(var uplink: Long, var downlink: Long, var trickleWindows: Int)
@@ -44,20 +48,21 @@ class StalledFlowPolicy(
 
     fun pick(nowMillis: Long, active: List<FlowSnap>): List<FlowSnap> {
         val trickling = trickleCandidates(nowMillis, active)
-        val room = maxPerSession - resetInSession
+        while (resetTimes.isNotEmpty() && nowMillis - resetTimes.first() >= capWindowMillis) resetTimes.removeFirst()
+        val room = maxPerWindow - resetTimes.size
         if (room <= 0) return emptyList()
         val picked = active.asSequence()
             .filter { it.id in trickling || isStalled(nowMillis, it) }
             .sortedBy { it.createdAtEpochMillis }
             .take(minOf(maxPerSnapshot, room))
             .toList()
-        resetInSession += picked.size
+        repeat(picked.size) { resetTimes.addLast(nowMillis) }
         return picked
     }
 
     /** Новая сессия VPN: счётчик предохранителя с нуля. */
     fun reset() {
-        resetInSession = 0
+        resetTimes.clear()
         seen.clear()
     }
 

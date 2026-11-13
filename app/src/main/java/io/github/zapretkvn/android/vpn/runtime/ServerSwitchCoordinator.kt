@@ -609,8 +609,12 @@ internal class ServerSwitchCoordinator(
             return
         }
         videoVerdicts.trySend(verdict)
-        if (!youtubeSwitchEnabled || !verdict.starving) return
+        noteDeadCluster(verdict)
+        if (!youtubeSwitchEnabled || !(verdict.starving || verdict.deadCluster)) return
         if (youtubePolicy.gate(enabled = true, busy = smartBusy() || operationActive()) != YoutubeSwitchGate.Ready) return
+        // Мёртвый кластер (плеер ждёт ответ, которого нет) лечится сменой сервера так же, как голодание:
+        // YouTube выбирает кластер по адресу запроса, другой сервер получит другой кластер.
+        val reason = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
         runOperation(Operation.Smart) { previous ->
             previous?.cancelAndJoin()
             RuntimeLog.resetVideoDetector()
@@ -619,9 +623,28 @@ internal class ServerSwitchCoordinator(
                 host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
                 youtubeAverage = RuntimeLog::youtubeAverage,
             ).runEpisode()
-            timeline("Переключение при медленном YouTube: ${youtubeOutcomeText(outcome)}.")
+            timeline("Переключение при медленном YouTube ($reason): ${youtubeOutcomeText(outcome)}.")
         }
     }
+
+    /**
+     * Один раз за эпизод пишет в журнал, что кластер мёртв, а переключение при медленном YouTube выключено:
+     * иначе по журналу не понять, почему приложение бездействует. Эпизод кончается, когда мёртвых кластеров нет.
+     */
+    private fun noteDeadCluster(verdict: SlowVideoDetector.Verdict) {
+        if (!verdict.deadCluster) {
+            deadClusterNoted = false
+            return
+        }
+        if (deadClusterNoted || youtubeSwitchEnabled) return
+        deadClusterNoted = true
+        timeline(
+            "Кластер YouTube ${verdict.deadClusters.joinToString()} не отвечает, но «Менять сервер при медленном YouTube» " +
+                "выключено: сервер не меняется.",
+        )
+    }
+
+    private var deadClusterNoted = false
 
     private fun youtubeOutcomeText(outcome: YoutubeSwitchOutcome): String = when (outcome) {
         YoutubeSwitchOutcome.Gone -> "сессия закончилась"

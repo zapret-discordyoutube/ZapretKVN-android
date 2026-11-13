@@ -113,6 +113,52 @@ class RuntimeLogFlowsTest {
         RuntimeLog.configure(true)
     }
 
+    private fun closedSilent(id: String, domain: String, closedAt: Long, lived: Long = 8_000, down: Long = 0): String =
+        """{"id":"$id","net":"tcp","domain":"$domain","dest":"2.27.31.124:443","pkg":"app.youtube","out":"hy2",
+            "created":${closedAt - lived},"closed":$closedAt,"up":2048,"down":$down}"""
+
+    private fun closedSnapshot(vararg flows: String): String =
+        """{"at":0,"active":[],"closed":[${flows.joinToString(",")}]}"""
+
+    @Test
+    fun `three silent flows to one cluster give a dead cluster verdict with a log line, a healthy flow clears it`() {
+        RuntimeLog.configure(false)
+        RuntimeLog.sessionStarted(7)
+        val dead = "rr2---sn-8ph2xajvh-3a4l.googlevideo.com"
+        val now = System.currentTimeMillis()
+        val first = RuntimeLog.flows(closedSnapshot(closedSilent("d1", dead, now - 3_000), closedSilent("d2", dead, now - 2_000))).verdict
+        assertFalse("two flows are not a verdict", first.deadCluster)
+        val third = RuntimeLog.flows(closedSnapshot(closedSilent("d3", dead, now - 1_000))).verdict
+        assertTrue(third.deadCluster)
+        assertEquals(listOf("sn-8ph2xajvh"), third.deadClusters)
+        val text = logText()
+        assertTrue(text, "МЁРТВЫЙ КЛАСТЕР YouTube sn-8ph2xajvh: 3 потока(ов) без единого байта ответа" in text)
+        assertTrue("the verdict stays while the player retries", RuntimeLog.flows(closedSnapshot()).verdict.deadCluster)
+
+        val healthy = RuntimeLog.flows(closedSnapshot(closedSilent("ok1", "rr1---sn-8ph2xajvh-aaaa.googlevideo.com", now, lived = 20_000, down = 4_000_000))).verdict
+        assertFalse("a healthy flow of the cluster clears the verdict", healthy.deadCluster)
+        assertTrue(logText().contains("кластер YouTube sn-8ph2xajvh снова отвечает"))
+    }
+
+    @Test
+    fun `silent flows of different clusters do not add up and a new session forgets the verdict`() {
+        RuntimeLog.configure(false)
+        RuntimeLog.sessionStarted(8)
+        val now = System.currentTimeMillis()
+        val mixed = RuntimeLog.flows(
+            closedSnapshot(
+                closedSilent("m1", "rr1---sn-aaaaaa-x.googlevideo.com", now - 3_000),
+                closedSilent("m2", "rr1---sn-bbbbbb-x.googlevideo.com", now - 2_000),
+                closedSilent("m3", "rr1---sn-cccccc-x.googlevideo.com", now - 1_000),
+            ),
+        ).verdict
+        assertFalse(mixed.deadCluster)
+        val dead = "rr3---sn-dddddd-x.googlevideo.com"
+        assertTrue(RuntimeLog.flows(closedSnapshot(closedSilent("n1", dead, now - 3_000), closedSilent("n2", dead, now - 2_000), closedSilent("n3", dead, now - 1_000))).verdict.deadCluster)
+        RuntimeLog.sessionStarted(9)
+        assertFalse("a new session starts clean", RuntimeLog.flows(closedSnapshot()).verdict.deadCluster)
+    }
+
     @Test
     fun `tunnel statistics lines are written one per server and blank input is ignored`() {
         RuntimeLog.tunnelStats(null)

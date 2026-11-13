@@ -40,7 +40,15 @@ class SlowVideoDetector(
         val starving: Boolean,
         /** Видео сейчас идёт здорово. */
         val healthy: Boolean,
+        /**
+         * Кеш-кластеры YouTube, признанные мёртвыми ([DeadVideoClusterTracker]): плеер повторяет запросы к ним и не
+         * получает ничего. Заполняет вызывающий: детектор по потокам этого не видит (у них нет ни байта).
+         */
+        val deadClusters: List<String> = emptyList(),
     ) {
+        /** Есть мёртвый кластер: это повод сменить сервер так же, как голодание. */
+        val deadCluster: Boolean get() = deadClusters.isNotEmpty()
+
         companion object {
             val Idle = Verdict(0, emptyList(), 0, 0, starving = false, healthy = false)
         }

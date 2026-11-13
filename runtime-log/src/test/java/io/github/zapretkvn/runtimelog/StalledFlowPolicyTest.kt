@@ -130,12 +130,20 @@ class StalledFlowPolicyTest {
     }
 
     @Test
-    fun `the session cap stops resets and reset starts a new session`() {
-        val policy = StalledFlowPolicy(maxPerSnapshot = 10, maxPerSession = 4)
+    fun `the cap stops resets inside the window and reset starts over`() {
+        val policy = StalledFlowPolicy(maxPerSnapshot = 10, maxPerWindow = 4)
         assertEquals(3, policy.pick(now, (1..3).map { flow("a$it") }).size)
         assertEquals("only one more is allowed", 1, policy.pick(now, (1..3).map { flow("b$it") }).size)
         assertTrue(policy.pick(now, listOf(flow("c"))).isEmpty())
         policy.reset()
         assertEquals(1, policy.pick(now, listOf(flow("d"))).size)
+    }
+
+    @Test
+    fun `resets leave the window and room comes back (archive 0 5 43 hit the old per session cap after 40 minutes)`() {
+        val policy = StalledFlowPolicy(maxPerSnapshot = 10, maxPerWindow = 4, capWindowMillis = 60_000)
+        assertEquals(4, policy.pick(now, (1..4).map { flow("a$it") }).size)
+        assertTrue("window still full", policy.pick(now + 59_999, listOf(flow("b"))).isEmpty())
+        assertEquals("the first resets are older than the window", 1, policy.pick(now + 60_000, listOf(flow("c"))).size)
     }
 }

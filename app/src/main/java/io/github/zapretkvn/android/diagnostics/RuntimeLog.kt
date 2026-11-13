@@ -4,6 +4,7 @@ import io.github.zapretkvn.runtimelog.CoreLogLayers
 import io.github.zapretkvn.runtimelog.DnsAddressBook
 import io.github.zapretkvn.runtimelog.FlowSnap
 import io.github.zapretkvn.runtimelog.FlowTracker
+import io.github.zapretkvn.runtimelog.DeadVideoClusterTracker
 import io.github.zapretkvn.runtimelog.StalledFlowPolicy
 import io.github.zapretkvn.runtimelog.LogLayer
 import io.github.zapretkvn.runtimelog.LogStoreInfo
@@ -44,6 +45,9 @@ object RuntimeLog {
     private val flowTracker = FlowTracker()
     private val addressBook = DnsAddressBook()
     private val videoDetector = SlowVideoDetector()
+
+    /** Мёртвые кеш-кластеры YouTube (поток к ним получает 0 байт): повод сменить сервер, см. [DeadVideoClusterTracker]. */
+    private val deadClusters = DeadVideoClusterTracker()
     private var lastWindowLineAt = 0L
     private var lastStarving = false
     @Volatile
@@ -132,7 +136,7 @@ object RuntimeLog {
             val lived = if (flow.createdAtEpochMillis > 0 && flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis - flow.createdAtEpochMillis else 0L
             history?.recordFlow(flow.outbound, flow.domain, flow.destination, flow.downlink, lived)
         }
-        val (lines, stalled, verdict) = synchronized(stallLock) {
+        val (lines, stalled, sampled) = synchronized(stallLock) {
             closed.maxOfOrNull { it.closedAtEpochMillis }?.let { if (it > closedCursor) closedCursor = it }
             // Выборка при видео идёт каждые 1,5 с, а строку окна достаточно писать раз в ~5 с.
             val emitWindow = now - lastWindowLineAt >= WINDOW_LINE_MILLIS
@@ -140,10 +144,17 @@ object RuntimeLog {
             Triple(
                 flowTracker.onSnapshot(now, active, closed, emitWindow),
                 if (resetStalledEnabled) stalledPolicy.pick(now, active) else emptyList(),
-                videoDetector.onSnapshot(now, active),
+                // Вердикт по голоданию плюс мёртвые кластеры: у потоков к мёртвому кластеру нет ни байта,
+                // голодание их не видит. События (признан мёртвым, ожил) идут в журнал ниже.
+                run {
+                    val events = deadClusters.onClosed(now, closed) + deadClusters.onActive(now, active)
+                    videoDetector.onSnapshot(now, active).copy(deadClusters = deadClusters.activeDeadClusters(now)) to events
+                },
             )
         }
+        val (verdict, clusterEvents) = sampled
         logVideoVerdict(target, verdict)
+        logClusterEvents(target, clusterEvents)
         lines.forEach { target.log(LogLayer.Traffic, it.level, it.text) }
         stalled.forEach { flow ->
             target.log(
@@ -159,6 +170,26 @@ object RuntimeLog {
     }
 
     private const val WINDOW_LINE_MILLIS = 4_000L
+
+    /** Кластеры YouTube: когда кластер признан мёртвым и когда ожил (с числом потоков и сервером). */
+    private fun logClusterEvents(target: RuntimeLogStore, events: List<DeadVideoClusterTracker.Event>) {
+        for (event in events) {
+            when (event) {
+                is DeadVideoClusterTracker.Event.Dead -> target.log(
+                    LogLayer.Traffic,
+                    3,
+                    "МЁРТВЫЙ КЛАСТЕР YouTube ${event.cluster}: ${event.flows} потока(ов) без единого байта ответа за " +
+                        "${FlowTracker.formatDuration(event.spanMillis)} на ${event.outbound}; сброс потоков не помогает, " +
+                        "плеер получает тот же кластер (другой сервер получает другой)",
+                )
+                is DeadVideoClusterTracker.Event.Recovered -> target.log(
+                    LogLayer.Traffic,
+                    4,
+                    "кластер YouTube ${event.cluster} снова отвечает (был мёртв ${FlowTracker.formatDuration(event.deadForMillis)})",
+                )
+            }
+        }
+    }
 
     /** Границы голодания видео в журнал: когда началось и когда прошло. */
     private fun logVideoVerdict(target: RuntimeLogStore, verdict: SlowVideoDetector.Verdict) {
@@ -186,6 +217,7 @@ object RuntimeLog {
     fun resetVideoDetector() {
         synchronized(stallLock) {
             videoDetector.reset()
+            deadClusters.reset()
             lastStarving = false
         }
     }
@@ -235,6 +267,7 @@ object RuntimeLog {
             flowTracker.reset()
             stalledPolicy.reset()
             videoDetector.reset()
+            deadClusters.reset()
             lastStarving = false
             // Новая сессия начинает с чистого окна: первый снимок обязан дать строку окна.
             lastWindowLineAt = 0L

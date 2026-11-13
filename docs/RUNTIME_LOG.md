@@ -188,7 +188,7 @@ It is a direct call, like `proxyFlows`: there is no subscription to connections 
 `StalledFlowPolicy` decides which flows are stalled. A flow is reset only if **all** of these hold: it is TCP, its
 name is `googlevideo.com` or a subdomain, it is at least 8 seconds old, it has received at most 4 KB, and it has
 sent something (the request left). Flows without a name, UDP flows and every other site are left alone. At most
-3 flows are reset per snapshot (oldest first) and at most 30 per session, which is a fuse in case the rule matches
+3 flows are reset per snapshot (oldest first) and at most 30 per sliding window of 5 minutes (it was 30 per session until 0.5.44, which ran out after 40 minutes in the 0.5.43 field archive), which is a fuse in case the rule matches
 healthy flows by mistake. Each reset writes a line to the `F` layer:
 
 ```text
@@ -301,6 +301,33 @@ player connects to an address from an earlier answer). `DnsAddressBook` learns `
    15 s commits the choice and announces it; starving again marks that server too and tries the next candidate;
    silence (the video never started, for example the user left) is inconclusive and the previous server comes back;
 5. if every candidate is slow, the original server comes back.
+
+**5. Dead cache clusters (`DeadVideoClusterTracker`, 0.5.44).** The field archive of 0.5.43 (2026-11-13) showed a stall
+the detector above cannot see: the player opened flows to cache nodes of ONE cluster (`sn-8ph2xajvh`), sent the
+TLS ClientHello (about 2 KB) and got **not a single byte** back, again and again. Over 5 days that cluster gave 146
+flows, 137 with 0 B, none healthy, on every node. Resetting such flows only makes the player retry the same cluster
+sooner, and `SlowVideoDetector` stays silent because a flow with 0 B is not a "slow video flow" (it needs 16-256 KB).
+What helps is another exit address: YouTube chooses the cluster by the address the player's request came from, so a
+different server usually gets a different cluster (on the phone the same video played through another node within 7 s).
+The cluster is the part of the cache node name between `---` and the second dash: `rr2---sn-8ph2xajvh-3a4l` is `sn-8ph2xajvh`.
+The tracker reads the **closed** flows of the snapshot (so it works with or without the reset option) and counts a flow
+as *silent* when it is TCP, sent something, received at most 4 KB, and lived at least 5 s (an instant reset is a refusal,
+not a silent node). A cluster is **dead** after 3 different silent flows inside 90 s with no healthy flow (64 KB or more) of
+that cluster in between; a healthy flow, a new session or a server switch clears the count. The verdict stays active
+while the player keeps retrying (90 s after the last silent flow) and then fades. `redirector.googlevideo.com` and names
+without an `sn-` label belong to no cluster. The verdict travels in `SlowVideoDetector.Verdict.deadClusters`; the
+coordinator treats it like *starving* and starts the same switch episode, so the same gate (cooldown, limit, busy),
+candidates and live-video verification apply. When the option "Менять сервер при медленном YouTube" is off, the log gets one
+line per episode saying that the cluster is dead and the server is not changed. Log lines (layer `F`, level 3 and 4):
+
+```text
+МЁРТВЫЙ КЛАСТЕР YouTube sn-8ph2xajvh: 3 потока(ов) без единого байта ответа за 12с на <server>; сброс потоков не помогает, плеер получает тот же кластер (другой сервер получает другой)
+кластер YouTube sn-8ph2xajvh снова отвечает (был мёртв 2м10с)
+```
+
+The timeline line of the switch names the reason: `Переключение при медленном YouTube (кластер sn-8ph2xajvh не отвечает): выбран <server>.`
+A switch does not always help: if the new server is handed a dead cluster too, the next candidate is tried within the
+same limits. The tests (`DeadVideoClusterTrackerTest`, `RuntimeLogFlowsTest`) use the numbers of the 0.5.43 archive.
 
 Guards: 90 s of cooldown after an episode, at most 3 switches in 10 minutes, no episode while another switching
 operation or the lifecycle is busy. This engine is separate from the "smart check": it is not blocked by the 30 minutes
