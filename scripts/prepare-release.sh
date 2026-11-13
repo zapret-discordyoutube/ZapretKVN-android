@@ -69,7 +69,7 @@ if git show-ref --verify --quiet "refs/tags/$TAG" && [[ "$(git rev-list -n 1 "$T
     echo "note: local tag $TAG points elsewhere, it will be moved to the final commit"
 fi
 python3 "$SCRIPT_DIR/check-release-changes.py" "$SCRIPT_DIR/release-changes.txt" || die "fix scripts/release-changes.txt"
-forgejo_git_auth_check "refs/tags/$TAG" || die "git push is not authorized"
+forgejo_git_auth_check "HEAD:refs/heads/main" || die "git push is not authorized"
 echo "git push to Forgejo: authorized"
 if [[ -d "$WINDOWS_ROOT/.git" ]]; then
     repo_clean "$WINDOWS_ROOT" || die "the Windows worktree is not clean (another session works there?): not touching it"
