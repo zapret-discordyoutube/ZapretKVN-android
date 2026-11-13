@@ -55,11 +55,9 @@ if (( TRAFFIC_BYTES > 67108864 || DNS_QUERIES > 100 )); then
     exit 1
 fi
 
-device_count="$(adb_call devices | awk 'NR > 1 && $2 == "device" { count++ } END { print count+0 }')"
-if [[ "$device_count" -ne 1 ]]; then
-    echo "Expected exactly one ready adb device, found $device_count" >&2
-    exit 1
-fi
+# shellcheck source=lib/adb-select.sh
+source "$PROJECT_ROOT/scripts/lib/adb-select.sh"
+adb_select_device || exit 1
 is_emulator="$(adb_call shell getprop ro.kernel.qemu | tr -d '\r')"
 if [[ "$is_emulator" != "1" && "${GATE8_ALLOW_PHYSICAL:-0}" != "1" ]]; then
     echo "Physical execution resets batterystats; set GATE8_ALLOW_PHYSICAL=1 explicitly" >&2

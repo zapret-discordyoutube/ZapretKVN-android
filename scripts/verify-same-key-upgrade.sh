@@ -22,11 +22,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-device_count="$($ADB devices | awk 'NR > 1 && $2 == "device" { count++ } END { print count+0 }')"
-if [[ "$device_count" -ne 1 ]]; then
-    echo "Expected exactly one ready adb device, found $device_count" >&2
-    exit 1
-fi
+# shellcheck source=lib/adb-select.sh
+source "$PROJECT_ROOT/scripts/lib/adb-select.sh"
+adb_select_device || exit 1
 
 cd "$PROJECT_ROOT"
 ./gradlew :app:assembleDebug -PzapretVersionName=0.7.1-test1 -PzapretVersionCode=701001 >/dev/null

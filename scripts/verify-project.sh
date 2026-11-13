@@ -26,6 +26,10 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -x "$PROJECT_ROOT/scripts/check-libbox-fingerprint.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/ensure-libbox.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-libbox-fingerprint.sh" ]]
+[[ -f "$PROJECT_ROOT/scripts/lib/adb-select.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-adb-select.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/phone-adb-forward.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-phone-adb-forward.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/generate-baseline-profile.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/measure-startup-frames.sh" ]]
 BASELINE_PROFILE="$PROJECT_ROOT/app/src/main/baseline-prof.txt"
@@ -51,6 +55,8 @@ source "$PROJECT_ROOT/core.properties"
 source "$PROJECT_ROOT/scripts/core-patchset.sh"
 verify_core_patchset "$PROJECT_ROOT"
 "$PROJECT_ROOT/scripts/test-libbox-fingerprint.sh"
+"$PROJECT_ROOT/scripts/test-adb-select.sh"
+"$PROJECT_ROOT/scripts/test-phone-adb-forward.sh"
 [[ -f "$PROJECT_ROOT/scripts/gate8-performance-summary.jq" ]]
 
 RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/release-verify.yml"

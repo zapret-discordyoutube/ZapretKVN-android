@@ -14,11 +14,9 @@ if [[ ! "$CONNECT_CYCLES" =~ ^[1-9][0-9]*$ || ! "$NETWORK_TRANSITIONS" =~ ^[1-9]
     exit 1
 fi
 
-device_count="$($ADB devices | awk 'NR > 1 && $2 == "device" { count++ } END { print count+0 }')"
-if [[ "$device_count" -ne 1 ]]; then
-    echo "Expected exactly one ready adb device, found $device_count" >&2
-    exit 1
-fi
+# shellcheck source=lib/adb-select.sh
+source "$PROJECT_ROOT/scripts/lib/adb-select.sh"
+adb_select_device || exit 1
 if [[ "$($ADB shell getprop ro.kernel.qemu | tr -d '\r')" != "1" ]]; then
     echo "Automated Wi-Fi/cellular switching is restricted to a disposable AVD" >&2
     exit 1

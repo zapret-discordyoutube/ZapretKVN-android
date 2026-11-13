@@ -28,11 +28,9 @@ for command in "$ADB" awk jq keytool sed sort; do
 done
 [[ -x "$APKSIGNER" ]]
 
-device_count="$($ADB devices | awk 'NR > 1 && $2 == "device" { count++ } END { print count+0 }')"
-if [[ "$device_count" -ne 1 ]]; then
-    echo "Expected exactly one ready adb device, found $device_count" >&2
-    exit 1
-fi
+# shellcheck source=lib/adb-select.sh
+source "$PROJECT_ROOT/scripts/lib/adb-select.sh"
+adb_select_device || exit 1
 
 device_abi="$($ADB shell getprop ro.product.cpu.abi | tr -d '\r')"
 case "$device_abi" in
