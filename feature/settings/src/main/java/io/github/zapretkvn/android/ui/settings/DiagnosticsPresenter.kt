@@ -60,7 +60,38 @@ fun summarizeDiagnostics(
     }
 }
 
-fun AppProcessExitRecord.isCrash(): Boolean = reason == "native_crash" || reason == "anr"
+/**
+ * Завершение процесса считается сбоем, только если Android назвал одну из этих причин. Обновление приложения,
+ * остановка пользователем, нехватка памяти и прочие «тихие» выходы сбоем не являются: раньше раздел «Предыдущий
+ * сбой» показывал «Есть сохранённый сбой» при любой записи, и после обновления приложения (killDueToPackageUpdate)
+ * экран жаловался на сбой, которого не было (архив 0.5.43, 2026-11-13).
+ */
+fun AppProcessExitRecord.isCrash(): Boolean = reason in CRASH_EXIT_REASONS
+
+private val CRASH_EXIT_REASONS = setOf("native_crash", "java_crash", "anr", "initialization_failure")
+
+/** Человеческое название причины «тихого» завершения процесса. */
+fun AppProcessExitRecord.reasonText(): String = when {
+    description?.contains("PackageUpdate", ignoreCase = true) == true -> "обновление приложения"
+    reason == "user_requested" || reason == "user_stopped" -> "остановлено пользователем"
+    reason == "exit_self" -> "приложение завершилось само"
+    reason == "low_memory" -> "нехватка памяти в системе"
+    reason == "signaled" -> "процесс завершён сигналом"
+    reason == "permission_change" -> "смена разрешений"
+    reason == "excessive_resource_usage" -> "чрезмерное потребление ресурсов"
+    reason == "dependency_died" -> "завершилась связанная служба"
+    else -> "причина не названа"
+}
+
+/**
+ * Строка раздела «Предыдущий сбой». Решает одна функция, и верхняя сводка ([summarizeDiagnostics]) и этот раздел
+ * согласованы: сбой это своя запись приложения или аварийное завершение процесса, а не любая запись об выходе.
+ */
+fun crashSectionSummary(diagnostics: DiagnosticState): String {
+    if (diagnostics.previousCrash != null) return "Есть сохранённый сбой приложения"
+    val exit = diagnostics.previousProcessExit ?: return "Сбоев не было"
+    return if (exit.isCrash()) "Android остановил процесс из-за сбоя" else "Сбоев не было · последний выход: ${exit.reasonText()}"
+}
 
 /** Ключи секций, раскрытых по умолчанию: только «Последняя ошибка», если она есть. */
 fun defaultExpandedSections(hasLastError: Boolean): Set<String> =

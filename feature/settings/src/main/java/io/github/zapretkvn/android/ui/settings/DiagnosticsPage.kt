@@ -131,10 +131,9 @@ fun DiagnosticsScreen(
         }
 
         item(key = DiagnosticsSections.Crash, contentType = "section") {
-            val hasCrash = diagnostics.previousCrash != null || diagnostics.previousProcessExit != null
             CollapsibleCard(
                 title = "Предыдущий сбой",
-                summary = if (hasCrash) "Есть сохранённый сбой приложения" else "Сбоев не было",
+                summary = crashSectionSummary(diagnostics),
                 expanded = expanded(DiagnosticsSections.Crash),
                 onToggle = { onToggle(DiagnosticsSections.Crash) },
             ) {

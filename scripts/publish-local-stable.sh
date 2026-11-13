@@ -119,6 +119,12 @@ if ! git diff --quiet || ! git diff --cached --quiet ||
     exit 1
 fi
 
+# Git credentials for the tag push at the very end: wired here (a panel shell has no credential helper) and proven
+# by a dry run below, so that a missing helper stops the release in seconds and not after the whole bundle is built.
+# shellcheck source=lib/forgejo-git.sh
+source "$PROJECT_ROOT/scripts/lib/forgejo-git.sh"
+forgejo_git_credentials
+
 git fetch origin main
 if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
     echo "Local main must exactly match origin/main before publication" >&2
@@ -136,6 +142,8 @@ if [[ "$(git rev-list -n 1 "$TAG")" != "$(git rev-parse HEAD)" ]]; then
     echo "Stable tag must point to the current main commit: $TAG" >&2
     exit 1
 fi
+
+forgejo_git_auth_check "refs/tags/$TAG" || exit 1
 
 # The same changelog feeds the Forgejo notes and the Telegram announcement;
 # reject what the bot would split or refuse before anything is published.

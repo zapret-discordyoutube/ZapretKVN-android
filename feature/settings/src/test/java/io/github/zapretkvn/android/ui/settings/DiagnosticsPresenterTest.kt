@@ -85,6 +85,51 @@ class DiagnosticsPresenterTest {
         assertTrue(summarizeDiagnostics(VpnConnectionState.Stopped, state).ok)
     }
 
+    private fun exit(reason: String, description: String? = null) =
+        AppProcessExitRecord(1, 0, reason, 0, 100, 1, 1, description)
+
+    @Test
+    fun `an update kill is not a crash and the crash section says so`() {
+        // Запись из архива 0.5.43: причина «unknown», описание «stop ••• due to killDueToPackageUpdate».
+        val update = DiagnosticState(previousProcessExit = exit("unknown", "stop ••• due to killDueToPackageUpdate"))
+        assertEquals("Сбоев не было · последний выход: обновление приложения", crashSectionSummary(update))
+        assertTrue("the top summary agrees", summarizeDiagnostics(VpnConnectionState.Stopped, update).ok)
+    }
+
+    @Test
+    fun `no records means no crash`() {
+        assertEquals("Сбоев не было", crashSectionSummary(DiagnosticState()))
+    }
+
+    @Test
+    fun `an own crash record and crash exits are reported as crashes`() {
+        val own = DiagnosticState(previousCrash = AppCrashRecord(1, "main", "IllegalStateException", null, emptyList(), emptyList()))
+        assertEquals("Есть сохранённый сбой приложения", crashSectionSummary(own))
+        for (reason in listOf("native_crash", "java_crash", "anr", "initialization_failure")) {
+            val state = DiagnosticState(previousProcessExit = exit(reason))
+            assertEquals(reason, "Android остановил процесс из-за сбоя", crashSectionSummary(state))
+            assertFalse(reason, summarizeDiagnostics(VpnConnectionState.Stopped, state).ok)
+        }
+    }
+
+    @Test
+    fun `quiet exits are named in plain words`() {
+        val names = mapOf(
+            "user_requested" to "остановлено пользователем",
+            "user_stopped" to "остановлено пользователем",
+            "exit_self" to "приложение завершилось само",
+            "low_memory" to "нехватка памяти в системе",
+            "signaled" to "процесс завершён сигналом",
+            "permission_change" to "смена разрешений",
+            "excessive_resource_usage" to "чрезмерное потребление ресурсов",
+            "dependency_died" to "завершилась связанная служба",
+            "other" to "причина не названа",
+            "unknown" to "причина не названа",
+        )
+        names.forEach { (reason, text) -> assertEquals(reason, text, exit(reason).reasonText()) }
+        assertFalse(exit("low_memory").isCrash())
+    }
+
     @Test
     fun `only the last error section is open by default`() {
         assertEquals(setOf(DiagnosticsSections.Error), defaultExpandedSections(hasLastError = true))
