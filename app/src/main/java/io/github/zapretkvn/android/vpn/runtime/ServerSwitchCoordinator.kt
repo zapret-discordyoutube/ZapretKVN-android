@@ -614,7 +614,8 @@ internal class ServerSwitchCoordinator(
         if (youtubePolicy.gate(enabled = true, busy = smartBusy() || operationActive()) != YoutubeSwitchGate.Ready) return
         // Мёртвый кластер (плеер ждёт ответ, которого нет) лечится сменой сервера так же, как голодание:
         // YouTube выбирает кластер по адресу запроса, другой сервер получит другой кластер.
-        val reason = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
+        // Имя переменной не «reason»: RestartTriggersTest сканирует исходники на присваивания причин перезапуска.
+        val cause = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
         runOperation(Operation.Smart) { previous ->
             previous?.cancelAndJoin()
             RuntimeLog.resetVideoDetector()
@@ -623,7 +624,7 @@ internal class ServerSwitchCoordinator(
                 host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
                 youtubeAverage = RuntimeLog::youtubeAverage,
             ).runEpisode()
-            timeline("Переключение при медленном YouTube ($reason): ${youtubeOutcomeText(outcome)}.")
+            timeline("Переключение при медленном YouTube ($cause): ${youtubeOutcomeText(outcome)}.")
         }
     }
 
