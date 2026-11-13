@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android.config
 
+import java.io.File
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -51,5 +53,19 @@ class ForcedProxyDomainsTest {
         assertFalse("a user rule with a shorter list is theirs", ForcedProxyDomains.isForcedRule(other))
         val reject = JsonObject(ForcedProxyDomains.rule("any") + ("action" to JsonPrimitive("reject")))
         assertFalse(ForcedProxyDomains.isForcedRule(reject))
+    }
+
+    @Test
+    fun `the Kotlin list is the shared list that Windows ships too`() {
+        // android/shared/always-proxy-domains.json is the canonical file; windows/data/routing keeps a byte-identical copy
+        // (scripts/check-shared-routing-list.sh compares them at release time).
+        val file = listOf(File("../shared/always-proxy-domains.json"), File("shared/always-proxy-domains.json"))
+            .firstOrNull(File::isFile)
+        assertTrue("shared list file not found", file != null)
+        val doc = Json.parseToJsonElement(file!!.readText(Charsets.UTF_8)) as JsonObject
+        assertEquals(1, (doc["schema_version"] as JsonPrimitive).content.toInt())
+        val shared = (doc["suffixes"] as JsonArray).map { (it as JsonPrimitive).content }
+        assertEquals("edit shared/always-proxy-domains.json, ForcedProxyDomains.suffixes and the Windows copy together", shared, ForcedProxyDomains.suffixes)
+        assertEquals("no duplicates in the shared list", shared.size, shared.toSet().size)
     }
 }

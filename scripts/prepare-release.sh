@@ -77,6 +77,7 @@ if [[ -d "$WINDOWS_ROOT/.git" ]]; then
     [[ "$(git -C "$WINDOWS_ROOT" rev-parse HEAD)" == "$(git -C "$WINDOWS_ROOT" rev-parse origin/main)" ]] ||
         die "Windows main differs from origin/main: push or integrate it first"
     echo "Windows repository: clean and current"
+    "$SCRIPT_DIR/check-shared-routing-list.sh" || die "the shared always-proxy list differs between the repositories"
 else
     die "Windows repository not found at $WINDOWS_ROOT (the core pair needs it)"
 fi

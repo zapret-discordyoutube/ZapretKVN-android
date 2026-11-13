@@ -33,6 +33,9 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -f "$PROJECT_ROOT/scripts/lib/forgejo-git.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-forgejo-git.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/prepare-release.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/check-shared-routing-list.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-check-shared-routing-list.sh" ]]
+[[ -f "$PROJECT_ROOT/shared/always-proxy-domains.json" ]]
 [[ -x "$PROJECT_ROOT/scripts/generate-baseline-profile.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/measure-startup-frames.sh" ]]
 BASELINE_PROFILE="$PROJECT_ROOT/app/src/main/baseline-prof.txt"
@@ -61,6 +64,7 @@ verify_core_patchset "$PROJECT_ROOT"
 "$PROJECT_ROOT/scripts/test-adb-select.sh"
 "$PROJECT_ROOT/scripts/test-phone-adb-forward.sh"
 "$PROJECT_ROOT/scripts/test-forgejo-git.sh"
+"$PROJECT_ROOT/scripts/test-check-shared-routing-list.sh"
 [[ -f "$PROJECT_ROOT/scripts/gate8-performance-summary.jq" ]]
 
 RELEASE_WORKFLOW="$PROJECT_ROOT/.forgejo/workflows/release-verify.yml"
