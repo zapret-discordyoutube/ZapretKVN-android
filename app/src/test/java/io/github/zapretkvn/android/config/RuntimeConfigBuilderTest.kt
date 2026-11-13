@@ -304,6 +304,32 @@ class RuntimeConfigBuilderTest {
         }
     }
 
+    private fun isForcedProxy(rule: JsonObject): Boolean = ForcedProxyDomains.isForcedRule(rule)
+
+    @Test
+    fun `forced proxy domains come once, above the user rules, in every managed mode and never touch the stored profile`() {
+        val userRule = """{"domain_suffix":["example.ru"],"action":"route","outbound":"direct"}"""
+        val stored = validConfig().replace(
+            """"route":{"auto_detect_interface":true,"final":"zapret-proxy"}""",
+            """"route":{"auto_detect_interface":true,"final":"zapret-proxy","rules":[$userRule]}""",
+        )
+        assertTrue("the test config must carry the user rule", userRule in stored)
+        for (mode in listOf(DnsMode.Automatic, DnsMode.Secure, DnsMode.Android)) {
+            val built = RuntimeConfigBuilder.build(stored, options = RuntimeConfigOptions(dnsMode = mode))
+                as RuntimeConfigResult.Ready
+            val rules = routeRulesOf(built.json)
+            assertEquals("mode $mode: exactly one forced rule", 1, rules.count(::isForcedProxy))
+            val at = rules.indexOfFirst(::isForcedProxy)
+            val user = rules.indexOfFirst { (it["domain_suffix"] as? JsonArray)?.size == 1 }
+            assertTrue("mode $mode: the user rule is kept", user >= 0)
+            assertTrue("mode $mode: forced rule above the user rule", at < user)
+            val again = RuntimeConfigBuilder.build(stored, options = RuntimeConfigOptions(dnsMode = mode))
+                as RuntimeConfigResult.Ready
+            assertEquals("mode $mode: a rebuild does not multiply it", 1, routeRulesOf(again.json).count(::isForcedProxy))
+        }
+        assertFalse("the stored profile is never edited", "googlevideo.com" in stored)
+    }
+
     @Test
     fun `block quic is off in the builder by default and the stored profile stays untouched`() {
         val stored = validConfig()

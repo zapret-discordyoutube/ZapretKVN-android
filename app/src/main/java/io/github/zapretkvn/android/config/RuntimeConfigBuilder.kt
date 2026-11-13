@@ -539,6 +539,8 @@ object RuntimeConfigBuilder {
                 selectedProxyTag?.let { proxyTag ->
                     healthCheckPackageName?.let { add(healthProbeSniffRule(it)) }
                     add(healthProbeRule(proxyTag, healthCheckPackageName))
+                    // Имена, которые блокируются и с российским адресом, идут через VPN раньше RU-direct.
+                    add(ForcedProxyDomains.rule(proxyTag))
                 }
                 if (blockQuic) add(quicRejectRule())
             }
@@ -999,6 +1001,7 @@ object RuntimeConfigBuilder {
     private fun isGeneratedRouteRule(element: JsonElement): Boolean {
         val rule = element as? JsonObject ?: return false
         if (isPrivateDnsRouteRule(rule)) return true
+        if (ForcedProxyDomains.isForcedRule(rule)) return true
         return rule.string("action") == "hijack-dns" &&
             (rule["port"] as? JsonPrimitive)?.contentOrNull == "53"
             || rule.string("action") == "route" &&

@@ -13,6 +13,7 @@ import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.config.ForcedProxyDomains
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
@@ -389,6 +390,10 @@ internal class SessionStarter(
             4,
             "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic} " +
                 "resetStalledFlows=${uiSettings.resetStalledFlows}",
+        )
+        RuntimeLog.app(
+            4,
+            "маршрут: через VPN всегда, даже с российским адресом: ${ForcedProxyDomains.suffixes.joinToString()}",
         )
         val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(
