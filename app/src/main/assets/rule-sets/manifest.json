@@ -13,9 +13,9 @@
     {
       "tag": "zapret-ru-ip",
       "file": "zapret-ru-ip.srs",
-      "sha256": "bdca5cdb44cdcf0940001e5952386822a6f4ffa8b2c8eea00340aa6f585c7f9d",
+      "sha256": "55869c680cf6489991cbfdf62c2f5da77ea85bf571babddb6cd9c4941d84cbfa",
       "source": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-ru.srs",
-      "source_revision": "eb32cd6ed4a16fcb3bf9a36ccebf28e45716ae84",
+      "source_revision": "66c864fcfe1535549e0658569cb514dbd35756ba",
       "license": "GPL-3.0-or-later"
     }
   ]

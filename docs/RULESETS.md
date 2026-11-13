@@ -4,7 +4,7 @@
 sites that must go through `direct`. The binary `.srs` is built by the exact audit CLI
 from `core.properties`.
 
-`zapret-ru-ip.srs` comes from the pinned snapshot `SagerNet/sing-geoip@eb32cd6ed4a16fcb3bf9a36ccebf28e45716ae84`; the expected SHA-256 is `bdca5cdb44cdcf0940001e5952386822a6f4ffa8b2c8eea00340aa6f585c7f9d`.
+`zapret-ru-ip.srs` comes from the pinned snapshot `SagerNet/sing-geoip@66c864fcfe1535549e0658569cb514dbd35756ba`; the expected SHA-256 is `55869c680cf6489991cbfdf62c2f5da77ea85bf571babddb6cd9c4941d84cbfa`.
 
 Both files are delivered only together with the APK. There is no runtime download of the sets: they are updated only together with the APK (the background check and download of the APK itself are described in ARCHITECTURE.md).
 
