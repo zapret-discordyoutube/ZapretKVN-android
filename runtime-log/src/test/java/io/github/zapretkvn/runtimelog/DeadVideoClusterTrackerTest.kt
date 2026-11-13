@@ -28,10 +28,33 @@ class DeadVideoClusterTrackerTest {
         assertEquals("sn-8ph2xajvh", DeadVideoClusterTracker.clusterOf("r6---sn-8ph2xajvh-n8vs.googlevideo.com"))
         assertEquals("sn-2oi5h5", DeadVideoClusterTracker.clusterOf("RR5---SN-2OI5H5-5J.GoogleVideo.com."))
         assertEquals("sn-gxuo03g", DeadVideoClusterTracker.clusterOf("rr1---sn-gxuo03g.googlevideo.com"))
+        // Поток получает имя по ответу DNS (CNAME на форму с точкой): архив 0.5.47, 2026-11-13 23:02:51.
+        assertEquals("sn-8ph2xajvh", DeadVideoClusterTracker.clusterOf("rr2.sn-8ph2xajvh-3a4l.googlevideo.com"))
+        assertEquals("sn-8ph2xajvh", DeadVideoClusterTracker.clusterOf("rr1.sn-8ph2xajvh-3a4s.googlevideo.com"))
+        assertEquals("sn-gxuo03g", DeadVideoClusterTracker.clusterOf("rr1.sn-gxuo03g.googlevideo.com."))
         assertNull(DeadVideoClusterTracker.clusterOf("redirector.googlevideo.com"))
         assertNull(DeadVideoClusterTracker.clusterOf("googlevideo.com"))
         assertNull(DeadVideoClusterTracker.clusterOf("rr2---sn-8ph2xajvh-3a4l.example.com"))
+        assertNull(DeadVideoClusterTracker.clusterOf("rr2.sn-8ph2xajvh-3a4l.example.com"))
+        assertNull(DeadVideoClusterTracker.clusterOf("sn-8ph2xajvh.googlevideo.com"))
         assertNull(DeadVideoClusterTracker.clusterOf(""))
+    }
+
+    @Test
+    fun `the archive 0-5-47 pattern with dotted names makes the cluster dead`() {
+        // 23:02:51: два потока к rr2 и один к rr1 того же кластера, по 8.1 с, вверх 3 КБ, вниз 948 Б.
+        val tracker = DeadVideoClusterTracker()
+        val at = 1_731_538_971_000L
+        val events = tracker.onClosed(
+            at,
+            listOf(
+                closed("a", at, "rr2.sn-8ph2xajvh-3a4l.googlevideo.com", lived = 8_100, up = 3_072, down = 948),
+                closed("b", at, "rr1.sn-8ph2xajvh-3a4s.googlevideo.com", lived = 8_100, up = 3_072, down = 948),
+                closed("c", at, "rr2.sn-8ph2xajvh-3a4l.googlevideo.com", lived = 8_100, up = 3_072, down = 948),
+            ),
+        )
+        assertEquals(listOf(DeadVideoClusterTracker.Event.Dead("sn-8ph2xajvh", 3, 0, "hy2-titiru")), events)
+        assertEquals(listOf("sn-8ph2xajvh"), tracker.activeDeadClusters(at))
     }
 
     @Test

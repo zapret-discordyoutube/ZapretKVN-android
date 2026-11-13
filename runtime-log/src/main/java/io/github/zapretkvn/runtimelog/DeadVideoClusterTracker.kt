@@ -122,10 +122,12 @@ class DeadVideoClusterTracker(
 
     companion object {
         private const val MAX_IDS = 512
-        private val CLUSTER = Regex("""---(sn-[a-z0-9]+)(?:-[a-z0-9]+)?\.googlevideo\.com$""")
+        private val CLUSTER = Regex("""(?:---|\.)(sn-[a-z0-9]+)(?:-[a-z0-9]+)?\.googlevideo\.com$""")
 
         /**
          * Кластер из имени кеш-узла: `rr2---sn-8ph2xajvh-3a4l.googlevideo.com` даёт `sn-8ph2xajvh`.
+         * Обе записи имени равноправны: плеер просит `rr2---sn-…`, а поток получает имя по ответу DNS, то есть
+         * `rr2.sn-…` (с точкой) через CNAME. Поле: архив 0.5.47, детектор молчал, пока знал только форму с `---`.
          * Имена без метки `sn-` (`redirector.googlevideo.com` и другие) кластеру не принадлежат: `null`.
          */
         fun clusterOf(domain: String): String? =

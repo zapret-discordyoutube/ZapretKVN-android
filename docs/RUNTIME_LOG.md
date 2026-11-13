@@ -310,6 +310,11 @@ sooner, and `SlowVideoDetector` stays silent because a flow with 0 B is not a "s
 What helps is another exit address: YouTube chooses the cluster by the address the player's request came from, so a
 different server usually gets a different cluster (on the phone the same video played through another node within 7 s).
 The cluster is the part of the cache node name between `---` and the second dash: `rr2---sn-8ph2xajvh-3a4l` is `sn-8ph2xajvh`.
+Both spellings of the name count: the player asks for `rr2---sn-…`, but a flow is named from the DNS answer, which CNAMEs to
+the dotted form `rr2.sn-…`. **Field bug (0.5.47 archive, 2026-11-13 23:02-23:06):** the tracker only knew the `---` form, so
+three batches of three silent flows (948 B back after 8.1 s) to `sn-8ph2xajvh` were never counted and the switch never ran,
+while Chrome through the same node, cluster and cache address (128.75.235.173) received 1-6 MB. Fixed in 0.5.48; the test uses
+the exact names and sizes of that archive. Windows `cluster_of` has the same regex and the same fix.
 The tracker reads the **closed** flows of the snapshot (so it works with or without the reset option) and counts a flow
 as *silent* when it is TCP, sent something, received at most 4 KB, and lived at least 5 s (an instant reset is a refusal,
 not a silent node). A cluster is **dead** after 3 different silent flows inside 90 s with no healthy flow (64 KB or more) of
