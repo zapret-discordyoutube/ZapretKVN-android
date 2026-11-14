@@ -3,7 +3,6 @@ package io.github.zapretkvn.android.diagnostics
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import android.widget.Toast
 import java.io.File
 import kotlin.concurrent.thread
@@ -17,7 +16,6 @@ class DiagnosticSaveReceiver : BroadcastReceiver() {
             try {
                 val source = File(File(appContext.cacheDir, DiagnosticExporter.DIRECTORY_NAME), DiagnosticExporter.FILE_NAME)
                 val saved = DiagnosticDownloadsSaver.save(appContext, source)
-                Log.i(TAG, if (saved != null) "diagnostic copied to Downloads: $saved" else "diagnostic copy to Downloads failed")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
                     Toast.makeText(
                         appContext,
@@ -29,9 +27,5 @@ class DiagnosticSaveReceiver : BroadcastReceiver() {
                 pending.finish()
             }
         }
-    }
-
-    private companion object {
-        const val TAG = "ZapretDiagnosticSave"
     }
 }
