@@ -174,6 +174,8 @@ fun SettingsRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     icon: ImageVector? = null,
+    /** `Color.Unspecified` оставляет значок как нарисован: так выводятся логотипы с фирменными цветами. */
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     onClick: (() -> Unit)? = null,
     showChevron: Boolean = onClick != null,
     trailing: (@Composable () -> Unit)? = null,
@@ -191,7 +193,7 @@ fun SettingsRow(
             Icon(
                 icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = iconTint,
                 modifier = Modifier.size(24.dp),
             )
         }

@@ -18,10 +18,9 @@ import io.github.zapretkvn.android.ui.settings.RowsCard
 import io.github.zapretkvn.android.ui.settings.SettingsPageList
 import io.github.zapretkvn.core.designsystem.SectionHeader
 import io.github.zapretkvn.core.designsystem.SettingsRow
-import io.github.zapretkvn.core.designsystem.ZapretIcons
 
 /** Официальные ссылки проекта. Других мест, где они записаны, в приложении нет. */
-data class AboutUsLink(val title: String, val subtitle: String, val url: String)
+data class AboutUsLink(val title: String, val subtitle: String, val url: String, val icon: AboutUsIcon)
 
 /**
  * Рекламная метка deep-link бота: источник kvnand + место community.
@@ -34,21 +33,21 @@ private const val MIRROR = "https://script.google.com/macros/s/AKfycbzcEPk67WW6f
 
 object AboutUsLinks {
     /** Главный VPN-бот, где покупают подписку: стоит над всем остальным. */
-    val bot = AboutUsLink("Zapret VPN bot", "Главный VPN-бот: здесь можно купить подписку", BOT_COMMUNITY_URL)
+    val bot = AboutUsLink("Zapret VPN bot", "Главный VPN-бот: здесь можно купить подписку", BOT_COMMUNITY_URL, AboutUsIcon.Telegram)
 
     val channels: List<AboutUsLink> = listOf(
-        AboutUsLink("Zapret KVN", "Telegram-канал", "https://t.me/bypassblock"),
-        AboutUsLink("VPN Discord YouTube", "Telegram-сообщество", "https://t.me/vpndiscordyooutube"),
-        AboutUsLink("RuNet VPN YouTube Discord", "Telegram-канал", "https://t.me/runetvpnyoutubediscord"),
-        AboutUsLink("Zastogram", "Telegram-канал", "https://t.me/zastogram"),
+        AboutUsLink("Zapret KVN", "Telegram-канал", "https://t.me/bypassblock", AboutUsIcon.Telegram),
+        AboutUsLink("VPN Discord YouTube", "Telegram-сообщество", "https://t.me/vpndiscordyooutube", AboutUsIcon.Telegram),
+        AboutUsLink("RuNet VPN YouTube Discord", "Telegram-канал", "https://t.me/runetvpnyoutubediscord", AboutUsIcon.Telegram),
+        AboutUsLink("Zastogram", "Telegram-канал", "https://t.me/zastogram", AboutUsIcon.Telegram),
     )
 
     /** Главные ресурсы проекта и запасные списки адресов на случай блокировки основных. */
     val resources: List<AboutUsLink> = listOf(
-        AboutUsLink("Вики", "Инструкции и ответы на вопросы", "$MIRROR?s=wiki"),
-        AboutUsLink("Git", "Исходный код и релизы", "$MIRROR?s=git"),
-        AboutUsLink("Резервный список адресов", "Документ Google", "https://docs.google.com/document/d/1v1TeRSBpXEJpy6qxNa3tVkyhgtoM_rj_T-jwphhfvYI/"),
-        AboutUsLink("Ещё один резервный список", "GitHub Gist", "https://gist.github.com/fuckyourkn/ecb9b6a03f53bddcdd47023ebc12d4f9"),
+        AboutUsLink("Вики", "Инструкции и ответы на вопросы", "$MIRROR?s=wiki", AboutUsIcon.Book),
+        AboutUsLink("Git", "Исходный код и релизы", "$MIRROR?s=git", AboutUsIcon.Git),
+        AboutUsLink("Резервный список адресов", "Документ Google", "https://docs.google.com/document/d/1v1TeRSBpXEJpy6qxNa3tVkyhgtoM_rj_T-jwphhfvYI/", AboutUsIcon.GoogleDocs),
+        AboutUsLink("Ещё один резервный список", "GitHub Gist", "https://gist.github.com/fuckyourkn/ecb9b6a03f53bddcdd47023ebc12d4f9", AboutUsIcon.GitHub),
     )
 
     val all: List<AboutUsLink> = listOf(bot) + channels + resources
@@ -105,7 +104,9 @@ private fun LinksCard(links: List<AboutUsLink>, onOpen: (String) -> Unit) {
             SettingsRow(
                 title = link.title,
                 subtitle = link.subtitle,
-                icon = ZapretIcons.Chat,
+                icon = link.icon.vector,
+                // Фирменный цвет у логотипа свой; без него (GitHub, книга) цвет берёт тема.
+                iconTint = link.icon.brandColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 onClick = { onOpen(link.url) },
             )
         }
