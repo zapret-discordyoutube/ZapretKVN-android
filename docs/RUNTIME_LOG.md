@@ -376,6 +376,15 @@ switches again (cooldown 90 s, 3 switches per 10 min). A starving candidate is s
 the original server, and an episode that began with plain starving keeps the old rule (silence restores). Off switch: the same
 option "Менять сервер при медленном YouTube".
 
+**Notice when the switch did not help (0.6.1, owner decision 2026-11-14).** The second measured wedge (16:48 to 16:59 UTC)
+ended differently from the dead-cluster case: the verdict was plain starving, the player held links of clusters that answered
+with about 948 bytes and then stalled, two episodes tried other servers (Hipnl, Tinul), found no new video flow, returned
+`Silent`, and so restored the old server; the video stayed at 0:10 until the client was force-stopped, after which another
+video played at once. The app cannot close another app, so for the outcomes `Inconclusive` and `AllCandidatesSlow`
+(`YoutubeWedgeNotice`, pure, tested) it shows the message and notification "YouTube завис, и смена сервера не помогла.
+Закройте YouTube … и откройте видео заново", at most once per 10 minutes, and the timeline gets one line. Other outcomes stay
+silent. Off switch: the same option "Менять сервер при медленном YouTube".
+
 The timeline line of the switch names the reason: `Переключение при медленном YouTube (кластер sn-8ph2xajvh не отвечает): выбран <server>.`
 A switch does not always help: if the new server is handed a dead cluster too, the next candidate is tried within the
 same limits. The tests (`DeadVideoClusterTrackerTest`, `RuntimeLogFlowsTest`) use the numbers of the 0.5.43 archive.

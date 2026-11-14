@@ -15,6 +15,7 @@ import io.github.zapretkvn.android.engines.failover.YoutubeSwitchEngine
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchGate
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchOutcome
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchPolicy
+import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.config.SlotSelectors
 import io.github.zapretkvn.android.network.probes.LivenessResult
@@ -113,6 +114,9 @@ internal class ServerSwitchCoordinator(
      * сервер и про сервер слота ничего не говорит.
      */
     private var slotFailover: SlotFailoverPolicy? = null
+
+    /** Когда пользователю в последний раз предложили закрыть зависший YouTube (не чаще раза в 10 минут). */
+    @Volatile private var wedgeNoticeShownAt: Long? = null
 
     /** Закрепления слотов из настроек (id слота -> тег сервера); приходят сообщением при старте и при каждой правке. */
     private var slotPins: Map<String, String> = emptyMap()
@@ -733,6 +737,12 @@ internal class ServerSwitchCoordinator(
                 (if (onSlot) "Слот YouTube, переключение при медленном видео" else "Переключение при медленном YouTube") +
                     " ($cause): ${youtubeOutcomeText(outcome)}.",
             )
+            // Смена сервера не вернула видео: плеер ReVanced держит мёртвые ссылки и оживает только после закрытия клиента.
+            YoutubeWedgeNotice.decide(outcome, wedgeNoticeShownAt, clock())?.let { notice ->
+                wedgeNoticeShownAt = clock()
+                timeline("YouTube завис, смена сервера не помогла: пользователю предложено закрыть YouTube и открыть видео заново.")
+                SmartContext().announce(session, notice.message, notice.detail)
+            }
             val switchedAway = outcome is YoutubeSwitchOutcome.Switched || outcome is YoutubeSwitchOutcome.SwitchedUnverified
             if (verdict.deadCluster && switchedAway && leftServerId != null && !onSlot) {
                 supervisor.avoidForYoutube(leftServerId)
