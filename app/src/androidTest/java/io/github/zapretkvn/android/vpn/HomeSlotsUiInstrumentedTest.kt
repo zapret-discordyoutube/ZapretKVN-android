@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.vpn
 
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -19,8 +20,8 @@ import org.junit.Rule
 import org.junit.Test
 
 /**
- * Home with service slots (docs/SERVICE_SLOTS.md): the card lists each service with its server, a tap opens the sheet,
- * a pick pins the server in the stored settings, and the low-speed switch on Home writes the same setting as Settings.
+ * Home with service slots (docs/SERVICE_SLOTS.md): the card lists each service with its server, a tap opens the
+ * «Сервисы» tab, and the low-speed switch on Home writes the same setting as Settings.
  */
 class HomeSlotsUiInstrumentedTest {
     @get:Rule
@@ -99,25 +100,13 @@ class HomeSlotsUiInstrumentedTest {
     }
 
     @Test
-    fun pickingAServerInTheSheetPinsItAndAutomaticUnpinsIt() = runBlocking {
+    fun tappingTheCardOpensTheServicesTab() {
         scrollToCard()
-        composeRule.onNodeWithTag("home-slot-youtube").performClick()
-        composeRule.onNodeWithTag("home-slot-sheet").assertExists()
-        composeRule.onNodeWithText("Автоматически").assertExists()
-        // The sheet lists the servers of the profile; Paris is not the current server of YouTube.
-        // "Paris" is also the Telegram row behind the sheet: look only inside the sheet.
-        val parisInSheet = androidx.compose.ui.test.hasText("Paris") and
-            androidx.compose.ui.test.hasAnyAncestor(hasTestTag("home-slot-sheet"))
-        composeRule.onNode(parisInSheet).performClick()
+        composeRule.onNodeWithTag("home-slots-open").performClick()
         composeRule.waitUntil(5_000) {
-            runBlocking { container.uiSettingsStore.settings.first().slotPins["youtube"] } == "Paris"
+            composeRule.onAllNodesWithTag("services-screen").fetchSemanticsNodes().isNotEmpty()
         }
-        assertEquals("Paris", container.uiSettingsStore.settings.first().slotPins["youtube"])
-        composeRule.onNodeWithText("Автоматически").performClick()
-        composeRule.waitUntil(5_000) {
-            runBlocking { container.uiSettingsStore.settings.first().slotPins["youtube"] } == null
-        }
-        assertTrue(container.uiSettingsStore.settings.first().slotPins.isEmpty())
+        composeRule.onNodeWithTag("services-screen").assertExists()
     }
 
     @Test

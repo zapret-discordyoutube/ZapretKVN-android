@@ -15,6 +15,8 @@ import io.github.zapretkvn.core.designsystem.ZapretIcons
 enum class AppTab(val title: String, val icon: ImageVector) {
     Home("Главная", ZapretIcons.Power),
     Servers("Серверы", ZapretIcons.Servers),
+    /** Третья, сразу после серверов: свой сервер для YouTube, Telegram и ИИ-приложений. */
+    Services("Сервисы", ZapretIcons.Apps),
     Routing("Маршруты", ZapretIcons.Route),
     Settings("Настройки", ZapretIcons.Tune),
     /** Всегда последняя, справа: бот с покупкой подписки и Telegram-каналы. */

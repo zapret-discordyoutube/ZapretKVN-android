@@ -45,6 +45,9 @@ import io.github.zapretkvn.android.platform.VpnSystemPolicyDetector
 import io.github.zapretkvn.android.routing.GlobalRoutingPolicy
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.slots.ForeignServer
+import io.github.zapretkvn.android.slots.ForeignServers
+import io.github.zapretkvn.android.slots.ProfileServers
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotPlanner
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -225,6 +228,31 @@ internal class SessionStarter(
         false
     }
 
+    /**
+     * Servers of the user's other profiles that a slot may use. Read from the store at every start (a deleted or edited
+     * profile is picked up at once); a profile that cannot be read or parsed is skipped, it must never stop a start.
+     * Their addresses are registered with the redactor like the active profile's, so logs never show them.
+     */
+    private suspend fun loadForeignServers(activeId: String, activeName: String, active: ParsedConfig): List<ForeignServer> {
+        val others = container.profileStore.profiles.value.filter { it.id != activeId }.mapNotNull { meta ->
+            try {
+                val config = ParsedConfig.parse(container.profileStore.read(meta.id).json)
+                config.root?.let { root -> ProfileServers(meta.id, meta.name, root) to config }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                null
+            }
+        }
+        val activeRoot = active.root ?: return emptyList()
+        val foreign = ForeignServers.collect(ProfileServers(activeId, activeName, activeRoot), others.map { it.first })
+        val used = foreign.map { it.ref.profileId }.toSet()
+        others.filter { it.first.profileId in used }.forEach { (profile, config) ->
+            ServerAddressRedactor.registerProfile(profile.profileId, config)
+        }
+        return foreign
+    }
+
     private fun checkCurrent(token: Long) {
         check(token == controller.currentGeneration()) { "Запуск отменён." }
     }
@@ -400,9 +428,21 @@ internal class SessionStarter(
         )
         // Раздельные серверы (docs/SERVICE_SLOTS.md): по слоту на selector. Нужен управляемый профиль минимум с двумя
         // серверами; иначе слоты молча не создаются и работает один общий selector, как раньше.
+        // Пул слота: серверы активного профиля и серверы остальных профилей (решение владельца 2026-11-14).
+        val foreignServers = if (uiSettings.serviceSlots && SlotRoutes.managedServers(effectiveConfig.root) != null) {
+            loadForeignServers(profileId, profile.metadata.name, effectiveConfig)
+        } else {
+            emptyList()
+        }
         val slotPlan = if (uiSettings.serviceSlots) {
             SlotRoutes.managedServers(effectiveConfig.root)?.let { managed ->
-                SlotPlanner.plan(SlotCatalog.withPins(uiSettings.slotPins), managed.tags, managed.selected, selectedPackages)
+                val pins = ForeignServers.runtimePins(uiSettings.slotPins, profileId, foreignServers)
+                SlotPlanner.plan(
+                    SlotCatalog.withPins(pins),
+                    managed.tags + foreignServers.map { it.runtimeTag },
+                    managed.selected,
+                    selectedPackages,
+                ).copy(foreign = foreignServers)
             }
         } else {
             null
@@ -414,6 +454,7 @@ internal class SessionStarter(
                     "слоты: включены, но профиль без управляемого selector или с одним сервером: один общий сервер"
                 } else {
                     "слоты: " + slotPlan.specs.joinToString("; ") { "${it.slotId}=${it.defaultMember} из ${it.members.size}" } +
+                        (if (foreignServers.isEmpty()) "" else "; серверов из других профилей: ${foreignServers.size}") +
                         "; остальные приложения идут через основной сервер"
                 },
             )
@@ -441,6 +482,7 @@ internal class SessionStarter(
                         underlying.privateDnsMode != PrivateDnsMode.Strict,
                     privateDnsRoute = privateDnsRoute,
                     slotRoutes = slotPlan?.specs.orEmpty(),
+                    extraOutbounds = foreignServers.map { it.outbound },
                 ),
             )
         ) {

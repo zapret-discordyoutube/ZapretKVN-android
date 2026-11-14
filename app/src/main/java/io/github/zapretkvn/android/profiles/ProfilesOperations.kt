@@ -15,8 +15,10 @@ internal class ProfilesOperations(
     private val scope: CoroutineScope,
 ) {
     fun run(markBusy: Boolean = true, block: suspend () -> Unit) {
+        // «Занято» ставится до запуска: иначе между вызовом и стартом корутины состояние выглядит свободным
+        // (повторное нажатие запускало вторую операцию, а тест видел «свободно» раньше работы).
+        if (markBusy) state.update { it.copy(busy = true) }
         scope.launch {
-            if (markBusy) state.update { it.copy(busy = true) }
             try {
                 block()
             } catch (error: Exception) {

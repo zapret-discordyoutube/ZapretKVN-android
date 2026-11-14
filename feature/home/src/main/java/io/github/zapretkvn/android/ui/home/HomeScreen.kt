@@ -161,8 +161,8 @@ class HomeCallbacks(
     /** «Показать IP»: единственный запрос внешнего IP, только по нажатию. */
     val onRequestExternalIp: () -> Unit,
     val onSlowServerSwitchChange: (Boolean) -> Unit = {},
-    /** Закрепить сервер за слотом ([serverTag] = null: слот снова выбирает сам). */
-    val onPinSlot: (slotId: String, serverTag: String?) -> Unit = { _, _ -> },
+    /** Открыть вкладку «Сервисы»: там выбирают сервер для каждого сервиса. */
+    val onOpenServices: () -> Unit = {},
 )
 
 /**
@@ -206,7 +206,7 @@ fun HomeScreen(
                     ui.slots,
                     ui.slowServerSwitch,
                     callbacks.onSlowServerSwitchChange,
-                    callbacks.onPinSlot,
+                    callbacks.onOpenServices,
                     Modifier.animateItem(),
                 )
             }
@@ -686,33 +686,28 @@ private fun ServerCard(server: HomeServerUi, onClick: () -> Unit, modifier: Modi
 // ---------------------------------------------------------------- slots
 
 /**
- * «Серверы по сервисам»: на какой сервер сейчас уходит каждый сервис, и выключатель автопереключения по скорости.
- * Без слотов остаётся только выключатель. Владелец 2026-11-14: карточки и выключатель на Главной.
+ * «Серверы по сервисам»: на какой сервер сейчас уходит каждый сервис, и выключатель автопереключения. Выбор сервера
+ * для сервиса живёт на вкладке «Сервисы» (владелец 2026-11-14), карточка открывает её. Без слотов остаётся выключатель.
  */
 @Composable
 private fun SlotsCard(
     slots: List<HomeSlotUi>,
     slowServerSwitch: Boolean,
     onSlowServerSwitchChange: (Boolean) -> Unit,
-    onPinSlot: (String, String?) -> Unit,
+    onOpenServices: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var openSlotId by rememberSaveable { mutableStateOf<String?>(null) }
-    // The sheet reads the live row, so the "now" mark follows a move while it is open.
-    slots.firstOrNull { it.id == openSlotId && it.options.isNotEmpty() }?.let { slot ->
-        SlotSheet(slot, onPick = { tag -> onPinSlot(slot.id, tag) }, onDismiss = { openSlotId = null })
-    }
     ZapretCard(modifier = modifier.testTag("home-slots"), verticalSpacing = Spacing.s) {
         if (slots.isNotEmpty()) {
-            CardTitle(title = "Серверы по сервисам", icon = ZapretIcons.Globe)
+            CardTitle(
+                title = "Серверы по сервисам",
+                icon = ZapretIcons.Globe,
+                modifier = Modifier.clickable(role = Role.Button, onClick = onOpenServices).testTag("home-slots-open"),
+                action = { Icon(ZapretIcons.Chevron, contentDescription = "Открыть вкладку «Сервисы»") },
+            )
             slots.forEach { slot ->
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (slot.options.isNotEmpty()) Modifier.clickable { openSlotId = slot.id } else Modifier,
-                        )
-                        .testTag("home-slot-${slot.id}"),
+                    modifier = Modifier.fillMaxWidth().testTag("home-slot-${slot.id}"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Spacing.m),
                 ) {
@@ -722,16 +717,11 @@ private fun SlotsCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(slot.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                         Text(
-                            slot.serverTitle,
+                            listOfNotNull(slot.serverTitle, slot.profileName).joinToString(" · "),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Text(
-                        slot.modeLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         }
@@ -742,63 +732,6 @@ private fun SlotsCard(
             modifier = Modifier.testTag("home-slow-switch"),
             switchDescription = "Переключать при низкой скорости",
         )
-    }
-}
-
-/**
- * Нижний лист слота: «Автоматически» или конкретный сервер профиля. Выбор действует сразу, без перезапуска VPN;
- * закреплённый сервер слот не покидает, пока он отвечает.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SlotSheet(slot: HomeSlotUi, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = Spacing.l)
-                .padding(bottom = Spacing.l)
-                .testTag("home-slot-sheet"),
-            verticalArrangement = Arrangement.spacedBy(Spacing.s),
-        ) {
-            Text(slot.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-            Text(
-                "Сервис ходит через свой сервер. Автоматически: приложение выбирает сервер само и меняет его только при сбое. " +
-                    "Закреплённый сервер меняется, только если он перестал отвечать.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                SlotSheetRow("Автоматически", null, selected = slot.pinnedTag == null, current = false) { onPick(null) }
-                slot.options.forEach { option ->
-                    SlotSheetRow(option.title, option.flag, selected = option.pinned, current = option.current) {
-                        onPick(option.tag)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SlotSheetRow(title: String, flag: String?, selected: Boolean, current: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.m),
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-            if (flag != null) FlagBadge(flag, size = 24.dp)
-        }
-        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        if (current) {
-            Text("сейчас", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        }
     }
 }
 

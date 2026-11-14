@@ -43,7 +43,18 @@ sealed interface VpnConnectionState {
  * A service slot of the running session (docs/SERVICE_SLOTS.md): which server its traffic leaves through now.
  * The `default` slot is not listed: it is the main selector, shown as the server card.
  */
-data class SlotState(val slotId: String, val title: String, val serverTag: String)
+data class SlotState(
+    val slotId: String,
+    val title: String,
+    /** The tag the runtime knows the server by (a server of another profile carries a profile suffix). */
+    val serverTag: String,
+    /** The server's own name for the user, without the suffix. */
+    val serverName: String = serverTag,
+    /** The profile the server belongs to when it is not the active one; null for the active profile. */
+    val profileName: String? = null,
+    /** The slot's server in the stored form (`<profile id>|<tag>`), what a pin is compared with. */
+    val serverRef: String? = null,
+)
 
 data class RuntimeSelectorGroup(
     val tag: String,

@@ -240,4 +240,45 @@ class SlotRoutesTest {
         val fromJson = build(emptyList(), mode = DnsMode.FromJson, raw = userDnsConfig(final = "direct")).dnsRules()
         assertTrue(fromJson.none { it.strings("domain_suffix") == forced })
     }
+
+    // ---- Pool of all profiles ----
+
+    private fun foreignOutbound(tag: String): JsonObject =
+        JsonConfig.parse("""{"type":"direct","tag":"$tag"}""") as JsonObject
+
+    @Test
+    fun `servers of other profiles join the runtime only as members of a slot and never of the main selector`() {
+        val spec = youtube.copy(members = listOf("server-b", "Oslo@bbbbbbbb"), defaultMember = "Oslo@bbbbbbbb")
+        val options = RuntimeConfigOptions(
+            dnsMode = DnsMode.Automatic,
+            blockQuic = true,
+            slotRoutes = listOf(spec),
+            extraOutbounds = listOf(foreignOutbound("Oslo@bbbbbbbb"), foreignOutbound("Unused@bbbbbbbb")),
+        )
+        val built = RuntimeConfigBuilder.build(config(), options = options) as RuntimeConfigResult.Ready
+        val parsed = JsonConfig.parse(built.json) as JsonObject
+        val tags = parsed.outbounds().map { it.str("tag") }
+        assertEquals("the foreign server is there once", 1, tags.count { it == "Oslo@bbbbbbbb" })
+        assertFalse("a foreign server no slot uses is not started", "Unused@bbbbbbbb" in tags)
+        val main = parsed.outbounds().single { it.str("tag") == "zapret-proxy" }
+        assertEquals(listOf("server-a", "server-b", "server-c"), main.strings("outbounds"))
+        val slot = parsed.outbounds().single { it.str("tag") == "zapret-slot-youtube" }
+        assertEquals(listOf("server-b", "Oslo@bbbbbbbb"), slot.strings("outbounds"))
+        assertEquals("Oslo@bbbbbbbb", slot.str("default"))
+        // The stored profile is never edited.
+        assertFalse("Oslo" in config())
+        // A rebuild from the runtime copy does not multiply the foreign server.
+        val again = RuntimeConfigBuilder.build(built.json, options = options) as RuntimeConfigResult.Ready
+        assertEquals(1, (JsonConfig.parse(again.json) as JsonObject).outbounds().count { it.str("tag") == "Oslo@bbbbbbbb" })
+    }
+
+    @Test
+    fun `without slots the extra outbounds are ignored and the config is the old one`() {
+        val plain = RuntimeConfigBuilder.build(config(), options = RuntimeConfigOptions(blockQuic = true)) as RuntimeConfigResult.Ready
+        val withExtras = RuntimeConfigBuilder.build(
+            config(),
+            options = RuntimeConfigOptions(blockQuic = true, extraOutbounds = listOf(foreignOutbound("Oslo@bbbbbbbb"))),
+        ) as RuntimeConfigResult.Ready
+        assertEquals(plain.json, withExtras.json)
+    }
 }

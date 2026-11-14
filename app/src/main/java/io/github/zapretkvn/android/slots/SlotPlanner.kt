@@ -1,9 +1,12 @@
 package io.github.zapretkvn.android.slots
 
-import io.github.zapretkvn.android.slots.SlotRouteSpec
-
 /** The slot layout of one session: the specs for the config builder and what each slot starts on. */
-internal data class SlotPlan(val specs: List<SlotRouteSpec>, val assignments: List<SlotAssignment>)
+internal data class SlotPlan(
+    val specs: List<SlotRouteSpec>,
+    val assignments: List<SlotAssignment>,
+    /** Servers of other profiles in the pool (their runtime tags are members of the specs). */
+    val foreign: List<ForeignServer> = emptyList(),
+)
 
 /**
  * Turns slot definitions plus the profile's servers into the plan the session starts with. The `default` slot has no

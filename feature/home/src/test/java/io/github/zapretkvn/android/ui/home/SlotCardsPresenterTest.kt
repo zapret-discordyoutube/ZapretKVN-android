@@ -1,44 +1,41 @@
 package io.github.zapretkvn.android.ui.home
 
-import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
-import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.SlotState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SlotCardsPresenterTest {
-    private val group = RuntimeSelectorGroup(
-        tag = "zapret-proxy",
-        type = "selector",
-        selected = "🇳🇱 Amsterdam",
-        selectable = true,
-        primary = true,
-        items = listOf(
-            RuntimeOutboundItem("🇳🇱 Amsterdam", "vless", "ams.example.com:443"),
-            RuntimeOutboundItem("🇩🇪 Berlin", "hysteria2", "ber.example.com:443"),
-            RuntimeOutboundItem("Plain", "vless", "plain.example.com:443"),
-        ),
-    )
     private val main = HomeServerUi("Amsterdam", "🇳🇱", "VLESS", "V", null, null, null, true)
 
     @Test
     fun `no slots means no rows, the card shows only the switch`() {
-        assertTrue(slotCards(emptyList(), listOf(group), main, hide = false, hostCountries = emptyMap()).isEmpty())
+        assertTrue(slotCards(emptyList(), main, hide = false).isEmpty())
     }
 
     @Test
     fun `rows keep the session order, use Russian titles and end with the main server`() {
         val rows = slotCards(
             listOf(SlotState("ai", "AI", "🇩🇪 Berlin"), SlotState("youtube", "YouTube", "Plain")),
-            listOf(group), main, hide = false, hostCountries = emptyMap(),
+            main,
+            hide = false,
         )
         assertEquals(listOf("ai", "youtube", "default"), rows.map { it.id })
         assertEquals(listOf("ИИ-приложения", "YouTube", "Остальные приложения"), rows.map { it.title })
         assertEquals("🇩🇪", rows[0].flag)
-        assertEquals("Авто", rows[0].modeLabel)
+        assertEquals("Berlin", rows[0].serverTitle)
         assertEquals("Amsterdam", rows.last().serverTitle)
-        assertEquals("Выбран вами", rows.last().modeLabel)
+    }
+
+    @Test
+    fun `a server of another profile shows its own name and that profile`() {
+        val state = SlotState("telegram", "Telegram", "🇳🇴 Oslo@bbbbbbbb", serverName = "🇳🇴 Oslo", profileName = "Work")
+        val row = slotCards(listOf(state), null, hide = false).single()
+        assertEquals("Oslo", row.serverTitle)
+        assertEquals("🇳🇴", row.flag)
+        assertEquals("Work", row.profileName)
+        assertNull(slotCards(listOf(SlotState("ai", "AI", "Plain")), null, hide = false).single().profileName)
     }
 
     @Test
@@ -48,40 +45,9 @@ class SlotCardsPresenterTest {
     }
 
     @Test
-    fun `a pin shows as pinned and the sheet lists every server with the current and pinned marks`() {
-        val rows = slotCards(
-            listOf(SlotState("youtube", "YouTube", "🇩🇪 Berlin")),
-            listOf(group), main, hide = false, hostCountries = emptyMap(),
-            pins = mapOf("youtube" to "🇩🇪 Berlin"),
-        )
-        val youtube = rows.first { it.id == "youtube" }
-        assertEquals("Закреплён", youtube.modeLabel)
-        assertEquals("🇩🇪 Berlin", youtube.pinnedTag)
-        assertEquals(3, youtube.options.size)
-        assertEquals(listOf("🇩🇪 Berlin"), youtube.options.filter { it.current }.map { it.tag })
-        assertEquals(listOf("🇩🇪 Berlin"), youtube.options.filter { it.pinned }.map { it.tag })
-        assertTrue("the main server row has no sheet", rows.last().options.isEmpty())
-    }
-
-    @Test
-    fun `a pin on a server the profile no longer has is shown as automatic`() {
-        val rows = slotCards(
-            listOf(SlotState("youtube", "YouTube", "Plain")),
-            listOf(group), main, hide = false, hostCountries = emptyMap(),
-            pins = mapOf("youtube" to "gone"),
-        )
-        assertEquals("Авто", rows.first().modeLabel)
-        assertEquals(null, rows.first().pinnedTag)
-    }
-
-    @Test
-    fun `a pinned slot that sits on another server says the pinned one stopped answering`() {
-        val rows = slotCards(
-            listOf(SlotState("youtube", "YouTube", "Plain")),
-            listOf(group), main, hide = false, hostCountries = emptyMap(),
-            pins = mapOf("youtube" to "🇩🇪 Berlin"),
-        )
-        assertEquals("Закреплённый не отвечал", rows.first().modeLabel)
-        assertEquals("the pin stays, so the sheet still shows it", "🇩🇪 Berlin", rows.first().pinnedTag)
+    fun `addresses in a server name are masked when the privacy switch is on`() {
+        val state = SlotState("youtube", "YouTube", "203.0.113.9:443", serverName = "203.0.113.9:443")
+        val row = slotCards(listOf(state), null, hide = true).single()
+        assertTrue(row.serverTitle, "203.0.113.9" !in row.serverTitle)
     }
 }

@@ -123,12 +123,40 @@ Texts shown to users are Russian.
   measured a second time first (owner answer).
 - No hidden cost: no new timers; slot logic runs on the existing flow sampling while the screen is on (I6-03).
 
-## Decided pool scope (my reasoning, owner leaned the same way)
+## Pool scope: servers of ALL profiles (owner decision 2026-11-14, replaces the first version)
 
-The pool is per slot but drawn from the **active profile**: all selectors live in one sing-box config built from one
-profile, and mixing servers of several profiles would need a merged config, separate credentials handling and a
-second failover plan. A slot may therefore not use servers outside the active profile in the first version; a user
-who wants a different subscription for YouTube switches the profile (revisit when profiles can be merged).
+The first version drew a slot's pool from the active profile only. The owner decided that a slot may use every server
+the user has, from any profile or subscription. How it works (code in `slots/`):
+
+- `ServerRef(profileId, tag)` (in `core:model`) is a server's identity across profiles; its stored form is
+  `<profile id>|<tag>`. Pins are stored in that form, so a pin on «Paris» of one profile never applies to «Paris» of
+  another; an older pin without the profile id means the active profile.
+- `ForeignServers.collect` picks the plain servers (`SLOT_SERVER_TYPES`, no `detour`, the same transport and TLS rules
+  as the active profile) of the managed groups of the other profiles. A server whose protocol and address the active
+  profile already has joins once, as the active one. At most 64 foreign servers, so the core does not start hundreds
+  of outbounds. A profile that cannot be read is skipped; it never stops a start.
+- A foreign server's runtime tag is `<tag>@<first 8 digits of its profile id>`: it cannot collide with the active
+  profile's tags, and the log, the speed history and the failover keep servers of different profiles apart.
+- `RuntimeConfigOptions.extraOutbounds` appends the foreign servers that some slot actually uses to the runtime
+  outbounds, before the DNS name registry is filled (their names are server names). They are never members of the main
+  selector `zapret-proxy`, never shown on the «Серверы» tab, never written to a stored profile, and a rebuild does not
+  double them. Slots use selectors, so there are still no probes that could expose a server.
+- A single-server active profile can now get slots when other profiles add servers; a profile without the managed
+  selector (raw JSON) still gets none. The log line at the start says how many servers came from other profiles.
+- Addresses of the other profiles' servers are registered with the redactor like the active profile's.
+
+## The «Сервисы» tab (owner decision 2026-11-14)
+
+A bottom tab, third after «Серверы» (bar: Главная, Серверы, Сервисы, Маршруты, Настройки, О нас). It replaces the bottom
+sheet of Home. A switch «Раздельные серверы (бета)» on top; with it on, one compact row per service (YouTube, Telegram,
+ИИ-приложения): the service, where it leaves now (and the profile when it is not the active one), and the mode
+(«Авто», «Закреплён», «Закреплённый сервер не отвечал»). A tap expands the row in place: «Автоматически», then the
+servers grouped by profile (the active profile first, profiles collapsed unless they hold the current or pinned
+server, a search field above 8 servers, the whole list searched while typing). A pick writes the profile-qualified pin
+and applies at once in a running session. «Остальные приложения» is only a note: their server is chosen on «Серверы».
+The list is built from the stored profiles, so it works with the VPN off too. Home keeps a summary card (each service
+and its server, a tap opens the tab) and the «Переключать при низкой скорости» switch. Presenter: `buildServicesUi`
+(pure, tested), screen: `ServicesScreen` (module `feature:servers`), adapter: `ServicesRoute` in `:app`.
 
 ## Settled by the agent (owner: "settle the remaining questions, then implement", 2026-11-14)
 

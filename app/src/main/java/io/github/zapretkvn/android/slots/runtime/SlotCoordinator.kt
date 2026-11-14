@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.slots.runtime
 
 import io.github.zapretkvn.android.engines.failover.SlowSwitchSnapshot
+import io.github.zapretkvn.android.slots.ForeignServers
 import io.github.zapretkvn.android.slots.SlotCandidates
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotFailoverDecision
@@ -44,6 +45,10 @@ internal class SlotCoordinator(
     /** Last command number per slot: written when a command is created, read by the command itself. */
     private val moveSequence = ConcurrentHashMap<String, Long>()
 
+    /** The stored pins (profile-qualified) as runtime tags of this session; a pin whose server is gone is dropped. */
+    private fun runtimePins(session: CoreSession): Map<String, String> =
+        ForeignServers.runtimePins(pins, session.profileId, session.slotPlan?.foreign.orEmpty())
+
     /** Server a slot sits on now, or null when the session has no such slot. */
     fun serverOf(slotId: String): String? = failover?.serverOf(slotId)
 
@@ -52,7 +57,7 @@ internal class SlotCoordinator(
         failover = session.slotPlan?.let { plan ->
             val initial = plan.assignments.mapNotNull { a -> a.serverId?.let { a.slotId to it } }.toMap()
             val servers = plan.specs.flatMap { it.members }.distinct()
-            SlotFailoverPolicy(SlotCatalog.withPins(pins), servers, initial) { clock() }
+            SlotFailoverPolicy(SlotCatalog.withPins(runtimePins(session)), servers, initial) { clock() }
         }
         publish(session)
     }
@@ -94,7 +99,7 @@ internal class SlotCoordinator(
         val policy = failover ?: return
         if (!host.isCurrent(session)) return
         val specs = session.slotPlan?.specs.orEmpty().associateBy { it.slotId }
-        val moves = policy.setPins(newPins) { slotId -> specs[slotId]?.members.orEmpty() }
+        val moves = policy.setPins(runtimePins(session)) { slotId -> specs[slotId]?.members.orEmpty() }
         if (moves.isEmpty()) return
         host.timeline("Закреплено вручную: ${moves.joinToString { "${title(it.slotId)} → ${host.serverName(it.to)}" }}.")
         ServerNameRegistry.useForSlots(policy.slotServers())
@@ -132,8 +137,19 @@ internal class SlotCoordinator(
         val states = if (policy == null) {
             emptyList()
         } else {
+            val foreign = session.slotPlan?.foreign.orEmpty()
             session.slotPlan?.specs.orEmpty().mapNotNull { spec ->
-                policy.serverOf(spec.slotId)?.let { SlotState(spec.slotId, title(spec.slotId), it) }
+                policy.serverOf(spec.slotId)?.let { runtimeTag ->
+                    val other = foreign.firstOrNull { it.runtimeTag == runtimeTag }
+                    SlotState(
+                        slotId = spec.slotId,
+                        title = title(spec.slotId),
+                        serverTag = runtimeTag,
+                        serverName = other?.ref?.tag ?: runtimeTag,
+                        profileName = other?.profileName,
+                        serverRef = ForeignServers.refOf(runtimeTag, session.profileId, foreign).encode(),
+                    )
+                }
             }
         }
         controller.publishSlots(session.generation, states)

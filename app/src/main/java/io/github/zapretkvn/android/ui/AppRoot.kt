@@ -51,6 +51,7 @@ import io.github.zapretkvn.android.ui.routing.RoutingRoute
 import io.github.zapretkvn.android.ui.servers.ImportPreviewDialog
 import io.github.zapretkvn.android.ui.servers.ProfilesRoute
 import io.github.zapretkvn.android.ui.servers.ServersRoute
+import io.github.zapretkvn.android.ui.services.ServicesRoute
 import io.github.zapretkvn.android.ui.aboutus.AboutUsScreen
 import io.github.zapretkvn.android.ui.settings.SettingsPageRoute
 import io.github.zapretkvn.android.ui.settings.SettingsRoute
@@ -167,6 +168,7 @@ fun ZapretRoot(deps: AppDependencies) {
                         when (tab) {
                             AppTab.Home -> HomeWithUpdateBanner(deps, nav, padding)
                             AppTab.Servers -> ServersRoute(deps, nav, padding)
+                            AppTab.Services -> ServicesRoute(deps, padding)
                             AppTab.Routing -> RoutingRoute(deps, nav, padding)
                             AppTab.Settings -> SettingsRoute(deps, nav, padding)
                             AppTab.AboutUs -> AboutUsScreen(padding)

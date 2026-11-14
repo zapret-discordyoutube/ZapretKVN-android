@@ -102,6 +102,12 @@ data class RuntimeConfigOptions(
      * него они молча пропускаются.
      */
     val slotRoutes: List<SlotRouteSpec> = emptyList(),
+    /**
+     * Servers of OTHER profiles that slots may use (docs/SERVICE_SLOTS.md, pool of all profiles). Only those that are
+     * members of a usable slot are added to the runtime outbounds; they never join the main selector and the stored
+     * profile is never edited. Tags must already be unique (see `ForeignServers`).
+     */
+    val extraOutbounds: List<JsonObject> = emptyList(),
 )
 
 /**
@@ -270,7 +276,8 @@ object RuntimeConfigBuilder {
             }
         }
         val slotRoutes = if (managed && selectedProxyTag != null && options.slotRoutes.isNotEmpty()) {
-            val tags = runtimeOutbounds?.mapNotNull { (it as? JsonObject)?.string("tag") }?.toSet().orEmpty()
+            val tags = runtimeOutbounds?.mapNotNull { (it as? JsonObject)?.string("tag") }?.toSet().orEmpty() +
+                options.extraOutbounds.mapNotNull { it.string("tag") }
             SlotRoutes.usable(options.slotRoutes, tags - ConfigAnalyzer.MANAGED_SELECTOR_TAG)
         } else {
             emptyList()
@@ -280,7 +287,10 @@ object RuntimeConfigBuilder {
             val withoutOld = runtimeOutbounds?.toList().orEmpty().filterNot {
                 (it as? JsonObject)?.string("tag")?.startsWith(SlotSelectors.PREFIX) == true
             }
-            runtimeOutbounds = JsonArray(withoutOld + slotRoutes.map(SlotRoutes::selector))
+            val present = withoutOld.mapNotNull { (it as? JsonObject)?.string("tag") }.toSet()
+            val used = slotRoutes.flatMap { it.members }.toSet()
+            val extras = options.extraOutbounds.filter { it.string("tag").let { tag -> tag in used && tag !in present } }
+            runtimeOutbounds = JsonArray(withoutOld + extras + slotRoutes.map(SlotRoutes::selector))
         }
         val storedLog = root["log"] as? JsonObject
         val runtimeLog = buildJsonObject {
