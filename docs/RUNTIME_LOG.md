@@ -333,6 +333,13 @@ two defects of the *automation* froze it at 3:13 (the owner reports the freeze w
 4. **Tiraru is not a safe fallback for this cluster either** (0.5.48, second replay 10:41-10:48 UTC): ReVanced got 0 B on two
    clusters there while Titiru and Chrome worked. Open, see the vpnbot router check.
 
+5. **Silence is detected faster (0.5.51, vpnbot node measurement 2026-11-14).** The node side showed that cluster `sn-8ph2xajvh`
+   accepts TCP and then sends NOTHING for 13+ s to a TLS ClientHello, while a healthy cache answers in 0.1-0.3 s. A googlevideo flow
+   that sent a request and got ZERO server bytes is now reset after 3 s (`StalledFlowPolicy.silentMinAgeMillis`, was 8 s), and the
+   dead-cluster tracker counts it as silent after 2.5 s (`silentMinLivedMillis`, was 5 s), so the verdict comes after about 4-5 s
+   instead of 14 s. Flows with a few bytes (a started handshake) keep the old limits. The cap (30 resets per 5 min) is unchanged.
+   Windows `DeadVideoClusterTracker` has the same rule (`silent_min_age_sec`).
+
 **Saving the archive without a messenger (0.5.50, owner 2026-11-14).** On Android 14+ the share window of «Экспортировать
 диагностику» has a custom action «Сохранить в Загрузки»: it copies the same zip to `Download/zapret-kvn-diagnostic-<UTC time>.zip`
 through MediaStore (no permission, only on that tap). A developer with adb pulls the exact name (`adb pull` of the file whose

@@ -37,6 +37,23 @@ class StalledFlowPolicyTest {
         assertEquals(listOf("exactly-at-the-limit"), picked.map { it.id })
     }
 
+    /** Замер узла 2026-11-14: кластер принимает TCP и молчит; здоровый поток получает ServerHello за 0.1-0.3 с. */
+    @Test
+    fun `a flow that got zero server bytes is reset after 3 seconds, one with a few bytes still after 8`() {
+        val policy = StalledFlowPolicy()
+        val picked = policy.pick(
+            now,
+            listOf(
+                flow("silent-3s", created = now - 3_000, down = 0),
+                flow("silent-2-9s", created = now - 2_999, down = 0),
+                flow("some-bytes-5s", created = now - 5_000, down = 647),
+                flow("some-bytes-8s", created = now - 8_000, down = 647),
+                flow("silent-but-nothing-sent", created = now - 9_000, up = 0, down = 0),
+            ),
+        )
+        assertEquals(setOf("silent-3s", "some-bytes-8s"), picked.map { it.id }.toSet())
+    }
+
     @Test
     fun `only googlevideo names and only tcp are touched`() {
         val picked = StalledFlowPolicy().pick(

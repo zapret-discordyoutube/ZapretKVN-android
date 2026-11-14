@@ -24,6 +24,12 @@ package io.github.zapretkvn.runtimelog
 class StalledFlowPolicy(
     private val hostSuffixes: List<String> = listOf("googlevideo.com"),
     private val minAgeMillis: Long = 8_000,
+    /**
+     * Поток, который отправил запрос и не получил от сервера НИ ОДНОГО байта (даже ServerHello): сбрасывается раньше.
+     * Поле (архив 0.5.48 и замер узла 2026-11-14): кластер `sn-8ph2xajvh` принимает TCP и молчит, а здоровый поток
+     * получает ServerHello за 0.1-0.3 с. Три секунды с запасом на плохую сеть; плеер получает отказ на 5 с раньше.
+     */
+    private val silentMinAgeMillis: Long = 3_000,
     private val maxDownlinkBytes: Long = 4_096,
     private val maxPerSnapshot: Int = 3,
     private val maxPerWindow: Int = 30,
@@ -102,7 +108,7 @@ class StalledFlowPolicy(
         flow.network.equals("tcp", ignoreCase = true) &&
             matchesHost(flow.domain) &&
             flow.createdAtEpochMillis > 0 &&
-            nowMillis - flow.createdAtEpochMillis >= minAgeMillis &&
+            nowMillis - flow.createdAtEpochMillis >= (if (flow.downlink == 0L) silentMinAgeMillis else minAgeMillis) &&
             flow.downlink <= maxDownlinkBytes &&
             flow.uplink > 0
 

@@ -124,6 +124,19 @@ class DeadVideoClusterTrackerTest {
     }
 
     @Test
+    fun `three zero-byte flows reset at 3 seconds make the cluster dead, but 3 second flows with bytes do not`() {
+        val withBytes = DeadVideoClusterTracker()
+        assertTrue(withBytes.onClosed(100_000, listOf(closed("a", 100_000, lived = 3_000, down = 647), closed("b", 100_000, lived = 3_000, down = 647), closed("c", 100_000, lived = 3_000, down = 647))).isEmpty())
+        val zero = DeadVideoClusterTracker()
+        val events = zero.onClosed(100_000, listOf(closed("a", 100_000, lived = 3_000), closed("b", 100_000, lived = 3_100), closed("c", 100_000, lived = 3_200)))
+        assertEquals(1, events.size)
+        assertTrue(events.single() is DeadVideoClusterTracker.Event.Dead)
+        // меньше 2.5 с остаётся мгновенным отказом, а не молчанием
+        val instant = DeadVideoClusterTracker()
+        assertTrue(instant.onClosed(100_000, listOf(closed("a", 100_000, lived = 2_400), closed("b", 100_000, lived = 2_400), closed("c", 100_000, lived = 2_400))).isEmpty())
+    }
+
+    @Test
     fun `a healthy flow of the cluster clears the verdict and reports the recovery`() {
         val tracker = DeadVideoClusterTracker()
         tracker.onClosed(100_000, listOf(closed("a", 100_000), closed("b", 100_100), closed("c", 100_200)))

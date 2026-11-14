@@ -25,6 +25,8 @@ class DeadVideoClusterTracker(
     private val windowMillis: Long = 90_000,
     private val maxDownlinkBytes: Long = 4_096,
     private val minLivedMillis: Long = 5_000,
+    /** Поток без единого байта ответа считается молчаливым раньше: он сбрасывается через 3 с ([StalledFlowPolicy]). */
+    private val silentMinLivedMillis: Long = 2_500,
     private val healthyDownlinkBytes: Long = 64L * 1024,
     private val maxClusters: Int = 64,
 ) {
@@ -101,7 +103,8 @@ class DeadVideoClusterTracker(
 
     private fun isSilent(flow: FlowSnap): Boolean {
         val lived = if (flow.createdAtEpochMillis > 0 && flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis - flow.createdAtEpochMillis else 0L
-        return flow.uplink > 0 && flow.downlink <= maxDownlinkBytes && lived >= minLivedMillis
+        return flow.uplink > 0 && flow.downlink <= maxDownlinkBytes &&
+            lived >= (if (flow.downlink == 0L) silentMinLivedMillis else minLivedMillis)
     }
 
     private fun recover(nowMillis: Long, cluster: String): Event.Recovered? {
