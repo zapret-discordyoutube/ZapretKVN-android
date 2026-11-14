@@ -187,4 +187,23 @@ class ServiceSlotsTest {
         assertTrue(telegram.domainSuffixes.isNotEmpty() && telegram.cidrs.isNotEmpty())
         assertEquals(telegram.packages.sorted(), telegram.packages)
     }
+
+    @Test
+    fun `a server that just failed is not where a slot starts, a pin on it included, but it stays in the pool`() {
+        val pinned = SlotCatalog.withPins(mapOf(SlotIds.YOUTUBE to "B"))
+        val plan = SlotPlanner.plan(pinned, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("B"))
+        val youtube = plan.specs.first { it.slotId == SlotIds.YOUTUBE }
+        assertTrue("YouTube does not start on the failed pin", youtube.defaultMember != "B")
+        assertTrue("the failed pin stays a member, so it can be used again later", "B" in youtube.members)
+        assertTrue(plan.assignments.first { it.slotId == SlotIds.YOUTUBE }.choice == SlotChoice.PinUnavailable)
+        // Without the failure the pin wins, as before.
+        val healthy = SlotPlanner.plan(pinned, listOf("A", "B", "C", "D"), selectedTag = "A")
+        assertEquals("B", healthy.specs.first { it.slotId == SlotIds.YOUTUBE }.defaultMember)
+    }
+
+    @Test
+    fun `the main server is never excluded by the failure list`() {
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("A"))
+        assertEquals("A", plan.assignments.first { it.slotId == SlotIds.DEFAULT }.serverId)
+    }
 }

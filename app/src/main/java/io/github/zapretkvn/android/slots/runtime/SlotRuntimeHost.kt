@@ -32,6 +32,12 @@ internal interface SlotRuntimeHost {
 
     fun latencyHints(profileId: String): Map<String, LatencyHint>
 
+    /**
+     * A slot left [serverId] because its connections failed: remember it as "не отвечает" (the latency store), so the
+     * next start does not begin on it and the Servers tab says so.
+     */
+    fun recordUnreachable(session: CoreSession, serverId: String)
+
     /** Another switching operation (manual, failover, smart check) is running. */
     fun busy(): Boolean
 

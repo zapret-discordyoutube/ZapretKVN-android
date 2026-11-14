@@ -73,7 +73,10 @@ internal class SlotCoordinator(
             // (the main selector ends the session instead, see PathSupervisor; a slot has no session to end).
             val security = hint.code in PathSupervisor.SECURITY_FAILURES
             if (!security && hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
-            apply(session, policy, hint.code.name, policy.onFailureHint(hint.outboundTag, mainServer, host.mainDeadServers(), immediate = security))
+            val decision = policy.onFailureHint(hint.outboundTag, mainServer, host.mainDeadServers(), immediate = security)
+            // Failed connections (not just a slow DNS) make the server «не отвечает» for the next start too.
+            if (decision is SlotFailoverDecision.Move && !security) host.recordUnreachable(session, decision.failedServer)
+            apply(session, policy, hint.code.name, decision)
         }
     }
 

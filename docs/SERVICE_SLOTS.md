@@ -255,6 +255,17 @@ is left until the server is back, moves are rate limited, the default slot never
 `... отказов за минуту (DNS слота), слоты уходят: ...`. Tests: `SlotFailoverTest` (burst counts once, default and unknown
 slots ignored) and `CoreLogHintsTest` (real lines).
 
+## A failed server is not where a slot starts (Android 0.6.9, owner decision 2026-11-14)
+
+With the YouTube slot pinned to a dead server, every connect started on it and the video played only about 45 s later
+(the slot then left it by itself, see the section above). Now `SlotPlanner.plan(..., unusable)` does not start a slot on a
+server whose last saved result is a fresh failure («не отвечает», `hint().failed`, 10 minutes), a pinned server included:
+the pin stays set and the server stays a pool member, so the slot goes there again once the failure is old. The main
+server is never excluded. A server is recorded as «не отвечает» when a manual pick is refused, when the relay test says so,
+and when a slot leaves it because its connections failed (`SlotRuntimeHost.recordUnreachable`); a failure seen only in the
+slot's DNS is not recorded, because the server may work for ordinary traffic (Rusge on 2026-11-14), so the Servers tab does
+not call it dead. Tests: `ServiceSlotsTest` (failed pin, main server), `SlotFailoverTest`.
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

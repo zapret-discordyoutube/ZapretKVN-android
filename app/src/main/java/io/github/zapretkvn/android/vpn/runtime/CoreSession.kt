@@ -203,6 +203,10 @@ internal class CoreSession(
 
     fun stopLatencyProbe() = latencyProbeCoordinator.stop()
 
+    /** The server alone, before a manual pick moves traffic to it (PreSelectionGate). */
+    suspend fun checkServerFirst(groupTag: String, outboundTag: String): RelayVerdict =
+        latencyProbeCoordinator.checkOne(groupTag, outboundTag, PreSelectionGate.CHECK_TIMEOUT_MILLIS)
+
     /**
      * Группы от ядра: запоминается фактический выбор, а сохранённый пинг
      * подставляется сразу, до новой проверки.

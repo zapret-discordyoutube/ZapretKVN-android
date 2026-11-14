@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn.runtime
 
+import io.github.zapretkvn.android.network.probes.hint
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
@@ -233,6 +234,20 @@ internal class SessionStarter(
      * profile is picked up at once); a profile that cannot be read or parsed is skipped, it must never stop a start.
      * Their addresses are registered with the redactor like the active profile's, so logs never show them.
      */
+    /**
+     * Runtime tags of the servers whose last saved result is a fresh failure («не отвечает», see `hint()`): a slot does
+     * not start on them, a pin on one included, so a connect does not begin with a minute of waiting on a dead server.
+     */
+    private fun recentlyFailedServers(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): Set<String> {
+        val store = container.serverLatencyStore
+        val own = store.forProfile(profileId)
+        val failed = activeTags.filterTo(mutableSetOf()) { own[it]?.hint()?.failed == true }
+        for (server in foreign) {
+            if (store.forProfile(server.ref.profileId)[server.ref.tag]?.hint()?.failed == true) failed += server.runtimeTag
+        }
+        return failed
+    }
+
     private suspend fun loadForeignServers(activeId: String, activeName: String, active: ParsedConfig): List<ForeignServer> {
         val others = container.profileStore.profiles.value.filter { it.id != activeId }.mapNotNull { meta ->
             try {
@@ -442,6 +457,7 @@ internal class SessionStarter(
                     managed.tags + foreignServers.map { it.runtimeTag },
                     managed.selected,
                     selectedPackages,
+                    unusable = recentlyFailedServers(profileId, managed.tags, foreignServers),
                 ).copy(foreign = foreignServers)
             }
         } else {

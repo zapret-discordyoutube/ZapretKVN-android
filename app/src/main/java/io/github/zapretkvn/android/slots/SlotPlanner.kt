@@ -20,12 +20,16 @@ internal object SlotPlanner {
         selectedTag: String?,
         installedPackages: Set<String> = emptySet(),
         previous: Map<String, String> = emptyMap(),
+        unusable: Set<String> = emptySet(),
     ): SlotPlan {
         val servers = serverTags.distinct()
         if (servers.size < 2) return SlotPlan(emptyList(), emptyList())
         val keep = previous.toMutableMap()
         selectedTag?.takeIf { it in servers }?.let { keep[SlotIds.DEFAULT] = it }
-        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it) }, keep)
+        // A server that just failed is not where a slot starts, a pin on it included (it stays a pool member and stays
+        // pinned; the slot goes there again once the failure is old). The main server is never excluded.
+        val avoid = unusable - setOfNotNull(selectedTag)
+        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid) }, keep)
         val specs = slots.filter { it.id != SlotIds.DEFAULT }.mapNotNull { slot ->
             val server = assignments.first { it.slotId == slot.id }.serverId ?: return@mapNotNull null
             val members = slot.pool?.let { pool -> servers.filter { it in pool } } ?: servers

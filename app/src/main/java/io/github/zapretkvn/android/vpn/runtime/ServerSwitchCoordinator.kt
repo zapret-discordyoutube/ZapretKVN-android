@@ -19,6 +19,8 @@ import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.slots.SlotIds
+import io.github.zapretkvn.android.vpn.LatencyProbeState
+import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.slots.runtime.SlotCoordinator
 import io.github.zapretkvn.android.slots.runtime.SlotRuntimeHost
 import io.github.zapretkvn.android.slots.youtube.YoutubeSlotSwitchHost
@@ -90,6 +92,7 @@ internal class ServerSwitchCoordinator(
 
     /** Антифлап «умной проверки» переживает переподключения. */
     private val smartPolicy = SlowServerSwitchPolicy { clock() }
+    private val preSelection = PreSelectionGate { clock() }
 
     /** Антифлап и метки «плох для YouTube»: тоже переживают переподключения. */
     private val youtubePolicy = YoutubeSwitchPolicy { clock() }
@@ -177,6 +180,16 @@ internal class ServerSwitchCoordinator(
         setPathStatus(session, PathStatus.Switching, "сервер выбран вручную")
         runOperation(Operation.Select) { previous ->
             previous?.cancelAndJoin()
+            // Сначала сервер проверяется отдельно, трафик не двигается: мёртвый сервер не замораживает связь на ~20 с
+            // (решение владельца 14.11.2026). Повторный выбор того же сервера в течение 2 минут идёт без проверки.
+            if (preSelection.shouldCheck(outboundTag)) {
+                timeline("Сервер ${server(outboundTag)}: проверка перед переключением, трафик не двигается.")
+                val verdict = session.checkServerFirst(groupTag, outboundTag)
+                if (preSelection.refuses(outboundTag, verdict)) {
+                    postToActor { onSelectRefused(session, groupTag, outboundTag) }
+                    return@runOperation
+                }
+            }
             // Транзакция выбора (SelectionTransaction): выбор закрепляется после
             // проверки; мёртвый сервер возвращает прежний, сбой не по вине сервера
             // оставляет выбор с предупреждением.
@@ -196,6 +209,20 @@ internal class ServerSwitchCoordinator(
             )
             postToActor { onSelectDone(session, groupTag, outboundTag, outcome, transaction.warning, startId) }
         }
+    }
+
+    /** The server did not answer the test before the switch: traffic never moved, the previous server stays. */
+    private fun onSelectRefused(session: CoreSession, groupTag: String, outboundTag: String) {
+        if (sessions.active() !== session || session.generation != controller.currentGeneration()) return
+        val now = clock()
+        controller.publishUnreachable(session.generation, groupTag, outboundTag, now)
+        setPathStatus(session, PathStatus.Ok, "прежний сервер сохранён")
+        timeline("Выбранный ${server(outboundTag)} не ответил на проверку до переключения: прежний сервер не тронут.")
+        controller.publishMessage(
+            "Сервер ${server(outboundTag)} не ответил, соединение осталось на прежнем. " +
+                "Если он точно рабочий, выберите его ещё раз: приложение попробует без предварительной проверки.",
+        )
+        host.showForeground(ForegroundState.Connected)
     }
 
     private fun onSelectDone(
@@ -858,6 +885,21 @@ internal class ServerSwitchCoordinator(
         override fun latencyHints(profileId: String) = this@ServerSwitchCoordinator.latencyHints(profileId)
 
         override fun busy() = smartBusy()
+
+        override fun recordUnreachable(session: CoreSession, serverId: String) {
+            val now = clock()
+            val foreign = session.slotPlan?.foreign?.firstOrNull { it.runtimeTag == serverId }
+            if (foreign != null) {
+                container.serverLatencyStore.record(
+                    foreign.ref.profileId,
+                    emptyMap(),
+                    mapOf(foreign.ref.tag to LatencyProbeState.Failed(LatencyFailure.NoResponse, null, now)),
+                )
+            } else {
+                session.recordUnreachable(serverId, now)
+                session.primaryGroupTag?.let { controller.publishUnreachable(session.generation, it, serverId, now) }
+            }
+        }
 
         override fun announce(session: CoreSession, message: String, notificationDetail: String) =
             SmartContext().announce(session, message, notificationDetail)

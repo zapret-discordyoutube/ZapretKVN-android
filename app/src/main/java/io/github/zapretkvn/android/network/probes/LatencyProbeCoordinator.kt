@@ -11,6 +11,7 @@ import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.lastSample
 import io.nekohasekai.libbox.CommandClient
 import io.nekohasekai.libbox.Libbox
+import io.github.zapretkvn.android.vpn.runtime.RelayVerdict
 import io.nekohasekai.libbox.RelayDelayProbeHandler
 import io.nekohasekai.libbox.RelayDelayProbeResult
 import java.util.concurrent.ConcurrentHashMap
@@ -88,6 +89,41 @@ internal class LatencyProbeCoordinator(
             job.cancel()
             controller.cancelLatencyProbe(generation, requestId, group.tag, networkIdentity)
         }
+    }
+
+    /**
+     * Проверка одного сервера до переключения на него (PreSelectionGate): Relay HTTPS через этот сервер, трафик не
+     * переключается. Результат сохраняется как у обычной проверки. Незавершённая проверка — [RelayVerdict.Unknown].
+     */
+    internal suspend fun checkOne(groupTag: String, outboundTag: String, timeoutMillis: Long): RelayVerdict {
+        if (closed.get()) return RelayVerdict.Unknown
+        val client = Libbox.newStandaloneCommandClient()
+        var verdict = RelayVerdict.Unknown
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(timeoutMillis) {
+                callRelay(client, groupTag, outboundTag) { result ->
+                    if (result.outboundTag != outboundTag) return@callRelay
+                    when (result.outcome) {
+                        Libbox.RelayDelayOutcomeSuccess -> {
+                            verdict = RelayVerdict.Alive
+                            onResults(mapOf(outboundTag to result.toState(networkMonitor.current.identity.orEmpty(), null)))
+                        }
+                        Libbox.RelayDelayOutcomeTimeout -> {
+                            verdict = RelayVerdict.NoResponse
+                            onResults(mapOf(outboundTag to result.toState(networkMonitor.current.identity.orEmpty(), null)))
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            // The core could not run the test: no verdict.
+        } finally {
+            runCatching { client.disconnect() }
+        }
+        return verdict
     }
 
     /** Останавливает идущую проверку; уже полученные задержки остаются на месте. */
