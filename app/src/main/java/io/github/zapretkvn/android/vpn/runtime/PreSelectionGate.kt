@@ -43,7 +43,11 @@ internal class PreSelectionGate(private val clock: () -> Long) {
     companion object {
         const val OVERRIDE_MILLIS = 2 * 60_000L
 
-        /** Longest the test may take before the pick goes on without a verdict. */
-        const val CHECK_TIMEOUT_MILLIS = 8_000L
+        /**
+         * Longest the test may take before the pick goes on without a verdict. The core's relay test gives a dead server
+         * [C.TCPTimeout] = 15 s before it reports a timeout, so a shorter cap would never see a refusal (the first field
+         * run of 0.6.9 used 8 s: every dead server ended as "no verdict" and the old switch-then-verify path ran).
+         */
+        const val CHECK_TIMEOUT_MILLIS = 18_000L
     }
 }
