@@ -112,6 +112,10 @@
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             tools:node="remove" />
 
+        <receiver
+            android:name=".diagnostics.DiagnosticSaveReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

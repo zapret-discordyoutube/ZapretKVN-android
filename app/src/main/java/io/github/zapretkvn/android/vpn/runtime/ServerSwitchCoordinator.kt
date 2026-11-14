@@ -624,6 +624,7 @@ internal class ServerSwitchCoordinator(
                 policy = youtubePolicy,
                 host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
                 youtubeAverage = RuntimeLog::youtubeAverage,
+                excludedIds = supervisor::deadServerIds,
             ).runEpisode(keepOnSilent = verdict.deadCluster)
             timeline("Переключение при медленном YouTube ($cause): ${youtubeOutcomeText(outcome)}.")
             val switchedAway = outcome is YoutubeSwitchOutcome.Switched || outcome is YoutubeSwitchOutcome.SwitchedUnverified

@@ -72,6 +72,8 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
         currentId: String,
         targets: List<FailoverTarget>,
         hints: Map<String, LatencyHint>,
+        /** Серверы, которые только что подтверждённо не отвечали (общий failover): пробовать их нет смысла. */
+        excludedIds: Set<String> = emptySet(),
         youtubeAverage: (String) -> Long?,
     ): List<FailoverTarget> {
         val now = monotonicMillis()
@@ -80,6 +82,7 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
             .asSequence()
             .filter { it.id != currentId && it.valid && !it.maintenance }
             .filter { it.id !in slowUntil }
+            .filter { it.id !in excludedIds }
             .filter { hints[it.id]?.failed != true }
             .filter { (youtubeAverage(it.id) ?: Long.MAX_VALUE) >= YoutubeSwitchDefaults.BAD_HISTORY_BYTES_PER_SECOND }
             .withIndex()
@@ -168,6 +171,7 @@ internal class YoutubeSwitchEngine(
     private val host: YoutubeSwitchHost,
     private val youtubeAverage: (String) -> Long?,
     private val hintsOf: (SlowSwitchSnapshot) -> Map<String, LatencyHint> = { it.hints },
+    private val excludedIds: () -> Set<String> = { emptySet() },
 ) {
     /**
      * [keepOnSilent]: эпизод начался с вердикта «мёртвый кластер». Запущенный плеер держит ссылки именно этого кластера
@@ -179,7 +183,7 @@ internal class YoutubeSwitchEngine(
         val snapshot = host.snapshot() ?: return YoutubeSwitchOutcome.Gone
         val original = snapshot.currentId
         policy.markSlow(original)
-        val candidates = policy.candidates(original, snapshot.targets, hintsOf(snapshot), youtubeAverage)
+        val candidates = policy.candidates(original, snapshot.targets, hintsOf(snapshot), excludedIds(), youtubeAverage)
         if (candidates.isEmpty()) {
             host.log("YouTube на сервере $original медленный, подходящего запасного сервера нет.")
             policy.onEpisodeEnd()

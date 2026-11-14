@@ -327,6 +327,18 @@ two defects of the *automation* froze it at 3:13 (the owner reports the freeze w
    replacement by ping and chose Titiru, whose cluster was dead 90 s earlier. After a switch away because of a dead cluster
    the old server is now marked (`PathSupervisor.avoidForYoutube`, 10 min): it is offered LAST, never excluded, and the log
    says so (`кластер YouTube мёртв, при автоматической замене сервера он будет последним`).
+3. **A dead server was probed twice.** At 10:43:33 and again at 10:44:10 the engine tried Clermany, which had just timed out and
+   been marked dead by the failover. The engine's candidates now exclude `PathSupervisor.deadServerIds()` (servers confirmed
+   dead in the last 5 min).
+4. **Tiraru is not a safe fallback for this cluster either** (0.5.48, second replay 10:41-10:48 UTC): ReVanced got 0 B on two
+   clusters there while Titiru and Chrome worked. Open, see the vpnbot router check.
+
+**Saving the archive without a messenger (0.5.50, owner 2026-11-14).** On Android 14+ the share window of «Экспортировать
+диагностику» has a custom action «Сохранить в Загрузки»: it copies the same zip to `Download/zapret-kvn-diagnostic-<UTC time>.zip`
+through MediaStore (no permission, only on that tap). A developer with adb pulls the exact name (`adb pull` of the file whose
+name starts with `zapret-kvn-diagnostic-`); nobody has to forward the zip. The archive is the same one that goes to a
+messenger, with domains and IP addresses in it.
+
 Not changed: the "slow YouTube" probe itself may still try a server whose YouTube average is poor; ReVanced stalls with real
 cache addresses as well (see the 0.5.47 archive), the cause of that is still open.
 The tracker reads the **closed** flows of the snapshot (so it works with or without the reset option) and counts a flow

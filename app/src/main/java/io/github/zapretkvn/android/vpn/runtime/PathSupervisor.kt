@@ -239,6 +239,17 @@ internal class PathSupervisor(
         avoidUntil[serverId] = monotonicMillis() + millis
     }
 
+    /**
+     * Серверы, подтверждённо не отвечавшие за последние [DEAD_SERVER_COOLDOWN_MILLIS]. Ими пользуется и переключение
+     * при медленном YouTube: поле (0.5.48, 2026-11-14 10:43 и 10:44) — Clermany не ответил на пробу, и через 40 с
+     * движок YouTube пробовал его снова.
+     */
+    fun deadServerIds(): Set<String> {
+        val now = monotonicMillis()
+        deadUntil.entries.removeAll { it.value <= now }
+        return deadUntil.keys.toSet()
+    }
+
     /** Кандидаты для замены без подтверждённо мёртвых серверов. */
     fun candidates(plan: FailoverPlan, hints: Map<String, LatencyHint>): List<FailoverTarget> {
         val now = monotonicMillis()

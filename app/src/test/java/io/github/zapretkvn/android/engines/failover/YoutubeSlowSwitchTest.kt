@@ -45,6 +45,20 @@ class YoutubeSlowSwitchTest {
     private fun engine(host: FakeHost, policy: YoutubeSwitchPolicy = policy(), average: (String) -> Long? = { null }) =
         YoutubeSwitchEngine(policy, host, average)
 
+    /** Архив 0.5.48 (2026-11-14 10:43-10:44): Clermany не ответил на пробу, через 40 с движок пробовал его снова. */
+    @Test
+    fun `a server the failover just confirmed dead is not tried as a candidate`() = runTest {
+        val host = FakeHost(snapshot("Titiru", "Clermany", "Horologium"), mutableListOf(VideoOutcome.Healthy))
+        val outcome = YoutubeSwitchEngine(policy(), host, { null }, excludedIds = { setOf("Clermany") }).runEpisode()
+        assertEquals(YoutubeSwitchOutcome.Switched("Horologium"), outcome)
+        assertTrue(host.calls.none { it.contains("Clermany") })
+        val onlyDead = FakeHost(snapshot("Titiru", "Clermany"), mutableListOf())
+        assertEquals(
+            YoutubeSwitchOutcome.NoCandidates,
+            YoutubeSwitchEngine(policy(), onlyDead, { null }, excludedIds = { setOf("Clermany") }).runEpisode(),
+        )
+    }
+
     @Test
     fun `a healthy video on the candidate commits the switch`() = runTest {
         val host = FakeHost(snapshot("Hipge", "Senge"), mutableListOf(VideoOutcome.Healthy))

@@ -2,6 +2,8 @@ package io.github.zapretkvn.core.designsystem
 
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.os.Build
+import android.service.chooser.ChooserAction
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +23,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
+private const val CHOOSER_ACTIONS_EXTRA = "io.github.zapretkvn.android.extra.CHOOSER_ACTIONS"
 
 /** Создаёт redacted diagnostic JSON и открывает системное окно отправки. */
 @Composable
@@ -45,9 +49,14 @@ fun DiagnosticShareButton(
                     exportError = null
                     try {
                         val shareIntent = onCreateDiagnosticShare()
-                        context.startActivity(
-                            Intent.createChooser(shareIntent, "Передать диагностику"),
-                        )
+                        val chooser = Intent.createChooser(shareIntent, "Передать диагностику")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            // Действия окна отправки («Сохранить в Загрузки») кладёт экспортёр на передаваемый intent.
+                            shareIntent.getParcelableArrayExtra(CHOOSER_ACTIONS_EXTRA, ChooserAction::class.java)?.let {
+                                chooser.putExtra(Intent.EXTRA_CHOOSER_CUSTOM_ACTIONS, it)
+                            }
+                        }
+                        context.startActivity(chooser)
                         onShared()
                     } catch (cancelled: CancellationException) {
                         throw cancelled

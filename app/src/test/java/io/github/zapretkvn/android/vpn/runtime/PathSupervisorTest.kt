@@ -179,6 +179,14 @@ class PathSupervisorTest {
     }
 
     @Test
+    fun `deadServerIds lists confirmed dead servers until the cooldown ends`() {
+        supervisor.markDead(listOf("a", "b"))
+        assertEquals(setOf("a", "b"), supervisor.deadServerIds())
+        now += PathSupervisor.DEAD_SERVER_COOLDOWN_MILLIS
+        assertEquals(emptySet<String>(), supervisor.deadServerIds())
+    }
+
+    @Test
     fun `startup ranks candidates exactly like the supervisor`() {
         val plan = plan("a")
         val hints = mapOf("c" to LatencyHint(millis = 40, failed = false), "b" to LatencyHint(millis = null, failed = true))

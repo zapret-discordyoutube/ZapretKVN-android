@@ -8,6 +8,9 @@ import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.FileProvider
+import android.app.PendingIntent
+import android.graphics.drawable.Icon
+import android.service.chooser.ChooserAction
 import io.github.zapretkvn.runtimelog.ZipExtra
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
@@ -88,6 +91,21 @@ class DiagnosticExporter(
             putExtra(Intent.EXTRA_SUBJECT, "Zapret KVN — диагностика")
             clipData = ClipData.newRawUri("Zapret KVN diagnostic", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Окно отправки Android 14+ получит действие «Сохранить в Загрузки» (кнопка копирует его в чужое окно).
+                val save = PendingIntent.getBroadcast(
+                    appContext,
+                    0,
+                    Intent(appContext, DiagnosticSaveReceiver::class.java),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+                val action = ChooserAction.Builder(
+                    Icon.createWithResource(appContext, android.R.drawable.stat_sys_download_done),
+                    "Сохранить в Загрузки",
+                    save,
+                ).build()
+                putExtra(EXTRA_SAVE_ACTIONS, arrayOf(action))
+            }
         }
     }
 
@@ -676,6 +694,8 @@ class DiagnosticExporter(
     )
 
     companion object {
+        /** Ключ на передаваемом intent: кнопка переносит эти действия в окно отправки (core не знает про экспортёр). */
+        const val EXTRA_SAVE_ACTIONS = "io.github.zapretkvn.android.extra.CHOOSER_ACTIONS"
         const val DIRECTORY_NAME = "diagnostics"
         const val FILE_NAME = "zapret-kvn-diagnostic.zip"
         const val REPORT_ENTRY_NAME = "diagnostic.json"
