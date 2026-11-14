@@ -108,9 +108,19 @@ internal class LatencyProbeCoordinator(
                             verdict = RelayVerdict.Alive
                             onResults(mapOf(outboundTag to result.toState(networkMonitor.current.identity.orEmpty(), null)))
                         }
-                        Libbox.RelayDelayOutcomeTimeout -> {
+                        // A dead Hysteria server does not end in a context deadline: QUIC reports an idle timeout, which
+                        // the core classifies as FAILED (field run of 0.6.9). Both mean the server does not carry traffic.
+                        Libbox.RelayDelayOutcomeTimeout, Libbox.RelayDelayOutcomeFailed -> {
                             verdict = RelayVerdict.NoResponse
-                            onResults(mapOf(outboundTag to result.toState(networkMonitor.current.identity.orEmpty(), null)))
+                            onResults(
+                                mapOf(
+                                    outboundTag to LatencyProbeState.Failed(
+                                        LatencyFailure.NoResponse,
+                                        null,
+                                        result.testedAtUnixMillis.takeIf { it > 0L } ?: System.currentTimeMillis(),
+                                    ),
+                                ),
+                            )
                         }
                         else -> Unit
                     }
