@@ -52,8 +52,9 @@ Telegram transfer can no longer starve or "heal" YouTube.
 
 Two levels, so "direct" never becomes a slot:
 
-1. **VPN scope** (existing per-app picker): an app outside the include list never enters the TUN and goes out as it
-   does today. RU-direct rules still apply inside the tunnel. These apps are not shown among the slots.
+1. **VPN scope** (existing per-app picker, owner 2026-11-14: "direct is the default route for all apps unless they are
+   selected to go through the VPN"): an app outside the include list never enters the TUN and goes out directly, as it
+   does today. Selecting an app in the picker is what puts it in a slot (a named one, or Everything else). RU-direct rules still apply inside the tunnel. These apps are not shown among the slots.
 2. **Slot rules** for traffic that is in scope: first match wins in this order: AI, YouTube, Telegram (package list,
    then domains, then IP ranges), user-defined app slots before the built-in ones; whatever matches nothing goes to
    **Everything else** (`zapret-proxy`, the profile's main selector).
