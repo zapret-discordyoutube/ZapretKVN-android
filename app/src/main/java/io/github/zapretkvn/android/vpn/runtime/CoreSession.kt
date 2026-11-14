@@ -13,6 +13,8 @@ import io.github.zapretkvn.android.engines.failover.SlowThroughputDetector
 import io.github.zapretkvn.android.network.DefaultNetworkMonitor
 import io.github.zapretkvn.android.network.UnderlyingPolicyKey
 import io.github.zapretkvn.android.network.probes.LatencyProbeCoordinator
+import io.github.zapretkvn.android.vpn.LatencyProbeState
+import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyReducer
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
@@ -177,6 +179,15 @@ internal class CoreSession(
         profileJson = profileJson,
     )
     private val throughputDetector = SlowThroughputDetector()
+
+    /** The server did not answer the check after the user picked it: the list and the saved pings say «Нет ответа». */
+    fun recordUnreachable(outboundTag: String, nowEpochMillis: Long) {
+        latencyStore.record(
+            profileId,
+            serverFingerprints,
+            mapOf(outboundTag to LatencyProbeState.Failed(LatencyFailure.NoResponse, null, nowEpochMillis)),
+        )
+    }
 
     init {
         controller.registerServiceCheckHandler(generation, serviceAvailabilityCoordinator::requestCheck)

@@ -194,12 +194,13 @@ internal class ServerSwitchCoordinator(
                 outboundTag,
                 SwitchVerifier { candidateSession, json -> transaction.check(candidateSession, json) },
             )
-            postToActor { onSelectDone(session, outboundTag, outcome, transaction.warning, startId) }
+            postToActor { onSelectDone(session, groupTag, outboundTag, outcome, transaction.warning, startId) }
         }
     }
 
     private fun onSelectDone(
         session: CoreSession,
+        groupTag: String,
         outboundTag: String,
         outcome: SwitchOutcome,
         checkError: Throwable?,
@@ -227,6 +228,12 @@ internal class ServerSwitchCoordinator(
                 setPathStatus(session, PathStatus.Ok, "прежний сервер возвращён")
                 val dead = generateSequence(outcome.error) { it.cause }.filterIsInstance<DeadServerException>().firstOrNull()
                 val failure = VpnFailureStates.from(dead?.cause ?: outcome.error)
+                if (dead != null) {
+                    // The row must say why the pick did not stay: «Нет ответа» instead of the old number.
+                    val now = clock()
+                    controller.publishUnreachable(session.generation, groupTag, outboundTag, now)
+                    session.recordUnreachable(outboundTag, now)
+                }
                 timeline("Выбранный ${server(outboundTag)} не прошёл проверку связи (${dead?.code?.name ?: failure.code}): прежний сервер возвращён.")
                 controller.publishMessage(
                     if (dead != null) {
@@ -466,13 +473,14 @@ internal class ServerSwitchCoordinator(
         onStallEvent(session, stallDetector.onSample(sample))
     }
 
-    /** Нетегированные отказы DNS по таймауту из лога ядра (в акторе). */
+    /** Таймауты собственного DNS слотов из лога ядра: первый признак мёртвого сервера слота (в акторе). */
     fun onSlotDnsFailures(generation: Long, slotIds: Set<String>) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session)) return
         slots.onSlotDnsFailures(session, slotIds, mainServerOf(session))
     }
 
+    /** Нетегированные отказы DNS по таймауту из лога ядра (в акторе). */
     fun onDnsFailures(generation: Long, hint: DnsFailureHint) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session) || !screenInteractive) return

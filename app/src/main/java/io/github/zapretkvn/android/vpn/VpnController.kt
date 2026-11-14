@@ -547,6 +547,9 @@ class VpnController(
 
     internal fun markLatencyStale(generation: Long) = latencyPublisher.markLatencyStale(generation)
 
+    internal fun publishUnreachable(generation: Long, groupTag: String, outboundTag: String, nowEpochMillis: Long) =
+        latencyPublisher.publishUnreachable(generation, groupTag, outboundTag, nowEpochMillis)
+
     internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) {
         latencyPublisher.publishSelection(generation, groupTag, outboundTag)
         diagnosticsRecorder.targetFor(outboundTag)

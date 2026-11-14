@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.network.probes
 
+import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.vpn.LatencyProbeProgress
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencyUnsupportedReason
@@ -108,6 +109,27 @@ internal object LatencyProbeReducer {
             probeProgress = null,
             items = group.items.map { item ->
                 item.copy(relay = item.relay.restoreAfterCancellation())
+            },
+        )
+    }
+
+    /**
+     * The user's pick of [outboundTag] was rolled back because the server did not answer: its row says so («Нет ответа»,
+     * the last good measurement stays as «было 146 мс»), instead of keeping a stale number that invites picking it again.
+     */
+    fun markUnreachable(
+        groups: List<RuntimeSelectorGroup>,
+        groupTag: String,
+        outboundTag: String,
+        nowEpochMillis: Long,
+    ): List<RuntimeSelectorGroup> = groups.map { group ->
+        if (group.tag != groupTag) return@map group
+        group.copy(
+            items = group.items.map { item ->
+                if (item.tag != outboundTag) item
+                else item.copy(
+                    relay = LatencyProbeState.Failed(LatencyFailure.NoResponse, item.relay.lastSample(), nowEpochMillis),
+                )
             },
         )
     }

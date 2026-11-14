@@ -175,4 +175,31 @@ class LatencyProbeReducerTest {
             ),
         ),
     )
+
+    @Test
+    fun aServerThatDidNotAnswerAfterThePickShowsNoResponseAndKeepsItsLastGoodNumber() {
+        // Field case 2026-11-14: 4virtual (UDP does not arrive) was picked, rolled back after ~20 s, and its row went on
+        // showing «146 мс · давно», so nothing told the user why the pick did not stay.
+        val sample = LatencySample(146, 1_000L, networkIdentity = null)
+        val group = RuntimeSelectorGroup(
+            tag = "root",
+            type = "selector",
+            selected = "ok",
+            selectable = true,
+            items = listOf(
+                RuntimeOutboundItem("ok", "hysteria2", "ok.example:443", LatencyProbeState.Success(LatencySample(40, 2_000L, null))),
+                RuntimeOutboundItem("dead", "hysteria2", "dead.example:443", LatencyProbeState.Stale(sample)),
+            ),
+        )
+        val other = group.copy(tag = "other")
+
+        val marked = LatencyProbeReducer.markUnreachable(listOf(group, other), "root", "dead", 9_000L)
+
+        val dead = marked.first().items.last().relay as LatencyProbeState.Failed
+        assertEquals(LatencyFailure.NoResponse, dead.reason)
+        assertEquals(sample, dead.previous)
+        assertEquals(9_000L, dead.failedAtEpochMillis)
+        assertEquals(group.items.first(), marked.first().items.first())
+        assertEquals(other, marked.last())
+    }
 }

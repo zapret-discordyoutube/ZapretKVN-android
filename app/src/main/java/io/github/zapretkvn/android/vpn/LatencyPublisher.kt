@@ -110,6 +110,13 @@ internal class LatencyPublisher(
         }
     }
 
+    internal fun publishUnreachable(generation: Long, groupTag: String, outboundTag: String, nowEpochMillis: Long) {
+        mutable.update { groups ->
+            if (generation != currentGeneration()) return@update groups
+            LatencyProbeReducer.markUnreachable(groups, groupTag, outboundTag, nowEpochMillis)
+        }
+    }
+
     internal fun publishSelection(generation: Long, groupTag: String, outboundTag: String) {
         mutable.update { groups ->
             if (generation != currentGeneration()) return@update groups
