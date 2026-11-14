@@ -51,6 +51,7 @@ import io.github.zapretkvn.android.ui.routing.RoutingRoute
 import io.github.zapretkvn.android.ui.servers.ImportPreviewDialog
 import io.github.zapretkvn.android.ui.servers.ProfilesRoute
 import io.github.zapretkvn.android.ui.servers.ServersRoute
+import io.github.zapretkvn.android.ui.aboutus.AboutUsScreen
 import io.github.zapretkvn.android.ui.settings.SettingsPageRoute
 import io.github.zapretkvn.android.ui.settings.SettingsRoute
 import io.github.zapretkvn.android.ui.update.HomeWithUpdateBanner
@@ -168,6 +169,7 @@ fun ZapretRoot(deps: AppDependencies) {
                             AppTab.Servers -> ServersRoute(deps, nav, padding)
                             AppTab.Routing -> RoutingRoute(deps, nav, padding)
                             AppTab.Settings -> SettingsRoute(deps, nav, padding)
+                            AppTab.AboutUs -> AboutUsScreen(padding)
                         }
                     }
                     Route.Profiles -> ProfilesRoute(deps, nav)

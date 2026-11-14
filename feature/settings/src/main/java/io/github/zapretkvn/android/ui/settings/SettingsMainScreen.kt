@@ -174,18 +174,6 @@ fun SettingsMainScreen(
             }
         }
 
-        item(key = "h-community", contentType = "header") { SectionHeader("СООБЩЕСТВО") }
-        item(key = "community", contentType = "rows") {
-            RowsCard {
-                SettingsRow(
-                    title = SettingsPage.Community.title,
-                    subtitle = "Telegram-каналы Zapret KVN",
-                    icon = ZapretIcons.Chat,
-                    onClick = { onOpenPage(SettingsPage.Community) },
-                )
-            }
-        }
-
         item(key = "h-about", contentType = "header") { SectionHeader("О ПРИЛОЖЕНИИ") }
         item(key = "about", contentType = "rows") {
             RowsCard {

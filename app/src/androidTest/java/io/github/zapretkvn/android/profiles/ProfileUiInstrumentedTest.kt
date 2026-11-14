@@ -360,12 +360,23 @@ class ProfileUiInstrumentedTest {
     }
 
     @Test
-    fun settingsSubpagesHaveBackNavigationAndCommunityIsIsolated() {
-        openSettingsPage("Сообщество")
+    fun aboutUsIsTheLastTabWithBotChannelsAndResources() {
+        composeRule.onNode(hasText("О нас") and hasClickAction()).performClick()
+        composeRule.onNodeWithTag("about-us-screen").assertExists()
+        composeRule.onNodeWithText("Zapret VPN bot").assertExists()
         composeRule.onNodeWithText("Zapret KVN").assertExists()
         composeRule.onNodeWithText("VPN Discord YouTube").assertExists()
-        composeRule.onNodeWithText("Zapret VPN bot").assertExists()
-        composeRule.onNodeWithContentDescription("Назад").performClick()
+        composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Zastogram"))
+        composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Вики"))
+        composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Ещё один резервный список"))
+        // Страница «Сообщество» из настроек переехала сюда и больше не открывается оттуда.
+        composeRule.onNode(hasText("Настройки") and hasClickAction()).performClick()
+        composeRule.onNodeWithTag("settings-list").assertExists()
+        composeRule.onNodeWithText("Сообщество").assertDoesNotExist()
+    }
+
+    @Test
+    fun settingsSubpagesHaveBackNavigation() {
 
         composeRule.runOnUiThread {
             val token = container.vpnController.nextGeneration()

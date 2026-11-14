@@ -64,7 +64,6 @@ fun SettingsPageRoute(deps: AppDependencies, nav: AppNavigation, page: String) {
             SettingsPage.Hiding -> HidingRoute(deps, padding)
             SettingsPage.Diagnostics -> DiagnosticsRoute(deps, nav, padding)
             SettingsPage.Updates -> UpdatesRoute(deps, padding)
-            SettingsPage.Community -> CommunityScreen(padding)
             SettingsPage.About -> AboutScreen(padding, CurrentAppInfo)
             SettingsPage.Advanced -> AdvancedRoute(deps, nav, padding)
         }

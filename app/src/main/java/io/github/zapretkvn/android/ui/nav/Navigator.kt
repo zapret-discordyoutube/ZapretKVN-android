@@ -17,6 +17,8 @@ enum class AppTab(val title: String, val icon: ImageVector) {
     Servers("Серверы", ZapretIcons.Servers),
     Routing("Маршруты", ZapretIcons.Route),
     Settings("Настройки", ZapretIcons.Tune),
+    /** Всегда последняя, справа: бот с покупкой подписки и Telegram-каналы. */
+    AboutUs("О нас", ZapretIcons.Chat),
 }
 
 /** Экраны поверх вкладок. Вкладка — корень стека, остальное кладётся сверху. */

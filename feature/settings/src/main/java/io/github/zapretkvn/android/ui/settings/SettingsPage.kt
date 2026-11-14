@@ -11,7 +11,6 @@ enum class SettingsPage(val id: String, val title: String) {
     Hiding("hiding", "Скрытие VPN"),
     Diagnostics("diagnostics", "Диагностика"),
     Updates("updates", "Обновления"),
-    Community("community", "Сообщество"),
     About("about", "О приложении"),
     Advanced("advanced", "Дополнительно"),
     ;
