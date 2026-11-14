@@ -61,7 +61,13 @@ fun slotCards(
             title = slotTitle(slot.slotId, slot.title),
             serverTitle = label(slot.serverTag),
             flag = flag(slot.serverTag),
-            modeLabel = if (pinned != null) "Закреплён" else "Авто",
+            // The app leaves a pinned server that stops answering (field 2026-11-14: a dead YouTube cluster); the row
+            // must not claim the pin while the slot sits elsewhere.
+            modeLabel = when {
+                pinned == null -> "Авто"
+                pinned == slot.serverTag -> "Закреплён"
+                else -> "Закреплённый не отвечал"
+            },
             pinnedTag = pinned,
             options = servers.map { item ->
                 HomeSlotOption(item.tag, label(item.tag), flag(item.tag), current = item.tag == slot.serverTag, pinned = item.tag == pinned)

@@ -183,5 +183,15 @@ who wants a different subscription for YouTube switches the profile (revisit whe
   nothing; a pin outside the pool or the profile is ignored), and the session starts pinned slots on their servers
   (`SlotCatalog.withPins`). A pinned server that stops answering is still left by the failover (the pin stays recorded,
   the row shows the real server). The main server is not pinned here: it is chosen on the server card.
+- Field test on the phone (Pixel 9 Pro XL, Android 0.5.52, beta ON, 2026-11-14 16:36 to 16:44 UTC, profile of 32
+  servers with Hysteria2 and VLESS mixed): the session started with `слоты: ai=Clermany; youtube=Rusge; telegram=Senge`
+  and the main server Horologium, all four different. Traffic followed the rules: the Telegram fork (package prefix
+  `org.zastogram.messenger.`) left through Senge, ReVanced through the YouTube slot, Chrome through the main server.
+  A pin from the sheet moved YouTube to 4virtual at once with the VPN staying up (`Закреплено вручную`, `Слот YouTube:
+  теперь через 4virtual`). On 4virtual the video hit a dead YouTube cluster (`sn-ojnpo5`); the YouTube episode moved
+  only the YouTube slot to Tiraru, the restarted video played, the other slots did not move. No spurious slot moves in
+  about six minutes of mixed traffic. Found and fixed: the row kept saying «Закреплён» after the app had left a pinned
+  server that did not work for YouTube; it now says «Закреплённый не отвечал». Not exercised yet: failover on repeated
+  connection failures of a slot server (unit tested only) and the AI slot.
 - Not yet (phase 4c): the pool per slot and the apps of a slot on the sheet (move an app to another slot, remove it from
   the VPN), user-defined slots. Then Windows parity, phone test.

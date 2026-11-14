@@ -50,7 +50,7 @@ class SlotCardsPresenterTest {
     @Test
     fun `a pin shows as pinned and the sheet lists every server with the current and pinned marks`() {
         val rows = slotCards(
-            listOf(SlotState("youtube", "YouTube", "Plain")),
+            listOf(SlotState("youtube", "YouTube", "🇩🇪 Berlin")),
             listOf(group), main, hide = false, hostCountries = emptyMap(),
             pins = mapOf("youtube" to "🇩🇪 Berlin"),
         )
@@ -58,7 +58,7 @@ class SlotCardsPresenterTest {
         assertEquals("Закреплён", youtube.modeLabel)
         assertEquals("🇩🇪 Berlin", youtube.pinnedTag)
         assertEquals(3, youtube.options.size)
-        assertEquals(listOf("Plain"), youtube.options.filter { it.current }.map { it.tag })
+        assertEquals(listOf("🇩🇪 Berlin"), youtube.options.filter { it.current }.map { it.tag })
         assertEquals(listOf("🇩🇪 Berlin"), youtube.options.filter { it.pinned }.map { it.tag })
         assertTrue("the main server row has no sheet", rows.last().options.isEmpty())
     }
@@ -72,5 +72,16 @@ class SlotCardsPresenterTest {
         )
         assertEquals("Авто", rows.first().modeLabel)
         assertEquals(null, rows.first().pinnedTag)
+    }
+
+    @Test
+    fun `a pinned slot that sits on another server says the pinned one stopped answering`() {
+        val rows = slotCards(
+            listOf(SlotState("youtube", "YouTube", "Plain")),
+            listOf(group), main, hide = false, hostCountries = emptyMap(),
+            pins = mapOf("youtube" to "🇩🇪 Berlin"),
+        )
+        assertEquals("Закреплённый не отвечал", rows.first().modeLabel)
+        assertEquals("the pin stays, so the sheet still shows it", "🇩🇪 Berlin", rows.first().pinnedTag)
     }
 }
