@@ -143,4 +143,50 @@ class SlotRoutesTest {
         assertEquals(null, SlotRoutes.managedServers(JsonConfig.parse(config(managed = false)) as JsonObject))
         assertEquals(null, SlotRoutes.managedServers(null))
     }
+
+    private fun JsonObject.dns() = this["dns"] as JsonObject
+    private fun JsonObject.dnsServers() = (dns()["servers"] as JsonArray).map { it as JsonObject }
+    private fun JsonObject.dnsRules() = (dns()["rules"] as JsonArray).map { it as JsonObject }
+
+    @Test
+    fun `a slot resolves its names through the node it leaves through, with the core cache off`() {
+        for (mode in listOf(DnsMode.Automatic, DnsMode.Secure)) {
+            val root = build(listOf(youtube, telegram), mode)
+            val byTag = root.dnsServers().associateBy { it.str("tag") }
+            val udp = byTag.getValue("zapret-slot-dns-youtube-udp")
+            assertEquals("mode $mode", "zapret-slot-youtube", udp.str("detour"))
+            assertEquals("zapret-slot-youtube", byTag.getValue("zapret-slot-dns-youtube-tcp").str("detour"))
+            val race = byTag.getValue("zapret-slot-dns-youtube")
+            assertEquals("fallback", race.str("type"))
+            assertEquals(listOf("zapret-slot-dns-youtube-udp", "zapret-slot-dns-youtube-tcp"), race.strings("servers"))
+            assertEquals("zapret-slot-telegram", byTag.getValue("zapret-slot-dns-telegram-udp").str("detour"))
+            assertEquals("the main node DNS stays on the main selector", ConfigAnalyzer.MANAGED_SELECTOR_TAG, byTag.getValue("zapret-node-dns-udp").str("detour"))
+
+            val slotRules = root.dnsRules().filter { (it.str("server") ?: "").startsWith("zapret-slot-dns-") }
+            assertEquals("mode $mode: apps then names for both slots", 4, slotRules.size)
+            assertEquals(listOf("package_name", "package_name", "domain_suffix", "domain_suffix"),
+                slotRules.map { r -> listOf("package_name", "domain_suffix").first { it in r } })
+            assertTrue(slotRules.all { (it["disable_cache"] as JsonPrimitive).boolean })
+            assertEquals("zapret-slot-dns-youtube", slotRules.first().str("server"))
+            val firstSlot = root.dnsRules().indexOfFirst { (it.str("server") ?: "").startsWith("zapret-slot-dns-") }
+            val firstOther = root.dnsRules().indexOfFirst {
+                val server = it.str("server") ?: return@indexOfFirst false
+                server.startsWith("zapret-") && !server.startsWith("zapret-slot-dns-") && server != "zapret-dns-override"
+            }
+            assertTrue("mode $mode: slot DNS rules come before the main node DNS rules", firstOther == -1 || firstSlot < firstOther)
+        }
+    }
+
+    @Test
+    fun `no slots or the system DNS mode add no slot DNS and a rebuild does not multiply it`() {
+        val plain = build(emptyList())
+        assertTrue(plain.dnsServers().none { (it.str("tag") ?: "").startsWith("zapret-slot-dns-") })
+        assertTrue(plain.dnsRules().none { (it.str("server") ?: "").startsWith("zapret-slot-dns-") })
+        val fromJson = build(listOf(youtube), DnsMode.FromJson)
+        assertTrue("the profile's own DNS is not touched", fromJson.dnsServers().none { (it.str("tag") ?: "").startsWith("zapret-slot-dns-") })
+        val once = build(listOf(youtube))
+        val twice = build(listOf(youtube))
+        assertEquals(once, twice)
+        assertEquals(1, once.dnsServers().count { it.str("tag") == "zapret-slot-dns-youtube" })
+    }
 }

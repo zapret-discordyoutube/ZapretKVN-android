@@ -25,6 +25,20 @@ data class SlotRouteSpec(
     val selectorTag: String get() = SlotSelectors.tag(slotId)
 }
 
+/** DNS servers of the slots: tags only, the JSON is built where the node-DNS conventions live (RuntimeConfigBuilder). */
+object SlotDns {
+    const val PREFIX = "zapret-slot-dns-"
+
+    /** The server the DNS rules of a slot point at (a parallel UDP and TCP race, like the main node DNS). */
+    fun tag(slotId: String): String = PREFIX + slotId
+
+    fun udpTag(slotId: String): String = tag(slotId) + "-udp"
+
+    fun tcpTag(slotId: String): String = tag(slotId) + "-tcp"
+
+    fun isSlotDnsServer(tag: String?): Boolean = tag != null && tag.startsWith(PREFIX)
+}
+
 object SlotSelectors {
     const val PREFIX = "zapret-slot-"
 
@@ -80,6 +94,28 @@ internal object SlotRoutes {
         specs.filter { it.domainSuffixes.isNotEmpty() }.forEach { add(rule(it, "domain_suffix", it.domainSuffixes)) }
         specs.filter { it.cidrs.isNotEmpty() }.forEach { add(rule(it, "ip_cidr", it.cidrs)) }
     }
+
+    /**
+     * DNS rules of the slots, in the router's order (apps, then names). With separate servers a slot's names must be
+     * resolved by the node the slot leaves through: the node's DNS picks the cache node (a googlevideo cluster) for its
+     * own network, and an address chosen for another node's network can be unreachable from the slot's node (field
+     * 2026-11-14: `connect error: timeout` to a cache address that the main node's DNS had handed out, while other
+     * clusters worked at 245 KB/s on the same slot server). The answers are not cached by the core: the slot's server
+     * can change, and a cached answer from the previous node would bring the mismatch back.
+     */
+    fun dnsRules(specs: List<SlotRouteSpec>, ipv4Only: Boolean): List<JsonObject> = buildList {
+        specs.filter { it.packages.isNotEmpty() }.forEach { add(dnsRule(it, "package_name", it.packages, ipv4Only)) }
+        specs.filter { it.domainSuffixes.isNotEmpty() }.forEach { add(dnsRule(it, "domain_suffix", it.domainSuffixes, ipv4Only)) }
+    }
+
+    private fun dnsRule(spec: SlotRouteSpec, field: String, values: List<String>, ipv4Only: Boolean): JsonObject =
+        buildJsonObject {
+            put(field, JsonArray(values.sorted().map(::JsonPrimitive)))
+            put("action", "route")
+            put("server", SlotDns.tag(spec.slotId))
+            put("disable_cache", true)
+            if (ipv4Only) put("strategy", "ipv4_only")
+        }
 
     private fun rule(spec: SlotRouteSpec, field: String, values: List<String>): JsonObject = buildJsonObject {
         put(field, JsonArray(values.sorted().map(::JsonPrimitive)))

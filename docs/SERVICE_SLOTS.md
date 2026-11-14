@@ -82,8 +82,17 @@ a slot member.
   user rules, RU-direct, final. Slot rules sit before RU-direct so a Russian address does not take YouTube or
   Telegram out of the tunnel.
 - `interrupt_exist_connections` is per selector, so switching the YouTube slot cuts only YouTube connections.
-- DNS stays owned by the gasket: a slot never changes DNS; domain-specific server-name DNS follows the slot's server
-  through the existing rules.
+- DNS stays owned by the gasket, but a slot's names follow the slot's server (0.6.2). The node DNS of the main selector
+  (`zapret-secure-dns`, queries to the sentinel 8.8.8.8 through `zapret-proxy`) picks the cache node (a googlevideo
+  cluster) for the main node's network. With separate servers the video leaves through another node, and an address
+  chosen for the first network can be unreachable from the second: field 2026-11-14 17:03, `connect error: timeout:
+  no recent network activity` to the cache address of cluster `sn-8ph2xajvh-n8vs` through `zapret-slot-youtube` while
+  other clusters ran at 245 KB/s on the same server, and the address answers from other hosts. Each slot therefore gets
+  its own node DNS (`zapret-slot-dns-<id>`, a UDP and TCP race with `detour` = the slot selector) and DNS rules in the
+  router's order (apps, then names) before the main node DNS rules, with `disable_cache` so that an answer from the
+  previous node cannot survive a slot move. Only in modes that use the node DNS (Automatic, Secure, system DNS via the
+  node); the profile's own DNS ("From JSON") is untouched. `SlotRoutesTest` pins servers, rules, order and idempotence;
+  `RuntimeConfigNativeInstrumentedTest.slotConfigPassesPinnedLibbox` runs the config through the pinned core on a device.
 
 ## Home screen
 

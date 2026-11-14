@@ -406,7 +406,8 @@ object RuntimeConfigBuilder {
         val profileServers = (dns["servers"] as? JsonArray)?.toList().orEmpty()
         var servers = if (mode in MANAGED_DNS_MODES) {
             profileServers.filterNot {
-                (it as? JsonObject)?.string("tag") in GENERATED_DNS_SERVER_TAGS
+                val tag = (it as? JsonObject)?.string("tag")
+                tag in GENERATED_DNS_SERVER_TAGS || SlotDns.isSlotDnsServer(tag)
             }
         } else {
             profileServers
@@ -426,6 +427,8 @@ object RuntimeConfigBuilder {
             if (mode != DnsMode.Android || androidViaNode) {
                 val proxy = checkNotNull(selectedProxyTag)
                 servers = servers + secureDnsServers(proxy)
+                // Раздельные серверы: имена слота разрешает DNS того узла, через который слот выходит.
+                slotRoutes.forEach { servers = servers + slotDnsServers(it) }
             }
             normalizedOverride?.let { servers = servers + dnsOverrideServer(it) }
             dns["strategy"] = JsonPrimitive("prefer_ipv4")
@@ -465,10 +468,16 @@ object RuntimeConfigBuilder {
                 DnsMode.FromJson -> emptyList()
             }
             val overrideRules = listOfNotNull(normalizedOverride?.let(::dnsOverrideRule))
+            val slotDnsRules = if (mode != DnsMode.Android || androidViaNode) {
+                SlotRoutes.dnsRules(slotRoutes, proxyIpv4Only)
+            } else {
+                emptyList()
+            }
             dns["rules"] = JsonArray(
                 packageRejectRules(blockedPackages) +
                     rejectRules +
                     overrideRules +
+                    slotDnsRules +
                     generated +
                     otherRules,
             )
@@ -683,6 +692,18 @@ object RuntimeConfigBuilder {
                 "servers",
                 JsonArray(listOf(NODE_DNS_UDP_TAG, NODE_DNS_TCP_TAG).map(::JsonPrimitive)),
             )
+            put("strategy", "parallel")
+        },
+    )
+
+    /** The node DNS of one slot: the same race as [secureDnsServers], through the slot's own selector. */
+    private fun slotDnsServers(spec: SlotRouteSpec): List<JsonObject> = listOf(
+        nodeDnsServer(SlotDns.udpTag(spec.slotId), "udp", spec.selectorTag),
+        nodeDnsServer(SlotDns.tcpTag(spec.slotId), "tcp", spec.selectorTag),
+        buildJsonObject {
+            put("type", "fallback")
+            put("tag", SlotDns.tag(spec.slotId))
+            put("servers", JsonArray(listOf(SlotDns.udpTag(spec.slotId), SlotDns.tcpTag(spec.slotId)).map(::JsonPrimitive)))
             put("strategy", "parallel")
         },
     )
