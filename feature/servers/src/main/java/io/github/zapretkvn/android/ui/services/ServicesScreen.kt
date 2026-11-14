@@ -40,7 +40,6 @@ import io.github.zapretkvn.core.designsystem.Spacing
 import io.github.zapretkvn.core.designsystem.SwitchRow
 import io.github.zapretkvn.core.designsystem.ZapretCard
 import io.github.zapretkvn.core.designsystem.ZapretIcons
-import io.github.zapretkvn.core.designsystem.ZapretTopBar
 
 /** More servers than this (over all profiles) and the chooser shows a search field. */
 private const val SEARCH_THRESHOLD = 8
@@ -65,7 +64,6 @@ fun ServicesScreen(
             .consumeWindowInsets(contentPadding)
             .testTag("services-screen"),
     ) {
-        ZapretTopBar(title = "Сервисы")
         LazyColumn(
             contentPadding = PaddingValues(horizontal = Spacing.l, vertical = Spacing.s),
             verticalArrangement = Arrangement.spacedBy(Spacing.s),
@@ -128,8 +126,10 @@ private fun ServiceCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.m),
         ) {
-            Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-                if (service.flag != null) FlagBadge(service.flag, size = 24.dp)
+            if (service.flag != null) {
+                Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                    FlagBadge(service.flag, size = 24.dp)
+                }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(service.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)

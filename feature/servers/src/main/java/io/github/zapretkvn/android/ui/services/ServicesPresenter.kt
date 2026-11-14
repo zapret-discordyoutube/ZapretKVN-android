@@ -98,20 +98,26 @@ fun buildServicesUi(
             val group = summaries[profile.id]?.groups?.firstOrNull { it.tag == MANAGED_SELECTOR_TAG_NAME } ?: return@mapNotNull null
             val servers = group.options.filter { it.type.lowercase() in SLOT_SERVER_TYPES }
                 .map { serverUi(profile.id, it.tag, it.type, slot?.serverRef, pinned) }
+                // The pinned and the current server come first, so the choice is visible without scrolling.
+                .sortedBy { if (it.pinned) 0 else if (it.current) 1 else 2 }
             if (servers.isEmpty()) null else ServiceProfileUi(profile.id, profile.name, profile.id == activeProfileId, servers)
         }
         val known = groups.any { profile -> profile.servers.any { it.ref == pinned } }
         val shownPin = pinned?.takeIf { known }
         val parsed = slot?.let { ServerName.parse(it.serverName) }
+        // With the VPN off the row still names the pinned server, so «Закреплён» says where.
+        val pinnedServer = groups.firstNotNullOfOrNull { profile ->
+            profile.servers.firstOrNull { it.ref == shownPin }?.let { profile to it }
+        }
         ServiceUi(
             id = id,
             title = title,
             serverTitle = slot?.let {
                 val masked = ScreenshotPrivacy.serverLabel(it.serverName, hide)
                 if (masked != it.serverName) masked else parsed?.title
-            },
-            flag = parsed?.flag,
-            profileName = slot?.profileName,
+            } ?: pinnedServer?.second?.title,
+            flag = if (slot != null) parsed?.flag else pinnedServer?.second?.flag,
+            profileName = if (slot != null) slot.profileName else pinnedServer?.first?.takeUnless { it.active }?.name,
             modeLabel = when {
                 shownPin == null -> "Авто"
                 slot == null || slot.serverRef == shownPin -> "Закреплён"

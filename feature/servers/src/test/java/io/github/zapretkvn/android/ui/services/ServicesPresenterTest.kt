@@ -76,6 +76,20 @@ class ServicesPresenterTest {
     }
 
     @Test
+    fun `with the vpn off a pinned service names its server and lists it first`() {
+        val ref = ServerRef(mainId, "🇩🇪 Berlin").encode()
+        val youtube = ui(pins = mapOf("youtube" to ref)).services.first()
+        assertEquals("Berlin", youtube.serverTitle)
+        assertEquals("🇩🇪", youtube.flag)
+        assertNull(youtube.profileName)
+        assertEquals(listOf("Berlin", "Paris"), youtube.profiles.first().servers.map { it.title })
+
+        val foreign = ui(pins = mapOf("youtube" to ServerRef(workId, "🇳🇴 Oslo").encode())).services.first()
+        assertEquals("Oslo", foreign.serverTitle)
+        assertEquals("Work", foreign.profileName)
+    }
+
+    @Test
     fun `the current server of a service on another profile carries that profile's name`() {
         val ref = ServerRef(workId, "🇳🇴 Oslo").encode()
         val state = SlotState("telegram", "Telegram", "🇳🇴 Oslo@bbbbbbbb", serverName = "🇳🇴 Oslo", profileName = "Work", serverRef = ref)
