@@ -1,5 +1,9 @@
 package io.github.zapretkvn.android.config
 
+import io.github.zapretkvn.android.slots.SlotDns
+import io.github.zapretkvn.android.slots.SlotRouteSpec
+import io.github.zapretkvn.android.slots.SlotRoutes
+import io.github.zapretkvn.android.slots.SlotSelectors
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.hardening.RuntimeHardeningResult
 import io.github.zapretkvn.android.hardening.VpnHidingOptions

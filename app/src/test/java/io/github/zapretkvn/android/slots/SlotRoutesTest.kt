@@ -1,5 +1,12 @@
-package io.github.zapretkvn.android.config
+package io.github.zapretkvn.android.slots
 
+import io.github.zapretkvn.android.config.ConfigAnalyzer
+import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.config.RuntimeConfigBuilder
+import io.github.zapretkvn.android.config.RuntimeConfigOptions
+import io.github.zapretkvn.android.config.RuntimeConfigResult
+import io.github.zapretkvn.android.config.JsonConfig
+import io.github.zapretkvn.android.config.ForcedProxyDomains
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

@@ -21,7 +21,7 @@ import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePa
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCoordinator
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
-import io.github.zapretkvn.android.config.SlotSelectors
+import io.github.zapretkvn.android.slots.SlotSelectors
 import io.github.zapretkvn.android.slots.ServiceSlotRouter
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotPlan

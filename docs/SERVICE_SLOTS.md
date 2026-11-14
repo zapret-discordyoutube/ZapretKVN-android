@@ -230,3 +230,19 @@ Read and left as they are: the dead-cluster tracker treats any flow with 64 KB o
 (slow flows are the slow-video detector's job); `SlotTraffic` re-counts a flow only after it was absent for 40
 snapshots; the routing editor orders managed rules by action by design; a player paused for more than 30 s with one
 idle tail flow can still look starving (it needs the media state to tell the difference).
+
+## Code layout (since the refactor of 2026-11-14)
+
+All slot code lives under `app/src/main/java/io/github/zapretkvn/android/slots/`, one file per concept, no behaviour
+change (the old `ServiceSlots.kt` and the slot parts of `ServerSwitchCoordinator` were split, `config/SlotRoutes.kt` moved in):
+
+| Place | What |
+|---|---|
+| `slots/` (pure Kotlin, no Android) | `SlotIds`, `SlotDefinition`, `SlotCatalog` (composes the services), `ServiceSlotRouter` + `Cidr` (which slot a connection belongs to), `SlotServerAssigner` (pin, keep, least used), `SlotPlanner` (the plan a session starts with), `SlotFailover` (failure policy), `SlotTraffic`, `SlotCandidates`, `SlotPins`, `SlotRoutes` (selectors, route rules and per-slot DNS as JSON for the config builder) |
+| `slots/youtube/` | `YoutubeSlot` (clients and names of YouTube) and `YoutubeSlotSwitchHost` (the "slow YouTube" episode that moves the slot's selector) |
+| `slots/telegram/` | `TelegramSlot` (clients, forks, names, datacentre ranges) |
+| `slots/ai/` | `AiSlot` (assistant apps and names) |
+| `slots/runtime/` | `SlotCoordinator` (state of the slots in a running session, failover, pins, Home cards, the doorway of the YouTube episode) and `SlotRuntimeHost` (what it needs from the runtime actor) |
+
+A new service is one folder with one definition object plus one line in `SlotCatalog`. `ServerSwitchCoordinator` only
+creates the `SlotCoordinator` and forwards the core's hints, the pins and the session activation to it.

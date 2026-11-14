@@ -17,18 +17,14 @@ import io.github.zapretkvn.android.engines.failover.YoutubeSwitchOutcome
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchPolicy
 import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
-import io.github.zapretkvn.android.config.SlotSelectors
 import io.github.zapretkvn.android.network.probes.LivenessResult
-import io.github.zapretkvn.android.slots.SlotCandidates
-import io.github.zapretkvn.android.slots.SlotCatalog
-import io.github.zapretkvn.android.slots.SlotFailoverDecision
-import io.github.zapretkvn.android.slots.SlotFailoverPolicy
 import io.github.zapretkvn.android.slots.SlotIds
-import io.github.zapretkvn.android.slots.SlotMove
+import io.github.zapretkvn.android.slots.runtime.SlotCoordinator
+import io.github.zapretkvn.android.slots.runtime.SlotRuntimeHost
+import io.github.zapretkvn.android.slots.youtube.YoutubeSlotSwitchHost
 import io.github.zapretkvn.android.slots.SlotTraffic
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import io.github.zapretkvn.android.vpn.PathStatus
-import io.github.zapretkvn.android.vpn.SlotState
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -108,18 +104,11 @@ internal class ServerSwitchCoordinator(
 
     private var trafficJob: Job? = null
 
-    /**
-     * Failover раздельных серверов (docs/SERVICE_SLOTS.md, «только при сбое»): есть, пока у сессии есть слоты.
-     * Отдельно от [supervisor]: у слота своя проверка по повторам, потому что проба через туннель идёт через основной
-     * сервер и про сервер слота ничего не говорит.
-     */
-    private var slotFailover: SlotFailoverPolicy? = null
-
     /** Когда пользователю в последний раз предложили закрыть зависший YouTube (не чаще раза в 10 минут). */
     @Volatile private var wedgeNoticeShownAt: Long? = null
 
-    /** Закрепления слотов из настроек (id слота -> тег сервера); приходят сообщением при старте и при каждой правке. */
-    private var slotPins: Map<String, String> = emptyMap()
+    /** Раздельные серверы: состояние слотов, их failover, закрепления (docs/SERVICE_SLOTS.md). */
+    private val slots = SlotCoordinator(scope, controller, switcher, SlotHostImpl(), clock)
 
     /** «Нет связи с сервером» показано пользователю (только в акторе). */
     private var pathStatus = PathStatus.Ok
@@ -260,7 +249,7 @@ internal class ServerSwitchCoordinator(
     fun onCoreHints(generation: Long, hints: List<PathHint>) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session)) return
-        onSlotHints(session, hints)
+        slots.onHints(session, hints, mainServerOf(session))
         // Только что выбранный сервер ещё поднимает соединения, и его таймауты в логе —
         // не повод для пробы: она отменила бы сам выбор.
         if (operationKind == Operation.Select && operationActive()) return
@@ -285,89 +274,15 @@ internal class ServerSwitchCoordinator(
      * Подсказки об отказе сервера, на котором сидит слот. Основной selector не затрагивается: его ведёт [supervisor].
      * Решение о переносе принимает чистая [SlotFailoverPolicy]; здесь только команда selector'а слота и строка в журнал.
      */
-    /** Last command number per slot: written by the actor when a command is created, read by the command itself. */
-    private val slotMoveSequence = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    private fun onSlotHints(session: CoreSession, hints: List<PathHint>) {
-        val policy = slotFailover ?: return
-        for (hint in hints) {
-            // A server that rejects our credentials or certificate is not "slow": a slot leaves it at the first hint
-            // (the main selector ends the session instead, see PathSupervisor; a slot has no session to end).
-            val security = hint.code in PathSupervisor.SECURITY_FAILURES
-            if (!security && hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
-            val main = session.primaryGroupTag?.let { session.runtimeSelections()[it] }
-            when (val decision = policy.onFailureHint(hint.outboundTag, main, supervisor.deadServerIds(), immediate = security)) {
-                is SlotFailoverDecision.Ignore -> Unit
-                is SlotFailoverDecision.Move -> {
-                    timeline(
-                        "${server(decision.failedServer)}: ${decision.hints} отказов за минуту (${hint.code.name}), " +
-                            "слоты уходят: ${decision.moves.joinToString { "${slotTitle(it.slotId)} → ${server(it.to)}" }}.",
-                    )
-                    // Имя нового сервера должно разрешаться до команды.
-                    ServerNameRegistry.useForSlots(policy.slotServers())
-                    publishSlots(session)
-                    decision.moves.forEach { move -> moveSlot(session, policy, move) }
-                }
-            }
-        }
-    }
-
-    /**
-     * Пользователь закрепил сервер за слотом или снял закрепление (карточка на Главной). Сессия переносит закреплённый
-     * слот сразу, командой его selector'а, без перезапуска; снятое закрепление ничего не двигает.
-     */
+    /** Закрепления слотов из настроек: бегущая сессия двигает слот сразу, без перезапуска. */
     fun onSlotPins(pins: Map<String, String>) {
-        slotPins = pins
-        val session = sessions.active() ?: return
-        val policy = slotFailover ?: return
-        if (!isCurrent(session)) return
-        val specs = session.slotPlan?.specs.orEmpty().associateBy { it.slotId }
-        val moves = policy.setPins(pins) { slotId -> specs[slotId]?.members.orEmpty() }
-        if (moves.isEmpty()) return
-        timeline("Закреплено вручную: ${moves.joinToString { "${slotTitle(it.slotId)} → ${server(it.to)}" }}.")
-        ServerNameRegistry.useForSlots(policy.slotServers())
-        publishSlots(session)
-        moves.forEach { move -> moveSlot(session, policy, move) }
+        slots.onPins(sessions.active(), pins)
     }
 
-    private fun moveSlot(session: CoreSession, policy: SlotFailoverPolicy, move: SlotMove) {
-        // Commands run on the IO dispatcher, so launch order is not execution order: every command carries a number
-        // per slot and an older one that was overtaken by a newer move does nothing (the newer command sets the core).
-        val sequence = (slotMoveSequence[move.slotId] ?: 0L) + 1
-        slotMoveSequence[move.slotId] = sequence
-        scope.launch {
-            if (slotMoveSequence[move.slotId] != sequence) return@launch
-            val failure = switcher.moveSlot(session, SlotSelectors.tag(move.slotId), move.to)
-            postToActor {
-                if (failure != null && slotFailover === policy) {
-                    policy.moveFailed(move)
-                    ServerNameRegistry.useForSlots(policy.slotServers())
-                    publishSlots(session)
-                    timeline("Слот ${slotTitle(move.slotId)}: команда на ${server(move.to)} не прошла, остаётся на ${server(move.from)}.")
-                } else if (failure == null) {
-                    timeline("Слот ${slotTitle(move.slotId)}: теперь через ${server(move.to)}.")
-                }
-            }
-        }
-    }
+    /** Сервер основного selector'а сессии: слоты уходят от него и обходят его. */
+    private fun mainServerOf(session: CoreSession): String? =
+        session.primaryGroupTag?.let { session.runtimeSelections()[it] }
 
-    /** Карточки слотов на Главной: где сейчас каждый слот. Только в акторе. */
-    private fun publishSlots(session: CoreSession) {
-        val policy = slotFailover
-        val states = if (policy == null) {
-            emptyList()
-        } else {
-            session.slotPlan?.specs.orEmpty().mapNotNull { spec ->
-                policy.serverOf(spec.slotId)?.let { SlotState(spec.slotId, slotTitle(spec.slotId), it) }
-            }
-        }
-        controller.publishSlots(session.generation, states)
-    }
-
-    private fun slotTitle(slotId: String): String =
-        SlotCatalog.builtIn().firstOrNull { it.id == slotId }?.title ?: slotId
-
-    /** Одна проба через текущий сервер: единственная активная проверка, которую запускает надзор. */
     private fun startProbe(session: CoreSession, decision: PathDecision.Probe, code: HysteriaFailureCode) {
         if (pathStatus == PathStatus.Ok) setPathStatus(session, PathStatus.Checking, "проверка связи")
         probeCode = code
@@ -728,16 +643,16 @@ internal class ServerSwitchCoordinator(
         // Имя переменной не «reason»: RestartTriggersTest сканирует исходники на присваивания причин перезапуска.
         val cause = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
         // Со слотом YouTube видео идёт через его selector: переключать надо слот, а не основной сервер.
-        val onSlot = slotFailover?.serverOf(SlotIds.YOUTUBE) != null &&
+        val onSlot = slots.serverOf(SlotIds.YOUTUBE) != null &&
             session.slotPlan?.specs?.any { it.slotId == SlotIds.YOUTUBE } == true
-        val leftServerId = if (onSlot) slotFailover?.serverOf(SlotIds.YOUTUBE) else currentPlan(session)?.currentId
+        val leftServerId = if (onSlot) slots.serverOf(SlotIds.YOUTUBE) else currentPlan(session)?.currentId
         runOperation(Operation.Smart) { previous ->
             previous?.cancelAndJoin()
             RuntimeLog.resetVideoDetector()
             val outcome = YoutubeSwitchEngine(
                 policy = youtubePolicy,
                 host = if (onSlot) {
-                    YoutubeSlotSwitchHost(session, SlotIds.YOUTUBE, SlotContext(), switcher, controller, videoVerdicts)
+                    YoutubeSlotSwitchHost(session, SlotIds.YOUTUBE, slots.switchContext(::mainServerOf), switcher, controller, videoVerdicts)
                 } else {
                     YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts)
                 },
@@ -796,12 +711,7 @@ internal class ServerSwitchCoordinator(
     fun onSessionActivated(session: CoreSession) {
         smartPolicy.bindProfile(session.profileId)
         youtubePolicy.bindProfile(session.profileId)
-        slotFailover = session.slotPlan?.let { plan ->
-            val initial = plan.assignments.mapNotNull { a -> a.serverId?.let { a.slotId to it } }.toMap()
-            val servers = plan.specs.flatMap { it.members }.distinct()
-            SlotFailoverPolicy(SlotCatalog.withPins(slotPins), servers, initial) { clock() }
-        }
-        publishSlots(session)
+        slots.onSessionActivated(session)
         applyVideoLoop(session)
         // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
         stallDetector.reset(keepCooldown = false)
@@ -915,45 +825,28 @@ internal class ServerSwitchCoordinator(
         override fun timeline(message: String) = this@ServerSwitchCoordinator.timeline(message)
     }
 
-    /** Доступ эпизода YouTube-слота к состоянию рантайма — только через актор. */
-    private inner class SlotContext : SlotSwitchContext {
-        override suspend fun snapshot(session: CoreSession, slotId: String) = ask {
-            if (!this@ServerSwitchCoordinator.isCurrent(session)) return@ask null
-            val policy = slotFailover ?: return@ask null
-            val spec = session.slotPlan?.specs?.firstOrNull { it.slotId == slotId } ?: return@ask null
-            val currentId = policy.serverOf(slotId) ?: return@ask null
-            val main = session.primaryGroupTag?.let { session.runtimeSelections()[it] }
-            val usedByOthers = policy.assignments().filterKeys { it != slotId }.values.toSet() + listOfNotNull(main)
-            SlowSwitchSnapshot(
-                currentId = currentId,
-                targets = SlotCandidates.targets(
-                    members = spec.members,
-                    planTargets = currentPlan(session)?.targets,
-                    currentId = currentId,
-                    usedByOthers = usedByOthers,
-                    dead = policy.deadServers() + supervisor.deadServerIds(),
-                ),
-                hints = latencyHints(session.profileId),
-                busy = smartBusy(),
-            )
-        }
+    /** Что слотам нужно от актора: узкая дверь, чтобы слоты не лезли во внутренности координатора. */
+    private inner class SlotHostImpl : SlotRuntimeHost {
+        override fun isCurrent(session: CoreSession) = this@ServerSwitchCoordinator.isCurrent(session)
 
-        override suspend fun canTrial(session: CoreSession, slotId: String, currentId: String) = ask {
-            this@ServerSwitchCoordinator.isCurrent(session) && !smartBusy() && slotFailover?.serverOf(slotId) == currentId
-        }
+        override fun postToActor(block: () -> Unit) = this@ServerSwitchCoordinator.postToActor(block)
 
-        override suspend fun place(session: CoreSession, slotId: String, serverId: String) = ask {
-            val policy = slotFailover ?: return@ask
-            policy.place(slotId, serverId)
-            publishSlots(session)
-            // Имя нового сервера должно разрешаться до команды (она идёт следом).
-            ServerNameRegistry.useForSlots(policy.slotServers())
-        }
+        override suspend fun <T> ask(block: () -> T): T = this@ServerSwitchCoordinator.ask(block)
+
+        override fun timeline(message: String) = this@ServerSwitchCoordinator.timeline(message)
+
+        override fun serverName(tag: String) = server(tag)
+
+        override fun mainDeadServers() = supervisor.deadServerIds()
+
+        override fun plannedTargets(session: CoreSession) = currentPlan(session)?.targets
+
+        override fun latencyHints(profileId: String) = this@ServerSwitchCoordinator.latencyHints(profileId)
+
+        override fun busy() = smartBusy()
 
         override fun announce(session: CoreSession, message: String, notificationDetail: String) =
             SmartContext().announce(session, message, notificationDetail)
-
-        override fun timeline(message: String) = this@ServerSwitchCoordinator.timeline(message)
     }
 
     private fun timeline(message: String) = log.note(message)

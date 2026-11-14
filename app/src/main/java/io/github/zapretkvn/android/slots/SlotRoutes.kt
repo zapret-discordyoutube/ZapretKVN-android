@@ -1,5 +1,6 @@
-package io.github.zapretkvn.android.config
+package io.github.zapretkvn.android.slots
 
+import io.github.zapretkvn.android.config.ConfigAnalyzer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

@@ -59,14 +59,14 @@ class RuntimeConfigNativeInstrumentedTest {
             }
         """.trimIndent()
         val slots = listOf(
-            io.github.zapretkvn.android.config.SlotRouteSpec(
+            io.github.zapretkvn.android.slots.SlotRouteSpec(
                 slotId = "youtube",
                 members = listOf("server-b", "server-c"),
                 defaultMember = "server-b",
                 packages = listOf("app.morphe.android.youtube"),
                 domainSuffixes = listOf("googlevideo.com", "youtube.com"),
             ),
-            io.github.zapretkvn.android.config.SlotRouteSpec(
+            io.github.zapretkvn.android.slots.SlotRouteSpec(
                 slotId = "telegram",
                 members = listOf("server-a", "server-c"),
                 defaultMember = "server-c",

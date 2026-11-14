@@ -18,7 +18,7 @@ import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
 import io.github.zapretkvn.android.config.RuntimeConfigResult
-import io.github.zapretkvn.android.config.SlotRoutes
+import io.github.zapretkvn.android.slots.SlotRoutes
 import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import io.github.zapretkvn.android.diagnostics.EffectiveOverlaySummary
