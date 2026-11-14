@@ -21,6 +21,8 @@ import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePa
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCoordinator
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
+import io.github.zapretkvn.android.config.SlotSelectors
+import io.github.zapretkvn.android.slots.SlotPlan
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.withRelayHistory
@@ -81,6 +83,8 @@ internal class CoreSession(
     private val externalIpProbe: VpnExternalIpProbe,
     private val latencyStore: ServerLatencyStore,
     serviceProbePaths: AndroidServiceProbePaths,
+    /** Раздельные серверы этой сессии (docs/SERVICE_SLOTS.md); null — слоты не используются. */
+    val slotPlan: SlotPlan? = null,
 ) : AutoCloseable {
     /** JSON профиля этой сессии (текст [profileConfig]). */
     val profileJson: String get() = profileConfig.raw
@@ -201,7 +205,9 @@ internal class CoreSession(
             }
             runtimeSelection[group.tag] = group.selected
         }
-        return ServerLatencyReducer.hydrate(groups, latencyStore.forProfile(profileId), serverFingerprints)
+        // Выбор слотов запомнен выше (по нему работает failover слотов), но в списке серверов экрана их selector'ов нет.
+        val shown = groups.filterNot { SlotSelectors.isSlotSelector(it.tag) }
+        return ServerLatencyReducer.hydrate(shown, latencyStore.forProfile(profileId), serverFingerprints)
     }
 
     /** Выбранный в ядре участник каждой группы (по последнему сообщению групп). */

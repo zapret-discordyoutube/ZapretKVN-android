@@ -128,6 +128,26 @@ internal class ServerSwitcher(
         SwitchOutcome.RolledBack(error)
     }
 
+    /**
+     * Слот (docs/SERVICE_SLOTS.md) уходит на другой сервер: только команда его selector'а, без проверки кандидата и без
+     * записи в профиль (выбор слота живёт в сессии). `interrupt_exist_connections` рвёт соединения одного слота.
+     * Возвращает причину отказа или null.
+     */
+    suspend fun moveSlot(session: CoreSession, selectorTag: String, toTag: String): Throwable? =
+        session.switchLock.withLock {
+            val client = session.groupClient()
+                ?: return@withLock IllegalStateException("Клиент управления selector уже закрыт.")
+            try {
+                withContext(Dispatchers.IO) { client.selectOutbound(selectorTag, toTag) }
+                session.recordCommandedSelection(selectorTag, toTag)
+                null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                error
+            }
+        }
+
     /** Вернуть участника группы без сохранения (откат пробы «умной проверки»). */
     suspend fun restore(session: CoreSession, groupTag: String, outboundTag: String): Throwable? =
         session.switchLock.withLock { rollback(session, groupTag, outboundTag) }

@@ -498,6 +498,7 @@ internal class SessionStarter(
             externalIpProbe = container.vpnExternalIpProbe,
             serviceProbePaths = container.serviceProbePaths,
             latencyStore = container.serverLatencyStore,
+            slotPlan = slotPlan?.takeIf { it.specs.isNotEmpty() },
         )
         if (!sessions.registerPending(session, token)) {
             session.close()
@@ -543,6 +544,8 @@ internal class SessionStarter(
                 BootstrapConfig.serverHostsByTag(runtimeConfig),
                 BootstrapConfig.target(runtimeConfig)?.hostname,
             )
+            // Серверы слотов тоже разрешаются доверенным путём, а при его отказе — системным, как выбранный.
+            ServerNameRegistry.useForSlots(slotPlan?.specs?.map { it.defaultMember }.orEmpty())
             commandServer.startOrReloadService(
                 runtimeJson,
                 OverrideOptions().apply {

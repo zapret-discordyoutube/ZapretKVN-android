@@ -112,10 +112,15 @@ object ServerNameRegistry {
     @Volatile
     private var selected: String? = null
 
+    /** Servers the service slots use now (docs/SERVICE_SLOTS.md): like [selected], they may fall back to system DNS. */
+    @Volatile
+    private var slotHosts: Set<String> = emptySet()
+
     fun replace(hostnames: Collection<String>) {
         names = hostnames.mapNotNull(::normalize).toSet()
         hostByTag = emptyMap()
         selected = null
+        slotHosts = emptySet()
     }
 
     /**
@@ -127,6 +132,15 @@ object ServerNameRegistry {
         hostByTag = byTag
         names = (hostnames.mapNotNull(::normalize) + byTag.values).toSet()
         selected = normalize(selectedHost)?.takeIf(names::contains)
+        slotHosts = emptySet()
+    }
+
+    /**
+     * Servers the slots sit on now, replacing the previous set. Call before the command that moves a slot, so the
+     * new server's name can already be resolved. A tag without a name (an IP address) adds nothing.
+     */
+    fun useForSlots(tags: Collection<String>) {
+        slotHosts = tags.mapNotNull { hostByTag[it] }.toSet()
     }
 
     /**
@@ -147,7 +161,7 @@ object ServerNameRegistry {
      */
     fun allowsSystemFallback(hostname: String?): Boolean {
         val name = normalize(hostname) ?: return true
-        return name !in names || name == selected
+        return name !in names || name == selected || name in slotHosts
     }
 
     fun snapshot(): Set<String> = names

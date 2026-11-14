@@ -16,7 +16,13 @@ import io.github.zapretkvn.android.engines.failover.YoutubeSwitchGate
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchOutcome
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchPolicy
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
+import io.github.zapretkvn.android.config.SlotSelectors
 import io.github.zapretkvn.android.network.probes.LivenessResult
+import io.github.zapretkvn.android.slots.SlotCatalog
+import io.github.zapretkvn.android.slots.SlotFailoverDecision
+import io.github.zapretkvn.android.slots.SlotFailoverPolicy
+import io.github.zapretkvn.android.slots.SlotMove
+import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
@@ -96,6 +102,13 @@ internal class ServerSwitchCoordinator(
     private val stallDetector = StallDetector()
 
     private var trafficJob: Job? = null
+
+    /**
+     * Failover раздельных серверов (docs/SERVICE_SLOTS.md, «только при сбое»): есть, пока у сессии есть слоты.
+     * Отдельно от [supervisor]: у слота своя проверка по повторам, потому что проба через туннель идёт через основной
+     * сервер и про сервер слота ничего не говорит.
+     */
+    private var slotFailover: SlotFailoverPolicy? = null
 
     /** «Нет связи с сервером» показано пользователю (только в акторе). */
     private var pathStatus = PathStatus.Ok
@@ -236,6 +249,7 @@ internal class ServerSwitchCoordinator(
     fun onCoreHints(generation: Long, hints: List<PathHint>) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session)) return
+        onSlotHints(session, hints)
         // Только что выбранный сервер ещё поднимает соединения, и его таймауты в логе —
         // не повод для пробы: она отменила бы сам выбор.
         if (operationKind == Operation.Select && operationActive()) return
@@ -255,6 +269,48 @@ internal class ServerSwitchCoordinator(
             }
         }
     }
+
+    /**
+     * Подсказки об отказе сервера, на котором сидит слот. Основной selector не затрагивается: его ведёт [supervisor].
+     * Решение о переносе принимает чистая [SlotFailoverPolicy]; здесь только команда selector'а слота и строка в журнал.
+     */
+    private fun onSlotHints(session: CoreSession, hints: List<PathHint>) {
+        val policy = slotFailover ?: return
+        for (hint in hints) {
+            if (hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
+            val main = session.primaryGroupTag?.let { session.runtimeSelections()[it] }
+            when (val decision = policy.onFailureHint(hint.outboundTag, main, supervisor.deadServerIds())) {
+                is SlotFailoverDecision.Ignore -> Unit
+                is SlotFailoverDecision.Move -> {
+                    timeline(
+                        "${server(decision.failedServer)}: ${decision.hints} отказов за минуту (${hint.code.name}), " +
+                            "слоты уходят: ${decision.moves.joinToString { "${slotTitle(it.slotId)} → ${server(it.to)}" }}.",
+                    )
+                    // Имя нового сервера должно разрешаться до команды.
+                    ServerNameRegistry.useForSlots(policy.slotServers())
+                    decision.moves.forEach { move -> moveSlot(session, policy, move) }
+                }
+            }
+        }
+    }
+
+    private fun moveSlot(session: CoreSession, policy: SlotFailoverPolicy, move: SlotMove) {
+        scope.launch {
+            val failure = switcher.moveSlot(session, SlotSelectors.tag(move.slotId), move.to)
+            postToActor {
+                if (failure != null && slotFailover === policy) {
+                    policy.moveFailed(move)
+                    ServerNameRegistry.useForSlots(policy.slotServers())
+                    timeline("Слот ${slotTitle(move.slotId)}: команда на ${server(move.to)} не прошла, остаётся на ${server(move.from)}.")
+                } else if (failure == null) {
+                    timeline("Слот ${slotTitle(move.slotId)}: теперь через ${server(move.to)}.")
+                }
+            }
+        }
+    }
+
+    private fun slotTitle(slotId: String): String =
+        SlotCatalog.builtIn().firstOrNull { it.id == slotId }?.title ?: slotId
 
     /** Одна проба через текущий сервер: единственная активная проверка, которую запускает надзор. */
     private fun startProbe(session: CoreSession, decision: PathDecision.Probe, code: HysteriaFailureCode) {
@@ -669,6 +725,11 @@ internal class ServerSwitchCoordinator(
     fun onSessionActivated(session: CoreSession) {
         smartPolicy.bindProfile(session.profileId)
         youtubePolicy.bindProfile(session.profileId)
+        slotFailover = session.slotPlan?.let { plan ->
+            val initial = plan.assignments.mapNotNull { a -> a.serverId?.let { a.slotId to it } }.toMap()
+            val servers = plan.specs.flatMap { it.members }.distinct()
+            SlotFailoverPolicy(SlotCatalog.builtIn(), servers, initial) { clock() }
+        }
         applyVideoLoop(session)
         // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
         stallDetector.reset(keepCooldown = false)

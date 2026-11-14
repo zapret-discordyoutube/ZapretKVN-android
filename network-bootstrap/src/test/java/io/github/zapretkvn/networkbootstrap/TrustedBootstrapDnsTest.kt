@@ -141,6 +141,29 @@ class TrustedBootstrapDnsTest {
     }
 
     @Test
+    fun serversOfTheSlotsMayFallBackToSystemDnsToo() {
+        ServerNameRegistry.replace(
+            hostnames = listOf("a.example.com", "b.example.com", "c.example.com"),
+            hostsByTag = mapOf("A" to "a.example.com", "B" to "b.example.com", "C" to "c.example.com"),
+            selectedHost = "a.example.com",
+        )
+        try {
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("b.example.com"))
+            ServerNameRegistry.useForSlots(listOf("B", "no-name-tag"))
+            assertTrue(ServerNameRegistry.allowsSystemFallback("b.example.com"))
+            assertTrue(ServerNameRegistry.allowsSystemFallback("a.example.com"))
+            // A server nobody uses stays hidden.
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("c.example.com"))
+            // The set is replaced, not accumulated: a slot that left B takes it away again.
+            ServerNameRegistry.useForSlots(listOf("C"))
+            assertTrue(!ServerNameRegistry.allowsSystemFallback("b.example.com"))
+            assertTrue(ServerNameRegistry.allowsSystemFallback("c.example.com"))
+        } finally {
+            ServerNameRegistry.replace(emptyList())
+        }
+    }
+
+    @Test
     fun serverNameRegistryMatchesNormalizedNamesOnly() {
         ServerNameRegistry.replace(listOf("VPN.Example.com.", " node2.example.net ", ""))
         try {

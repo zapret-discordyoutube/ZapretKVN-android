@@ -1,6 +1,6 @@
 # Service slots: a dedicated server and switching logic per service (design draft)
 
-Status: DRAFT, no code yet. Owner direction of 2026-11-14, written down so the design starts from the owner's words.
+Status: IN PROGRESS (phases 1 to 3a in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
 Language: English (owner decision 2026-11-08). Read `docs/ARCHITECTURE.md` and the root `AGENTS.md` section
 "Architecture basis: native cores, sing-box is the gasket" first.
 
@@ -144,6 +144,16 @@ who wants a different subscription for YouTube switches the profile (revisit whe
   and user rules (apps, then names, then addresses). The main selector and the `default` slot are unchanged: the
   default slot is the main selector and keeps the server the user selected. `SlotRoutesTest` pins the rule order,
   the repair of broken pools, no-slots = old config byte for byte, and that the stored profile is never edited.
-- Not yet: per-slot switching at runtime (`SelectOutbound` on the slot selector, failure reassignment, selector cache
-  reconciliation for slot selectors), flow attribution per slot for the detectors, Home cards, the slot sheet (pin,
-  pool, apps), Windows parity, phone test.
+- Phase 3a done (failover on failure, not released): `slots/SlotFailover.kt` (`SlotFailoverPolicy`, pure, tested).
+  The main supervisor confirms a hint with a probe through the tunnel, which always leaves through the main server, so
+  it cannot judge a slot's own server. A slot server is judged by repetition instead: 3 switchable failures of the same
+  server within 60 s (first guess, to tune on the phone). Then the server is marked dead for 5 minutes, the assigner
+  runs again with it unusable, and only the slots on it move (the `default` slot never moves here; servers the main
+  supervisor confirmed dead are avoided too). At most 3 moves per 15 minutes, stale lines for 2 s after a move are
+  ignored. `ServerSwitcher.moveSlot` sends `SelectOutbound` to the slot selector under the session's switch lock;
+  nothing is written to the profile (a slot's server lives in the session). Timeline lines: `отказов за минуту ...,
+  слоты уходят`, `Слот X: теперь через Y`. Also: slot selectors are hidden from the server list of the screen, and
+  `ServerNameRegistry.useForSlots` lets the names of slot servers fall back to system DNS like the selected server
+  (before, only one server could).
+- Not yet: flow attribution per slot for the detectors (throughput monitor, video detector), Home cards, the slot sheet
+  (pin, pool, apps), Windows parity, phone test.
