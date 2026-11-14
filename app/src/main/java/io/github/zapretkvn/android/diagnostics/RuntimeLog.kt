@@ -120,7 +120,13 @@ object RuntimeLog {
      * пропускаются; битый JSON не должен ронять отсчёт трафика.
      */
     /** Итог одной выборки потоков: что закрыть как зависшее и вердикт по видео (для переключения сервера). */
-    class FlowSample(val stalledIds: List<String>, val verdict: SlowVideoDetector.Verdict)
+    class FlowSample(
+        val stalledIds: List<String>,
+        val verdict: SlowVideoDetector.Verdict,
+        /** Потоки этого снимка (для учёта трафика по слотам): открытые и закрытые с прошлого раза. */
+        val active: List<FlowSnap> = emptyList(),
+        val closed: List<FlowSnap> = emptyList(),
+    )
 
     private val emptySample = FlowSample(emptyList(), SlowVideoDetector.Verdict.Idle)
 
@@ -166,7 +172,7 @@ object RuntimeLog {
         }
         stalled.forEach { history?.recordReset(it.outbound, it.domain, it.destination) }
         history?.flushIfDirty()
-        return FlowSample(stalled.map { it.id }, verdict)
+        return FlowSample(stalled.map { it.id }, verdict, active, closed)
     }
 
     private const val WINDOW_LINE_MILLIS = 4_000L

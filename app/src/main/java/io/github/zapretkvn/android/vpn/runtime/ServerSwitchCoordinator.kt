@@ -18,10 +18,13 @@ import io.github.zapretkvn.android.engines.failover.YoutubeSwitchPolicy
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.config.SlotSelectors
 import io.github.zapretkvn.android.network.probes.LivenessResult
+import io.github.zapretkvn.android.slots.SlotCandidates
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotFailoverDecision
 import io.github.zapretkvn.android.slots.SlotFailoverPolicy
+import io.github.zapretkvn.android.slots.SlotIds
 import io.github.zapretkvn.android.slots.SlotMove
+import io.github.zapretkvn.android.slots.SlotTraffic
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnController
@@ -672,19 +675,29 @@ internal class ServerSwitchCoordinator(
         // YouTube выбирает кластер по адресу запроса, другой сервер получит другой кластер.
         // Имя переменной не «reason»: RestartTriggersTest сканирует исходники на присваивания причин перезапуска.
         val cause = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
-        val leftServerId = currentPlan(session)?.currentId
+        // Со слотом YouTube видео идёт через его selector: переключать надо слот, а не основной сервер.
+        val onSlot = slotFailover?.serverOf(SlotIds.YOUTUBE) != null &&
+            session.slotPlan?.specs?.any { it.slotId == SlotIds.YOUTUBE } == true
+        val leftServerId = if (onSlot) slotFailover?.serverOf(SlotIds.YOUTUBE) else currentPlan(session)?.currentId
         runOperation(Operation.Smart) { previous ->
             previous?.cancelAndJoin()
             RuntimeLog.resetVideoDetector()
             val outcome = YoutubeSwitchEngine(
                 policy = youtubePolicy,
-                host = YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts),
+                host = if (onSlot) {
+                    YoutubeSlotSwitchHost(session, SlotIds.YOUTUBE, SlotContext(), switcher, controller, videoVerdicts)
+                } else {
+                    YoutubeSwitchHostImpl(session, SmartContext(), switcher, controller, videoVerdicts)
+                },
                 youtubeAverage = RuntimeLog::youtubeAverage,
                 excludedIds = supervisor::deadServerIds,
             ).runEpisode(keepOnSilent = verdict.deadCluster)
-            timeline("Переключение при медленном YouTube ($cause): ${youtubeOutcomeText(outcome)}.")
+            timeline(
+                (if (onSlot) "Слот YouTube, переключение при медленном видео" else "Переключение при медленном YouTube") +
+                    " ($cause): ${youtubeOutcomeText(outcome)}.",
+            )
             val switchedAway = outcome is YoutubeSwitchOutcome.Switched || outcome is YoutubeSwitchOutcome.SwitchedUnverified
-            if (verdict.deadCluster && switchedAway && leftServerId != null) {
+            if (verdict.deadCluster && switchedAway && leftServerId != null && !onSlot) {
                 supervisor.avoidForYoutube(leftServerId)
                 timeline("${server(leftServerId)}: кластер YouTube мёртв, при автоматической замене сервера он будет последним.")
             }
@@ -767,7 +780,9 @@ internal class ServerSwitchCoordinator(
 
     private fun onSpeedSample(session: CoreSession, total: Long, connections: Int) {
         if (!smartSwitchEnabled || !isCurrent(session)) return
-        if (!session.onThroughputSample(clock(), total, connections)) return
+        // Раздельные серверы: основной сервер судится только по своему трафику, без того, что несут слоты.
+        val (own, ownConnections) = SlotTraffic.own(total, connections, session.slotTrafficOutsideDefault())
+        if (!session.onThroughputSample(clock(), own, ownConnections)) return
         if (smartPolicy.gate(enabled = true, busy = false) != SlowSwitchGate.Ready) return
         if (operationActive() || supervisor.busy) return
         session.resetThroughputWindow()
@@ -837,6 +852,46 @@ internal class ServerSwitchCoordinator(
                 }
             }
         }
+
+        override fun timeline(message: String) = this@ServerSwitchCoordinator.timeline(message)
+    }
+
+    /** Доступ эпизода YouTube-слота к состоянию рантайма — только через актор. */
+    private inner class SlotContext : SlotSwitchContext {
+        override suspend fun snapshot(session: CoreSession, slotId: String) = ask {
+            if (!this@ServerSwitchCoordinator.isCurrent(session)) return@ask null
+            val policy = slotFailover ?: return@ask null
+            val spec = session.slotPlan?.specs?.firstOrNull { it.slotId == slotId } ?: return@ask null
+            val currentId = policy.serverOf(slotId) ?: return@ask null
+            val main = session.primaryGroupTag?.let { session.runtimeSelections()[it] }
+            val usedByOthers = policy.assignments().filterKeys { it != slotId }.values.toSet() + listOfNotNull(main)
+            SlowSwitchSnapshot(
+                currentId = currentId,
+                targets = SlotCandidates.targets(
+                    members = spec.members,
+                    planTargets = currentPlan(session)?.targets,
+                    currentId = currentId,
+                    usedByOthers = usedByOthers,
+                    dead = policy.deadServers() + supervisor.deadServerIds(),
+                ),
+                hints = latencyHints(session.profileId),
+                busy = smartBusy(),
+            )
+        }
+
+        override suspend fun canTrial(session: CoreSession, slotId: String, currentId: String) = ask {
+            this@ServerSwitchCoordinator.isCurrent(session) && !smartBusy() && slotFailover?.serverOf(slotId) == currentId
+        }
+
+        override suspend fun place(session: CoreSession, slotId: String, serverId: String) = ask {
+            val policy = slotFailover ?: return@ask
+            policy.place(slotId, serverId)
+            // Имя нового сервера должно разрешаться до команды (она идёт следом).
+            ServerNameRegistry.useForSlots(policy.slotServers())
+        }
+
+        override fun announce(session: CoreSession, message: String, notificationDetail: String) =
+            SmartContext().announce(session, message, notificationDetail)
 
         override fun timeline(message: String) = this@ServerSwitchCoordinator.timeline(message)
     }

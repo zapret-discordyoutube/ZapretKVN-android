@@ -22,7 +22,10 @@ import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCo
 import io.github.zapretkvn.android.platform.AndroidPlatformAdapter
 import io.github.zapretkvn.android.vpn.RuntimeOutboundItem
 import io.github.zapretkvn.android.config.SlotSelectors
+import io.github.zapretkvn.android.slots.ServiceSlotRouter
+import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotPlan
+import io.github.zapretkvn.android.slots.SlotTraffic
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.android.vpn.withRelayHistory
@@ -295,6 +298,13 @@ internal class CoreSession(
         return totals.downlinkTotal > 0
     }
 
+    /** Трафик слотов кроме `default` (docs/SERVICE_SLOTS.md); null — слотов нет. */
+    private val slotTraffic: SlotTraffic? = slotPlan?.let { SlotTraffic(ServiceSlotRouter(SlotCatalog.builtIn())) }
+
+    /** Сколько загрузки и открытых потоков приходится на слоты кроме основного; null — слотов нет. */
+    fun slotTrafficOutsideDefault(): Pair<Long, Int>? =
+        slotTraffic?.let { it.downlinkOutsideDefault() to it.activeOutsideDefault() }
+
     /**
      * Выборка потоков через прокси: журнал, история, вердикт по видео и закрытие зависших потоков YouTube (плеер
      * получает сброс и открывает новое соединение, не дожидаясь своего долгого таймаута). Прямые вызовы ядра, подписки
@@ -305,6 +315,7 @@ internal class CoreSession(
         val sample = RuntimeLog.flows(
             runCatching { server?.proxyFlows(RuntimeLog.flowCursor(), RuntimeLog.FLOW_LIMIT) }.getOrNull(),
         )
+        slotTraffic?.onSnapshot(sample.active, sample.closed)
         if (sample.stalledIds.isNotEmpty()) closeFlows(sample.stalledIds)
         return sample
     }

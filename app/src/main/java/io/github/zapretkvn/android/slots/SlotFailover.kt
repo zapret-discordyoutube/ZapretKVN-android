@@ -92,6 +92,18 @@ internal class SlotFailoverPolicy(
         return SlotFailoverDecision.Move(serverId, hints, moves)
     }
 
+    /** Server of one slot now, or null when the policy does not know the slot. */
+    fun serverOf(slotId: String): String? = current[slotId]
+
+    /**
+     * Another part of the app (the YouTube engine) moved [slotId] to [serverId]: remember it, and forget hints about
+     * the server it left (they describe a connection that is gone).
+     */
+    fun place(slotId: String, serverId: String) {
+        current[slotId]?.let { hintTimes.remove(it) }
+        current[slotId] = serverId
+    }
+
     /** The core refused the command: the slot is still where it was. */
     fun moveFailed(move: SlotMove) {
         current[move.slotId] = move.from

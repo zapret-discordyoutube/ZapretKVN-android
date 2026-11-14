@@ -1,6 +1,6 @@
 # Service slots: a dedicated server and switching logic per service (design draft)
 
-Status: IN PROGRESS (phases 1 to 3a in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
+Status: IN PROGRESS (phases 1 to 3b in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
 Language: English (owner decision 2026-11-08). Read `docs/ARCHITECTURE.md` and the root `AGENTS.md` section
 "Architecture basis: native cores, sing-box is the gasket" first.
 
@@ -155,5 +155,18 @@ who wants a different subscription for YouTube switches the profile (revisit whe
   слоты уходят`, `Слот X: теперь через Y`. Also: slot selectors are hidden from the server list of the screen, and
   `ServerNameRegistry.useForSlots` lets the names of slot servers fall back to system DNS like the selected server
   (before, only one server could).
-- Not yet: flow attribution per slot for the detectors (throughput monitor, video detector), Home cards, the slot sheet
-  (pin, pool, apps), Windows parity, phone test.
+- Phase 3b done (detectors per slot, not released):
+  - **Video detector and the YouTube episode.** The detector already reads only YouTube flows (googlevideo), so it was
+    never confused by other apps; what was wrong with slots on is the action: the episode switched the main selector,
+    while YouTube leaves through `zapret-slot-youtube`. With a YouTube slot the same `YoutubeSwitchEngine` now runs on
+    `YoutubeSlotSwitchHost`, which moves the slot's own selector (`ServerSwitcher.moveSlot`), takes candidates from the
+    slot's pool (`SlotCandidates`: dead servers and servers other slots or the main selector use are left out while a
+    candidate remains) and writes nothing to the profile. Timeline: `Слот YouTube, переключение при медленном видео`.
+  - **Throughput monitor.** It reads one global downlink counter, so a slow Telegram transfer could look like a slow
+    main server. With slots on, `SlotTraffic` assigns each flow of the existing direct snapshot (no new core calls,
+    I6-05) to a slot by the config's own rule (package, then name, then address) and the monitor subtracts what the
+    other slots carried (`SlotTraffic.own`). Both approximations err the safe way: bytes not counted yet raise the
+    default rate (no false "slow"), bytes counted early make the counter step back, which the detector treats as a
+    reset. The probe that confirms slowness already goes through the main server, which is the right server to judge.
+  - Not tuned on the phone yet; the numbers of 3a and these rules are first guesses.
+- Not yet: Home cards, the slot sheet (pin, pool, apps), Windows parity, phone test.
