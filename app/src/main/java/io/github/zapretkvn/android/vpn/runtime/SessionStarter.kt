@@ -1,6 +1,5 @@
 package io.github.zapretkvn.android.vpn.runtime
 
-import io.github.zapretkvn.android.network.probes.hint
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
@@ -51,6 +50,7 @@ import io.github.zapretkvn.android.slots.ForeignServers
 import io.github.zapretkvn.android.slots.ProfileServers
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotPlanner
+import io.github.zapretkvn.android.slots.recentlyFailedRuntimeTags
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.ZapretVpnService
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
@@ -238,15 +238,8 @@ internal class SessionStarter(
      * Runtime tags of the servers whose last saved result is a fresh failure («не отвечает», see `hint()`): a slot does
      * not start on them, a pin on one included, so a connect does not begin with a minute of waiting on a dead server.
      */
-    private fun recentlyFailedServers(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): Set<String> {
-        val store = container.serverLatencyStore
-        val own = store.forProfile(profileId)
-        val failed = activeTags.filterTo(mutableSetOf()) { own[it]?.hint()?.failed == true }
-        for (server in foreign) {
-            if (store.forProfile(server.ref.profileId)[server.ref.tag]?.hint()?.failed == true) failed += server.runtimeTag
-        }
-        return failed
-    }
+    private fun recentlyFailedServers(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): Set<String> =
+        container.serverLatencyStore.recentlyFailedRuntimeTags(profileId, activeTags, foreign)
 
     private suspend fun loadForeignServers(activeId: String, activeName: String, active: ParsedConfig): List<ForeignServer> {
         val others = container.profileStore.profiles.value.filter { it.id != activeId }.mapNotNull { meta ->

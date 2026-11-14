@@ -266,6 +266,16 @@ and when a slot leaves it because its connections failed (`SlotRuntimeHost.recor
 slot's DNS is not recorded, because the server may work for ordinary traffic (Rusge on 2026-11-14), so the Servers tab does
 not call it dead. Tests: `ServiceSlotsTest` (failed pin, main server), `SlotFailoverTest`.
 
+### The same rule for a replacement (Android 0.6.12)
+
+Field case 2026-11-14 (0.6.11, long-video test): the YouTube slot started on Clermany, which timed out, and the failover
+moved it to 4virtual, a server marked «не отвечает» four minutes earlier; 17 s later it left that one too and the video
+started only on the third server (about 47 s after the tap). `SlotFailoverPolicy` now takes the same failure marks
+(`recentlyFailed`, the shared `recentlyFailedRuntimeTags`) and looks for a replacement among the unmarked servers first.
+When every other candidate is marked the old search runs, so a slot never stays on the server that just failed because
+of a mark. The main server is never excluded by a mark. Tests: `SlotFailoverTest` (marked server skipped, only marked
+servers left, main server).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

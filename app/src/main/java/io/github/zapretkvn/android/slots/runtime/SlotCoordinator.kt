@@ -57,7 +57,12 @@ internal class SlotCoordinator(
         failover = session.slotPlan?.let { plan ->
             val initial = plan.assignments.mapNotNull { a -> a.serverId?.let { a.slotId to it } }.toMap()
             val servers = plan.specs.flatMap { it.members }.distinct()
-            SlotFailoverPolicy(SlotCatalog.withPins(runtimePins(session)), servers, initial) { clock() }
+            SlotFailoverPolicy(
+                SlotCatalog.withPins(runtimePins(session)),
+                servers,
+                initial,
+                recentlyFailed = { host.recentlyFailedServers(session) },
+            ) { clock() }
         }
         publish(session)
     }

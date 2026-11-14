@@ -32,6 +32,12 @@ internal class SlotFailoverPolicy(
     slots: List<SlotDefinition>,
     private val servers: List<String>,
     initial: Map<String, String>,
+    /**
+     * Servers whose last saved result is a fresh failure («не отвечает»). A replacement is looked for among the others
+     * first: a slot that leaves a dead server must not land on one that is known to be dead too (field case
+     * 2026-11-14: Clermany → 4virtual, failed 4 minutes before, cost 17 s of a video start).
+     */
+    private val recentlyFailed: () -> Set<String> = { emptySet() },
     private val clock: () -> Long,
 ) {
     private var slots: List<SlotDefinition> = slots
@@ -89,13 +95,19 @@ internal class SlotFailoverPolicy(
         val avoid = deadUntil.keys + serverId + mainDead
         val previous = current.toMutableMap()
         mainServer?.let { previous[SlotIds.DEFAULT] = it }
-        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid) }, previous)
-        val moves = assignments.mapNotNull { choice ->
-            val from = current[choice.slotId]
-            val to = choice.serverId
-            if (choice.slotId == SlotIds.DEFAULT || from != serverId || to == null || to == from) null
-            else SlotMove(choice.slotId, from, to)
+        fun movesAvoiding(unusable: Set<String>): List<SlotMove> {
+            val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in unusable) }, previous)
+            return assignments.mapNotNull { choice ->
+                val from = current[choice.slotId]
+                val to = choice.serverId
+                if (choice.slotId == SlotIds.DEFAULT || from != serverId || to == null || to == from) null
+                else SlotMove(choice.slotId, from, to)
+            }
         }
+        // The main server is never excluded by an old mark: it is the one the whole tunnel works through now.
+        val marked = recentlyFailed() - setOfNotNull(mainServer)
+        // Better a server of unknown health than one that failed minutes ago; with nothing else, the marked one.
+        val moves = movesAvoiding(avoid + marked).ifEmpty { movesAvoiding(avoid) }
         if (moves.isEmpty()) return SlotFailoverDecision.Ignore("no usable replacement for $serverId")
         times.clear()
         deadUntil[serverId] = now + DEAD_MILLIS

@@ -19,10 +19,12 @@ class SlotFailoverTest {
         main: String = "A",
         list: List<SlotDefinition> = slots,
         pool: List<String> = servers,
+        failed: Set<String> = emptySet(),
     ) = SlotFailoverPolicy(
         list,
         pool,
         mapOf(SlotIds.YOUTUBE to youtube, SlotIds.TELEGRAM to telegram, SlotIds.DEFAULT to main),
+        recentlyFailed = { failed },
     ) { now }
 
     private fun SlotFailoverPolicy.fail(server: String, times: Int, main: String = "A", dead: Set<String> = emptySet()): SlotFailoverDecision {
@@ -44,6 +46,29 @@ class SlotFailoverTest {
         assertEquals(1, decision.moves.size)
         assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "D"), decision.moves.single())
         assertEquals("D", p.assignments().getValue(SlotIds.YOUTUBE))
+    }
+
+    @Test
+    fun `a replacement is not a server that failed minutes ago`() {
+        // Field case 2026-11-14: the slot left a dead server for another one that was marked dead 4 minutes before.
+        val p = policy(pool = listOf("A", "B", "C", "D", "E"), failed = setOf("D"))
+        val decision = p.fail("B", 3) as SlotFailoverDecision.Move
+        assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "E"), decision.moves.single())
+    }
+
+    @Test
+    fun `with only marked servers left the slot still moves rather than stay on the dead one`() {
+        val p = policy(pool = listOf("B", "D"), failed = setOf("D"))
+        val decision = p.fail("B", 3) as SlotFailoverDecision.Move
+        assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "D"), decision.moves.single())
+    }
+
+    @Test
+    fun `the main server is never excluded by an old mark`() {
+        val p = policy(failed = setOf("A", "D"), pool = listOf("A", "B", "D"), telegram = "A")
+        val decision = p.fail("B", 3, main = "A")
+        // D is marked, A is the main server: the main server may be shared, so the move goes to A, not nowhere.
+        assertTrue(decision is SlotFailoverDecision.Move)
     }
 
     @Test

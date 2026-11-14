@@ -19,6 +19,7 @@ import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.slots.SlotIds
+import io.github.zapretkvn.android.slots.recentlyFailedRuntimeTags
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.slots.runtime.SlotCoordinator
@@ -885,6 +886,12 @@ internal class ServerSwitchCoordinator(
         override fun latencyHints(profileId: String) = this@ServerSwitchCoordinator.latencyHints(profileId)
 
         override fun busy() = smartBusy()
+
+        override fun recentlyFailedServers(session: CoreSession): Set<String> {
+            val plan = session.slotPlan ?: return emptySet()
+            val tags = plan.specs.flatMap { it.members }.distinct()
+            return container.serverLatencyStore.recentlyFailedRuntimeTags(session.profileId, tags, plan.foreign)
+        }
 
         override fun recordUnreachable(session: CoreSession, serverId: String) {
             val now = clock()

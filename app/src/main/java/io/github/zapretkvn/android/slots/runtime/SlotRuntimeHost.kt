@@ -38,6 +38,9 @@ internal interface SlotRuntimeHost {
      */
     fun recordUnreachable(session: CoreSession, serverId: String)
 
+    /** Runtime tags of the servers that have a fresh «не отвечает» mark (the latency store). */
+    fun recentlyFailedServers(session: CoreSession): Set<String>
+
     /** Another switching operation (manual, failover, smart check) is running. */
     fun busy(): Boolean
 
