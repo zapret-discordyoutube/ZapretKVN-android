@@ -14,7 +14,8 @@ package io.github.zapretkvn.runtimelog
  *
  * «Голодание» это когда есть медленный видеопоток, а суммарная скорость всех видеопотоков окна ниже
  * [starvingBytesPerSecond], и так в [observationsRequired] отсчётах подряд. Тогда плеер ждёт данные, а здоровых потоков,
- * которые его кормят, нет: можно менять сервер. Если рядом идёт здоровый поток, голодания нет.
+ * которые его кормят, нет: можно менять сервер. Если рядом идёт здоровый поток, голодания нет. Нет его и тогда, когда
+ * за последние [deliveredWindowMillis] видео получило не меньше [deliveredHoldBytes]: плеер сыт и просто не берёт данные.
  *
  * Чистая логика без часов и ядра: вызывающий даёт время и снимок потоков (с уже подставленными именами).
  */
@@ -27,6 +28,8 @@ class SlowVideoDetector(
     private val healthyBytesPerSecond: Long = 120L * 1024,
     private val starvingBytesPerSecond: Long = 60L * 1024,
     private val observationsRequired: Int = 2,
+    private val deliveredWindowMillis: Long = 30_000,
+    private val deliveredHoldBytes: Long = 3L * 1024 * 1024,
 ) {
     data class Verdict(
         /** Видеопотоков googlevideo в снимке. */
@@ -60,7 +63,11 @@ class SlowVideoDetector(
     private var lastAtMillis = -1L
     private var starvingObservations = 0
 
+    /** Байты видеопотоков по снимкам за последние [deliveredWindowMillis]: пара (время, байт за окно снимка). */
+    private val delivered = ArrayDeque<Pair<Long, Long>>()
+
     fun reset() {
+        delivered.clear()
         seen.clear()
         lastAtMillis = -1L
         starvingObservations = 0
@@ -84,6 +91,7 @@ class SlowVideoDetector(
         videoFlowIds = video.map { it.id }
         val ids = HashSet<String>(active.size * 2)
         var windowDownTotal = 0.0
+        var windowBytes = 0L
         var healthy = 0
         val slow = ArrayList<FlowSnap>()
         for (flow in video) {
@@ -94,6 +102,7 @@ class SlowVideoDetector(
             val seconds = if (previous != null && windowSeconds > 0) windowSeconds else ageSeconds
             val windowDown = if (previous != null) (flow.downlink - previous.downlink).coerceAtLeast(0) else flow.downlink
             seen[flow.id] = Seen(flow.uplink, flow.downlink)
+            windowBytes += windowDown
             val rate = windowDown / seconds
             windowDownTotal += windowDown / seconds
             if (rate >= healthyBytesPerSecond) healthy++
@@ -101,7 +110,13 @@ class SlowVideoDetector(
         }
         seen.keys.retainAll(ids)
         val videoRate = windowDownTotal.toLong()
-        val starvingNow = slow.isNotEmpty() && healthy == 0 && videoRate < starvingBytesPerSecond
+        delivered.addLast(nowMillis to windowBytes)
+        while (delivered.isNotEmpty() && nowMillis - delivered.first().first > deliveredWindowMillis) delivered.removeFirst()
+        // Плеер с полным буфером сам не берёт данные: окно без байт и один медленный хвост ещё не голод. Если за
+        // последние секунды видео получило мегабайты, плеер сыт (поле, 0.5.48: 5 МБ за 30 с, затем две паузы по 5 с
+        // дали «ВИДЕО ГОЛОДАЕТ» и ненужную смену рабочего сервера).
+        val recentlyFed = delivered.sumOf { it.second } >= deliveredHoldBytes
+        val starvingNow = slow.isNotEmpty() && healthy == 0 && videoRate < starvingBytesPerSecond && !recentlyFed
         starvingObservations = if (starvingNow) starvingObservations + 1 else 0
         return Verdict(
             videoFlows = video.size,

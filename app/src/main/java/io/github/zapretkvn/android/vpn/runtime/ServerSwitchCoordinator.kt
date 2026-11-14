@@ -616,6 +616,7 @@ internal class ServerSwitchCoordinator(
         // YouTube выбирает кластер по адресу запроса, другой сервер получит другой кластер.
         // Имя переменной не «reason»: RestartTriggersTest сканирует исходники на присваивания причин перезапуска.
         val cause = if (verdict.deadCluster) "кластер ${verdict.deadClusters.joinToString()} не отвечает" else "видео голодает"
+        val leftServerId = currentPlan(session)?.currentId
         runOperation(Operation.Smart) { previous ->
             previous?.cancelAndJoin()
             RuntimeLog.resetVideoDetector()
@@ -625,6 +626,11 @@ internal class ServerSwitchCoordinator(
                 youtubeAverage = RuntimeLog::youtubeAverage,
             ).runEpisode(keepOnSilent = verdict.deadCluster)
             timeline("Переключение при медленном YouTube ($cause): ${youtubeOutcomeText(outcome)}.")
+            val switchedAway = outcome is YoutubeSwitchOutcome.Switched || outcome is YoutubeSwitchOutcome.SwitchedUnverified
+            if (verdict.deadCluster && switchedAway && leftServerId != null) {
+                supervisor.avoidForYoutube(leftServerId)
+                timeline("${server(leftServerId)}: кластер YouTube мёртв, при автоматической замене сервера он будет последним.")
+            }
         }
     }
 

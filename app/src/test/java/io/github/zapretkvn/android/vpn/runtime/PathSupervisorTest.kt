@@ -161,6 +161,23 @@ class PathSupervisorTest {
         )
     }
 
+    /** Архив 0.5.48 (2026-11-14 10:19): уйдя с titiru (мёртвый кластер) и упав на пробе, замена по пингу вернула titiru. */
+    @Test
+    fun `a server with a dead YouTube cluster is offered last but not excluded`() {
+        val hints = mapOf("titiru" to LatencyHint(140, false), "horologium" to LatencyHint(300, false), "tiraru" to LatencyHint(900, false))
+        val withTitiru = plan("tiraru", ids = arrayOf("titiru", "horologium", "tiraru"))
+        assertEquals(listOf("titiru", "horologium"), supervisor.candidates(withTitiru, hints).map { it.id })
+        supervisor.avoidForYoutube("titiru")
+        assertEquals(listOf("horologium", "titiru"), supervisor.candidates(withTitiru, hints).map { it.id })
+        // единственный кандидат остаётся, даже если помечен
+        assertEquals(listOf("titiru"), supervisor.candidates(plan("a", ids = arrayOf("titiru", "a")), hints).map { it.id })
+        now += PathSupervisor.YOUTUBE_AVOID_MILLIS
+        assertEquals(listOf("titiru", "horologium"), supervisor.candidates(withTitiru, hints).map { it.id })
+        supervisor.avoidForYoutube("titiru")
+        supervisor.reset()
+        assertEquals(listOf("titiru", "horologium"), supervisor.candidates(withTitiru, hints).map { it.id })
+    }
+
     @Test
     fun `startup ranks candidates exactly like the supervisor`() {
         val plan = plan("a")

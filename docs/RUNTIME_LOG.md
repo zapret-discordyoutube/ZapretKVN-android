@@ -315,6 +315,20 @@ the dotted form `rr2.sn-…`. **Field bug (0.5.47 archive, 2026-11-13 23:02-23:0
 three batches of three silent flows (948 B back after 8.1 s) to `sn-8ph2xajvh` were never counted and the switch never ran,
 while Chrome through the same node, cluster and cache address (128.75.235.173) received 1-6 MB. Fixed in 0.5.48; the test uses
 the exact names and sizes of that archive. Windows `cluster_of` has the same regex and the same fix.
+
+**Field test of 0.5.48 (2026-11-14 10:17-10:22 UTC, phone, Titiru).** The fix worked: the detector fired 14 s after ReVanced
+started (`МЁРТВЫЙ КЛАСТЕР YouTube sn-8ph2xajvh`), the app moved to Horologium, and the video pulled 10.9 MB and 5.0 MB there. Then
+two defects of the *automation* froze it at 3:13 (the owner reports the freeze was real, not caused by switching apps):
+1. **False starvation.** A player with a full buffer stops fetching. Two 5 s windows with 0 B and one 36 KB/s tail flow were
+   enough for `ВИДЕО ГОЛОДАЕТ`, 90 s after the first switch the engine probed Tiraru (dead, flows 0 B, timeouts) and left a
+   working server. `SlowVideoDetector` now says "not starving" while the video flows received at least 3 MB in the last 30 s
+   (`deliveredHoldBytes`, `deliveredWindowMillis`); the 0.5.39 field case (555 KB burst, then a trickle) still counts.
+2. **Failover returned to the server with the dead cluster.** The probe candidate timed out, the general failover ranked the
+   replacement by ping and chose Titiru, whose cluster was dead 90 s earlier. After a switch away because of a dead cluster
+   the old server is now marked (`PathSupervisor.avoidForYoutube`, 10 min): it is offered LAST, never excluded, and the log
+   says so (`кластер YouTube мёртв, при автоматической замене сервера он будет последним`).
+Not changed: the "slow YouTube" probe itself may still try a server whose YouTube average is poor; ReVanced stalls with real
+cache addresses as well (see the 0.5.47 archive), the cause of that is still open.
 The tracker reads the **closed** flows of the snapshot (so it works with or without the reset option) and counts a flow
 as *silent* when it is TCP, sent something, received at most 4 KB, and lived at least 5 s (an instant reset is a refusal,
 not a silent node). A cluster is **dead** after 3 different silent flows inside 90 s with no healthy flow (64 KB or more) of

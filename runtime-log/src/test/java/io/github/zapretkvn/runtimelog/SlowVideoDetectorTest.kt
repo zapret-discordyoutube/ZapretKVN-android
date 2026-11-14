@@ -52,6 +52,42 @@ class SlowVideoDetectorTest {
         assertFalse(detector.onSnapshot(start + 8_000, listOf(video("a", start, 7 * kb, 130 * kb), video("b", start, 7 * kb, 4_000 * kb))).starving)
     }
 
+    /** Архив 0.5.48 (2026-11-14 10:18): на рабочем сервере видео взяло МБ, потом две паузы по 5 с и хвост 36 КБ/с. */
+    @Test
+    fun `a player that was just fed megabytes and pauses is not starving`() {
+        val detector = SlowVideoDetector()
+        val start = 200_000L
+        // поток набирает МБ: три отсчёта по ~1 МБ
+        var down = 0L
+        var now = start
+        repeat(3) {
+            now += 5_000
+            down += 1_100 * kb
+            detector.onSnapshot(now, listOf(video("main", start, 40 * kb, down), video("tail", start, 20 * kb, 60 * kb)))
+        }
+        // плеер сыт: основной поток молчит, хвост сочится
+        var starved = false
+        repeat(3) {
+            now += 5_000
+            starved = starved || detector.onSnapshot(now, listOf(video("main", start, 40 * kb, down), video("tail", start, 20 * kb, 60 * kb + 5 * kb))).starving
+        }
+        assertFalse("fed player must not be called starving", starved)
+    }
+
+    @Test
+    fun `a stream that moved megabytes long ago and now only trickles is starving`() {
+        val detector = SlowVideoDetector()
+        val start = 300_000L
+        detector.onSnapshot(start + 5_000, listOf(video("main", start, 40 * kb, 4_000 * kb), video("tail", start, 20 * kb, 60 * kb)))
+        var now = start + 5_000
+        var starved = false
+        repeat(12) {
+            now += 5_000
+            starved = starved || detector.onSnapshot(now, listOf(video("tail", start, 20 * kb, 60 * kb + (it + 1) * 8 * kb))).starving
+        }
+        assertTrue("megabytes older than 30 s no longer feed the player", starved)
+    }
+
     @Test
     fun `redirector other hosts udp handshakes and idle preconnects are not video streams`() {
         val detector = SlowVideoDetector()

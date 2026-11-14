@@ -81,6 +81,7 @@ internal class PathSupervisor(
     private var networkWideHoldUntil = Long.MIN_VALUE
     private val mutedUntil = mutableMapOf<String, Long>()
     private val deadUntil = mutableMapOf<String, Long>()
+    private val avoidUntil = mutableMapOf<String, Long>()
     private val switchTimes = ArrayDeque<Long>()
 
     val busy: Boolean get() = state != State.Idle
@@ -95,6 +96,7 @@ internal class PathSupervisor(
         networkWideHoldUntil = Long.MIN_VALUE
         mutedUntil.clear()
         deadUntil.clear()
+        avoidUntil.clear()
         switchTimes.clear()
     }
 
@@ -228,11 +230,21 @@ internal class PathSupervisor(
         serverIds.forEach { deadUntil[it] = until }
     }
 
+    /**
+     * Сервер жив, но кластер YouTube на нём мёртв (приложение только что ушло с него): при замене он идёт последним.
+     * Не исключение: если других кандидатов нет, он остаётся. Поле (0.5.48, 2026-11-14 10:19): после ухода с такого
+     * сервера на рабочий замена по пингу вернула именно его, и видео встало снова.
+     */
+    fun avoidForYoutube(serverId: String, millis: Long = YOUTUBE_AVOID_MILLIS) {
+        avoidUntil[serverId] = monotonicMillis() + millis
+    }
+
     /** Кандидаты для замены без подтверждённо мёртвых серверов. */
     fun candidates(plan: FailoverPlan, hints: Map<String, LatencyHint>): List<FailoverTarget> {
         val now = monotonicMillis()
         deadUntil.entries.removeAll { it.value <= now }
-        return rank(plan, hints, deadUntil.keys)
+        avoidUntil.entries.removeAll { it.value <= now }
+        return rank(plan, hints, deadUntil.keys, avoidUntil.keys)
     }
 
     private fun pruneSwitches(now: Long) {
@@ -261,6 +273,7 @@ internal class PathSupervisor(
             plan: FailoverPlan,
             hints: Map<String, LatencyHint>,
             excluded: Set<String> = emptySet(),
+            avoided: Set<String> = emptySet(),
         ): List<FailoverTarget> = plan.targets
             .asSequence()
             .filter { it.id != plan.currentId && it.valid && !it.maintenance }
@@ -268,7 +281,8 @@ internal class PathSupervisor(
             .filter { hints[it.id]?.failed != true }
             .withIndex()
             .sortedWith(
-                compareBy<IndexedValue<FailoverTarget>> { hints[it.value.id]?.millis ?: Int.MAX_VALUE }
+                compareBy<IndexedValue<FailoverTarget>> { it.value.id in avoided }
+                    .thenBy { hints[it.value.id]?.millis ?: Int.MAX_VALUE }
                     .thenBy { it.index },
             )
             .map { it.value }
@@ -279,6 +293,9 @@ internal class PathSupervisor(
 
         /** Строки лога покинутого сервера ещё приходят сразу после переключения. */
         const val COMMIT_FENCE_MILLIS = 2_000L
+
+        /** Сервер с мёртвым кластером YouTube при замене идёт последним столько времени. */
+        const val YOUTUBE_AVOID_MILLIS = 10 * 60_000L
 
         /** Подтверждённо мёртвый сервер не рассматривается как кандидат. */
         const val DEAD_SERVER_COOLDOWN_MILLIS = 5 * 60_000L
