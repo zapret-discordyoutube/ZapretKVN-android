@@ -64,6 +64,11 @@ other ReVanced/Vanced builds; Telegram: `org.telegram.messenger`, `org.telegram.
 well-known forks, plus any app the user adds). The user adds or removes a package on the slot sheet. A package is in
 one slot only; adding it to another moves it.
 
+Owner rule (2026-11-14): an app that is in the VPN scope and in a slot has **no Direct choice**. To send it
+directly, remove it from the VPN picker ("via VPN" menu); it then leaves its slot and every slot list, and goes out
+directly. So the slot sheet offers only: move to another slot, or remove from the VPN. No `direct` outbound is ever
+a slot member.
+
 ## Mapping to sing-box (the gasket)
 
 - Today there is one managed `selector` with the stable tag `zapret-proxy`, hot-switched with
