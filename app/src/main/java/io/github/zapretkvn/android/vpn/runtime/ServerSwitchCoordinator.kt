@@ -27,6 +27,7 @@ import io.github.zapretkvn.android.slots.SlotMove
 import io.github.zapretkvn.android.slots.SlotTraffic
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import io.github.zapretkvn.android.vpn.PathStatus
+import io.github.zapretkvn.android.vpn.SlotState
 import io.github.zapretkvn.android.vpn.VpnController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -291,6 +292,7 @@ internal class ServerSwitchCoordinator(
                     )
                     // Имя нового сервера должно разрешаться до команды.
                     ServerNameRegistry.useForSlots(policy.slotServers())
+                    publishSlots(session)
                     decision.moves.forEach { move -> moveSlot(session, policy, move) }
                 }
             }
@@ -304,12 +306,26 @@ internal class ServerSwitchCoordinator(
                 if (failure != null && slotFailover === policy) {
                     policy.moveFailed(move)
                     ServerNameRegistry.useForSlots(policy.slotServers())
+                    publishSlots(session)
                     timeline("Слот ${slotTitle(move.slotId)}: команда на ${server(move.to)} не прошла, остаётся на ${server(move.from)}.")
                 } else if (failure == null) {
                     timeline("Слот ${slotTitle(move.slotId)}: теперь через ${server(move.to)}.")
                 }
             }
         }
+    }
+
+    /** Карточки слотов на Главной: где сейчас каждый слот. Только в акторе. */
+    private fun publishSlots(session: CoreSession) {
+        val policy = slotFailover
+        val states = if (policy == null) {
+            emptyList()
+        } else {
+            session.slotPlan?.specs.orEmpty().mapNotNull { spec ->
+                policy.serverOf(spec.slotId)?.let { SlotState(spec.slotId, slotTitle(spec.slotId), it) }
+            }
+        }
+        controller.publishSlots(session.generation, states)
     }
 
     private fun slotTitle(slotId: String): String =
@@ -743,6 +759,7 @@ internal class ServerSwitchCoordinator(
             val servers = plan.specs.flatMap { it.members }.distinct()
             SlotFailoverPolicy(SlotCatalog.builtIn(), servers, initial) { clock() }
         }
+        publishSlots(session)
         applyVideoLoop(session)
         // Новая сессия: прежние окна, антифлап и «Нет связи» относились к другому подключению.
         stallDetector.reset(keepCooldown = false)
@@ -886,6 +903,7 @@ internal class ServerSwitchCoordinator(
         override suspend fun place(session: CoreSession, slotId: String, serverId: String) = ask {
             val policy = slotFailover ?: return@ask
             policy.place(slotId, serverId)
+            publishSlots(session)
             // Имя нового сервера должно разрешаться до команды (она идёт следом).
             ServerNameRegistry.useForSlots(policy.slotServers())
         }

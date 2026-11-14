@@ -52,6 +52,7 @@ class VpnController(
     internal val sessionHistory = SessionHistory()
     private val mutableState = MutableStateFlow<VpnConnectionState>(VpnConnectionState.Stopped)
     private val mutableGroups = MutableStateFlow<List<RuntimeSelectorGroup>>(emptyList())
+    private val mutableSlots = MutableStateFlow<List<SlotState>>(emptyList())
     private val mutableMessage = MutableStateFlow<String?>(null)
     private val mutablePathStatus = MutableStateFlow(PathStatus.Ok)
     private val mutableHomeVisible = MutableStateFlow(false)
@@ -78,6 +79,9 @@ class VpnController(
 
     val state: StateFlow<VpnConnectionState> = mutableState.asStateFlow()
     val selectorGroups: StateFlow<List<RuntimeSelectorGroup>> = mutableGroups.asStateFlow()
+
+    /** Servers of the service slots of the running session; empty without slots (docs/SERVICE_SLOTS.md). */
+    val slotStates: StateFlow<List<SlotState>> = mutableSlots.asStateFlow()
     val message: StateFlow<String?> = mutableMessage.asStateFlow()
 
     /**
@@ -298,6 +302,7 @@ class VpnController(
             safeState is VpnConnectionState.Paused
         ) {
             mutableGroups.value = emptyList()
+            mutableSlots.value = emptyList()
             mutableServiceAvailability.value = ServiceAvailabilityState.Initial
         }
     }
@@ -327,6 +332,7 @@ class VpnController(
         // this generation. Repeated Starting progress updates must not erase the
         // initial CommandGroup snapshot when it arrives quickly.
         mutableGroups.value = emptyList()
+        mutableSlots.value = emptyList()
         return generation
     }
 
@@ -501,6 +507,10 @@ class VpnController(
         diagnosticsRecorder.publishDiagnosticLogStream(generation, active)
 
     // ---- Группы серверов и задержки: LatencyPublisher. ----
+
+    internal fun publishSlots(generation: Long, slots: List<SlotState>) {
+        if (generation == latestGeneration.get()) mutableSlots.value = slots
+    }
 
     internal fun publishGroups(generation: Long, groups: List<RuntimeSelectorGroup>) =
         latencyPublisher.publishGroups(generation, groups)

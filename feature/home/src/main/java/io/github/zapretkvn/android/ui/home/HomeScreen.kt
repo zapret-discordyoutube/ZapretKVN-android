@@ -88,11 +88,13 @@ import io.github.zapretkvn.android.vpn.TrafficSample
 import io.github.zapretkvn.android.vpn.PathStatus
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.VpnSessionStats
+import io.github.zapretkvn.core.designsystem.CardTitle
 import io.github.zapretkvn.core.designsystem.DiagnosticShareButton
 import io.github.zapretkvn.core.designsystem.FlagBadge
 import io.github.zapretkvn.core.designsystem.Motion
 import io.github.zapretkvn.core.designsystem.PresetPicker
 import io.github.zapretkvn.core.designsystem.Spacing
+import io.github.zapretkvn.core.designsystem.SwitchRow
 import io.github.zapretkvn.core.designsystem.Tone
 import io.github.zapretkvn.core.designsystem.ToneBadge
 import io.github.zapretkvn.core.designsystem.ZapretCard
@@ -134,6 +136,10 @@ data class HomeUi(
     val services: List<ServiceId> = ServiceCatalog.defaults.map { it.id },
     /** Состояние пути поверх «Подключено»: проверка, замена, «нет связи» (кнопка смены сервера). */
     val pathStatus: PathStatus = PathStatus.Ok,
+    /** Строки карточки «Серверы по сервисам»; пусто, если слотов нет. */
+    val slots: List<HomeSlotUi> = emptyList(),
+    /** «Переключать при низкой скорости»: тот же выбор, что в настройках. */
+    val slowServerSwitch: Boolean = true,
 )
 
 class HomeCallbacks(
@@ -145,6 +151,7 @@ class HomeCallbacks(
     val onCheckServices: () -> Unit,
     /** «Показать IP»: единственный запрос внешнего IP, только по нажатию. */
     val onRequestExternalIp: () -> Unit,
+    val onSlowServerSwitchChange: (Boolean) -> Unit = {},
 )
 
 /**
@@ -180,6 +187,11 @@ fun HomeScreen(
         if (ui.server != null && ui.stage != HomeStage.NoProfile) {
             item(key = "server", contentType = "server") {
                 ServerCard(ui.server, onClick = callbacks.onOpenServers, modifier = Modifier.animateItem())
+            }
+        }
+        if (ui.server != null && ui.stage != HomeStage.NoProfile) {
+            item(key = "slots", contentType = "card") {
+                SlotsCard(ui.slots, ui.slowServerSwitch, callbacks.onSlowServerSwitchChange, Modifier.animateItem())
             }
         }
         if (connected) {
@@ -651,6 +663,59 @@ private fun ServerCard(server: HomeServerUi, onClick: () -> Unit, modifier: Modi
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- slots
+
+/**
+ * «Серверы по сервисам»: на какой сервер сейчас уходит каждый сервис, и выключатель автопереключения по скорости.
+ * Без слотов остаётся только выключатель. Владелец 2026-11-14: карточки и выключатель на Главной.
+ */
+@Composable
+private fun SlotsCard(
+    slots: List<HomeSlotUi>,
+    slowServerSwitch: Boolean,
+    onSlowServerSwitchChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ZapretCard(modifier = modifier.testTag("home-slots"), verticalSpacing = Spacing.s) {
+        if (slots.isNotEmpty()) {
+            CardTitle(title = "Серверы по сервисам", icon = ZapretIcons.Globe)
+            slots.forEach { slot ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home-slot-${slot.id}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+                ) {
+                    Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                        if (slot.flag != null) FlagBadge(slot.flag, size = 24.dp)
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(slot.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            slot.serverTitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        slot.modeLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        SwitchRow(
+            title = "Переключать при низкой скорости",
+            checked = slowServerSwitch,
+            onCheckedChange = onSlowServerSwitchChange,
+            modifier = Modifier.testTag("home-slow-switch"),
+            switchDescription = "Переключать при низкой скорости",
+        )
     }
 }
 

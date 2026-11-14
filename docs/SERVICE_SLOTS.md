@@ -1,6 +1,6 @@
 # Service slots: a dedicated server and switching logic per service (design draft)
 
-Status: IN PROGRESS (phases 1 to 3b in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
+Status: IN PROGRESS (phases 1 to 4a in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
 Language: English (owner decision 2026-11-08). Read `docs/ARCHITECTURE.md` and the root `AGENTS.md` section
 "Architecture basis: native cores, sing-box is the gasket" first.
 
@@ -169,4 +169,10 @@ who wants a different subscription for YouTube switches the profile (revisit whe
     default rate (no false "slow"), bytes counted early make the counter step back, which the detector treats as a
     reset. The probe that confirms slowness already goes through the main server, which is the right server to judge.
   - Not tuned on the phone yet; the numbers of 3a and these rules are first guesses.
-- Not yet: Home cards, the slot sheet (pin, pool, apps), Windows parity, phone test.
+- Phase 4a done (Home, not released): the runtime publishes `VpnController.slotStates` (slot, title, server; set when
+  the session activates and after every move, cleared with the groups); `slotCards` (pure, tested) turns them into rows
+  with Russian titles, the server name (masked like the server card when addresses are hidden), a flag and the mode
+  («Авто»), then one row for the main server («Выбран вами»). Home gets the card «Серверы по сервисам» and, under it,
+  the switch «Переключать при низкой скорости» (the same setting as in Settings, which keeps its switch too). Without
+  slots the card holds only the switch. The wiki guide `premium/android.md` must show the new Home card at release.
+- Not yet: the slot sheet (pin, pool, apps; tap on a row), Windows parity, phone test.

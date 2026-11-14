@@ -23,6 +23,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val vpnState by deps.vpn.state.collectAsStateWithLifecycle()
     val pathStatus by deps.vpn.pathStatus.collectAsStateWithLifecycle()
     val selectorGroups by deps.vpn.selectorGroups.collectAsStateWithLifecycle()
+    val slotStates by deps.vpn.slotStates.collectAsStateWithLifecycle()
     // Трафик тикает раз в секунду: читается только в листовых карточках через лямбду.
     val sessionStats = deps.vpn.sessionStats.collectAsStateWithLifecycle()
     val sessionServices = deps.vpn.serviceAvailability.collectAsStateWithLifecycle()
@@ -73,6 +74,8 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         appVersion = BuildConfig.VERSION_NAME,
         services = ServiceCatalog.resolve(state.settings.serviceChecks).map { it.id },
         pathStatus = pathStatus,
+        slots = slotCards(slotStates, selectorGroups, server, hide, hostCountries),
+        slowServerSwitch = state.settings.slowServerSwitch,
     )
     val callbacks = remember(deps, nav) {
         HomeCallbacks(
@@ -98,6 +101,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
                 else deps.vpn.checkServices()
             },
             onRequestExternalIp = deps.vpn::requestExternalIp,
+            onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
         )
     }
     HomeScreen(
