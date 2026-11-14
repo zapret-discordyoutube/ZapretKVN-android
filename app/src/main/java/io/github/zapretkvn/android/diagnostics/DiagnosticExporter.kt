@@ -11,6 +11,7 @@ import androidx.core.content.FileProvider
 import android.app.PendingIntent
 import android.graphics.drawable.Icon
 import android.service.chooser.ChooserAction
+import io.github.zapretkvn.android.MainActivity
 import io.github.zapretkvn.runtimelog.ZipExtra
 import io.github.zapretkvn.android.BuildConfig
 import io.github.zapretkvn.android.config.DnsMode
@@ -93,10 +94,13 @@ class DiagnosticExporter(
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 // Окно отправки Android 14+ получит действие «Сохранить в Загрузки» (кнопка копирует его в чужое окно).
-                val save = PendingIntent.getBroadcast(
+                // Не новый компонент манифеста (инвариант 7 VPN_HIDING_ARCHITECTURE): действие приходит в MainActivity.
+                val save = PendingIntent.getActivity(
                     appContext,
                     0,
-                    Intent(appContext, DiagnosticSaveReceiver::class.java),
+                    Intent(appContext, MainActivity::class.java)
+                        .setAction(MainActivity.ACTION_SAVE_DIAGNOSTIC)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 )
                 val action = ChooserAction.Builder(

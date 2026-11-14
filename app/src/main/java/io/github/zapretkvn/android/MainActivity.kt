@@ -21,6 +21,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.Lifecycle
+import android.widget.Toast
+import io.github.zapretkvn.android.diagnostics.DiagnosticDownloadsSaver
+import io.github.zapretkvn.android.diagnostics.DiagnosticExporter
+import java.io.File
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -226,6 +230,11 @@ class MainActivity : ComponentActivity() {
             if (updateController.state.value is UpdateState.Ready) requestUpdateInstall() else installWhenReady = true
             return
         }
+        if (intent.action == ACTION_SAVE_DIAGNOSTIC) {
+            intent.action = null
+            saveDiagnosticToDownloads()
+            return
+        }
         if (intent.action == ACTION_REQUEST_VPN_START) {
             val profileId = intent.getStringExtra(EXTRA_PROFILE_ID).orEmpty()
             intent.action = null
@@ -235,6 +244,22 @@ class MainActivity : ComponentActivity() {
         }
         val uri = intent.externalImportUri() ?: return
         profilesViewModel.importDocument(uri)
+    }
+
+    /** Действие «Сохранить в Загрузки» окна отправки диагностики: копия последнего архива, итог показывает тост. */
+    private fun saveDiagnosticToDownloads() {
+        val appContext = applicationContext
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                val source = File(File(appContext.cacheDir, DiagnosticExporter.DIRECTORY_NAME), DiagnosticExporter.FILE_NAME)
+                DiagnosticDownloadsSaver.save(appContext, source)
+            }
+            Toast.makeText(
+                appContext,
+                saved?.let { "Сохранено в Загрузки: $it" } ?: "Не удалось сохранить в Загрузки",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun requestVpnStart(profileId: String) {
@@ -315,6 +340,9 @@ class MainActivity : ComponentActivity() {
 
         /** Нажатие на уведомление «Обновление готово — нажмите, чтобы установить». */
         const val ACTION_INSTALL_UPDATE = "io.github.zapretkvn.android.action.INSTALL_UPDATE"
+
+        /** Действие окна отправки диагностики «Сохранить в Загрузки» (Android 14+), см. [DiagnosticDownloadsSaver]. */
+        const val ACTION_SAVE_DIAGNOSTIC = "io.github.zapretkvn.android.action.SAVE_DIAGNOSTIC"
     }
 }
 
