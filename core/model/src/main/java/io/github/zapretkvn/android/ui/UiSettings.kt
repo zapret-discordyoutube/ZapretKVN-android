@@ -39,6 +39,11 @@ data class UiSettings(
      * страну выхода (владелец 2026-11-08: «по желанию»).
      */
     val youtubeSwitch: Boolean = false,
+    /**
+     * Раздельные серверы (docs/SERVICE_SLOTS.md, владелец 2026-11-14): у YouTube, Telegram и ИИ-приложений свой
+     * сервер из профиля. Выключено по умолчанию: работает один общий selector, как раньше. Читается при старте сессии.
+     */
+    val serviceSlots: Boolean = false,
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),

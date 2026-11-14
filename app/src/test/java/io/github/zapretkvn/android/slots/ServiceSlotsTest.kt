@@ -157,4 +157,34 @@ class ServiceSlotsTest {
         assertEquals(a, b)
         assertEquals(listOf("Z", "Y", "X", "W"), a.map { it.serverId })
     }
+
+    @Test
+    fun `the plan keeps the selected server for the default slot and sends the others elsewhere`() {
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A")
+        assertEquals(listOf("ai", "youtube", "telegram"), plan.specs.map { it.slotId })
+        assertEquals("the main selector keeps A, so the AI slot starts on B", "B", plan.specs.first { it.slotId == "ai" }.defaultMember)
+        assertEquals("C", plan.specs.first { it.slotId == "youtube" }.defaultMember)
+        assertEquals("D", plan.specs.first { it.slotId == "telegram" }.defaultMember)
+        assertTrue("every slot may use every server of the profile", plan.specs.all { it.members == listOf("A", "B", "C", "D") })
+        assertEquals("A", plan.assignments.first { it.slotId == SlotIds.DEFAULT }.serverId)
+    }
+
+    @Test
+    fun `a profile with one server gets no slots and an unknown selected server is ignored`() {
+        assertTrue(SlotPlanner.plan(slots, listOf("A"), "A").specs.isEmpty())
+        assertTrue(SlotPlanner.plan(slots, emptyList(), null).specs.isEmpty())
+        val plan = SlotPlanner.plan(slots, listOf("A", "B"), selectedTag = "ghost")
+        assertEquals(3, plan.specs.size)
+    }
+
+    @Test
+    fun `installed packages with a fork prefix join the Telegram slot and the rest of the spec is complete`() {
+        val installed = setOf("org.zastogram.messenger.dev", "com.android.chrome", "org.zastogram.messenger.beta")
+        val telegram = SlotPlanner.plan(slots, listOf("A", "B"), "A", installed).specs.first { it.slotId == SlotIds.TELEGRAM }
+        assertTrue("org.zastogram.messenger.dev" in telegram.packages)
+        assertFalse("com.android.chrome" in telegram.packages)
+        assertEquals("a package listed twice is sent once", telegram.packages.size, telegram.packages.toSet().size)
+        assertTrue(telegram.domainSuffixes.isNotEmpty() && telegram.cidrs.isNotEmpty())
+        assertEquals(telegram.packages.sorted(), telegram.packages)
+    }
 }

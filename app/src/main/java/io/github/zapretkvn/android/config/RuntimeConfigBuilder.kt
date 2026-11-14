@@ -92,6 +92,12 @@ data class RuntimeConfigOptions(
      * узел мог не пропускать 853, а лишний handshake не укладывался в проверку.
      */
     val privateDnsRoute: PrivateDnsRoute? = null,
+    /**
+     * Раздельные серверы (docs/SERVICE_SLOTS.md): по одному selector и набору правил маршрута на слот. Пусто (по
+     * умолчанию) значит один общий selector, как раньше. Слоты нужны управляемому профилю с выбранным proxy: без
+     * него они молча пропускаются.
+     */
+    val slotRoutes: List<SlotRouteSpec> = emptyList(),
 )
 
 /**
@@ -259,6 +265,15 @@ object RuntimeConfigBuilder {
                 runtimeEndpoints = applyBootstrapResolver(checkNotNull(runtimeEndpoints), overlay)
             }
         }
+        val slotRoutes = if (managed && selectedProxyTag != null && options.slotRoutes.isNotEmpty()) {
+            val tags = runtimeOutbounds?.mapNotNull { (it as? JsonObject)?.string("tag") }?.toSet().orEmpty()
+            SlotRoutes.usable(options.slotRoutes, tags - ConfigAnalyzer.MANAGED_SELECTOR_TAG)
+        } else {
+            emptyList()
+        }
+        if (slotRoutes.isNotEmpty()) {
+            runtimeOutbounds = JsonArray(runtimeOutbounds?.toList().orEmpty() + slotRoutes.map(SlotRoutes::selector))
+        }
         val storedLog = root["log"] as? JsonObject
         val runtimeLog = buildJsonObject {
             storedLog?.forEach { (key, value) ->
@@ -302,6 +317,7 @@ object RuntimeConfigBuilder {
             androidDnsProxiedViaNode = options.androidDnsProxiedViaNode,
             privateDnsRoute = options.privateDnsRoute,
             blockQuic = options.blockQuic,
+            slotRoutes = slotRoutes,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         return dnsOverlay as RuntimeConfigResult.Ready
@@ -373,6 +389,7 @@ object RuntimeConfigBuilder {
         androidDnsProxiedViaNode: Boolean,
         privateDnsRoute: PrivateDnsRoute?,
         blockQuic: Boolean,
+        slotRoutes: List<SlotRouteSpec> = emptyList(),
     ): RuntimeConfigResult {
         // «DNS Android» с выбранным proxy отправляет проксируемые имена к DNS узла;
         // без proxy (или с отключённым флагом) все имена остаются на системном DNS.
@@ -543,6 +560,9 @@ object RuntimeConfigBuilder {
                 // Отказ для QUIC обязан стоять выше правила по именам: то правило не ограничено сетью и иначе
                 // увело бы UDP 443 к YouTube в туннель (поле 0.5.46: UDP-потоки к googlevideo жили 30-45 с, плеер ждал).
                 if (blockQuic) add(quicRejectRule())
+                // Слоты (приложения, затем имена, затем адреса) стоят выше общего правила имён и выше пользовательских:
+                // выбранное приложение уходит на сервер своего слота. Само общее правило остаётся запасным.
+                addAll(SlotRoutes.rules(slotRoutes))
                 selectedProxyTag?.let { proxyTag ->
                     // Имена, которые блокируются и с российским адресом, идут через VPN раньше RU-direct.
                     add(ForcedProxyDomains.rule(proxyTag))

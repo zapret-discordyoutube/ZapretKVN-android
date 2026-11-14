@@ -18,6 +18,7 @@ import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
 import io.github.zapretkvn.android.config.RuntimeConfigResult
+import io.github.zapretkvn.android.config.SlotRoutes
 import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import io.github.zapretkvn.android.diagnostics.EffectiveOverlaySummary
@@ -44,6 +45,8 @@ import io.github.zapretkvn.android.platform.VpnSystemPolicyDetector
 import io.github.zapretkvn.android.routing.GlobalRoutingPolicy
 import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
+import io.github.zapretkvn.android.slots.SlotCatalog
+import io.github.zapretkvn.android.slots.SlotPlanner
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.ZapretVpnService
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
@@ -395,6 +398,26 @@ internal class SessionStarter(
             4,
             "маршрут: через VPN всегда, даже с российским адресом: ${ForcedProxyDomains.suffixes.joinToString()}",
         )
+        // Раздельные серверы (docs/SERVICE_SLOTS.md): по слоту на selector. Нужен управляемый профиль минимум с двумя
+        // серверами; иначе слоты молча не создаются и работает один общий selector, как раньше.
+        val slotPlan = if (uiSettings.serviceSlots) {
+            SlotRoutes.managedServers(effectiveConfig.root)?.let { managed ->
+                SlotPlanner.plan(SlotCatalog.builtIn(), managed.tags, managed.selected, selectedPackages)
+            }
+        } else {
+            null
+        }
+        if (uiSettings.serviceSlots) {
+            RuntimeLog.app(
+                4,
+                if (slotPlan == null || slotPlan.specs.isEmpty()) {
+                    "слоты: включены, но профиль без управляемого selector или с одним сервером: один общий сервер"
+                } else {
+                    "слоты: " + slotPlan.specs.joinToString("; ") { "${it.slotId}=${it.defaultMember} из ${it.members.size}" } +
+                        "; остальные приложения идут через основной сервер"
+                },
+            )
+        }
         val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(
                 effectiveConfig,
@@ -417,6 +440,7 @@ internal class SessionStarter(
                     androidDnsProxiedViaNode = configuredDnsMode == DnsMode.Android &&
                         underlying.privateDnsMode != PrivateDnsMode.Strict,
                     privateDnsRoute = privateDnsRoute,
+                    slotRoutes = slotPlan?.specs.orEmpty(),
                 ),
             )
         ) {

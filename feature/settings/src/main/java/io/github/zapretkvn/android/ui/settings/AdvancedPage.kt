@@ -15,11 +15,13 @@ fun AdvancedScreen(
     blockQuic: Boolean,
     resetStalledFlows: Boolean,
     youtubeSwitch: Boolean,
+    serviceSlots: Boolean,
     onOpenPage: (SettingsPage) -> Unit,
     onRawEditorLineWrapChange: (Boolean) -> Unit,
     onBlockQuicChange: (Boolean) -> Unit,
     onResetStalledFlowsChange: (Boolean) -> Unit,
     onYoutubeSwitchChange: (Boolean) -> Unit,
+    onServiceSlotsChange: (Boolean) -> Unit,
 ) {
     SettingsPageList(contentPadding, tag = "settings-page-advanced") {
         item(key = "pages", contentType = "rows") {
@@ -69,6 +71,17 @@ fun AdvancedScreen(
                     checked = youtubeSwitch,
                     onCheckedChange = onYoutubeSwitchChange,
                     switchDescription = "Менять сервер при медленном YouTube",
+                )
+                RowDivider()
+                SwitchRow(
+                    title = "Раздельные серверы (бета)",
+                    subtitle = "У YouTube, Telegram и ИИ-приложений (ChatGPT, Claude, Gemini) свой сервер из профиля, " +
+                        "остальные приложения идут через основной. Приложения вне VPN остаются напрямую. " +
+                        "Включение перезапускает VPN. Выключено — один общий сервер, как раньше.",
+                    icon = ZapretIcons.Shield,
+                    checked = serviceSlots,
+                    onCheckedChange = onServiceSlotsChange,
+                    switchDescription = "Раздельные серверы",
                 )
             }
         }

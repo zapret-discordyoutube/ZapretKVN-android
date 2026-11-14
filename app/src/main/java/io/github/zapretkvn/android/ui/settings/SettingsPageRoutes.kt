@@ -187,10 +187,12 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
         blockQuic = settings.blockQuic,
         resetStalledFlows = settings.resetStalledFlows,
         youtubeSwitch = settings.youtubeSwitch,
+        serviceSlots = settings.serviceSlots,
         onOpenPage = { page -> nav.openSettingsPage(page.id) },
         onRawEditorLineWrapChange = deps.profiles.settings::setRawEditorLineWrap,
         onBlockQuicChange = deps.profiles.settings::setBlockQuic,
         onResetStalledFlowsChange = deps.profiles.settings::setResetStalledFlows,
         onYoutubeSwitchChange = deps.profiles.settings::setYoutubeSwitch,
+        onServiceSlotsChange = deps.profiles.settings::setServiceSlots,
     )
 }

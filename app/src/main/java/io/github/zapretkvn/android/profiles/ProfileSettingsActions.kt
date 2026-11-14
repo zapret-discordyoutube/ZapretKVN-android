@@ -61,6 +61,10 @@ class ProfileSettingsActions internal constructor(
     /** Без перезапуска: координатор читает настройку из потока настроек и действует сразу. */
     fun setYoutubeSwitch(enabled: Boolean) = apply { settingsStore.setYoutubeSwitch(enabled) }
 
+    /** Меняет набор selector и правил маршрута, поэтому подключённый VPN перезапускается. */
+    fun setServiceSlots(enabled: Boolean) =
+        apply("Смена раздельных серверов") { settingsStore.setServiceSlots(enabled) }
+
     fun setBlockQuic(enabled: Boolean) =
         apply("Смена блокировки QUIC") { settingsStore.setBlockQuic(enabled) }
 

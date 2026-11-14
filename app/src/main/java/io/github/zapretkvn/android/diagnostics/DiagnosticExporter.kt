@@ -214,6 +214,7 @@ class DiagnosticExporter(
                     put("block_quic", settings.blockQuic)
                     put("reset_stalled_flows", settings.resetStalledFlows)
                     put("youtube_switch", settings.youtubeSwitch)
+                    put("service_slots", settings.serviceSlots)
                     put(
                         "override_active",
                         settings.dnsOverride.enabled && settings.dnsMode != DnsMode.FromJson,

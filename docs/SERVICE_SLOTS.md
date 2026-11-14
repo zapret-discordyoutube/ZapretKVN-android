@@ -135,6 +135,15 @@ who wants a different subscription for YouTube switches the profile (revisit whe
 
 ## Status
 
-- Phase 1 done: `slots/ServiceSlots.kt` (router, CIDR matching, catalogue, server assigner) with
-  `ServiceSlotsTest`. Nothing uses it at runtime yet.
-- Next: phase 2 (config builder, default-OFF switch), then runtime and Home cards.
+- Phase 1 done: `slots/ServiceSlots.kt` (router, CIDR matching, catalogue, server assigner, `SlotPlanner`) with
+  `ServiceSlotsTest`.
+- Phase 2 done (config only): setting «Раздельные серверы (бета)» (Settings → Advanced, default OFF, enabling restarts
+  the VPN). When ON and the profile is managed with at least two servers, `SessionStarter` builds a `SlotPlan`
+  (`slots=` line in the runtime log) and `RuntimeConfigBuilder` adds one selector per slot (`zapret-slot-<id>`, members =
+  the pool, `interrupt_exist_connections`) and slot route rules after the QUIC reject and before the forced-proxy rule
+  and user rules (apps, then names, then addresses). The main selector and the `default` slot are unchanged: the
+  default slot is the main selector and keeps the server the user selected. `SlotRoutesTest` pins the rule order,
+  the repair of broken pools, no-slots = old config byte for byte, and that the stored profile is never edited.
+- Not yet: per-slot switching at runtime (`SelectOutbound` on the slot selector, failure reassignment, selector cache
+  reconciliation for slot selectors), flow attribution per slot for the detectors, Home cards, the slot sheet (pin,
+  pool, apps), Windows parity, phone test.
