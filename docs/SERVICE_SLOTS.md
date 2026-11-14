@@ -245,7 +245,9 @@ reported "false alarm".
 Change: a timeout of a slot's own DNS (`dns/fallback[zapret-slot-dns-<id>]: resolve failed ... timeout|deadline|stateless
 reset`, parsed by `CoreLogHints.slotDnsFailures`) is a failure hint for the server the slot sits on
 (`SlotFailoverPolicy.onSlotDnsFailure`). At most one hint per slot per 5 s, so a burst of queued lookups is one failure and
-a move needs three separate failures (about 10 s of a dead path). Everything else is unchanged: a pin that does not answer
+a move needs three separate failures (about 10 s of a dead path). Lookups started before a move keep timing out up to the resolver deadline (10 s) after it, so the slot's DNS failures are ignored for
+`DNS_STALE_MILLIS` (12 s) after any move of that slot: the first field run of this change (0.6.6) moved YouTube off the dead
+server and, 11 s later, off its healthy replacement because of those late failures. Everything else is unchanged: a pin that does not answer
 is left until the server is back, moves are rate limited, the default slot never moves, and the timeline shows
 `... отказов за минуту (DNS слота), слоты уходят: ...`. Tests: `SlotFailoverTest` (burst counts once, default and unknown
 slots ignored) and `CoreLogHintsTest` (real lines).

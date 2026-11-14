@@ -41,6 +41,7 @@ internal class SlotFailoverPolicy(
     private val leftAt = mutableMapOf<String, Long>()
     private val moveTimes = ArrayDeque<Long>()
     private val dnsHintAt = mutableMapOf<String, Long>()
+    private val movedAt = mutableMapOf<String, Long>()
 
     /** Server of every slot as the policy believes it is (the `default` slot included when it was told). */
     fun assignments(): Map<String, String> = current.toMap()
@@ -98,7 +99,10 @@ internal class SlotFailoverPolicy(
         if (moves.isEmpty()) return SlotFailoverDecision.Ignore("no usable replacement for $serverId")
         times.clear()
         deadUntil[serverId] = now + DEAD_MILLIS
-        moves.forEach { current[it.slotId] = it.to }
+        moves.forEach {
+            current[it.slotId] = it.to
+            movedAt[it.slotId] = now
+        }
         leftAt[serverId] = now
         moveTimes.addLast(now)
         return SlotFailoverDecision.Move(serverId, hints, moves)
@@ -114,6 +118,11 @@ internal class SlotFailoverPolicy(
         val server = current[slotId] ?: return SlotFailoverDecision.Ignore("unknown slot $slotId")
         if (slotId == SlotIds.DEFAULT) return SlotFailoverDecision.Ignore("the default slot belongs to the main selector")
         val now = clock()
+        // Lookups started before the slot moved still time out up to the resolver deadline later: they describe the
+        // server the slot left, not the new one (field case 2026-11-14: a healthy server was blamed 11 s after a move).
+        if (movedAt[slotId]?.let { now - it < DNS_STALE_MILLIS } == true) {
+            return SlotFailoverDecision.Ignore("dns lookups started before the move")
+        }
         val last = dnsHintAt[slotId]
         if (last != null && now - last < DNS_HINT_GAP_MILLIS) return SlotFailoverDecision.Ignore("same dns burst")
         dnsHintAt[slotId] = now
@@ -148,6 +157,7 @@ internal class SlotFailoverPolicy(
     fun place(slotId: String, serverId: String) {
         val left = current[slotId]
         current[slotId] = serverId
+        movedAt[slotId] = clock()
         // Hints describe connections of a server; another slot may still sit on it, and its count must survive.
         if (left != null && left != serverId && current.none { it.key != SlotIds.DEFAULT && it.value == left }) {
             hintTimes.remove(left)
@@ -167,6 +177,9 @@ internal class SlotFailoverPolicy(
         const val WINDOW_MILLIS = 60_000L
         const val STALE_LINE_MILLIS = 2_000L
         const val DNS_HINT_GAP_MILLIS = 5_000L
+
+        /** The resolver gives up after 10 s; a little more, then DNS failures belong to the new server. */
+        const val DNS_STALE_MILLIS = 12_000L
         const val DEAD_MILLIS = 5 * 60_000L
         const val MAX_MOVES = 3
         const val RATE_WINDOW_MILLIS = 15 * 60_000L

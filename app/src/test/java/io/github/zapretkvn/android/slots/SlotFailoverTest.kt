@@ -213,4 +213,41 @@ class SlotFailoverTest {
         }
         assertEquals("A", p.assignments().getValue(SlotIds.DEFAULT))
     }
+
+    @Test
+    fun `dns timeouts of lookups started before a move are not charged to the new server`() {
+        // Field case 2026-11-14: the YouTube slot left a dead server at 21:00:26 and 11 s later left the healthy
+        // replacement, because lookups issued on the old server were still timing out.
+        val p = policy(youtube = "B")
+        repeat(3) {
+            p.onSlotDnsFailure(SlotIds.YOUTUBE, "A")
+            now += SlotFailoverPolicy.DNS_HINT_GAP_MILLIS
+        }
+        assertEquals("D", p.assignments().getValue(SlotIds.YOUTUBE))
+        // Late failures of the old lookups: far more than three hints' worth, spaced like the real log.
+        repeat(2) {
+            assertTrue(p.onSlotDnsFailure(SlotIds.YOUTUBE, "A") is SlotFailoverDecision.Ignore)
+            now += 5_000
+        }
+        assertEquals("D", p.assignments().getValue(SlotIds.YOUTUBE))
+        // Once the old lookups are gone, a really dead new server is still left.
+        now += SlotFailoverPolicy.DNS_STALE_MILLIS
+        var decision: SlotFailoverDecision = SlotFailoverDecision.Ignore("none")
+        repeat(3) {
+            decision = p.onSlotDnsFailure(SlotIds.YOUTUBE, "A")
+            now += SlotFailoverPolicy.DNS_HINT_GAP_MILLIS
+        }
+        assertTrue(decision is SlotFailoverDecision.Move)
+    }
+
+    @Test
+    fun `a move by another part of the app also opens the dns grace period`() {
+        val p = policy(youtube = "B")
+        p.place(SlotIds.YOUTUBE, "C")
+        repeat(4) {
+            assertTrue(p.onSlotDnsFailure(SlotIds.YOUTUBE, "A") is SlotFailoverDecision.Ignore)
+            now += 2_000
+        }
+        assertEquals("C", p.assignments().getValue(SlotIds.YOUTUBE))
+    }
 }
