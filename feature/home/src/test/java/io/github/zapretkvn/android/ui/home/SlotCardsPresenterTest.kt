@@ -46,4 +46,31 @@ class SlotCardsPresenterTest {
         assertEquals("Мой слот", slotTitle("app:com.example", "Мой слот"))
         assertEquals("app:com.example", slotTitle("app:com.example", ""))
     }
+
+    @Test
+    fun `a pin shows as pinned and the sheet lists every server with the current and pinned marks`() {
+        val rows = slotCards(
+            listOf(SlotState("youtube", "YouTube", "Plain")),
+            listOf(group), main, hide = false, hostCountries = emptyMap(),
+            pins = mapOf("youtube" to "🇩🇪 Berlin"),
+        )
+        val youtube = rows.first { it.id == "youtube" }
+        assertEquals("Закреплён", youtube.modeLabel)
+        assertEquals("🇩🇪 Berlin", youtube.pinnedTag)
+        assertEquals(3, youtube.options.size)
+        assertEquals(listOf("Plain"), youtube.options.filter { it.current }.map { it.tag })
+        assertEquals(listOf("🇩🇪 Berlin"), youtube.options.filter { it.pinned }.map { it.tag })
+        assertTrue("the main server row has no sheet", rows.last().options.isEmpty())
+    }
+
+    @Test
+    fun `a pin on a server the profile no longer has is shown as automatic`() {
+        val rows = slotCards(
+            listOf(SlotState("youtube", "YouTube", "Plain")),
+            listOf(group), main, hide = false, hostCountries = emptyMap(),
+            pins = mapOf("youtube" to "gone"),
+        )
+        assertEquals("Авто", rows.first().modeLabel)
+        assertEquals(null, rows.first().pinnedTag)
+    }
 }

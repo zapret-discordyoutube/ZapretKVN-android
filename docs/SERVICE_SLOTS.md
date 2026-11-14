@@ -1,6 +1,6 @@
 # Service slots: a dedicated server and switching logic per service (design draft)
 
-Status: IN PROGRESS (phases 1 to 4a in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
+Status: IN PROGRESS (phases 1 to 4b in code, behind a default-OFF beta setting; see "Status" at the end). Owner direction of 2026-11-14, written down so the design starts from the owner's words.
 Language: English (owner decision 2026-11-08). Read `docs/ARCHITECTURE.md` and the root `AGENTS.md` section
 "Architecture basis: native cores, sing-box is the gasket" first.
 
@@ -175,4 +175,13 @@ who wants a different subscription for YouTube switches the profile (revisit whe
   («Авто»), then one row for the main server («Выбран вами»). Home gets the card «Серверы по сервисам» and, under it,
   the switch «Переключать при низкой скорости» (the same setting as in Settings, which keeps its switch too). Without
   slots the card holds only the switch. The wiki guide `premium/android.md` must show the new Home card at release.
-- Not yet: the slot sheet (pin, pool, apps; tap on a row), Windows parity, phone test.
+- Phase 4b done (slot sheet, pins; not released): a tap on a slot row opens a bottom sheet with «Автоматически» and
+  every server of the profile (marks: «сейчас» = the slot leaves through it, radio = pinned). Pins are stored as one JSON
+  object in the settings (`slot_pins`, `SlotPins`, tags hold emoji and punctuation) and apply without a VPN restart:
+  `VpnRuntime` posts the pins to the coordinator, `SlotFailoverPolicy.setPins` returns the moves (a pinned slot goes to
+  its server at once, also off a server marked dead: an explicit choice beats the app's guess; unpinning moves
+  nothing; a pin outside the pool or the profile is ignored), and the session starts pinned slots on their servers
+  (`SlotCatalog.withPins`). A pinned server that stops answering is still left by the failover (the pin stays recorded,
+  the row shows the real server). The main server is not pinned here: it is chosen on the server card.
+- Not yet (phase 4c): the pool per slot and the apps of a slot on the sheet (move an app to another slot, remove it from
+  the VPN), user-defined slots. Then Windows parity, phone test.

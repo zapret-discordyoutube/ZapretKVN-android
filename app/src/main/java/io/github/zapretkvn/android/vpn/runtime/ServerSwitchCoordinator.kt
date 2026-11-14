@@ -114,6 +114,9 @@ internal class ServerSwitchCoordinator(
      */
     private var slotFailover: SlotFailoverPolicy? = null
 
+    /** Закрепления слотов из настроек (id слота -> тег сервера); приходят сообщением при старте и при каждой правке. */
+    private var slotPins: Map<String, String> = emptyMap()
+
     /** «Нет связи с сервером» показано пользователю (только в акторе). */
     private var pathStatus = PathStatus.Ok
 
@@ -297,6 +300,24 @@ internal class ServerSwitchCoordinator(
                 }
             }
         }
+    }
+
+    /**
+     * Пользователь закрепил сервер за слотом или снял закрепление (карточка на Главной). Сессия переносит закреплённый
+     * слот сразу, командой его selector'а, без перезапуска; снятое закрепление ничего не двигает.
+     */
+    fun onSlotPins(pins: Map<String, String>) {
+        slotPins = pins
+        val session = sessions.active() ?: return
+        val policy = slotFailover ?: return
+        if (!isCurrent(session)) return
+        val specs = session.slotPlan?.specs.orEmpty().associateBy { it.slotId }
+        val moves = policy.setPins(pins) { slotId -> specs[slotId]?.members.orEmpty() }
+        if (moves.isEmpty()) return
+        timeline("Закреплено вручную: ${moves.joinToString { "${slotTitle(it.slotId)} → ${server(it.to)}" }}.")
+        ServerNameRegistry.useForSlots(policy.slotServers())
+        publishSlots(session)
+        moves.forEach { move -> moveSlot(session, policy, move) }
     }
 
     private fun moveSlot(session: CoreSession, policy: SlotFailoverPolicy, move: SlotMove) {
@@ -757,7 +778,7 @@ internal class ServerSwitchCoordinator(
         slotFailover = session.slotPlan?.let { plan ->
             val initial = plan.assignments.mapNotNull { a -> a.serverId?.let { a.slotId to it } }.toMap()
             val servers = plan.specs.flatMap { it.members }.distinct()
-            SlotFailoverPolicy(SlotCatalog.builtIn(), servers, initial) { clock() }
+            SlotFailoverPolicy(SlotCatalog.withPins(slotPins), servers, initial) { clock() }
         }
         publishSlots(session)
         applyVideoLoop(session)

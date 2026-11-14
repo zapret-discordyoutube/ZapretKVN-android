@@ -29,11 +29,12 @@ internal sealed interface SlotFailoverDecision {
  * Not thread safe: owned by the runtime actor, like `PathSupervisor`.
  */
 internal class SlotFailoverPolicy(
-    private val slots: List<SlotDefinition>,
+    slots: List<SlotDefinition>,
     private val servers: List<String>,
     initial: Map<String, String>,
     private val clock: () -> Long,
 ) {
+    private var slots: List<SlotDefinition> = slots
     private val current = initial.toMutableMap()
     private val hintTimes = mutableMapOf<String, ArrayDeque<Long>>()
     private val deadUntil = mutableMapOf<String, Long>()
@@ -90,6 +91,24 @@ internal class SlotFailoverPolicy(
         leftAt[serverId] = now
         moveTimes.addLast(now)
         return SlotFailoverDecision.Move(serverId, hints, moves)
+    }
+
+    /**
+     * The user's pins changed ([pins]: slot id to server tag; slots without an entry are automatic). Later failover
+     * decisions respect them. Returns the moves needed now: a pinned slot that is not on its server yet goes there,
+     * also when the server was marked dead (an explicit choice beats the app's guess). A pin outside the slot's pool
+     * is ignored. A slot that was unpinned stays where it is; automatic choice takes over from there.
+     */
+    fun setPins(pins: Map<String, String>, poolOf: (String) -> List<String>): List<SlotMove> {
+        slots = slots.map { slot -> slot.copy(pinned = SlotPins.forSlots(pins)[slot.id]) }
+        val moves = slots.mapNotNull { slot ->
+            val pin = slot.pinned ?: return@mapNotNull null
+            val from = current[slot.id] ?: return@mapNotNull null
+            if (pin == from || pin !in poolOf(slot.id) || pin !in servers) return@mapNotNull null
+            SlotMove(slot.id, from, pin)
+        }
+        moves.forEach { place(it.slotId, it.to) }
+        return moves
     }
 
     /** Server of one slot now, or null when the policy does not know the slot. */

@@ -402,7 +402,7 @@ internal class SessionStarter(
         // серверами; иначе слоты молча не создаются и работает один общий selector, как раньше.
         val slotPlan = if (uiSettings.serviceSlots) {
             SlotRoutes.managedServers(effectiveConfig.root)?.let { managed ->
-                SlotPlanner.plan(SlotCatalog.builtIn(), managed.tags, managed.selected, selectedPackages)
+                SlotPlanner.plan(SlotCatalog.withPins(uiSettings.slotPins), managed.tags, managed.selected, selectedPackages)
             }
         } else {
             null

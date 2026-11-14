@@ -44,6 +44,8 @@ data class UiSettings(
      * сервер из профиля. Выключено по умолчанию: работает один общий selector, как раньше. Читается при старте сессии.
      */
     val serviceSlots: Boolean = false,
+    /** Серверы, закреплённые за слотами (id слота -> тег сервера); слот без записи выбирает сервер сам. */
+    val slotPins: Map<String, String> = emptyMap(),
     val dnsOverride: DnsOverride = DnsOverride(),
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),

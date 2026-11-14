@@ -173,6 +173,12 @@ internal class VpnRuntime(
         }
         scope.launch {
             container.uiSettingsStore.settings
+                .map { it.slotPins }
+                .distinctUntilChanged()
+                .collect { post(Message.SlotPins(it)) }
+        }
+        scope.launch {
+            container.uiSettingsStore.settings
                 .map { it.youtubeSwitch }
                 .distinctUntilChanged()
                 .collect { post(Message.YoutubeSwitchSetting(it)) }
@@ -322,6 +328,7 @@ internal class VpnRuntime(
         data class AutomationSettings(val settings: NetworkAutomationSettings) : Message
         data class SmartSwitchSetting(val enabled: Boolean) : Message
         data class YoutubeSwitchSetting(val enabled: Boolean) : Message
+        data class SlotPins(val pins: Map<String, String>) : Message
         data class AttemptNetwork(val token: Long, val identity: String?) : Message
         data class PauseAtStart(
             val token: Long,
@@ -372,6 +379,7 @@ internal class VpnRuntime(
             is Message.AutomationSettings -> automation.onSettingsChanged(message.settings)
             is Message.SmartSwitchSetting -> switching.onSmartSwitchSetting(message.enabled)
             is Message.YoutubeSwitchSetting -> switching.onYoutubeSwitchSetting(message.enabled)
+            is Message.SlotPins -> switching.onSlotPins(message.pins)
             is Message.AttemptNetwork -> if (message.token == controller.currentGeneration()) {
                 recovery.onAttemptNetwork(message.identity)
             }

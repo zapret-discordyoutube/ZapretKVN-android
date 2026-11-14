@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.ui
 
+import io.github.zapretkvn.android.slots.SlotPins
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -61,6 +62,7 @@ class UiSettingsStore(
                 resetStalledFlows = preferences[RESET_STALLED_FLOWS] ?: true,
                 youtubeSwitch = preferences[YOUTUBE_SWITCH] ?: false,
                 serviceSlots = preferences[SERVICE_SLOTS] ?: false,
+                slotPins = SlotPins.decode(preferences[SLOT_PINS]),
                 dnsOverride = DnsOverride(
                     enabled = preferences[DNS_OVERRIDE_ENABLED] ?: true,
                     hostname = preferences[DNS_OVERRIDE_HOSTNAME] ?: DnsOverride.DEFAULT_HOSTNAME,
@@ -175,6 +177,13 @@ class UiSettingsStore(
 
     suspend fun setYoutubeSwitch(enabled: Boolean) {
         dataStore.edit { it[YOUTUBE_SWITCH] = enabled }
+    }
+
+    /** Закрепляет сервер за слотом ([tag] = null: слот снова выбирает сам). Чтение и запись одной транзакцией. */
+    suspend fun setSlotPin(slotId: String, tag: String?) {
+        dataStore.edit { preferences ->
+            preferences[SLOT_PINS] = SlotPins.encode(SlotPins.with(SlotPins.decode(preferences[SLOT_PINS]), slotId, tag))
+        }
     }
 
     suspend fun setServiceSlots(enabled: Boolean) {
@@ -318,6 +327,7 @@ class UiSettingsStore(
         val RESET_STALLED_FLOWS = booleanPreferencesKey("reset_stalled_flows")
         val YOUTUBE_SWITCH = booleanPreferencesKey("youtube_switch")
         val SERVICE_SLOTS = booleanPreferencesKey("service_slots")
+        val SLOT_PINS = stringPreferencesKey("slot_pins")
         val DNS_OVERRIDE_ENABLED = booleanPreferencesKey("dns_override_enabled")
         val DNS_OVERRIDE_HOSTNAME = stringPreferencesKey("dns_override_hostname")
         val DNS_OVERRIDE_IPV4 = stringPreferencesKey("dns_override_ipv4")

@@ -42,6 +42,9 @@ class ProfileSettingsActions internal constructor(
 
     fun setSlowServerSwitch(enabled: Boolean) = apply { settingsStore.setSlowServerSwitch(enabled) }
 
+    /** Закрепляет сервер за слотом без перезапуска: работающая сессия переносит слот сама (ServerSwitchCoordinator). */
+    fun setSlotPin(slotId: String, serverTag: String?) = apply { settingsStore.setSlotPin(slotId, serverTag) }
+
     fun setConnectOnLaunch(enabled: Boolean) = apply { settingsStore.setConnectOnLaunch(enabled) }
 
     fun setExternalControlEnabled(enabled: Boolean) = apply { settingsStore.setExternalControlEnabled(enabled) }

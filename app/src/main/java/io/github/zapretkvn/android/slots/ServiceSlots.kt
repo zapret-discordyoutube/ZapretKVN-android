@@ -125,6 +125,10 @@ internal object SlotCatalog {
         "copilot.microsoft.com",
     )
 
+    /** [builtIn] with the user's pins applied; the `default` slot is the main selector and is never pinned here. */
+    fun withPins(pins: Map<String, String>): List<SlotDefinition> =
+        builtIn().map { slot -> slot.copy(pinned = SlotPins.forSlots(pins)[slot.id]) }
+
     /** Built-in slots in match order; `default` is last and matches whatever is left. */
     fun builtIn(): List<SlotDefinition> = listOf(
         SlotDefinition(SlotIds.AI, "AI", packages = aiPackages, domainSuffixes = aiDomains),

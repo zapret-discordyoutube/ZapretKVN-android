@@ -74,7 +74,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         appVersion = BuildConfig.VERSION_NAME,
         services = ServiceCatalog.resolve(state.settings.serviceChecks).map { it.id },
         pathStatus = pathStatus,
-        slots = slotCards(slotStates, selectorGroups, server, hide, hostCountries),
+        slots = slotCards(slotStates, selectorGroups, server, hide, hostCountries, state.settings.slotPins),
         slowServerSwitch = state.settings.slowServerSwitch,
     )
     val callbacks = remember(deps, nav) {
@@ -102,6 +102,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
             },
             onRequestExternalIp = deps.vpn::requestExternalIp,
             onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
+            onPinSlot = deps.profiles.settings::setSlotPin,
         )
     }
     HomeScreen(

@@ -20,6 +20,15 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.semantics.heading
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -152,6 +161,8 @@ class HomeCallbacks(
     /** «Показать IP»: единственный запрос внешнего IP, только по нажатию. */
     val onRequestExternalIp: () -> Unit,
     val onSlowServerSwitchChange: (Boolean) -> Unit = {},
+    /** Закрепить сервер за слотом ([serverTag] = null: слот снова выбирает сам). */
+    val onPinSlot: (slotId: String, serverTag: String?) -> Unit = { _, _ -> },
 )
 
 /**
@@ -191,7 +202,13 @@ fun HomeScreen(
         }
         if (ui.server != null && ui.stage != HomeStage.NoProfile) {
             item(key = "slots", contentType = "card") {
-                SlotsCard(ui.slots, ui.slowServerSwitch, callbacks.onSlowServerSwitchChange, Modifier.animateItem())
+                SlotsCard(
+                    ui.slots,
+                    ui.slowServerSwitch,
+                    callbacks.onSlowServerSwitchChange,
+                    callbacks.onPinSlot,
+                    Modifier.animateItem(),
+                )
             }
         }
         if (connected) {
@@ -677,8 +694,14 @@ private fun SlotsCard(
     slots: List<HomeSlotUi>,
     slowServerSwitch: Boolean,
     onSlowServerSwitchChange: (Boolean) -> Unit,
+    onPinSlot: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var openSlotId by rememberSaveable { mutableStateOf<String?>(null) }
+    // The sheet reads the live row, so the "now" mark follows a move while it is open.
+    slots.firstOrNull { it.id == openSlotId && it.options.isNotEmpty() }?.let { slot ->
+        SlotSheet(slot, onPick = { tag -> onPinSlot(slot.id, tag) }, onDismiss = { openSlotId = null })
+    }
     ZapretCard(modifier = modifier.testTag("home-slots"), verticalSpacing = Spacing.s) {
         if (slots.isNotEmpty()) {
             CardTitle(title = "Серверы по сервисам", icon = ZapretIcons.Globe)
@@ -686,6 +709,9 @@ private fun SlotsCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .then(
+                            if (slot.options.isNotEmpty()) Modifier.clickable { openSlotId = slot.id } else Modifier,
+                        )
                         .testTag("home-slot-${slot.id}"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(Spacing.m),
@@ -716,6 +742,63 @@ private fun SlotsCard(
             modifier = Modifier.testTag("home-slow-switch"),
             switchDescription = "Переключать при низкой скорости",
         )
+    }
+}
+
+/**
+ * Нижний лист слота: «Автоматически» или конкретный сервер профиля. Выбор действует сразу, без перезапуска VPN;
+ * закреплённый сервер слот не покидает, пока он отвечает.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SlotSheet(slot: HomeSlotUi, onPick: (String?) -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = Spacing.l)
+                .padding(bottom = Spacing.l)
+                .testTag("home-slot-sheet"),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s),
+        ) {
+            Text(slot.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Text(
+                "Сервис ходит через свой сервер. Автоматически: приложение выбирает сервер само и меняет его только при сбое. " +
+                    "Закреплённый сервер меняется, только если он перестал отвечать.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                SlotSheetRow("Автоматически", null, selected = slot.pinnedTag == null, current = false) { onPick(null) }
+                slot.options.forEach { option ->
+                    SlotSheetRow(option.title, option.flag, selected = option.pinned, current = option.current) {
+                        onPick(option.tag)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SlotSheetRow(title: String, flag: String?, selected: Boolean, current: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.m),
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            if (flag != null) FlagBadge(flag, size = 24.dp)
+        }
+        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (current) {
+            Text("сейчас", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        }
     }
 }
 
