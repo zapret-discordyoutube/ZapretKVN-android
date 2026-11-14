@@ -121,9 +121,20 @@ profile, and mixing servers of several profiles would need a merged config, sepa
 second failover plan. A slot may therefore not use servers outside the active profile in the first version; a user
 who wants a different subscription for YouTube switches the profile (revisit when profiles can be merged).
 
-## Open questions for the owner
+## Settled by the agent (owner: "settle the remaining questions, then implement", 2026-11-14)
 
-- Which package catalogue ships for the AI slot (ChatGPT, Claude, Gemini, Perplexity, Copilot, others)?
-- YouTube Music, YouTube Kids and Google apps: part of the YouTube slot or Everything else?
-- Telegram forks without a known package (a custom build, like `org.zastogram.messenger.dev`): is IP-range matching
-  enough, or should the app also offer them in the picker as Telegram?
+- **AI slot catalogue:** ChatGPT, Claude, Gemini, the Google app (Gemini runs inside it), Perplexity, Copilot, DeepSeek,
+  Grok: the AI group of the app picker. Domains: the AI service names listed in `SlotCatalog.aiDomains`.
+- **YouTube slot:** every YouTube client of the picker catalogue, YouTube Music included (ReVanced, Vanced, Morphe,
+  official). Other Google apps stay in Everything else. YouTube Kids is not in the picker catalogue yet; add it to the
+  catalogue and the slot together when a device with it is available.
+- **Telegram forks:** matched by package list, by package prefix (`org.zastogram.messenger.*`) and by datacentre IP
+  range, so an unknown fork is still caught. Offering them in the picker as "Telegram" is a later UI item.
+- **Slots and profiles:** open on purpose ("we will work it out as we go"). The first version keeps one active profile;
+  every slot pool is a subset of its servers.
+
+## Status
+
+- Phase 1 done: `slots/ServiceSlots.kt` (router, CIDR matching, catalogue, server assigner) with
+  `ServiceSlotsTest`. Nothing uses it at runtime yet.
+- Next: phase 2 (config builder, default-OFF switch), then runtime and Home cards.
