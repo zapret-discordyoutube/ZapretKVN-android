@@ -204,3 +204,29 @@ who wants a different subscription for YouTube switches the profile (revisit whe
   connection failures of a slot server (unit tested only) and the AI slot.
 - Not yet (phase 4c): the pool per slot and the apps of a slot on the sheet (move an app to another slot, remove it from
   the VPN), user-defined slots. Then Windows parity, phone test.
+
+## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
+
+Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:
+
+- A cancelled YouTube episode (a manual server choice, a path probe) puts the server or slot back that the trial had
+  moved; before, the selector could stay on an unverified candidate. A failed return keeps the slot's recorded place on
+  the trial server (the command did not go through), so later decisions start from where the core really is.
+- Slot move commands carry a number per slot; an older command that was overtaken does nothing, and a late failure of
+  an older command no longer sends the slot back over a newer move (`SlotFailoverPolicy.moveFailed` acts only while the
+  slot still sits where the command sent it).
+- A server is marked dead only when some slot can leave it; moving one slot keeps the failure count of a server another
+  slot still uses.
+- A slot server that rejects our credentials or certificate (`SECURITY_FAILURES`) is left at the first hint, not the
+  third: repetition cannot make it more certain. The main selector still ends the session in that case.
+- DNS: the user's own DNS rules stand in front of the generated catch-all (they were unreachable behind it); names that
+  always go through the VPN (`ForcedProxyDomains`) resolve through the node also when `route.final` is direct; a runtime
+  copy fed back to the builder does not double slot selectors or slot route rules.
+- A queued restart without a generation (read from a UI state a few milliseconds old) is ignored while the VPN is
+  stopping (`RestartGate`); a server switch writes its selection into the profile as it is after the verification, not
+  into the snapshot taken before it (a subscription refresh in between is no longer undone).
+
+Read and left as they are: the dead-cluster tracker treats any flow with 64 KB or more as proof the cluster answers
+(slow flows are the slow-video detector's job); `SlotTraffic` re-counts a flow only after it was absent for 40
+snapshots; the routing editor orders managed rules by action by design; a player paused for more than 30 s with one
+idle tail flow can still look starving (it needs the media state to tell the difference).

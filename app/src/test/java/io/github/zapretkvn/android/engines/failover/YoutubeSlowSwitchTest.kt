@@ -1,5 +1,8 @@
 package io.github.zapretkvn.android.engines.failover
 
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,6 +22,7 @@ class YoutubeSlowSwitchTest {
         private val outcomes: MutableList<VideoOutcome>,
         private val trialOk: Boolean = true,
         private val commitOk: Boolean = true,
+        private val hangOnVerify: Boolean = false,
     ) : YoutubeSwitchHost {
         val calls = mutableListOf<String>()
         override suspend fun snapshot() = snapshot
@@ -27,7 +31,13 @@ class YoutubeSlowSwitchTest {
             return trialOk
         }
         override suspend fun dropVideoFlows() { calls += "drop" }
-        override suspend fun verifyVideo(timeoutMillis: Long): VideoOutcome = outcomes.removeAt(0).also { calls += "verify:$it" }
+        override suspend fun verifyVideo(timeoutMillis: Long): VideoOutcome {
+            if (hangOnVerify) {
+                calls += "verify:hang"
+                awaitCancellation()
+            }
+            return outcomes.removeAt(0).also { calls += "verify:$it" }
+        }
         override suspend fun commit(candidateId: String): Boolean {
             calls += "commit:$candidateId"
             return commitOk
@@ -57,6 +67,31 @@ class YoutubeSlowSwitchTest {
             YoutubeSwitchOutcome.NoCandidates,
             YoutubeSwitchEngine(policy(), onlyDead, { null }, excludedIds = { setOf("Clermany") }).runEpisode(),
         )
+    }
+
+    /** Ревью 2026-11-14: ручной выбор сервера или проба по подсказке ядра отменяют эпизод посреди проверки. */
+    @Test
+    fun `a cancelled episode puts the original server back and ends the episode`() = runTest {
+        val host = FakeHost(snapshot("Hipge", "Senge"), mutableListOf(), hangOnVerify = true)
+        val policy = policy()
+        val job = launch { YoutubeSwitchEngine(policy, host, { null }).runEpisode() }
+        runCurrent()
+        assertEquals(listOf("trial:Hipge->Senge", "drop", "verify:hang"), host.calls)
+        job.cancel()
+        runCurrent()
+        assertTrue(job.isCancelled)
+        // The restore ran although the coroutine was already cancelled.
+        assertTrue(host.calls.toString(), "restore:Hipge" in host.calls)
+        assertFalse(host.calls.toString(), host.calls.any { it.startsWith("commit") })
+    }
+
+    /** Nothing was moved, so nothing is restored. */
+    @Test
+    fun `an episode without candidates restores nothing`() = runTest {
+        val host = FakeHost(snapshot("Hipge"), mutableListOf())
+        val outcome = engine(host).runEpisode()
+        assertEquals(YoutubeSwitchOutcome.NoCandidates, outcome)
+        assertTrue(host.calls.none { it.startsWith("restore") })
     }
 
     @Test

@@ -272,7 +272,11 @@ object RuntimeConfigBuilder {
             emptyList()
         }
         if (slotRoutes.isNotEmpty()) {
-            runtimeOutbounds = JsonArray(runtimeOutbounds?.toList().orEmpty() + slotRoutes.map(SlotRoutes::selector))
+            // A runtime copy fed back in already holds the slot selectors of the previous build: replace, never double.
+            val withoutOld = runtimeOutbounds?.toList().orEmpty().filterNot {
+                (it as? JsonObject)?.string("tag")?.startsWith(SlotSelectors.PREFIX) == true
+            }
+            runtimeOutbounds = JsonArray(withoutOld + slotRoutes.map(SlotRoutes::selector))
         }
         val storedLog = root["log"] as? JsonObject
         val runtimeLog = buildJsonObject {
@@ -473,13 +477,18 @@ object RuntimeConfigBuilder {
             } else {
                 emptyList()
             }
+            // The generated tail is a catch-all (no matcher): everything after it is unreachable, so the user's own
+            // rules go in front of it, after the specific generated ones.
+            val generatedCatchAll = generated.takeLastWhile(::isCatchAllDnsRule)
+            val generatedSpecific = generated.dropLast(generatedCatchAll.size)
             dns["rules"] = JsonArray(
                 packageRejectRules(blockedPackages) +
                     rejectRules +
                     overrideRules +
                     slotDnsRules +
-                    generated +
-                    otherRules,
+                    generatedSpecific +
+                    otherRules +
+                    generatedCatchAll,
             )
             dns["final"] = JsonPrimitive(
                 when (mode) {
@@ -770,6 +779,10 @@ object RuntimeConfigBuilder {
             put("action", "route")
             put("server", ANDROID_DNS_TAG)
         }
+        // Names that always go through the VPN are resolved by the node as well: with `final = direct` (only selected
+        // sites, "Russia through VPN") the catch-all would send them to the system resolver, which picks a cache
+        // address for the phone's network while the video leaves through the node (review 2026-11-14).
+        result += ForcedProxyDomains.dnsRule(SECURE_DNS_TAG, proxyIpv4Only)
         if (healthHostsViaNode) {
             // Health-хосты route-правилом идут через выбранный proxy, поэтому и имя
             // обязано разрешаться по пути пользователя (DNS узла), даже когда
@@ -1038,6 +1051,12 @@ object RuntimeConfigBuilder {
     private fun isRejectRule(element: JsonElement): Boolean =
         (element as? JsonObject)?.string("action") == "reject"
 
+    /** A `route` DNS rule without any matcher: it answers every query that reaches it. */
+    private fun isCatchAllDnsRule(element: JsonElement): Boolean {
+        val rule = element as? JsonObject ?: return false
+        return rule.keys.all { it == "action" || it == "server" || it == "strategy" } && rule.string("action") == "route"
+    }
+
     private fun isGeneratedDnsRule(element: JsonElement): Boolean {
         val rule = element as? JsonObject ?: return false
         return rule.string("server")?.startsWith("zapret-") == true
@@ -1047,6 +1066,8 @@ object RuntimeConfigBuilder {
         val rule = element as? JsonObject ?: return false
         if (isPrivateDnsRouteRule(rule)) return true
         if (ForcedProxyDomains.isForcedRule(rule)) return true
+        // Slot rules (docs/SERVICE_SLOTS.md) go to a `zapret-slot-<id>` selector; a rebuild replaces them.
+        if (rule.string("action") == "route" && rule.string("outbound")?.startsWith(SlotSelectors.PREFIX) == true) return true
         return rule.string("action") == "hijack-dns" &&
             (rule["port"] as? JsonPrimitive)?.contentOrNull == "53"
             || rule.string("action") == "route" &&

@@ -1,5 +1,9 @@
 package io.github.zapretkvn.android.engines.failover
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+
 /**
  * Переключение сервера, когда он плох именно для YouTube (владелец 2026-11-08: «перенаправлять на более быстрый
  * сервер», настройка по желанию).
@@ -180,8 +184,34 @@ internal class YoutubeSwitchEngine(
      * видео получит другой кластер. Если запасной сервер окажется плох, обычный путь голодания переключит его снова.
      */
     suspend fun runEpisode(keepOnSilent: Boolean = false): YoutubeSwitchOutcome {
+        val state = EpisodeState()
+        try {
+            return episode(keepOnSilent, state)
+        } catch (cancelled: CancellationException) {
+            // Отмена посреди эпизода (ручной выбор сервера, проба по подсказке ядра) не должна оставлять сервер на
+            // непроверенном кандидате: пробное переключение откатывается, даже когда корутина уже отменена.
+            val original = state.original
+            if (state.trialOpen && original != null) {
+                withContext(NonCancellable) {
+                    host.restore(original)
+                    host.log("Эпизод YouTube прерван: возвращён прежний сервер $original.")
+                }
+            }
+            policy.onEpisodeEnd()
+            throw cancelled
+        }
+    }
+
+    /** Что эпизод успел сделать: по этому отмена знает, нужен ли откат. */
+    private class EpisodeState {
+        var original: String? = null
+        var trialOpen: Boolean = false
+    }
+
+    private suspend fun episode(keepOnSilent: Boolean, state: EpisodeState): YoutubeSwitchOutcome {
         val snapshot = host.snapshot() ?: return YoutubeSwitchOutcome.Gone
         val original = snapshot.currentId
+        state.original = original
         policy.markSlow(original)
         val candidates = policy.candidates(original, snapshot.targets, hintsOf(snapshot), excludedIds(), youtubeAverage)
         if (candidates.isEmpty()) {
@@ -196,6 +226,7 @@ internal class YoutubeSwitchEngine(
                 policy.onEpisodeEnd()
                 return YoutubeSwitchOutcome.TrialFailed
             }
+            state.trialOpen = true
             policy.onSwitch()
             host.dropVideoFlows()
             when (host.verifyVideo(YoutubeSwitchDefaults.VERIFY_MILLIS)) {
@@ -205,6 +236,7 @@ internal class YoutubeSwitchEngine(
                         policy.onEpisodeEnd()
                         return YoutubeSwitchOutcome.CommitRefused
                     }
+                    state.trialOpen = false
                     host.announce(original, candidate.id)
                     policy.onEpisodeEnd()
                     return YoutubeSwitchOutcome.Switched(candidate.id)
@@ -220,6 +252,7 @@ internal class YoutubeSwitchEngine(
                         policy.onEpisodeEnd()
                         return YoutubeSwitchOutcome.CommitRefused
                     }
+                    state.trialOpen = false
                     host.announce(original, candidate.id, restartVideo = true)
                     policy.onEpisodeEnd()
                     return YoutubeSwitchOutcome.SwitchedUnverified(candidate.id)

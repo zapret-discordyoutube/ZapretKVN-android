@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
@@ -37,9 +38,9 @@ internal fun rememberProfileImporter(
     subscriptionLinkPrompt: SubscriptionLinkPrompt?,
     hideServerAddresses: Boolean,
 ): ProfileImporter {
-    var urlDialogOpen by remember { mutableStateOf(false) }
-    var qrSourceDialogOpen by remember { mutableStateOf(false) }
-    var cameraDenied by remember { mutableStateOf(false) }
+    var urlDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var qrSourceDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var cameraDenied by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
 
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

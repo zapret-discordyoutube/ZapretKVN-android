@@ -39,6 +39,18 @@ internal object ForcedProxyDomains {
         put("outbound", proxyTag)
     }
 
+    /**
+     * Правило `dns` на [server] (DNS узла) по тем же именам. Без него имя, которое всегда идёт через VPN, в режимах
+     * с `final = direct` (только выбранные сайты, «Россия через VPN») разрешает системный DNS: адрес кеша выбран
+     * для сети телефона, а видео уходит через узел (ревью 2026-11-14, тот же разрыв, что чинили для слотов).
+     */
+    fun dnsRule(server: String, ipv4Only: Boolean): JsonObject = buildJsonObject {
+        put("domain_suffix", JsonArray(suffixes.map(::JsonPrimitive)))
+        put("action", "route")
+        put("server", server)
+        if (ipv4Only) put("strategy", "ipv4_only")
+    }
+
     /** Это правило создали мы (его надо заменить, а не размножить при пересборке конфигурации). */
     fun isForcedRule(element: JsonElement): Boolean {
         val rule = element as? JsonObject ?: return false

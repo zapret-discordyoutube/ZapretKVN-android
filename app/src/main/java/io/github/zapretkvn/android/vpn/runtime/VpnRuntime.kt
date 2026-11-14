@@ -428,7 +428,16 @@ internal class VpnRuntime(
 
     private fun onRestart(message: Message.Restart) {
         val expected = message.expectedGeneration
-        if (expected != null && (expected != controller.currentGeneration() || stopInProgress)) return
+        if (RestartGate.ignore(
+                expected,
+                controller.currentGeneration(),
+                stopInProgress,
+                controller.state.value is VpnConnectionState.Stopping,
+            )
+        ) {
+            if (expected == null) timeline("Перезапуск (${message.reason}) пропущен: идёт остановка VPN.")
+            return
+        }
         stopInProgress = false
         val token = controller.nextGeneration()
         if (message.resetRecovery) {

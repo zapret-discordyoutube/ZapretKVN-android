@@ -55,9 +55,15 @@ internal class SlotFailoverPolicy(
 
     /**
      * A switchable failure of [serverId] was seen in the core log. [mainServer] is the server of the main selector
-     * now, [mainDead] the servers the main supervisor confirmed dead.
+     * now, [mainDead] the servers the main supervisor confirmed dead. [immediate] is for a failure that repetition
+     * cannot make more certain (the server rejects our credentials or certificate): the slot leaves at the first hint.
      */
-    fun onFailureHint(serverId: String, mainServer: String?, mainDead: Set<String> = emptySet()): SlotFailoverDecision {
+    fun onFailureHint(
+        serverId: String,
+        mainServer: String?,
+        mainDead: Set<String> = emptySet(),
+        immediate: Boolean = false,
+    ): SlotFailoverDecision {
         val affected = slots.filter { it.id != SlotIds.DEFAULT && current[it.id] == serverId }
         if (affected.isEmpty()) return SlotFailoverDecision.Ignore("no slot uses $serverId")
         val now = clock()
@@ -68,15 +74,17 @@ internal class SlotFailoverPolicy(
         val times = hintTimes.getOrPut(serverId) { ArrayDeque() }
         times.addLast(now)
         while (times.isNotEmpty() && now - times.first() > WINDOW_MILLIS) times.removeFirst()
-        if (times.size < HINTS_TO_MOVE) return SlotFailoverDecision.Ignore("${times.size} of $HINTS_TO_MOVE hints")
+        if (!immediate && times.size < HINTS_TO_MOVE) {
+            return SlotFailoverDecision.Ignore("${times.size} of $HINTS_TO_MOVE hints")
+        }
         while (moveTimes.isNotEmpty() && now - moveTimes.first() >= RATE_WINDOW_MILLIS) moveTimes.removeFirst()
         if (moveTimes.size >= MAX_MOVES) return SlotFailoverDecision.Ignore("move rate limit")
 
         val hints = times.size
-        times.clear()
-        deadUntil[serverId] = now + DEAD_MILLIS
         deadUntil.entries.removeAll { it.value <= now }
-        val avoid = deadUntil.keys + mainDead
+        // The failing server is avoided for this search, but it is marked dead only when some slot can leave it:
+        // with no replacement the mark would only hide the server from the YouTube candidates for nothing.
+        val avoid = deadUntil.keys + serverId + mainDead
         val previous = current.toMutableMap()
         mainServer?.let { previous[SlotIds.DEFAULT] = it }
         val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid) }, previous)
@@ -87,6 +95,8 @@ internal class SlotFailoverPolicy(
             else SlotMove(choice.slotId, from, to)
         }
         if (moves.isEmpty()) return SlotFailoverDecision.Ignore("no usable replacement for $serverId")
+        times.clear()
+        deadUntil[serverId] = now + DEAD_MILLIS
         moves.forEach { current[it.slotId] = it.to }
         leftAt[serverId] = now
         moveTimes.addLast(now)
@@ -119,13 +129,20 @@ internal class SlotFailoverPolicy(
      * the server it left (they describe a connection that is gone).
      */
     fun place(slotId: String, serverId: String) {
-        current[slotId]?.let { hintTimes.remove(it) }
+        val left = current[slotId]
         current[slotId] = serverId
+        // Hints describe connections of a server; another slot may still sit on it, and its count must survive.
+        if (left != null && left != serverId && current.none { it.key != SlotIds.DEFAULT && it.value == left }) {
+            hintTimes.remove(left)
+        }
     }
 
-    /** The core refused the command: the slot is still where it was. */
+    /**
+     * The core refused the command: the slot is still where it was. A late failure of an older command must not undo
+     * a newer move of the same slot, so the slot goes back only while it still sits where this command sent it.
+     */
     fun moveFailed(move: SlotMove) {
-        current[move.slotId] = move.from
+        if (current[move.slotId] == move.to) current[move.slotId] = move.from
     }
 
     companion object {

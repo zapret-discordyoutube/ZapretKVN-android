@@ -44,6 +44,9 @@ internal class YoutubeSlotSwitchHost(
 ) : YoutubeSwitchHost {
     private val selectorTag = SlotSelectors.tag(slotId)
 
+    /** Server the last successful trial command moved the slot to; null before a trial. */
+    private var trialId: String? = null
+
     override suspend fun snapshot(): SlowSwitchSnapshot? = context.snapshot(session, slotId)
 
     override suspend fun trialSwitch(currentId: String, candidateId: String): Boolean {
@@ -55,6 +58,7 @@ internal class YoutubeSlotSwitchHost(
             log("Пробное переключение слота YouTube не выполнено: ${failure.message.orEmpty()}")
             return false
         }
+        trialId = candidateId
         context.timeline("YouTube медленный: слот YouTube пробует ${redact(candidateId)}.")
         return true
     }
@@ -88,8 +92,14 @@ internal class YoutubeSlotSwitchHost(
 
     override suspend fun restore(id: String) {
         context.place(session, slotId, id)
-        switcher.moveSlot(session, selectorTag, id)?.let { error ->
-            log("Возврат слота YouTube на ${redact(id)} не удался: ${error.message.orEmpty()}")
+        val failure = switcher.moveSlot(session, selectorTag, id)
+        if (failure != null) {
+            log("Возврат слота YouTube на ${redact(id)} не удался: ${failure.message.orEmpty()}")
+            // The command did not go through, so the selector most likely still sits on the trial server: the slot's
+            // recorded place must say so, otherwise later decisions start from a server the slot has left.
+            trialId?.takeIf { it != id }?.let { context.place(session, slotId, it) }
+        } else {
+            trialId = null
         }
         RuntimeLog.resetVideoDetector()
     }

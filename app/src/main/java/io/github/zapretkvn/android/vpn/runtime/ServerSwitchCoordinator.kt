@@ -285,12 +285,18 @@ internal class ServerSwitchCoordinator(
      * Подсказки об отказе сервера, на котором сидит слот. Основной selector не затрагивается: его ведёт [supervisor].
      * Решение о переносе принимает чистая [SlotFailoverPolicy]; здесь только команда selector'а слота и строка в журнал.
      */
+    /** Last command number per slot: written by the actor when a command is created, read by the command itself. */
+    private val slotMoveSequence = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private fun onSlotHints(session: CoreSession, hints: List<PathHint>) {
         val policy = slotFailover ?: return
         for (hint in hints) {
-            if (hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
+            // A server that rejects our credentials or certificate is not "slow": a slot leaves it at the first hint
+            // (the main selector ends the session instead, see PathSupervisor; a slot has no session to end).
+            val security = hint.code in PathSupervisor.SECURITY_FAILURES
+            if (!security && hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
             val main = session.primaryGroupTag?.let { session.runtimeSelections()[it] }
-            when (val decision = policy.onFailureHint(hint.outboundTag, main, supervisor.deadServerIds())) {
+            when (val decision = policy.onFailureHint(hint.outboundTag, main, supervisor.deadServerIds(), immediate = security)) {
                 is SlotFailoverDecision.Ignore -> Unit
                 is SlotFailoverDecision.Move -> {
                     timeline(
@@ -325,7 +331,12 @@ internal class ServerSwitchCoordinator(
     }
 
     private fun moveSlot(session: CoreSession, policy: SlotFailoverPolicy, move: SlotMove) {
+        // Commands run on the IO dispatcher, so launch order is not execution order: every command carries a number
+        // per slot and an older one that was overtaken by a newer move does nothing (the newer command sets the core).
+        val sequence = (slotMoveSequence[move.slotId] ?: 0L) + 1
+        slotMoveSequence[move.slotId] = sequence
         scope.launch {
+            if (slotMoveSequence[move.slotId] != sequence) return@launch
             val failure = switcher.moveSlot(session, SlotSelectors.tag(move.slotId), move.to)
             postToActor {
                 if (failure != null && slotFailover === policy) {

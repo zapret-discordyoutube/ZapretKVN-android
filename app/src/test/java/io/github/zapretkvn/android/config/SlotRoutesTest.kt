@@ -189,4 +189,48 @@ class SlotRoutesTest {
         assertEquals(once, twice)
         assertEquals(1, once.dnsServers().count { it.str("tag") == "zapret-slot-dns-youtube" })
     }
+
+    // ---- Review of 2026-11-14 ----
+
+    @Test
+    fun `a runtime copy fed back in is rebuilt without doubling slot selectors or slot rules`() {
+        val options = RuntimeConfigOptions(dnsMode = DnsMode.Automatic, blockQuic = true, slotRoutes = listOf(youtube))
+        val first = RuntimeConfigBuilder.build(config(), options = options) as RuntimeConfigResult.Ready
+        val second = RuntimeConfigBuilder.build(first.json, options = options) as RuntimeConfigResult.Ready
+        val parsed = JsonConfig.parse(second.json) as JsonObject
+        assertEquals(1, parsed.outbounds().count { it.str("tag") == "zapret-slot-youtube" })
+        val slotRules = { root: JsonObject -> root.rules().filter { it.str("outbound")?.startsWith("zapret-slot-") == true } }
+        assertEquals(slotRules(JsonConfig.parse(first.json) as JsonObject), slotRules(parsed))
+    }
+
+    private fun userDnsConfig(final: String = "zapret-proxy"): String = config().replace(
+        """"route":{""",
+        """"dns":{"servers":[{"type":"udp","tag":"corp-dns","server":"10.0.0.1"}],"rules":[{"domain_suffix":["corp.example"],"action":"route","server":"corp-dns"}]},"route":{""",
+    ).replace("\"final\":\"zapret-proxy\"", "\"final\":\"$final\"")
+
+    @Test
+    fun `the user's own dns rule is not shadowed by the generated catch-all`() {
+        for (mode in listOf(DnsMode.Automatic, DnsMode.Secure)) {
+            val rules = build(emptyList(), mode = mode, raw = userDnsConfig()).dnsRules()
+            val user = rules.indexOfFirst { it.strings("domain_suffix") == listOf("corp.example") }
+            assertTrue("mode $mode: the user's dns rule is kept", user >= 0)
+            val catchAll = rules.indexOfFirst { it.keys.all { k -> k == "action" || k == "server" || k == "strategy" } }
+            if (catchAll >= 0) assertTrue("mode $mode: the catch-all stays last", user < catchAll)
+            assertEquals("mode $mode: the catch-all closes the list", rules.size - 1, catchAll.takeIf { it >= 0 } ?: (rules.size - 1))
+        }
+    }
+
+    @Test
+    fun `names that always go through the VPN are resolved by the node also when the final route is direct`() {
+        val forced = ForcedProxyDomains.suffixes
+        val direct = build(emptyList(), mode = DnsMode.Automatic, raw = userDnsConfig(final = "direct")).dnsRules()
+        val rule = direct.single { it.strings("domain_suffix") == forced }
+        assertEquals("zapret-secure-dns", rule.str("server"))
+        // A rebuild does not multiply it.
+        assertEquals(1, build(emptyList(), mode = DnsMode.Automatic, raw = userDnsConfig(final = "direct")).dnsRules()
+            .count { it.strings("domain_suffix") == forced })
+        // The user's own DNS stays untouched in "From JSON".
+        val fromJson = build(emptyList(), mode = DnsMode.FromJson, raw = userDnsConfig(final = "direct")).dnsRules()
+        assertTrue(fromJson.none { it.strings("domain_suffix") == forced })
+    }
 }

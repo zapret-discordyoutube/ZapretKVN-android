@@ -99,7 +99,16 @@ internal class ServerSwitcher(
         if (!persist) return@withLock SwitchOutcome.Committed
         try {
             verifier?.verify(session, candidate)
-            profileStore.update(session.profileId, candidate)
+            // The verifier can take many seconds; a subscription refresh or an editor save may have written the
+            // profile meanwhile. The selection is applied to the profile as it is NOW, never to the old snapshot
+            // (that would silently bring back the servers a refresh just replaced).
+            val latest = profileStore.read(session.profileId).json
+            val toWrite = if (latest == stored.json) {
+                candidate
+            } else {
+                ConfigAnalyzer.selectServer(ParsedConfig.parse(latest), groupTag, outboundTag)
+            }
+            profileStore.update(session.profileId, toWrite)
         } catch (error: Throwable) {
             rollback(session, groupTag, previous)?.let(error::addSuppressed)
             if (error is CancellationException) throw error

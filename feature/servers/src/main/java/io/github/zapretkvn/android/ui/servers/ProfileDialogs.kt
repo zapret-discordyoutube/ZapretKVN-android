@@ -38,7 +38,7 @@ fun UrlImportDialog(
     onDismiss: () -> Unit,
     onImport: (String, SubscriptionIdentityInput) -> Unit,
 ) {
-    var url by remember(initialUrl) { mutableStateOf(initialUrl) }
+    var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
     var revealed by rememberSaveable { mutableStateOf(false) }
     // null — профиль ещё не выбран: его подскажет сама ссылка (happ://add и подобные).
     var clientProfile by rememberSaveable { mutableStateOf<SubscriptionClientProfile?>(null) }

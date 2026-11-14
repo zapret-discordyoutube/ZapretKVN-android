@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.android.profiles.ProfileEditorState
 import io.github.zapretkvn.android.profiles.ProfilesViewModel
 import io.github.zapretkvn.core.uimodel.ScreenshotPrivacy
+import io.github.zapretkvn.core.uimodel.plural
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -223,7 +224,7 @@ private fun SelectorControls(
     if (editor.selectors.isEmpty()) {
         if (editor.serverTags.isNotEmpty()) {
             OutlinedButton(onClick = viewModel::createManagedSelector) {
-                Text("Создать zapret-proxy из ${editor.serverTags.size} серверов")
+                Text("Создать zapret-proxy из ${editor.serverTags.size} ${plural(editor.serverTags.size, "сервера", "серверов", "серверов")}")
             }
         }
         return

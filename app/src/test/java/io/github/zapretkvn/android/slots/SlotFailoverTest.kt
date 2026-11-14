@@ -149,4 +149,42 @@ class SlotFailoverTest {
         assertEquals(SlotIds.YOUTUBE, move.slotId)
         assertTrue(move.to != "B")
     }
+
+    // ---- Review of 2026-11-14 ----
+
+    @Test
+    fun `a late failure of an older command does not undo a newer move of the same slot`() {
+        val p = policy()
+        val first = (p.fail("B", 3) as SlotFailoverDecision.Move).moves.single()
+        // The user pins the slot elsewhere while the command B -> first.to is still in flight.
+        val newer = servers.first { it != "B" && it != first.to }
+        p.place(SlotIds.YOUTUBE, newer)
+        p.moveFailed(first)
+        assertEquals(newer, p.assignments().getValue(SlotIds.YOUTUBE))
+    }
+
+    @Test
+    fun `a server nobody can replace is not marked dead and keeps its hints`() {
+        val none = policy(youtube = "B", telegram = "B", main = "B", pool = listOf("B"))
+        assertTrue(none.fail("B", 3) is SlotFailoverDecision.Ignore)
+        assertFalse("B" in none.deadServers())
+    }
+
+    @Test
+    fun `moving one slot keeps the failure count of a server another slot still uses`() {
+        val p = policy(youtube = "B", telegram = "B", main = "A")
+        p.fail("B", 2)
+        p.place(SlotIds.YOUTUBE, "D")
+        // Telegram is still on B, so the two hints are still on record: one more moves it.
+        assertTrue(p.onFailureHint("B", "A") is SlotFailoverDecision.Move)
+    }
+
+    @Test
+    fun `a server that rejects our credentials is left at the first hint`() {
+        val p = policy()
+        val decision = p.onFailureHint("B", "A", immediate = true)
+        assertTrue(decision is SlotFailoverDecision.Move)
+        assertTrue("B" in p.deadServers())
+        assertTrue((decision as SlotFailoverDecision.Move).moves.single().to != "B")
+    }
 }
