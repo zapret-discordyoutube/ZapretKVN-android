@@ -14,7 +14,9 @@ its own switching logic.
 
 ## Owner decisions (2026-11-14)
 
-1. YouTube, Telegram and "everything else" are separate **slots**; any other application can get its own slot too.
+1. YouTube, Telegram, AI apps and "everything else" are separate **slots**, each its own; any other application can get
+   its own slot too. A slot groups **several apps**: every YouTube client (ReVanced, the official app, other builds) is
+   one YouTube slot; Telegram is one slot for the official app, Telegram X and every fork.
 2. Each slot has its own server, its own protocol and its own switching logic. Example: YouTube over VLESS from one
    server, Telegram over Hysteria2 from another. Every setting is configurable.
 3. sing-box does the routing under the hood (several selectors, several server slots, several protocols).
@@ -22,6 +24,11 @@ its own switching logic.
 5. Rotation, first step: **on failure only** (no time-based or per-session rotation yet).
 6. Home screen gets the slot cards **and** the «Переключать при низкой скорости» toggle.
 7. Android first, then Windows.
+8. Out of the box: **YouTube, Telegram, AI (ChatGPT, Claude, Gemini and related), Everything else**.
+9. The pool belongs to the **slot** (owner's reading: a pool of servers formed for a slot, for specific apps).
+10. An app that must go straight out (for example one that only works from a Russian address) is **not in any slot and
+    is not shown among the slots**: it passes through as it does today (outside the VPN app scope, or through the
+    existing RU-direct rules). Direct is the fall-through, not a slot.
 
 ## Model
 
@@ -30,8 +37,8 @@ A slot is a pure value in a tested module (no Android types):
 | Field | Meaning |
 |---|---|
 | `id`, `title` | stable id (`youtube`, `telegram`, `default`, `app:<package>`), name on the card |
-| `matchers` | domains (shared always-proxy list for YouTube), package names, later IP/rule-set |
-| `pool` | server ids the slot may use (default: every server of the profile) |
+| `matchers` | domains (shared always-proxy list for YouTube), a **list of package names** (all clients of the service), IP ranges (Telegram datacentres, so an unknown fork is still caught), later rule-sets |
+| `pool` | server ids the slot may use; **per slot**, taken from the active profile's servers (default: all of them), editable on the slot sheet |
 | `pin` | optional server id; overrides automatic choice |
 | `switching` | switch policy: `OnFailure` now; room for `LowSpeed`, `Rotate` later |
 | `avoid` | server ids another slot is using, so slots do not share a server while the pool allows |
@@ -40,6 +47,21 @@ Per-slot logic is a policy object, not a flag inside one global engine. The exis
 (`SlowServerSwitchEngine`, `YoutubeSwitchEngine`, `PathSupervisor`) become the policies of the `default` and
 `youtube` slots; the throughput monitor and the video detector read only the flows that belong to their slot, so a
 Telegram transfer can no longer starve or "heal" YouTube.
+
+## Which traffic belongs to which slot
+
+Two levels, so "direct" never becomes a slot:
+
+1. **VPN scope** (existing per-app picker): an app outside the include list never enters the TUN and goes out as it
+   does today. RU-direct rules still apply inside the tunnel. These apps are not shown among the slots.
+2. **Slot rules** for traffic that is in scope: first match wins in this order: AI, YouTube, Telegram (package list,
+   then domains, then IP ranges), user-defined app slots before the built-in ones; whatever matches nothing goes to
+   **Everything else** (`zapret-proxy`, the profile's main selector).
+
+Matching packages: a built-in catalogue per slot (YouTube: `app.morphe.android.youtube`, `com.google.android.youtube`,
+other ReVanced/Vanced builds; Telegram: `org.telegram.messenger`, `org.telegram.messenger.web`, `org.thunderdog.challegram`,
+well-known forks, plus any app the user adds). The user adds or removes a package on the slot sheet. A package is in
+one slot only; adding it to another moves it.
 
 ## Mapping to sing-box (the gasket)
 
@@ -86,8 +108,16 @@ Texts shown to users are Russian.
   measured a second time first (owner answer).
 - No hidden cost: no new timers; slot logic runs on the existing flow sampling while the screen is on (I6-03).
 
+## Decided pool scope (my reasoning, owner leaned the same way)
+
+The pool is per slot but drawn from the **active profile**: all selectors live in one sing-box config built from one
+profile, and mixing servers of several profiles would need a merged config, separate credentials handling and a
+second failover plan. A slot may therefore not use servers outside the active profile in the first version; a user
+who wants a different subscription for YouTube switches the profile (revisit when profiles can be merged).
+
 ## Open questions for the owner
 
-- Which slots exist out of the box: YouTube, Telegram, Everything else only, or also AI (ChatGPT, Claude, Gemini)?
-- Is the pool defined per profile or per slot, when a subscription has servers in several countries?
-- Should a slot ever be allowed to use `direct` (for example a Russian-only app)?
+- Which package catalogue ships for the AI slot (ChatGPT, Claude, Gemini, Perplexity, Copilot, others)?
+- YouTube Music, YouTube Kids and Google apps: part of the YouTube slot or Everything else?
+- Telegram forks without a known package (a custom build, like `org.zastogram.messenger.dev`): is IP-range matching
+  enough, or should the app also offer them in the picker as Telegram?
