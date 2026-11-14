@@ -40,6 +40,7 @@ internal class SlotFailoverPolicy(
     private val deadUntil = mutableMapOf<String, Long>()
     private val leftAt = mutableMapOf<String, Long>()
     private val moveTimes = ArrayDeque<Long>()
+    private val dnsHintAt = mutableMapOf<String, Long>()
 
     /** Server of every slot as the policy believes it is (the `default` slot included when it was told). */
     fun assignments(): Map<String, String> = current.toMap()
@@ -104,6 +105,22 @@ internal class SlotFailoverPolicy(
     }
 
     /**
+     * The slot's own DNS ([slotId]) timed out. A dead slot server shows up here first and often alone: the Hysteria
+     * client retries the handshake quietly, so the log has no repeated connect error to count. The timeout is judged
+     * like any other hint for the server the slot sits on, but at most one hint per [DNS_HINT_GAP_MILLIS] per slot, so
+     * one burst of queued lookups is one failure and a move needs about [HINTS_TO_MOVE] separate failures.
+     */
+    fun onSlotDnsFailure(slotId: String, mainServer: String?, mainDead: Set<String> = emptySet()): SlotFailoverDecision {
+        val server = current[slotId] ?: return SlotFailoverDecision.Ignore("unknown slot $slotId")
+        if (slotId == SlotIds.DEFAULT) return SlotFailoverDecision.Ignore("the default slot belongs to the main selector")
+        val now = clock()
+        val last = dnsHintAt[slotId]
+        if (last != null && now - last < DNS_HINT_GAP_MILLIS) return SlotFailoverDecision.Ignore("same dns burst")
+        dnsHintAt[slotId] = now
+        return onFailureHint(server, mainServer, mainDead)
+    }
+
+    /**
      * The user's pins changed ([pins]: slot id to server tag; slots without an entry are automatic). Later failover
      * decisions respect them. Returns the moves needed now: a pinned slot that is not on its server yet goes there,
      * also when the server was marked dead (an explicit choice beats the app's guess). A pin outside the slot's pool
@@ -149,6 +166,7 @@ internal class SlotFailoverPolicy(
         const val HINTS_TO_MOVE = 3
         const val WINDOW_MILLIS = 60_000L
         const val STALE_LINE_MILLIS = 2_000L
+        const val DNS_HINT_GAP_MILLIS = 5_000L
         const val DEAD_MILLIS = 5 * 60_000L
         const val MAX_MOVES = 3
         const val RATE_WINDOW_MILLIS = 15 * 60_000L

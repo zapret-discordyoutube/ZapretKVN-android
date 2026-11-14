@@ -187,4 +187,30 @@ class SlotFailoverTest {
         assertTrue("B" in p.deadServers())
         assertTrue((decision as SlotFailoverDecision.Move).moves.single().to != "B")
     }
+
+    @Test
+    fun `a dead slot server is left on its own dns timeouts, one burst counts once`() {
+        // Field case 2026-11-14: a pinned YouTube server stopped answering, only the slot's DNS showed it.
+        val p = policy(youtube = "B")
+        // Many lookups of one burst within the gap are one failure.
+        repeat(10) { assertTrue(p.onSlotDnsFailure(SlotIds.YOUTUBE, "A") is SlotFailoverDecision.Ignore) }
+        now += SlotFailoverPolicy.DNS_HINT_GAP_MILLIS
+        assertTrue(p.onSlotDnsFailure(SlotIds.YOUTUBE, "A") is SlotFailoverDecision.Ignore)
+        now += SlotFailoverPolicy.DNS_HINT_GAP_MILLIS
+        val decision = p.onSlotDnsFailure(SlotIds.YOUTUBE, "A")
+        assertTrue(decision is SlotFailoverDecision.Move)
+        assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "D"), (decision as SlotFailoverDecision.Move).moves.single())
+        assertTrue("B" in p.deadServers())
+    }
+
+    @Test
+    fun `slot dns timeouts never move the default slot or an unknown slot`() {
+        val p = policy()
+        repeat(5) {
+            assertTrue(p.onSlotDnsFailure(SlotIds.DEFAULT, "A") is SlotFailoverDecision.Ignore)
+            assertTrue(p.onSlotDnsFailure("nope", "A") is SlotFailoverDecision.Ignore)
+            now += SlotFailoverPolicy.DNS_HINT_GAP_MILLIS
+        }
+        assertEquals("A", p.assignments().getValue(SlotIds.DEFAULT))
+    }
 }

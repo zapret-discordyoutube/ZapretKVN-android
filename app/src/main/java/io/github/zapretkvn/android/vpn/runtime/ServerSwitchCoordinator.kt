@@ -467,6 +467,12 @@ internal class ServerSwitchCoordinator(
     }
 
     /** Нетегированные отказы DNS по таймауту из лога ядра (в акторе). */
+    fun onSlotDnsFailures(generation: Long, slotIds: Set<String>) {
+        val session = sessions.active() ?: return
+        if (session.generation != generation || !isCurrent(session)) return
+        slots.onSlotDnsFailures(session, slotIds, mainServerOf(session))
+    }
+
     fun onDnsFailures(generation: Long, hint: DnsFailureHint) {
         val session = sessions.active() ?: return
         if (session.generation != generation || !isCurrent(session) || !screenInteractive) return

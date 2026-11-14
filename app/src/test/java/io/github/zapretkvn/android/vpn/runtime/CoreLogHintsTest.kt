@@ -124,4 +124,20 @@ class CoreLogHintsTest {
         )
         assertEquals(2, hint?.count)
     }
+
+    @Test
+    fun `a timeout of a slot's own dns names the slot, other dns failures do not`() {
+        // Real lines of the 2026-11-14 phone test: the pinned YouTube server stopped answering.
+        val ids = CoreLogHints.slotDnsFailures(
+            listOf(
+                "INFO[0147] [3702066817 10.0s] dns/fallback[zapret-slot-dns-youtube]: resolve failed for server zapret-slot-dns-youtube-tcp: dial TCP connection: context deadline exceeded",
+                "INFO[0147] [2975911975 10.0s] dns/fallback[zapret-slot-dns-youtube]: resolve failed for server zapret-slot-dns-youtube-udp: context deadline exceeded",
+                "INFO[0142] [3702066817 5.49s] dns/fallback[zapret-slot-dns-telegram]: resolve failed for server zapret-slot-dns-telegram-udp: dial UDP connection: connect error: timeout: no recent network activity",
+                "INFO[0147] dns/fallback[zapret-slot-dns-ai]: resolve failed for server zapret-slot-dns-ai-udp: NXDOMAIN",
+                "INFO[0147] dns/fallback[zapret-secure-dns]: resolve failed for server x: context deadline exceeded",
+            ),
+        )
+        assertEquals(setOf("youtube", "telegram"), ids)
+        assertTrue(CoreLogHints.slotDnsFailures(listOf("INFO dns: exchanged A example.com. 60 IN A 1.2.3.4")).isEmpty())
+    }
 }

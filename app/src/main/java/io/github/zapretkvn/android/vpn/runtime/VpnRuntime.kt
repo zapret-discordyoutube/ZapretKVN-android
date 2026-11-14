@@ -346,6 +346,7 @@ internal class VpnRuntime(
         data class SessionNetwork(val session: CoreSession, val state: UnderlyingNetworkState) : Message
         data class CoreHints(val generation: Long, val hints: List<PathHint>) : Message
         data class DnsFailures(val generation: Long, val hint: DnsFailureHint) : Message
+        data class SlotDnsFailures(val generation: Long, val slotIds: Set<String>) : Message
         data class ObserverUnavailable(val generation: Long, val message: String) : Message
         data class InjectedFailure(val session: CoreSession, val code: HysteriaFailureCode) : Message
         data class InjectedHint(val session: CoreSession, val code: HysteriaFailureCode) : Message
@@ -390,6 +391,7 @@ internal class VpnRuntime(
             is Message.SessionNetwork -> automation.onSessionNetwork(message.session, message.state)
             is Message.CoreHints -> switching.onCoreHints(message.generation, message.hints)
             is Message.DnsFailures -> switching.onDnsFailures(message.generation, message.hint)
+            is Message.SlotDnsFailures -> switching.onSlotDnsFailures(message.generation, message.slotIds)
             is Message.ObserverUnavailable -> onObserverUnavailable(message)
             is Message.InjectedFailure -> switching.onInjectedFailure(message.session, message.code)
             is Message.InjectedHint -> switching.onInjectedHint(message.session, message.code)
@@ -912,6 +914,7 @@ internal class VpnRuntime(
             val hints = CoreLogHints.from(messages)
             if (hints.isNotEmpty()) post(Message.CoreHints(generation, hints))
             CoreLogHints.dnsFailures(messages)?.let { post(Message.DnsFailures(generation, it)) }
+            CoreLogHints.slotDnsFailures(messages).takeIf { it.isNotEmpty() }?.let { post(Message.SlotDnsFailures(generation, it)) }
         }
 
         override fun onObserverUnavailable(generation: Long, message: String) =

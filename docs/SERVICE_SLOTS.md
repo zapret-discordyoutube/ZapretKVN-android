@@ -233,6 +233,23 @@ and its server, a tap opens the tab) and the «Переключать при н�
 - Not yet (phase 4c): the pool per slot and the apps of a slot on the sheet (move an app to another slot, remove it from
   the VPN), user-defined slots. Then Windows parity, phone test.
 
+## A dead slot server seen through its own DNS (Android 0.6.6, field case 2026-11-14)
+
+Phone test of 0.6.5 with the YouTube slot pinned to a Hysteria2 server: the server stopped answering (QUIC handshake
+`timeout: no recent network activity`), the home feed stayed in skeleton state for 100 s, and the slot never moved.
+Reason: the slot's DNS (`zapret-slot-dns-youtube`) leaves through the slot's server, so every YouTube lookup hung for 10 s,
+but the Hysteria client retries its handshake quietly (one `connect error` line, then nothing), so the repetition counter
+of `SlotFailoverPolicy` saw one hint instead of three. The main supervisor's probe goes through the main server and
+reported "false alarm".
+
+Change: a timeout of a slot's own DNS (`dns/fallback[zapret-slot-dns-<id>]: resolve failed ... timeout|deadline|stateless
+reset`, parsed by `CoreLogHints.slotDnsFailures`) is a failure hint for the server the slot sits on
+(`SlotFailoverPolicy.onSlotDnsFailure`). At most one hint per slot per 5 s, so a burst of queued lookups is one failure and
+a move needs three separate failures (about 10 s of a dead path). Everything else is unchanged: a pin that does not answer
+is left until the server is back, moves are rate limited, the default slot never moves, and the timeline shows
+`... отказов за минуту (DNS слота), слоты уходят: ...`. Tests: `SlotFailoverTest` (burst counts once, default and unknown
+slots ignored) and `CoreLogHintsTest` (real lines).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

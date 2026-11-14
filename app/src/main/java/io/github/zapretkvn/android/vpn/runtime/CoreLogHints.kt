@@ -43,6 +43,22 @@ internal object CoreLogHints {
         return names?.let { DnsFailureHint(it) }
     }
 
+    /**
+     * Slots whose own DNS timed out in this batch: `dns/fallback[zapret-slot-dns-youtube]: resolve failed for server
+     * zapret-slot-dns-youtube-udp: ... timeout`. The slot's DNS leaves through the slot's server, so this is the first
+     * sign of a dead slot server ([io.github.zapretkvn.android.slots.SlotFailoverPolicy.onSlotDnsFailure]).
+     */
+    fun slotDnsFailures(messages: List<String>): Set<String> {
+        var ids: MutableSet<String>? = null
+        for (message in messages) {
+            val match = SLOT_DNS_FAILURE.find(message) ?: continue
+            if (!DNS_TIMEOUT.containsMatchIn(message.substring(match.range.last + 1))) continue
+            (ids ?: mutableSetOf<String>().also { ids = it }) += match.groupValues[1]
+        }
+        return ids.orEmpty()
+    }
+
+    private val SLOT_DNS_FAILURE = Regex("""dns/fallback\[zapret-slot-dns-([a-z0-9_]+)\]: resolve failed""")
     private val DNS_FAILURE = Regex("""dns: (?:exchange|lookup) failed(?: for (\S*))?""")
     // QUIC `stateless reset`: узел потерял состояние соединения и больше не отвечает на него,
     // для DNS через туннель это тот же отказ, что и таймаут (запрос не получает ответа).

@@ -73,18 +73,34 @@ internal class SlotCoordinator(
             // (the main selector ends the session instead, see PathSupervisor; a slot has no session to end).
             val security = hint.code in PathSupervisor.SECURITY_FAILURES
             if (!security && hint.code !in PathSupervisor.SWITCHABLE_FAILURES) continue
-            when (val decision = policy.onFailureHint(hint.outboundTag, mainServer, host.mainDeadServers(), immediate = security)) {
-                is SlotFailoverDecision.Ignore -> Unit
-                is SlotFailoverDecision.Move -> {
-                    host.timeline(
-                        "${host.serverName(decision.failedServer)}: ${decision.hints} отказов за минуту (${hint.code.name}), " +
-                            "слоты уходят: ${decision.moves.joinToString { "${title(it.slotId)} → ${host.serverName(it.to)}" }}.",
-                    )
-                    // The new server's name must resolve before the command.
-                    ServerNameRegistry.useForSlots(policy.slotServers())
-                    publish(session)
-                    decision.moves.forEach { move -> move(session, policy, move) }
-                }
+            apply(session, policy, hint.code.name, policy.onFailureHint(hint.outboundTag, mainServer, host.mainDeadServers(), immediate = security))
+        }
+    }
+
+    /**
+     * The own DNS of these slots timed out. A dead slot server often shows only this: the client retries quietly and
+     * the log has no connect errors to count (field case 2026-11-14: a pinned YouTube server stopped answering and
+     * every YouTube lookup hung for 100 s without a single move).
+     */
+    fun onSlotDnsFailures(session: CoreSession, slotIds: Set<String>, mainServer: String?) {
+        val policy = failover ?: return
+        for (slotId in slotIds) {
+            apply(session, policy, "DNS слота", policy.onSlotDnsFailure(slotId, mainServer, host.mainDeadServers()))
+        }
+    }
+
+    private fun apply(session: CoreSession, policy: SlotFailoverPolicy, what: String, decision: SlotFailoverDecision) {
+        when (decision) {
+            is SlotFailoverDecision.Ignore -> Unit
+            is SlotFailoverDecision.Move -> {
+                host.timeline(
+                    "${host.serverName(decision.failedServer)}: ${decision.hints} отказов за минуту ($what), " +
+                        "слоты уходят: ${decision.moves.joinToString { "${title(it.slotId)} → ${host.serverName(it.to)}" }}.",
+                )
+                // The new server's name must resolve before the command.
+                ServerNameRegistry.useForSlots(policy.slotServers())
+                publish(session)
+                decision.moves.forEach { move -> move(session, policy, move) }
             }
         }
     }
