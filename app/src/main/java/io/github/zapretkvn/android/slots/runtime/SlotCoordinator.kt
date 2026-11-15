@@ -198,7 +198,8 @@ internal class SlotCoordinator(
                 // The one-hour slot marks count here too: a replacement the slot has just left for DNS or connect
                 // failures is no candidate for a trial (field case 2026-11-15: the only rescue attempt of the episode
                 // went to a server that fails the slot's DNS, so the video never got a second try). Soft, like the rest.
-                val marked = host.slotServerHealth(session).failed
+                val health = host.slotServerHealth(session)
+                val marked = health.failed
                 SlowSwitchSnapshot(
                     currentId = currentId,
                     targets = SlotCandidates.targets(
@@ -210,6 +211,7 @@ internal class SlotCoordinator(
                     ),
                     hints = host.latencyHints(session.profileId),
                     busy = host.busy(),
+                    alive = health.alive,
                 )
             }
 

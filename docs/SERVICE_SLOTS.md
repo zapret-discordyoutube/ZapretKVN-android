@@ -322,6 +322,31 @@ works it out alone.
 
 Tests: `DeadTrialTest`, `YoutubeSlowSwitchTest` (Starving candidate then Healthy one).
 
+### The rescue judges by proof and never keeps a starved server (Android 0.6.15, owner decision 2026-11-15)
+
+Field case 2026-11-15 (0.6.14, phone, YouTube slot pinned to 4virtual): the app skipped the marked Clermany and went on
+after a bad replacement, but both replacements it tried were bad (Rusina judged slow after 6 s, Hipnl dead for UDP), the
+episode restored the starving 4virtual and the video froze again. 4virtual gave one burst of 30-127 KB/s and then about
+4 KB/s on googlevideo in both runs, with a 5 ms round trip: a fast ping says nothing about video. Owner choice: judge by
+proof, never keep a starved server.
+
+- **Marked at the first trial** (`YoutubeSlotSwitchHost.trialSwitch`): the server the video starved on gets the one-hour
+  slot mark at once, whatever the trials turn out to be (a pin included). Before, only a successful move marked it.
+- **Proof first** (`YoutubeSwitchPolicy.candidates`, `SlowSwitchSnapshot.alive`): candidates are ordered by past YouTube
+  speed, then by a good relay result younger than six hours, then by ping and profile order. A server that was never seen
+  working goes after the ones that were.
+- **More tries** (`MAX_CANDIDATES` 2 → 3, `MAX_SWITCHES_PER_WINDOW` 3 → 6 so that one episode does not use the window up).
+- **No way back to the starved server** (`YoutubeSwitchHost.endWithoutWinner`): when no candidate plays well and one at
+  least answered (slow, not dead), the slot stays on it instead of returning to the starved server. With no candidate that
+  answered, the slot goes back as before. The main selector's episode (no slots) still restores the user's choice.
+- **Log:** `Ни один запасной сервер не дал здорового видео: слот остаётся на …, а не на …, где видео голодало.`
+
+Not solved and recorded as a hypothesis: googlevideo links are bound to the address that asked for the player, so a trial
+of another server with the same player may be judged slow only because the old links do not fit the new address; the
+wedge notice (close YouTube and open the video again) stays the way out of that case.
+
+Tests: `YoutubeSlowSwitchTest` (proof order, speed history beats proof, three tries).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

@@ -23,7 +23,7 @@ internal object YoutubeSwitchDefaults {
     const val COOLDOWN_MILLIS = 90_000L
 
     /** Не больше столько переключений за [WINDOW_MILLIS]: сервер не должен прыгать без конца. */
-    const val MAX_SWITCHES_PER_WINDOW = 3
+    const val MAX_SWITCHES_PER_WINDOW = 6
     const val WINDOW_MILLIS = 10 * 60_000L
 
     /** Сколько ждать здорового видео на кандидате. */
@@ -33,7 +33,7 @@ internal object YoutubeSwitchDefaults {
     const val SLOW_MARK_MILLIS = 30 * 60_000L
 
     /** Сколько кандидатов пробовать за один эпизод. */
-    const val MAX_CANDIDATES = 2
+    const val MAX_CANDIDATES = 3
 
     /** Средняя по видео, ниже которой сервер по истории не берётся совсем (граница «медленно» в журнале). */
     const val BAD_HISTORY_BYTES_PER_SECOND = 50L * 1024
@@ -78,6 +78,8 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
         hints: Map<String, LatencyHint>,
         /** Серверы, которые только что подтверждённо не отвечали (общий failover): пробовать их нет смысла. */
         excludedIds: Set<String> = emptySet(),
+        /** Серверы с недавним хорошим результатом: после истории по видео и до пинга. */
+        alive: Set<String> = emptySet(),
         youtubeAverage: (String) -> Long?,
     ): List<FailoverTarget> {
         val now = monotonicMillis()
@@ -92,6 +94,7 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
             .withIndex()
             .sortedWith(
                 compareByDescending<IndexedValue<FailoverTarget>> { youtubeAverage(it.value.id) ?: -1L }
+                    .thenBy { if (it.value.id in alive) 0 else 1 }
                     .thenBy { hints[it.value.id]?.millis ?: Int.MAX_VALUE }
                     .thenBy { it.index },
             )
@@ -135,6 +138,12 @@ internal enum class VideoOutcome { Healthy, Starving, Silent }
 internal interface YoutubeSwitchHost {
     /** null: сессии больше нет. */
     suspend fun snapshot(): SlowSwitchSnapshot?
+
+    /**
+     * Ни один кандидат не дал здорового видео. По умолчанию возвращается прежний сервер; хост слота может оставить
+     * слот на кандидате, который отвечал, чтобы не вернуться на сервер, на котором видео голодало.
+     */
+    suspend fun endWithoutWinner(original: String) = restore(original)
 
     /** Пробно переключает селектор без сохранения; false: состояние изменилось или команда не прошла. */
     suspend fun trialSwitch(currentId: String, candidateId: String): Boolean
@@ -213,7 +222,7 @@ internal class YoutubeSwitchEngine(
         val original = snapshot.currentId
         state.original = original
         policy.markSlow(original)
-        val candidates = policy.candidates(original, snapshot.targets, hintsOf(snapshot), excludedIds(), youtubeAverage)
+        val candidates = policy.candidates(original, snapshot.targets, hintsOf(snapshot), excludedIds(), snapshot.alive, youtubeAverage)
         if (candidates.isEmpty()) {
             host.log("YouTube на сервере $original медленный, подходящего запасного сервера нет.")
             policy.onEpisodeEnd()
@@ -264,7 +273,7 @@ internal class YoutubeSwitchEngine(
                 }
             }
         }
-        host.restore(original)
+        host.endWithoutWinner(original)
         policy.onEpisodeEnd()
         return YoutubeSwitchOutcome.AllCandidatesSlow
     }

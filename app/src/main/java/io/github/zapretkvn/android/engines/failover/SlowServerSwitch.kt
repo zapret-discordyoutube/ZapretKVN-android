@@ -293,6 +293,8 @@ internal data class SlowSwitchSnapshot(
     val hints: Map<String, LatencyHint>,
     /** Подключение, переподключение или failover в процессе. */
     val busy: Boolean,
+    /** Серверы с недавним хорошим результатом проверки: при прочих равных их пробуют первыми. */
+    val alive: Set<String> = emptySet(),
 )
 
 /**

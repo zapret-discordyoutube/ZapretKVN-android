@@ -72,11 +72,23 @@ internal class YoutubeSlotSwitchHost(
      */
     private var baseAfterDeadTrial: String? = null
 
+    /** The server YouTube starved on when this episode began; marked for the hour at the first trial. */
+    private var starvedOriginal: String? = null
+
+    /** The last candidate that answered but played slowly: where the slot stays if no candidate wins (never dead ones). */
+    private var slowButAlive: String? = null
+
     override suspend fun snapshot(): SlowSwitchSnapshot? = context.snapshot(session, slotId)
 
     override suspend fun trialSwitch(currentId: String, candidateId: String): Boolean {
         val from = baseAfterDeadTrial ?: currentId
         baseAfterDeadTrial = null
+        if (starvedOriginal == null) {
+            // The video starved on this server: remember it at once, whatever the trials turn out to be. The next
+            // connect (a pin included), the next episode and the slot's failover do not return to it for the hour.
+            starvedOriginal = currentId
+            context.markLeft(session, currentId)
+        }
         if (!context.canTrial(session, slotId, from)) return false
         if (from == candidateId) {
             // The slot's failover has already put it on this candidate: nothing to move, the video is judged there.
@@ -111,7 +123,7 @@ internal class YoutubeSlotSwitchHost(
                 val verdict = verdicts.receive()
                 outcome = when {
                     verdict.healthy -> VideoOutcome.Healthy
-                    verdict.starving -> VideoOutcome.Starving
+                    verdict.starving -> VideoOutcome.Starving.also { slowButAlive = trialId }
                     else -> null
                 }
             }
@@ -129,6 +141,28 @@ internal class YoutubeSlotSwitchHost(
             return VideoOutcome.Starving
         }
         return VideoOutcome.Silent
+    }
+
+    override suspend fun endWithoutWinner(original: String) {
+        val keep = slowButAlive
+        val place = context.placeOf(session, slotId)
+        if (keep != null && keep != original && place != null) {
+            // The original starved the video and a replacement at least answers: do not go back to the starved server.
+            if (place != keep) {
+                context.place(session, slotId, keep)
+                val failure = switcher.moveSlot(session, selectorTag, keep)
+                if (failure != null) {
+                    context.place(session, slotId, place)
+                    restore(original)
+                    return
+                }
+            }
+            trialId = null
+            RuntimeLog.resetVideoDetector()
+            log("Ни один запасной сервер не дал здорового видео: слот остаётся на ${redact(keep)}, а не на ${redact(original)}, где видео голодало.")
+            return
+        }
+        restore(original)
     }
 
     /** Already in place since the trial; the slot's server is session state, so there is nothing to persist. */

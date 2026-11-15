@@ -120,11 +120,29 @@ class YoutubeSlowSwitchTest {
 
     @Test
     fun `when every candidate is slow the original server comes back`() = runTest {
-        val host = FakeHost(snapshot("Hipge", "A", "B", "C"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving))
+        val host = FakeHost(snapshot("Hipge", "A", "B", "C", "D"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving))
         val outcome = engine(host).runEpisode()
         assertEquals(YoutubeSwitchOutcome.AllCandidatesSlow, outcome)
-        assertEquals("only two candidates per episode", 2, host.calls.count { it.startsWith("trial") })
+        assertEquals("only three candidates per episode", 3, host.calls.count { it.startsWith("trial") })
         assertEquals("restore:Hipge", host.calls.last())
+    }
+
+    /** Field case 2026-11-15 (0.6.14): the two replacements tried first were a slow one and a dead one; proof goes first. */
+    @Test
+    fun `servers with a recent good result are tried before unknown ones`() {
+        val policy = policy()
+        val all = targets("Hipge", "A", "B", "C", "D")
+        val picked = policy.candidates("Hipge", all, emptyMap(), alive = setOf("C", "D")) { null }
+        assertEquals(listOf("C", "D", "A"), picked.map { it.id })
+    }
+
+    @Test
+    fun `a known good YouTube speed still beats proof of life`() {
+        val policy = policy()
+        val all = targets("Hipge", "A", "B", "C")
+        val average = mapOf("B" to 400 * kb)
+        val picked = policy.candidates("Hipge", all, emptyMap(), alive = setOf("C")) { average[it] }
+        assertEquals(listOf("B", "C", "A"), picked.map { it.id })
     }
 
     @Test
@@ -197,7 +215,7 @@ class YoutubeSlowSwitchTest {
         val hints = mapOf("PingFailed" to LatencyHint(null, failed = true), "Unknown" to LatencyHint(40, failed = false))
         val average = mapOf("BadHistory" to 10 * kb, "Good" to 300 * kb, "Better" to 700 * kb)
         val picked = policy.candidates("Hipge", all, hints) { average[it] }
-        assertEquals("only two candidates per episode, best known first", listOf("Better", "Good"), picked.map { it.id })
+        assertEquals("only three candidates per episode, best known first", listOf("Better", "Good", "Unknown"), picked.map { it.id })
         val withoutKnown = policy.candidates("Hipge", all, hints) { null }
         // без истории: известный по пингу первым, затем в порядке профиля; плохие и помеченные не берутся никогда
         assertEquals("Unknown", withoutKnown.first().id)
