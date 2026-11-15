@@ -36,8 +36,13 @@ internal object SlotMarkRules {
     /** A repeat counts as a repeat for this long after the last mark; later the server starts again from one hour. */
     const val MEMORY_MILLIS = 24 * 60 * 60 * 1_000L
 
-    /** A mark: when it was set and how many times the server has failed the slot again after a mark ran out. */
-    data class Mark(val at: Long, val strikes: Int = 1)
+    /**
+     * A mark: when it was set and how many times the server has failed the slot again after a mark ran out. [video]: the
+     * only reason is that YouTube video starved there (no DNS, connect or certificate failure). Such a mark steers the
+     * automatic choice but does not overrule the user's pin at connect (0.6.23): that reason proved unreliable, the
+     * YouTube app itself stalls on some addresses, and the running episode still moves a pinned slot that starves.
+     */
+    data class Mark(val at: Long, val strikes: Int = 1, val video: Boolean = false)
 
     fun ttl(strikes: Int): Long = TTL_MILLIS shl (strikes.coerceIn(1, MAX_STRIKES) - 1)
 
@@ -49,20 +54,30 @@ internal object SlotMarkRules {
 
     /** The marks that still keep a slot away at [now]: key to the time of the mark. */
     fun live(marks: Map<String, Mark>, now: Long): Map<String, Long> =
-        marks.filter { (_, mark) -> now - mark.at in 0..ttl(mark.strikes) }.mapValues { it.value.at }
+        liveMarks(marks, now).mapValues { it.value.at }
+
+    /** Keys whose live mark has only the "video starved" reason. */
+    fun liveVideoOnly(marks: Map<String, Mark>, now: Long): Set<String> =
+        liveMarks(marks, now).filterValues { it.video }.keys
+
+    private fun liveMarks(marks: Map<String, Mark>, now: Long): Map<String, Mark> =
+        marks.filter { (_, mark) -> now - mark.at in 0..ttl(mark.strikes) }
 
     /**
      * [key] failed the slot at [now]. A failure while a mark still runs keeps the strike count (the slot had left that
      * server already); a failure after the mark ran out, within [MEMORY_MILLIS], is a repeat and doubles the next mark.
      */
-    fun add(marks: Map<String, Mark>, key: String, now: Long): Map<String, Mark> {
+    fun add(marks: Map<String, Mark>, key: String, now: Long, video: Boolean = false): Map<String, Mark> {
         val previous = marks[key]
+        val stillLive = previous != null && now - previous.at in 0..ttl(previous.strikes)
         val strikes = when {
             previous == null || now - previous.at > MEMORY_MILLIS -> 1
-            now - previous.at <= ttl(previous.strikes) -> previous.strikes
-            else -> minOf(previous.strikes + 1, MAX_STRIKES)
+            stillLive -> previous!!.strikes
+            else -> minOf(previous!!.strikes + 1, MAX_STRIKES)
         }
-        return remembered(marks + (key to Mark(now, strikes)), now)
+        // A real failure wins: a video mark over a running failure mark keeps the failure.
+        val videoOnly = video && !(stillLive && previous?.video == false)
+        return remembered(marks + (key to Mark(now, strikes, videoOnly)), now)
     }
 
     /**
@@ -74,11 +89,16 @@ internal object SlotMarkRules {
         return if (before == null) marks - key else marks + (key to before)
     }
 
-    /** One mark is a number (the time, one strike: files of 0.6.13-0.6.18) or `[time, strikes]`. */
+    /** One mark is a number (the time, one strike: files of 0.6.13-0.6.18), `[time, strikes]` or `[time, strikes, "v"]` (video). */
     fun encode(marks: Map<String, Mark>): String =
         buildJsonObject {
             marks.toSortedMap().forEach { (key, mark) ->
-                put(key, if (mark.strikes <= 1) JsonPrimitive(mark.at) else JsonArray(listOf(JsonPrimitive(mark.at), JsonPrimitive(mark.strikes))))
+                val value = when {
+                    mark.video -> JsonArray(listOf(JsonPrimitive(mark.at), JsonPrimitive(mark.strikes), JsonPrimitive("v")))
+                    mark.strikes <= 1 -> JsonPrimitive(mark.at)
+                    else -> JsonArray(listOf(JsonPrimitive(mark.at), JsonPrimitive(mark.strikes)))
+                }
+                put(key, value)
             }
         }.toString()
 
@@ -92,7 +112,8 @@ internal object SlotMarkRules {
                 is JsonArray -> {
                     val at = (value.getOrNull(0) as? JsonPrimitive)?.longOrNull
                     val strikes = (value.getOrNull(1) as? JsonPrimitive)?.intOrNull
-                    if (at != null && strikes != null) Mark(at, strikes.coerceIn(1, MAX_STRIKES)) else null
+                    val video = (value.getOrNull(2) as? JsonPrimitive)?.takeIf { it.isString }?.content == "v"
+                    if (at != null && strikes != null) Mark(at, strikes.coerceIn(1, MAX_STRIKES), video) else null
                 }
                 else -> null
             }
@@ -127,11 +148,11 @@ internal class SlotServerMarks(
     }
 
     /** [key] did not work for a slot just now. */
-    fun mark(key: String) {
+    fun mark(key: String, video: Boolean = false) {
         val now = clock()
         synchronized(lock) {
             val before = marks[key]
-            marks = SlotMarkRules.add(marks, key, now)
+            marks = SlotMarkRules.add(marks, key, now, video)
             marks[key]?.let { lastChange[key] = before to it }
         }
         save()
@@ -161,6 +182,9 @@ internal class SlotServerMarks(
 
     /** Marks that still keep a slot away (the first for an hour, repeats longer), key to the time of the mark. */
     fun active(): Map<String, Long> = synchronized(lock) { SlotMarkRules.live(marks, clock()) }
+
+    /** Keys of [active] whose only reason is that YouTube video starved there. */
+    fun activeVideoOnly(): Set<String> = synchronized(lock) { SlotMarkRules.liveVideoOnly(marks, clock()) }
 
     private fun writeAtomically(text: String) {
         file.parentFile?.let { parent ->

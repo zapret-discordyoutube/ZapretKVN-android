@@ -487,6 +487,27 @@ stays saved.
 Tests: `YoutubeSlowSwitchTest` (the field case picks Rusina by history, no proven server or a failed command restores the
 original, a dead proven server is skipped), `YoutubeWedgeNoticeTest`.
 
+### A pin beats a "video starved" mark, and the YouTube slot fails over to proven servers (Android 0.6.23, 2026-11-15)
+
+Field check 2026-11-15 20:36-20:41 UTC on 0.6.22 (new 55-minute video, the owner's pin on Rusina): the first frame came
+about 90 s after opening. Two causes, both fixed here:
+
+- **A pin lost to a wrong mark.** At connect the planner skipped the pinned Rusina («обойдено серверов с недавним
+  отказом: 4») because of a slot mark set at 18:47 by a YouTube episode, for a stall that was the YouTube app's own (see
+  0.6.20-0.6.22). Since 0.6.23 a mark has a kind: `SlotMarkRules.Mark.video` is set when the only reason is that YouTube
+  video starved there (`SlotSwitchContext.markLeft`), and the file stores it as `[time, strikes, "v"]`. A pin beats a
+  video mark at connect (`SlotServerHealth.blockedFor(pins)`), never a failure mark (DNS, connections, certificate) nor
+  a failed probe; the automatic choice and the episode's candidates still avoid video-marked servers. A failure while a
+  video mark runs turns it into a failure mark, not the other way round. Marks written before 0.6.23 read as failure
+  marks (their reason is unknown) and run out by themselves. Log: «закрепление сильнее отметки «видео голодало»: N».
+- **A replacement without proof.** Plade failed the slot's DNS (the slot left it 11 s after the first lookup, the
+  resolver's 10 s deadline is the floor), and the failover took 4vircosx, whose YouTube connections then hung 10 s at a
+  time for about a minute. `SlotFailoverPolicy` now gets `proven` (slot id to servers, YouTube: `youtubeProven`) and
+  ranks replacements like the planner at connect: not taken by another slot, then proven for this slot, then alive.
+
+Tests: `SlotServerMarksTest` (kinds, a failure wins, file round trip, old files), `SlotServerHealthTest` (a pin beats a
+video mark only), `SlotFailoverTest` (a YouTube replacement prefers proof; YouTube proof does not steer Telegram).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

@@ -902,9 +902,9 @@ internal class ServerSwitchCoordinator(
             )
         }
 
-        override fun markSlotUnusable(session: CoreSession, serverId: String) {
+        override fun markSlotUnusable(session: CoreSession, serverId: String, video: Boolean) {
             val foreign = session.slotPlan?.foreign.orEmpty()
-            container.slotServerMarks.mark(ForeignServers.refOf(serverId, session.profileId, foreign).encode())
+            container.slotServerMarks.mark(ForeignServers.refOf(serverId, session.profileId, foreign).encode(), video)
         }
 
         override fun forgiveSlotMark(session: CoreSession, serverId: String) {

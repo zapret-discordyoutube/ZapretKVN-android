@@ -8,7 +8,18 @@ import io.github.zapretkvn.android.network.probes.hint
  * (a fresh «не отвечает» in the latency store, or a slot mark, see [SlotMarkRules]); [alive] servers answered a
  * relay test recently and win ties between servers that no other slot uses. Both are sets of runtime tags.
  */
-internal data class SlotServerHealth(val failed: Set<String>, val alive: Set<String>) {
+internal data class SlotServerHealth(
+    val failed: Set<String>,
+    val alive: Set<String>,
+    /** Part of [failed] whose only reason is a slot mark "YouTube video starved there" (no failed probe, no failure mark). */
+    val videoOnly: Set<String> = emptySet(),
+) {
+    /**
+     * Servers a slot must not start on, given the user's [pinned] servers: a pin beats a "video starved" mark (0.6.23,
+     * owner 2026-11-15: such marks were set for stalls of the YouTube app itself), never a real failure.
+     */
+    fun blockedFor(pinned: Collection<String>): Set<String> = failed - (videoOnly intersect pinned.toSet())
+
     companion object {
         val Unknown = SlotServerHealth(emptySet(), emptySet())
 
@@ -29,19 +40,24 @@ internal fun slotServerHealth(
     activeTags: Collection<String>,
     foreign: List<ForeignServer>,
     now: Long = System.currentTimeMillis(),
+    /** Keys of [marks] set only because YouTube video starved there. */
+    videoMarks: Set<String> = emptySet(),
 ): SlotServerHealth {
     val failed = mutableSetOf<String>()
     val alive = mutableSetOf<String>()
+    val videoOnly = mutableSetOf<String>()
     fun judge(runtimeTag: String, ref: ServerRef, saved: PersistedServerLatency?) {
         val relay = saved?.relay
         val provedSince = relay != null && !relay.failed && relay.measuredAtEpochMillis > (marks[ref.encode()] ?: Long.MAX_VALUE)
         val good = relay != null && !relay.failed && now - relay.measuredAtEpochMillis <= SlotServerHealth.ALIVE_TTL_MILLIS
         if (good) alive += runtimeTag
         val markedForSlots = marks.containsKey(ref.encode()) && !provedSince
-        if (saved?.hint(now)?.failed == true || markedForSlots) failed += runtimeTag
+        val probeFailed = saved?.hint(now)?.failed == true
+        if (probeFailed || markedForSlots) failed += runtimeTag
+        if (!probeFailed && markedForSlots && ref.encode() in videoMarks) videoOnly += runtimeTag
     }
     val own = latency(profileId)
     activeTags.forEach { judge(it, ServerRef(profileId, it), own[it]) }
     for (server in foreign) judge(server.runtimeTag, server.ref, latency(server.ref.profileId)[server.ref.tag])
-    return SlotServerHealth(failed, alive)
+    return SlotServerHealth(failed, alive, videoOnly)
 }

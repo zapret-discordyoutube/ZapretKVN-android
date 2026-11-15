@@ -21,12 +21,14 @@ class SlotFailoverTest {
         pool: List<String> = servers,
         failed: Set<String> = emptySet(),
         alive: Set<String> = emptySet(),
+        proven: Map<String, Set<String>> = emptyMap(),
     ) = SlotFailoverPolicy(
         list,
         pool,
         mapOf(SlotIds.YOUTUBE to youtube, SlotIds.TELEGRAM to telegram, SlotIds.DEFAULT to main),
         recentlyFailed = { failed },
         alive = { alive },
+        proven = { proven },
     ) { now }
 
     private fun SlotFailoverPolicy.fail(server: String, times: Int, main: String = "A", dead: Set<String> = emptySet()): SlotFailoverDecision {
@@ -63,6 +65,22 @@ class SlotFailoverTest {
         val p = policy(pool = listOf("A", "B", "C", "D", "E"), alive = setOf("E"))
         val decision = p.fail("B", 3) as SlotFailoverDecision.Move
         assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "E"), decision.moves.single())
+    }
+
+    /** Field case 2026-11-15 (0.6.22): the YouTube slot left Plade for 4vircosx, whose connections then hung a minute. */
+    @Test
+    fun `a YouTube replacement prefers a server that played video fast before, over mere proof of life`() {
+        val p = policy(alive = setOf("D"), proven = mapOf(SlotIds.YOUTUBE to setOf("E")), pool = listOf("A", "B", "C", "D", "E"))
+        val decision = p.fail("B", 3)
+        assertTrue(decision is SlotFailoverDecision.Move)
+        assertEquals(
+            "E is proven for YouTube, D only answers pings (A and C are taken by the main selector and Telegram)",
+            listOf(SlotMove(SlotIds.YOUTUBE, "B", "E")),
+            (decision as SlotFailoverDecision.Move).moves,
+        )
+        val telegram = policy(youtube = "C", telegram = "B", alive = setOf("D"), proven = mapOf(SlotIds.YOUTUBE to setOf("E")), pool = listOf("A", "B", "C", "D", "E"))
+        val other = telegram.fail("B", 3) as SlotFailoverDecision.Move
+        assertEquals("YouTube proof does not steer the Telegram slot", SlotMove(SlotIds.TELEGRAM, "B", "D"), other.moves.single())
     }
 
     @Test

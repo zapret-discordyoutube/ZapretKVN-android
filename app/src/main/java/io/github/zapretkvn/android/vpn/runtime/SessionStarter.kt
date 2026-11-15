@@ -241,7 +241,10 @@ internal class SessionStarter(
      * not start on them, a pin on one included, so a connect does not begin with a minute of waiting on a dead server.
      */
     private fun slotHealth(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): SlotServerHealth =
-        slotServerHealth(container.serverLatencyStore::forProfile, container.slotServerMarks.active(), profileId, activeTags, foreign)
+        slotServerHealth(
+            container.serverLatencyStore::forProfile, container.slotServerMarks.active(), profileId, activeTags, foreign,
+            videoMarks = container.slotServerMarks.activeVideoOnly(),
+        )
 
     private suspend fun loadForeignServers(activeId: String, activeName: String, active: ParsedConfig): List<ForeignServer> {
         val others = container.profileStore.profiles.value.filter { it.id != activeId }.mapNotNull { meta ->
@@ -453,14 +456,18 @@ internal class SessionStarter(
                     managed.tags + foreignServers.map { it.runtimeTag },
                     managed.selected,
                     selectedPackages,
-                    unusable = health.failed,
+                    unusable = health.blockedFor(pins.values),
                     alive = health.alive,
                     // Servers that played YouTube fast in the past go first for the YouTube slot (a fast ping says
                     // nothing about video: field case 2026-11-15, 4virtual answered in 5 ms and starved every video).
                     proven = mapOf(
                         SlotIds.YOUTUBE to managed.tags.filter { RuntimeLog.youtubeProven(it, SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND) }.toSet(),
                     ),
-                ).copy(foreign = foreignServers, skippedFailed = (health.failed - setOfNotNull(managed.selected)).size)
+                ).copy(
+                    foreign = foreignServers,
+                    skippedFailed = (health.blockedFor(pins.values) - setOfNotNull(managed.selected)).size,
+                    pinnedOverVideoMark = (health.failed - health.blockedFor(pins.values)).size,
+                )
             }
         } else {
             null
@@ -474,6 +481,7 @@ internal class SessionStarter(
                     "слоты: " + slotPlan.specs.joinToString("; ") { "${it.slotId}=${it.defaultMember} из ${it.members.size}" } +
                         (if (foreignServers.isEmpty()) "" else "; серверов из других профилей: ${foreignServers.size}") +
                         (if (slotPlan.skippedFailed == 0) "" else "; обойдено серверов с недавним отказом: ${slotPlan.skippedFailed}") +
+                        (if (slotPlan.pinnedOverVideoMark == 0) "" else "; закрепление сильнее отметки «видео голодало»: ${slotPlan.pinnedOverVideoMark}") +
                         "; остальные приложения идут через основной сервер"
                 },
             )

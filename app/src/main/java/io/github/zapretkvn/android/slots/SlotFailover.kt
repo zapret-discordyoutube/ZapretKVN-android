@@ -40,6 +40,12 @@ internal class SlotFailoverPolicy(
     private val recentlyFailed: () -> Set<String> = { emptySet() },
     /** Servers with recent proof of life: among equally used candidates they go first. */
     private val alive: () -> Set<String> = { emptySet() },
+    /**
+     * Slot id to the servers that delivered that slot's traffic fast before (YouTube: video speed history), the same
+     * order as at the start of a session. Field case 2026-11-15 (0.6.22): the YouTube slot left Plade for 4vircosx,
+     * whose YouTube connections then hung for a minute, while servers with fast video history were in the pool.
+     */
+    private val proven: () -> Map<String, Set<String>> = { emptyMap() },
     private val clock: () -> Long,
 ) {
     private var slots: List<SlotDefinition> = slots
@@ -98,8 +104,16 @@ internal class SlotFailoverPolicy(
         val previous = current.toMutableMap()
         mainServer?.let { previous[SlotIds.DEFAULT] = it }
         val provenAlive = alive()
+        val provenFor = proven()
         fun movesAvoiding(unusable: Set<String>): List<SlotMove> {
-            val candidates = servers.map { SlotServer(it, usable = it !in unusable, alive = it in provenAlive) }
+            val candidates = servers.map { server ->
+                SlotServer(
+                    server,
+                    usable = server !in unusable,
+                    alive = server in provenAlive,
+                    provenFor = provenFor.filterValues { server in it }.keys,
+                )
+            }
             val assignments = SlotServerAssigner.assign(slots, candidates, previous)
             return assignments.mapNotNull { choice ->
                 val from = current[choice.slotId]

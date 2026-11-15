@@ -8,6 +8,8 @@ import io.github.zapretkvn.android.slots.SlotFailoverDecision
 import io.github.zapretkvn.android.slots.SlotFailoverPolicy
 import io.github.zapretkvn.android.slots.SlotIds
 import io.github.zapretkvn.android.slots.SlotMove
+import io.github.zapretkvn.android.slots.SlotPlanner
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.slots.SlotSelectors
 import io.github.zapretkvn.android.slots.youtube.SlotSwitchContext
 import io.github.zapretkvn.android.vpn.SlotState
@@ -63,6 +65,13 @@ internal class SlotCoordinator(
                 initial,
                 recentlyFailed = { host.slotServerHealth(session).failed },
                 alive = { host.slotServerHealth(session).alive },
+                proven = {
+                    mapOf(
+                        SlotIds.YOUTUBE to servers.filter {
+                            RuntimeLog.youtubeProven(it, SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND)
+                        }.toSet(),
+                    )
+                },
             ) { clock() }
         }
         publish(session)
@@ -233,7 +242,8 @@ internal class SlotCoordinator(
 
             override fun markLeft(session: CoreSession, serverId: String) {
                 host.postToActor {
-                    if (host.isCurrent(session)) host.markSlotUnusable(session, serverId)
+                    // The YouTube episode marks a server only because the video starved there: a softer reason.
+                    if (host.isCurrent(session)) host.markSlotUnusable(session, serverId, video = true)
                 }
             }
 

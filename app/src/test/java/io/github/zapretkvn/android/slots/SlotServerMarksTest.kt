@@ -131,4 +131,21 @@ class SlotServerMarksTest {
         assertEquals(setOf("repeat"), reread.active().keys)
         marks.forgive("nothing-here")
     }
+
+    /** 0.6.23: a "video starved" mark is softer than a failure mark, and survives the file. */
+    @Test
+    fun `a video mark stays video unless a real failure comes, and the file keeps the kind`() {
+        val now = 100 * hour
+        var marks = SlotMarkRules.add(emptyMap(), "a", now, video = true)
+        assertEquals(setOf("a"), SlotMarkRules.liveVideoOnly(marks, now))
+        marks = SlotMarkRules.add(marks, "a", now + 1_000)
+        assertTrue("a failure turns it into a failure mark", SlotMarkRules.liveVideoOnly(marks, now + 1_000).isEmpty())
+        marks = SlotMarkRules.add(marks, "a", now + 2_000, video = true)
+        assertTrue("a video mark does not soften a running failure mark", SlotMarkRules.liveVideoOnly(marks, now + 2_000).isEmpty())
+        val video = SlotMarkRules.add(emptyMap(), "v", now, video = true) + SlotMarkRules.add(emptyMap(), "f", now)
+        val decoded = SlotMarkRules.decode(SlotMarkRules.encode(video))
+        assertEquals(video, decoded)
+        assertEquals(setOf("v"), SlotMarkRules.liveVideoOnly(decoded, now))
+        assertEquals("old files read as failure marks", SlotMarkRules.Mark(5L, 2), SlotMarkRules.decode("""{"x":[5,2]}""")["x"])
+    }
 }

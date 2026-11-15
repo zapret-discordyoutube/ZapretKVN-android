@@ -22,9 +22,10 @@ class SlotServerHealthTest {
         marks: Map<String, Long> = emptyMap(),
         foreign: List<ForeignServer> = emptyList(),
         foreignSaved: Map<String, PersistedServerLatency> = emptyMap(),
+        videoMarks: Set<String> = emptySet(),
     ) = slotServerHealth(
         { id -> if (id == profile) saved else if (id == other) foreignSaved else emptyMap() },
-        marks, profile, listOf("A", "B", "C"), foreign, now,
+        marks, profile, listOf("A", "B", "C"), foreign, now, videoMarks,
     )
 
     @Test
@@ -56,5 +57,22 @@ class SlotServerHealthTest {
         assertEquals(setOf("X@abcd1234"), marked.failed)
         val alive = health(foreign = listOf(server), foreignSaved = mapOf("X" to ok(1_000)))
         assertEquals(setOf("X@abcd1234"), alive.alive)
+    }
+
+    /** 0.6.23, field 2026-11-15 20:35: a "video starved" mark on Rusina kept the user's pin off it at connect. */
+    @Test
+    fun `a pin beats a video mark but never a real failure`() {
+        val video = ServerRef(profile, "B").encode()
+        val failure = ServerRef(profile, "C").encode()
+        val h = health(
+            saved = mapOf("A" to failed(60_000)),
+            marks = mapOf(video to now - 1_000, failure to now - 1_000),
+            videoMarks = setOf(video),
+        )
+        assertEquals(setOf("A", "B", "C"), h.failed)
+        assertEquals(setOf("B"), h.videoOnly)
+        assertEquals("pinned B starts there, unpinned servers stay avoided", setOf("A", "C"), h.blockedFor(listOf("B")))
+        assertEquals("a pin on a failed server or a failure mark does not help", setOf("A", "B", "C"), h.blockedFor(listOf("A", "C", "D")))
+        assertEquals(setOf("A", "C"), h.blockedFor(listOf("A", "B", "C")))
     }
 }
