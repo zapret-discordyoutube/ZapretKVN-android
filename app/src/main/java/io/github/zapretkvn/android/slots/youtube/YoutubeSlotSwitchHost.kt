@@ -197,6 +197,30 @@ internal class YoutubeSlotSwitchHost(
         )
     }
 
+    override suspend fun moveToProven(original: String, serverId: String): Boolean {
+        val place = context.placeOf(session, slotId) ?: return false
+        if (place != serverId) {
+            context.place(session, slotId, serverId)
+            val failure = switcher.moveSlot(session, selectorTag, serverId)
+            if (failure != null) {
+                context.place(session, slotId, place)
+                log("Перевод слота YouTube на ${redact(serverId)} не выполнен: ${failure.message.orEmpty()}")
+                return false
+            }
+        }
+        trialId = null
+        RuntimeLog.resetVideoDetector()
+        val server = redact(serverId)
+        context.timeline("YouTube: слот переведён на $server, где видео недавно шло быстро; пользователя просят открыть видео заново.")
+        context.announce(
+            session,
+            "YouTube не получал видео ни через один проверенный сервер. Слот YouTube перешёл на $server, где видео недавно " +
+                "шло быстро. Закройте YouTube (смахните из списка приложений) и откройте видео заново.",
+            "YouTube перешёл на $server: закройте его и откройте видео заново",
+        )
+        return true
+    }
+
     /** Already in place since the trial; the slot's server is session state, so there is nothing to persist. */
     override suspend fun commit(candidateId: String): Boolean = true
 

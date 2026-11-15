@@ -22,7 +22,8 @@ internal object YoutubeWedgeNotice {
     fun decide(outcome: YoutubeSwitchOutcome, lastShownAtMillis: Long?, nowMillis: Long): Notice? {
         val didNotHelp = outcome == YoutubeSwitchOutcome.Inconclusive ||
             outcome == YoutubeSwitchOutcome.AllCandidatesSlow ||
-            outcome is YoutubeSwitchOutcome.StarvesEverywhere
+            // a move to a proven server has already asked for the restart itself
+            (outcome is YoutubeSwitchOutcome.StarvesEverywhere && outcome.movedTo == null)
         if (!didNotHelp) return null
         if (lastShownAtMillis != null && nowMillis - lastShownAtMillis < MIN_GAP_MILLIS) return null
         return Notice(

@@ -28,6 +28,7 @@ class YoutubeWedgeNoticeTest {
             YoutubeSwitchOutcome.SwitchedUnverified("A"),
             YoutubeSwitchOutcome.TrialFailed,
             YoutubeSwitchOutcome.CommitRefused,
+            YoutubeSwitchOutcome.StarvesEverywhere(4, movedTo = "Rusina"),
         )
         quiet.forEach { assertNull(it.toString(), YoutubeWedgeNotice.decide(it, null, now)) }
     }

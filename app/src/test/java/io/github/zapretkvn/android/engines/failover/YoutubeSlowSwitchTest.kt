@@ -6,6 +6,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -46,6 +47,11 @@ class YoutubeSlowSwitchTest {
         override fun log(message: String) { calls += "log" }
         override fun notTheServer(original: String, starved: List<String>) {
             calls += "notTheServer:$original<-${starved.joinToString(",")}"
+        }
+        var moveOk = true
+        override suspend fun moveToProven(original: String, serverId: String): Boolean {
+            calls += "proven:$original->$serverId"
+            return moveOk
         }
         override fun announce(fromId: String, toId: String, restartVideo: Boolean) {
             calls += "announce:$fromId->$toId" + if (restartVideo) ":restart" else ""
@@ -161,6 +167,42 @@ class YoutubeSlowSwitchTest {
         assertEquals(YoutubeSwitchGate.Cooldown, policy.gate(enabled = true, busy = false))
         now += YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS - YoutubeSwitchDefaults.COOLDOWN_MILLIS
         assertEquals(YoutubeSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+    }
+
+    /**
+     * Field 2026-11-15 20:12-20:17 UTC (0.6.21): the YouTube app played through Rusina and got nothing through the pinned
+     * Finohost four minutes later. Owner decision: when the video starves everywhere, the slot goes to the server that
+     * recently proved fast for YouTube, even over a pin, and the user is asked to reopen the video.
+     */
+    @Test
+    fun `when the video starves everywhere the slot goes to the proven server with the best history`() = runTest {
+        val host = FakeHost(
+            snapshot("Finohost", "4vusa", "4vircosx", "Hosfinano", "Rusina", "Titiru"),
+            mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving),
+        )
+        val average = mapOf("Rusina" to 900 * kb, "Titiru" to 400 * kb, "Finohost" to 2_000 * kb)
+        val outcome = YoutubeSwitchEngine(
+            policy(), host, { average[it] }, proven = { it in setOf("Rusina", "Titiru", "Finohost") },
+        ).runEpisode()
+        assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(4, movedTo = "Rusina"), outcome)
+        assertEquals("proven:Finohost->Rusina", host.calls.last())
+        assertTrue("the original is never the refuge, even when proven", host.calls.none { it == "restore:Finohost" })
+        assertNull(YoutubeWedgeNotice.decide(outcome, null, now))
+    }
+
+    @Test
+    fun `without a proven server, or when the move fails, the original comes back`() = runTest {
+        val none = FakeHost(snapshot("A", "B", "C", "D"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving))
+        assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(4), YoutubeSwitchEngine(policy(), none, { null }).runEpisode())
+        assertEquals("restore:A", none.calls.last())
+        val failing = FakeHost(snapshot("A", "B", "C", "D", "E"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving))
+        failing.moveOk = false
+        val outcome = YoutubeSwitchEngine(policy(), failing, { null }, proven = { it == "E" }).runEpisode()
+        assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(4), outcome)
+        assertEquals(listOf("proven:A->E", "restore:A"), failing.calls.takeLast(2))
+        val deadProven = FakeHost(snapshot("A", "B", "C", "D", "E"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving))
+        YoutubeSwitchEngine(policy(), deadProven, { null }, excludedIds = { setOf("E") }, proven = { it == "E" }).runEpisode()
+        assertEquals("a proven server the failover saw dead is not used", "restore:A", deadProven.calls.last())
     }
 
     @Test

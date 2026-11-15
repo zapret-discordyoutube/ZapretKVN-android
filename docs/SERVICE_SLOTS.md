@@ -457,6 +457,36 @@ The log line says «…слот возвращается на него…».
 
 Tests: `YoutubeSlowSwitchTest` (the original comes back after `notTheServer`).
 
+### When the video starves everywhere, the slot goes to a proven server (Android 0.6.22, owner decision 2026-11-15)
+
+Field A/B 2026-11-15 on 0.6.21, fresh starts of the YouTube app (Morphe), new videos, four minutes apart:
+
+| Run | Result |
+|---|---|
+| Rusina, 20:12 and 20:27 | plays: 17.7 MB in 100 s, normal flows |
+| Finohost, 20:16 (and 19:31, 19:44) | stuck: 21 of 24 video flows sent more than they received |
+| Chrome on Finohost, 19:41 and 20:22 | plays: 15.8 MB and 2.3 MB, normal flows |
+
+The app's own log (logcat `YT.mlplayer`, `YT.qoe`) shows the same start on both servers: the one-request start
+(`loadOnesieVideo`) fails with `onesie.unavailable.host` / `MalformedURLException`, then `loadVideo` follows. On Rusina
+the player reports `onPlaying` 2.5 s later; on Finohost it stays in `onBuffering`. So the server's address does matter,
+but only for this client: YouTube answers the app's requests through Finohost without media, while Chrome through the
+same address gets video. The most likely cause is YouTube's stricter treatment of the modified client on some addresses
+(the replies are encrypted, so this is the best explanation, not a read fact). It is not the VPN path.
+
+The 0.6.21 rule (go back to the original server) therefore sent the slot back to exactly the server that failed. Since
+0.6.22, a `StarvesEverywhere` episode moves the slot to the server that recently proved fast for YouTube
+(`SpeedHistory.youtubeProven`, the best `youtubeAverage` first), even over a pin (owner decision: "proven server, ask to
+restart"), and the user is asked to close YouTube and open the video again (the player's links carry the old address).
+Not the original, not one the failover saw dead; this episode's candidates are allowed, because their trial ran on links
+of the old address and proves nothing. Without a proven server, or when the command fails, the original comes back as in
+0.6.21. The notice is the move's own; the generic "смена сервера не помогла" notice is not shown on top of it. Log:
+«YouTube: слот переведён на …, где видео недавно шло быстро; пользователя просят открыть видео заново.» The pin itself
+stays saved.
+
+Tests: `YoutubeSlowSwitchTest` (the field case picks Rusina by history, no proven server or a failed command restores the
+original, a dead proven server is skipped), `YoutubeWedgeNoticeTest`.
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

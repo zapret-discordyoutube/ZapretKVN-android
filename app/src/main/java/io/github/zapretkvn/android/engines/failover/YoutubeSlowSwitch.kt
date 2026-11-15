@@ -173,6 +173,13 @@ internal interface YoutubeSwitchHost {
      */
     fun notTheServer(original: String, starved: List<String>) = Unit
 
+    /**
+     * Видео голодало везде, а [serverId] недавно доказал, что отдаёт видео YouTube быстро: перевести туда без проверки и
+     * попросить открыть видео заново (ссылки плеера подписаны адресом прежнего сервера). false: хост так не умеет или
+     * команда не прошла, тогда движок возвращает прежний сервер.
+     */
+    suspend fun moveToProven(original: String, serverId: String): Boolean = false
+
     /** Пробно переключает селектор без сохранения; false: состояние изменилось или команда не прошла. */
     suspend fun trialSwitch(currentId: String, candidateId: String): Boolean
 
@@ -204,8 +211,11 @@ internal sealed interface YoutubeSwitchOutcome {
     data object Inconclusive : YoutubeSwitchOutcome
     data object AllCandidatesSlow : YoutubeSwitchOutcome
 
-    /** Видео голодало на прежнем сервере и на отвечающих кандидатах: дело в клиенте YouTube, отметки сняты. */
-    data class StarvesEverywhere(val servers: Int) : YoutubeSwitchOutcome
+    /**
+     * Видео голодало на прежнем сервере и на отвечающих кандидатах: отметки сняты. [movedTo]: слот переведён на сервер,
+     * где видео недавно шло быстро (владелец 2026-11-15), и пользователя попросили открыть видео заново.
+     */
+    data class StarvesEverywhere(val servers: Int, val movedTo: String? = null) : YoutubeSwitchOutcome
     data object TrialFailed : YoutubeSwitchOutcome
     data object CommitRefused : YoutubeSwitchOutcome
 }
@@ -216,6 +226,8 @@ internal class YoutubeSwitchEngine(
     private val youtubeAverage: (String) -> Long?,
     private val hintsOf: (SlowSwitchSnapshot) -> Map<String, LatencyHint> = { it.hints },
     private val excludedIds: () -> Set<String> = { emptySet() },
+    /** Сервер недавно доказал, что отдаёт видео YouTube быстро (`SpeedHistory.youtubeProven`). */
+    private val proven: (String) -> Boolean = { false },
 ) {
     /**
      * [keepOnSilent]: эпизод начался с вердикта «мёртвый кластер». Запущенный плеер держит ссылки именно этого кластера
@@ -318,9 +330,17 @@ internal class YoutubeSwitchEngine(
             // пользователя тоже): поле 2026-11-15 19:45, слот остался на Hosfinano вместо закреплённого Finohost.
             policy.clearSlow(starved + original)
             host.notTheServer(original, starved)
-            host.restore(original)
+            // Владелец 2026-11-15 («доказанный сервер, попросить перезапуск»): приложение YouTube не получало видео через
+            // адрес Finohost, а через Rusina играло (поле 20:12-20:17). Слот идёт туда, где видео недавно шло быстро,
+            // даже поверх закрепления; кандидаты этого эпизода не исключаются: их проба шла по ссылкам прежнего адреса.
+            val excluded = excludedIds()
+            val refuge = snapshot.targets
+                .filter { it.id != original && it.valid && !it.maintenance && it.id !in excluded && proven(it.id) }
+                .maxByOrNull { youtubeAverage(it.id) ?: 0L }
+            val movedTo = refuge?.id?.takeIf { host.moveToProven(original, it) }
+            if (movedTo == null) host.restore(original)
             policy.onEpisodeEnd(YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS)
-            return YoutubeSwitchOutcome.StarvesEverywhere(servers)
+            return YoutubeSwitchOutcome.StarvesEverywhere(servers, movedTo)
         }
         host.endWithoutWinner(original)
         policy.onEpisodeEnd()

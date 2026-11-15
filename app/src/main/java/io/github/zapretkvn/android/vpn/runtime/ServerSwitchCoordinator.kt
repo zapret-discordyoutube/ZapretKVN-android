@@ -19,6 +19,7 @@ import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.slots.SlotIds
+import io.github.zapretkvn.android.slots.SlotPlanner
 import io.github.zapretkvn.android.slots.ForeignServers
 import io.github.zapretkvn.android.slots.SlotServerHealth
 import io.github.zapretkvn.android.slots.slotServerHealth
@@ -702,6 +703,7 @@ internal class ServerSwitchCoordinator(
                 },
                 youtubeAverage = RuntimeLog::youtubeAverage,
                 excludedIds = supervisor::deadServerIds,
+                proven = { RuntimeLog.youtubeProven(it, SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND) },
             ).runEpisode(keepOnSilent = verdict.deadCluster)
             timeline(
                 (if (onSlot) "Слот YouTube, переключение при медленном видео" else "Переключение при медленном YouTube") +
@@ -748,7 +750,8 @@ internal class ServerSwitchCoordinator(
         YoutubeSwitchOutcome.Inconclusive -> "видео не пошло, прежний сервер возвращён"
         YoutubeSwitchOutcome.AllCandidatesSlow -> "запасные серверы тоже медленные, прежний возвращён"
         is YoutubeSwitchOutcome.StarvesEverywhere ->
-            "видео голодает на всех ${outcome.servers} проверенных серверах: дело не в сервере, отметки сняты"
+            "видео голодает на всех ${outcome.servers} проверенных серверах, отметки сняты" +
+                (outcome.movedTo?.let { ", слот перешёл на ${server(it)}, где видео недавно шло быстро" } ?: "")
         YoutubeSwitchOutcome.TrialFailed -> "переключение не удалось"
         YoutubeSwitchOutcome.CommitRefused -> "выбор не сохранён, прежний сервер возвращён"
     }
