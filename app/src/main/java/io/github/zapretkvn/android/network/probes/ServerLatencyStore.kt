@@ -269,7 +269,9 @@ class ServerLatencyStore(
                 .getOrNull()
                 ?.let(ServerLatencyCodec::decode)
                 .orEmpty()
-            val changedInMemory = synchronized(lock) {
+            // The version is read inside the lock together with the merge: a result recorded right after the lock is
+            // released must not be taken for "already on disk" (it would never be written until the next change).
+            val (changedInMemory, loadedVersion) = synchronized(lock) {
                 val current = mutableEntries.value
                 // Результаты, записанные до окончания чтения, новее файла.
                 val merged = stored.mapValues { (profileId, profile) ->
@@ -277,9 +279,9 @@ class ServerLatencyStore(
                 } + current.filterKeys { it !in stored }
                 mutableEntries.value = merged
                 version.value += 1
-                merged != stored
+                (merged != stored) to version.value
             }
-            if (!changedInMemory) writtenVersion.value = version.value
+            if (!changedInMemory) writtenVersion.value = loadedVersion
             loaded.complete(Unit)
             version.collect { target ->
                 if (target <= writtenVersion.value) return@collect

@@ -394,6 +394,24 @@ connect started the YouTube slot on Rusge, not on Rusina that had just proven it
 Tests: `ServiceSlotsTest` (the YouTube slot starts on the proven server and no other slot takes it; proof never beats
 separation).
 
+### A server that keeps failing the slot is tried less and less often (Android 0.6.19, owner decision 2026-11-16)
+
+Field case 2026-11-15: a mark lasts one hour, so a pin on a server that starves video (4virtual) or a server that keeps
+failing the slot's DNS (Clermany: four sessions in a row) was tried again every hour, each try costing the viewer 15-60 s.
+
+- **Strikes** (`SlotMarkRules.Mark(at, strikes)`): the first mark lasts one hour. When the server fails the slot again
+  after its mark ran out (and within 24 h of the last mark), the next mark doubles: 1 h, 2 h, 4 h, 8 h (the ceiling).
+  A failure while a mark still runs is not a repeat (the slot had left that server already). After a quiet day the
+  server starts again from one hour. A good relay result newer than the mark still overrules it.
+- **File:** `slot-server-marks.json` keeps `key: time` for one strike (the files of 0.6.13-0.6.18 read as they are) and
+  `key: [time, strikes]` for repeats.
+- **Also in this release:** a race in the latency store that could leave a result recorded right at start-up unwritten
+  (the cause of a flaky `ServerLatencyStoreTest` that stopped the 0.6.18 release once): the version is now taken inside
+  the lock together with the merge.
+
+Tests: `SlotServerMarksTest` (escalation to the ceiling, repeat during a running mark, forgetting after a day, old file
+format, clamping).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:
