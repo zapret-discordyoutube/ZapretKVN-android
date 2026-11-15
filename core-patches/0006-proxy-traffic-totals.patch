@@ -147,7 +147,7 @@ index 0000000..1118fda
 +	}
 +}
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index 6ea7e62..a9f75da 100644
+index 1beba5a..c3b1fd0 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
 @@ -499,6 +499,18 @@ func (s *StartedService) SubscribeStatus(request *SubscribeStatusRequest, server
@@ -196,14 +196,14 @@ index 5dd456d..e0b2bd5 100644
  	instance := s.StartedService.Instance()
  	if instance == nil || instance.Box() == nil {
 diff --git a/go.mod b/go.mod
-index 72afdd2..d4d5065 100644
+index 649801e..fefc3d3 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -12,6 +12,7 @@ require (
  	github.com/anytls/sing-anytls v0.0.11
- 	github.com/apernet/hysteria/core/v2 v2.13.0
- 	github.com/apernet/hysteria/extras/v2 v2.13.0
-+	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c
+ 	github.com/apernet/hysteria/core/v2 v2.14.0
+ 	github.com/apernet/hysteria/extras/v2 v2.14.0
++	github.com/apernet/quic-go v0.65.1-0.20261109005002-2895f039137a
  	github.com/caddyserver/certmagic v0.25.3-0.20260421143802-60d9d8b415d6
  	github.com/caddyserver/zerossl v0.1.5
  	github.com/coder/websocket v1.8.14
@@ -211,7 +211,7 @@ index 72afdd2..d4d5065 100644
  	filippo.io/hpke v0.4.0 // indirect
  	github.com/OneOfOne/xxhash v1.2.8 // indirect
  	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
--	github.com/apernet/quic-go v0.63.1-0.20261004180939-a10df75c260c // indirect
+-	github.com/apernet/quic-go v0.65.1-0.20261109005002-2895f039137a // indirect
  	github.com/axiomhq/hyperloglog v0.0.0-20240319100328-84253e514e02 // indirect
  	github.com/bahlo/generic-list-go v0.2.0 // indirect
  	github.com/cespare/xxhash/v2 v2.3.0 // indirect

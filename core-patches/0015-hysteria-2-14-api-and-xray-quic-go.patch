@@ -1,0 +1,102 @@
+diff --git a/go.mod b/go.mod
+index c00ee991..a7a34643 100644
+--- a/go.mod
++++ b/go.mod
+@@ -129,7 +129,6 @@ require (
+ 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+ 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+ 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
+-	github.com/cloudflare/circl v1.6.3 // indirect
+ 	github.com/coreos/go-iptables v0.7.1-0.20240112124308-65c67c9f46e6 // indirect
+ 	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
+ 	github.com/database64128/netx-go v0.1.1 // indirect
+@@ -266,22 +265,18 @@ require (
+ 	github.com/zeebo/assert v1.3.0 // indirect
+ 	github.com/zeebo/blake3 v0.2.4 // indirect
+ 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect
+-	go.opentelemetry.io/otel v1.45.0 // indirect
+-	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
+ 	go.uber.org/multierr v1.11.0 // indirect
+ 	go.uber.org/zap/exp v0.3.0 // indirect
+ 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+ 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
+ 	golang.org/x/crypto/x509roots/fallback v0.0.0-20261020153306-9f2b28d4331a // indirect
+ 	golang.org/x/oauth2 v0.36.0 // indirect
+-	golang.org/x/tools v0.51.0 // indirect
+ 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
+ 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
+ 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb // indirect
+ 	golang.zx2c4.com/wireguard/windows v1.1.1 // indirect
+ 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
+ 	gopkg.in/yaml.v2 v2.4.0 // indirect
+-	gvisor.dev/gvisor v0.0.0-20260122175437-89a5d21be8f0 // indirect
+ 	layeh.com/gopher-luar v1.0.11 // indirect
+ 	modernc.org/libc v1.72.0 // indirect
+ 	modernc.org/mathutil v1.7.1 // indirect
+diff --git a/protocol/hysteria2/tcp_conn_test.go b/protocol/hysteria2/tcp_conn_test.go
+index 29b86f40..8cc358a0 100644
+--- a/protocol/hysteria2/tcp_conn_test.go
++++ b/protocol/hysteria2/tcp_conn_test.go
+@@ -148,11 +148,13 @@ type scriptedServerOutbound struct {
+ 	tcp func(string) (net.Conn, error)
+ }
+ 
+-func (o scriptedServerOutbound) TCP(address string) (net.Conn, error) { return o.tcp(address) }
+-func (scriptedServerOutbound) UDP(string) (hyserver.UDPConn, error) {
++func (o scriptedServerOutbound) TCP(_ *hyserver.RequestInfo, address string) (net.Conn, error) {
++	return o.tcp(address)
++}
++func (scriptedServerOutbound) UDP(*hyserver.RequestInfo, string) (hyserver.UDPConn, error) {
+ 	return nil, errors.New("unsupported")
+ }
+-func (scriptedServerOutbound) CheckUDP(string) error { return errors.New("unsupported") }
++func (scriptedServerOutbound) CheckUDP(*hyserver.RequestInfo, string) error { return errors.New("unsupported") }
+ 
+ // startFastOpenOutbound runs an upstream Hysteria2 server with a scripted target
+ // dialer and returns the production Outbound connected to it.
+diff --git a/protocol/xraycore/prepare.sh b/protocol/xraycore/prepare.sh
+index 68193a34..15ae4e33 100644
+--- a/protocol/xraycore/prepare.sh
++++ b/protocol/xraycore/prepare.sh
+@@ -1,8 +1,12 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
+ 
+-# The only local Xray change is logger interface integration with the pinned
+-# sing fork. Protocol code is copied unchanged from the verified upstream module.
++# Protocol code is copied from the verified upstream module. The only local changes are listed here, each with its reason
++# and the condition that removes it:
++#   xray-quic-go-http-stream.patch (core patch 0015, owner decision 2026-11-15): official Hysteria 2.14.0 needs
++#   apernet/quic-go v0.65.1, one call of Xray's MASQUE transport (`HTTPStream()`) returns an extra error there and does not
++#   compile against the version Xray v26.11.9 was written for (v0.61.1). Remove the patch and this step when the pinned
++#   Xray builds against the quic-go that Hysteria requires.
+ source_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ module="$1"
+ expected_commit="$2"
+@@ -19,3 +23,5 @@ trap 'rm -rf -- "$temporary"' EXIT
+ cp -a "$module_dir/." "$temporary/"
+ chmod -R u+w "$temporary"
+ mv "$temporary" "$destination"
++# `git apply` also works outside a repository; it fails closed when the context no longer matches the Xray source.
++(cd "$destination" && git apply --whitespace=nowarn "$source_root/protocol/xraycore/xray-quic-go-http-stream.patch")
+diff --git a/protocol/xraycore/xray-quic-go-http-stream.patch b/protocol/xraycore/xray-quic-go-http-stream.patch
+new file mode 100644
+index 00000000..dde29b88
+--- /dev/null
++++ b/protocol/xraycore/xray-quic-go-http-stream.patch
+@@ -0,0 +1,15 @@
++--- a/transport/internet/masque/connectip/proxy.go
+++++ b/transport/internet/masque/connectip/proxy.go
++@@ -28,7 +28,11 @@
++ 	w.WriteHeader(http.StatusOK)
++ 
++ 	if ok {
++-		return newProxiedConn(streamer.HTTPStream()), nil
+++		stream, err := streamer.HTTPStream()
+++		if err != nil {
+++			return nil, err
+++		}
+++		return newProxiedConn(stream), nil
++ 	}
++ 	controller := http.NewResponseController(w)
++ 	if err := controller.Flush(); err != nil {

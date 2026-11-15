@@ -1,9 +1,9 @@
 52a6b7e92fa674787c55205a7183a05e931c5956059388c639160dbcb746dc23  core-patches/0001-android-wireguard-data-plane.patch
 d43dc2d3810a6f4a68c61c85c93cb2cd914ea8b7f80e5fd25b90976f074bab4b  core-patches/0002-read-only-relay-delay-probe.patch
-947c210bdd14d0fc18015de2477a5b8f851269c6f7fbdadbe2f3cd9744d89ccc  core-patches/0003-official-hysteria2-core.patch
-2ef47c214d11c09030a870da1e6d9303be7800a01839b69bbbf55d12f9852c4d  core-patches/0004-protocol-runtime-modules.patch
-da9a4af1063435010e4a203d521cf6dbf0c05687c5fe2f72a32be895f8426d5f  core-patches/0005-official-amnezia-wg-unified.patch
-a45c8d4d29968282748d81f503092f8b077cfda7b5a8e59e24dd4561b8c032fd  core-patches/0006-proxy-traffic-totals.patch
+e0dc566f7e8671c1d4a8baa55c239d53264b5f03f68a79bc652e5c991a35801a  core-patches/0003-official-hysteria2-core.patch
+173f52159121249e9b9bca77b67c09c0c3df0b81cb1060d741c794916c5fded8  core-patches/0004-protocol-runtime-modules.patch
+78bdb10cfdd55607500a73dcd8a9a066e6803f52d19150d1aaa91060bca88231  core-patches/0005-official-amnezia-wg-unified.patch
+00ba206cf6aa59043b1f7bfa6904067959a8d374eaba17cf3b00b80511f6195d  core-patches/0006-proxy-traffic-totals.patch
 0bca72ab0705121fa926a8933cb04e87a6ecd6bc44c6efe247982dc9dda96bd9  core-patches/0007-browser-fetch.patch
 977eb1555037ed7429e5af08a01fc5bb3265bbb2b67d7a48a1c4bb79b265c635  core-patches/0008-libbox-browser-socket-protector.patch
 bbd07c6e839799cd3cd4762d00f3532cb63ef1854e3a2bfc68763acb72c93f22  core-patches/0009-hysteria2-serialize-udp-send.patch
@@ -11,4 +11,5 @@ bbd07c6e839799cd3cd4762d00f3532cb63ef1854e3a2bfc68763acb72c93f22  core-patches/0
 212264daa02c0ce48d456c36304c1ce6963460f8055134eaa9ee6971625e72e8  core-patches/0011-proxy-flows-snapshot.patch
 75e6d5a5576ae2cf830e5aa3320f61e8c7189e5dabb5062ce0141bf037197f1b  core-patches/0012-hysteria2-tunnel-stats.patch
 b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0013-proxy-flows-close.patch
-35319c53af44d36ee3dbe1010a324d1c550e455fe389259baa2b7512dba662f9  core-patches/0014-xray-core-v26-11-9.patch
+83fe16bc13589b6fd79d6e025e569cd9ec742af5c303a44126c4c79faa214235  core-patches/0014-xray-core-v26-11-9.patch
+80d5300a08a2048f37a585095745595b2b637f8ecc50ef6ad1b386426a16c757  core-patches/0015-hysteria-2-14-api-and-xray-quic-go.patch

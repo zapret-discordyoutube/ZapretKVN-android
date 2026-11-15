@@ -32,6 +32,7 @@ MANIFEST="$PROJECT_ROOT/app/src/main/AndroidManifest.xml"
 [[ -x "$PROJECT_ROOT/scripts/test-phone-adb-forward.sh" ]]
 [[ -f "$PROJECT_ROOT/scripts/lib/forgejo-git.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-forgejo-git.sh" ]]
+[[ -x "$PROJECT_ROOT/scripts/test-update-hysteria-core.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/prepare-release.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/check-shared-routing-list.sh" ]]
 [[ -x "$PROJECT_ROOT/scripts/test-check-shared-routing-list.sh" ]]
@@ -64,6 +65,7 @@ verify_core_patchset "$PROJECT_ROOT"
 "$PROJECT_ROOT/scripts/test-adb-select.sh"
 "$PROJECT_ROOT/scripts/test-phone-adb-forward.sh"
 "$PROJECT_ROOT/scripts/test-forgejo-git.sh"
+"$PROJECT_ROOT/scripts/test-update-hysteria-core.sh"
 "$PROJECT_ROOT/scripts/test-check-shared-routing-list.sh"
 [[ -f "$PROJECT_ROOT/scripts/gate8-performance-summary.jq" ]]
 

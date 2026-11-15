@@ -27,7 +27,7 @@ index 6628267..55a96f1 100644
  
  func (d *resolveDialer) QueryOptions() adapter.DNSQueryOptions {
 diff --git a/daemon/started_service.go b/daemon/started_service.go
-index eecee46..6ea7e62 100644
+index 35f653f..1beba5a 100644
 --- a/daemon/started_service.go
 +++ b/daemon/started_service.go
 @@ -454,8 +454,10 @@ func (s *StartedService) GetDefaultLogLevel(ctx context.Context, empty *emptypb.
@@ -44,7 +44,7 @@ index eecee46..6ea7e62 100644
  	return &DefaultLogLevel{Level: LogLevel(boxService.logFactory.Level())}, nil
  }
 diff --git a/go.mod b/go.mod
-index e11fa39..97bd898 100644
+index 8cec3cc..e137e76 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -85,6 +85,7 @@ require (
@@ -130,7 +130,7 @@ index e11fa39..97bd898 100644
 +
 +replace github.com/xtls/xray-core => ./third_party/xray-core
 diff --git a/go.sum b/go.sum
-index ccf0f5b..365d313 100644
+index 32aa97a..e0101b2 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -74,6 +74,8 @@ github.com/cilium/ebpf v0.16.0/go.mod h1:L7u2Blt2jMM/vLAVgjxluxtBKlz3/GWjB0dMOEn

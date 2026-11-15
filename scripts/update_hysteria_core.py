@@ -22,6 +22,7 @@ Gradle (scripts/ensure-libbox.sh), когда видит новые пины.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -60,6 +61,30 @@ def sha256_text(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def stored_abbrev(patch: bytes, default: int = 8) -> int:
+    """Length of the abbreviated hashes on the `index` lines of a stored patch.
+
+    The series was written in several rounds: 0001-0008 carry 7-character hashes, 0009 onward 8. A fixed
+    `--abbrev` can never reproduce all of them byte for byte (the check failed at 0001 from the day the sing-box core
+    moved, 2026-11-15), so every patch is diffed with the length it was stored with.
+    """
+
+    match = re.search(rb"(?m)^index ([0-9a-f]+)\.\.([0-9a-f]+)", patch)
+    return len(match.group(2)) if match else default
+
+
+def without_index_hashes(patch: bytes) -> bytes:
+    """The patch with the hashes of its `index` lines removed.
+
+    Those hashes name the blobs of the tree the patch was generated against and `git apply` never reads them. Patches
+    0001-0008 were moved onto the sing-box-extended base by applying them, so their `index` lines still describe the old
+    base and no rebuild on the current base can match them byte for byte. Everything else (every hunk, every header)
+    must still be identical, which is what the reproduction proof checks.
+    """
+
+    return re.sub(rb"(?m)^index [0-9a-f]+\.\.[0-9a-f]+", b"index", patch)
+
+
 class Workspace:
     def __init__(self, source: Path, go: str, env: dict[str, str]) -> None:
         self.source = source
@@ -76,8 +101,8 @@ class Workspace:
         return self.run("git", "-c", "user.name=core-update", "-c", "user.email=core-update@localhost",
                         "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", *args, check=check)
 
-    def diff(self, older: str, newer: str) -> bytes:
-        return subprocess.run(["git", "diff", "--abbrev=8", older, newer], cwd=self.source, env=self.env,
+    def diff(self, older: str, newer: str, abbrev: int = 8) -> bytes:
+        return subprocess.run(["git", "diff", f"--abbrev={abbrev}", older, newer], cwd=self.source, env=self.env,
                               check=True, stdout=subprocess.PIPE).stdout
 
     def tidy_go_mod_lines(self) -> list[str]:
@@ -92,7 +117,8 @@ class Workspace:
             if line.startswith("diff "):
                 in_go_mod = line.rstrip().endswith("go.mod")
                 continue
-            if in_go_mod and line[:1] in "+-" and not line.startswith(("+++", "---")):
+            # A tuple, not a string: an empty context line is `"" in "+-"` and would count as a change.
+            if in_go_mod and line[:1] in ("+", "-") and not line.startswith(("+++", "---")):
                 lines.append(line)
         return lines
 
@@ -108,6 +134,41 @@ def require_lines(go_mod: str) -> dict[str, str]:
     return found
 
 
+def indirect_removals(tidy_lines: list[str]) -> list[str] | None:
+    """The `require` lines that `go mod tidy` would only delete, or None when it wants anything else.
+
+    A new Hysteria can stop needing indirect requirements that the series carried (2.14.0 no longer needs five of them).
+    Dropping exactly such lines is safe and mechanical: tidy names them itself. Any other change (a new line, a changed
+    version, a direct requirement) is not mechanical and the update is refused as before.
+    """
+
+    removals: list[str] = []
+    for line in tidy_lines:
+        if not line.strip():
+            continue
+        text = line[1:].strip() if line.startswith("-") else None
+        if text is None or not text.endswith(" // indirect") or len(text.split()) != 4:
+            return None
+        removals.append(text)
+    return removals or None
+
+
+def version_swaps(upgrades: dict[str, str]) -> list[tuple[str, str]]:
+    """`module version` pairs (old, new) of the upgraded requirements, without the `// indirect` comment.
+
+    A later patch may move a module between the indirect and the direct block (0006 does this for quic-go), so the
+    version must be replaced wherever `module oldversion` stands, not only on the exact old `require` line.
+    """
+
+    pairs: list[tuple[str, str]] = []
+    for old, new in upgrades.items():
+        old_parts = re.sub(r" // indirect$", "", old.strip()).split()
+        new_parts = re.sub(r" // indirect$", "", new.strip()).split()
+        if len(old_parts) == 2 and len(new_parts) == 2 and old_parts[0] == new_parts[0]:
+            pairs.append((" ".join(old_parts), " ".join(new_parts)))
+    return pairs
+
+
 def resolve_go_mod_conflict(text: str, upgrades: dict[str, str]) -> str:
     """Конфликт в go.mod: сторона патча, но с версиями обновлённых модулей.
 
@@ -115,9 +176,11 @@ def resolve_go_mod_conflict(text: str, upgrades: dict[str, str]) -> str:
     верна во всём, кроме версий, которые только что поднял `go get`.
     """
 
+    swaps = version_swaps(upgrades)
+
     def pick(match: re.Match) -> str:
         theirs = match.group(2)
-        for old, new in upgrades.items():
+        for old, new in swaps:
             theirs = theirs.replace(old, new)
         return theirs
 
@@ -142,6 +205,18 @@ def build_tags(root: Path) -> str:
     return match.group(1).removesuffix(",badlinkname,tfogo_checklinkname0")
 
 
+@contextlib.contextmanager
+def workdir(keep: Path | None):
+    """The scratch directory of one run: a temporary one, or [keep] left in place for a manual look at a refusal."""
+
+    if keep is None:
+        with tempfile.TemporaryDirectory(prefix="hysteria-core-update-") as temporary:
+            yield temporary
+    else:
+        keep.mkdir(parents=True, exist_ok=False)
+        yield str(keep)
+
+
 def obtain_source(root: Path, properties: dict[str, str], destination: Path) -> None:
     cached = root / "core-build/source"
     if (cached / ".git").exists():
@@ -161,7 +236,7 @@ def obtain_source(root: Path, properties: dict[str, str], destination: Path) -> 
         subprocess.run(command, cwd=destination, check=True)
 
 
-def update(root: Path, tag: str, write: bool, go: str) -> dict:
+def update(root: Path, tag: str, write: bool, go: str, keep: Path | None = None) -> dict:
     if not re.fullmatch(r"app/v\d+\.\d+\.\d+", tag):
         raise UpdateError(f"Ожидается тег вида app/vX.Y.Z, получено: {tag}")
     version = tag.removeprefix("app/")
@@ -184,7 +259,7 @@ def update(root: Path, tag: str, write: bool, go: str) -> dict:
     if actual_go != expected_go:
         raise UpdateError(f"Нужен {expected_go} (GO_VERSION), найден {actual_go}")
 
-    with tempfile.TemporaryDirectory(prefix="hysteria-core-update-") as temporary:
+    with workdir(keep) as temporary:
         source = Path(temporary) / "source"
         obtain_source(root, properties, source)
         env = {**os.environ, "GOTOOLCHAIN": "local", "GOFLAGS": "-mod=mod", "GIT_EDITOR": "true"}
@@ -198,7 +273,9 @@ def update(root: Path, tag: str, write: bool, go: str) -> dict:
             work.git("add", "-A")
             work.git("commit", "-q", "-m", f"p{index}")
             work.git("tag", "-f", f"p{index}")
-            if work.diff(f"p{index - 1}", f"p{index}") != (root / relative).read_bytes():
+            stored = (root / relative).read_bytes()
+            rebuilt = work.diff(f"p{index - 1}", f"p{index}", stored_abbrev(stored))
+            if without_index_hashes(rebuilt) != without_index_hashes(stored):
                 raise UpdateError(f"Патч не воспроизводится из цепочки коммитов: {relative}")
 
         base = f"p{HYSTERIA_PATCH_INDEX}"
@@ -250,19 +327,11 @@ def update(root: Path, tag: str, write: bool, go: str) -> dict:
 
         final_mod = (source / "go.mod").read_text(encoding="utf-8")
         final_sum = go_sum.read_text(encoding="utf-8")
-        for old, new in upgrades.items():
+        for old, new in version_swaps(upgrades):
             if old in final_mod or new not in final_mod:
                 raise UpdateError(f"В итоговом go.mod осталась прежняя версия: {old}")
         if any(line.startswith(prefix) for line in final_sum.splitlines() for prefix in stale):
             raise UpdateError("В итоговом go.sum остались хеши прежних версий")
-
-        patches: dict[str, bytes] = {}
-        for index, (_, relative) in enumerate(series, start=1):
-            if index < HYSTERIA_PATCH_INDEX:
-                patches[relative] = (root / relative).read_bytes()
-                continue
-            older = f"p{index - 1}" if index == HYSTERIA_PATCH_INDEX else f"n{index - 1}"
-            patches[relative] = work.diff(older, f"n{index}")
 
         # Итоговое дерево должно собираться: подготовка Xray, tidy и компиляция
         # затронутых патчами пакетов с боевыми тегами.
@@ -270,7 +339,28 @@ def update(root: Path, tag: str, write: bool, go: str) -> dict:
         if prepare.exists():
             work.run("bash", str(prepare), properties["XRAY_CORE_MODULE"], properties["XRAY_CORE_COMMIT"])
         compile_env = {**env, "GOFLAGS": ""}
-        tidy = Workspace(source, go, compile_env).tidy_go_mod_lines()
+        final_tidy = Workspace(source, go, compile_env)
+        # Indirect requirements the new Hysteria no longer needs go out with the last patch of the series: its diff
+        # (n-1 to n) then shows the removal and the earlier patches stay as they are.
+        pruned = indirect_removals(final_tidy.tidy_go_mod_lines())
+        if pruned:
+            go_mod_path = source / "go.mod"
+            kept = [line for line in go_mod_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                    if line.strip() not in pruned]
+            go_mod_path.write_text("".join(kept), encoding="utf-8")
+            work.git("add", "go.mod")
+            work.git("commit", "-q", "--amend", "--no-edit")
+            work.git("tag", "-f", f"n{len(series)}")
+
+        patches: dict[str, bytes] = {}
+        for index, (_, relative) in enumerate(series, start=1):
+            if index < HYSTERIA_PATCH_INDEX:
+                patches[relative] = (root / relative).read_bytes()
+                continue
+            older = f"p{index - 1}" if index == HYSTERIA_PATCH_INDEX else f"n{index - 1}"
+            patches[relative] = work.diff(older, f"n{index}", stored_abbrev((root / relative).read_bytes()))
+
+        tidy = final_tidy.tidy_go_mod_lines()
         if tidy:
             raise UpdateError("Итоговый go.mod не приведён (go mod tidy -diff): " + "; ".join(tidy[:6]))
         compiled = subprocess.run(
@@ -311,6 +401,7 @@ def update(root: Path, tag: str, write: bool, go: str) -> dict:
         "changed": True, "previous": previous_tag, "tag": tag, "commit": commit,
         "patches": [relative for _, relative in series if patches[relative] != (root / relative).read_bytes()],
         "upgrades": upgrades,
+        "pruned_go_mod_lines": pruned or [],
     }
     if write:
         for relative, data in patches.items():
@@ -328,9 +419,10 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--go", default="go")
     parser.add_argument("--write", action="store_true", help="записать патчи и пины; без флага — только проверка")
+    parser.add_argument("--keep", type=Path, help="не удалять рабочую копию (каталог не должен существовать): для разбора отказа")
     args = parser.parse_args()
     try:
-        result = update(args.root.resolve(), args.tag, args.write, args.go)
+        result = update(args.root.resolve(), args.tag, args.write, args.go, args.keep)
     except UpdateError as error:
         print(f"update_hysteria_core: {error}", file=sys.stderr)
         return 1

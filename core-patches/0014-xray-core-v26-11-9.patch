@@ -1,5 +1,5 @@
 diff --git a/go.mod b/go.mod
-index d4d50655..f6983d3e 100644
+index fefc3d34..c00ee991 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -1,12 +1,13 @@
@@ -290,7 +290,7 @@ index d4d50655..f6983d3e 100644
  )
  
 diff --git a/go.sum b/go.sum
-index ce57f898..832e95a0 100644
+index 775dee55..fc14320a 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -38,6 +38,8 @@ github.com/anchore/go-lzo v0.1.0 h1:NgAacnzqPeGH49Ky19QKLBZEuFRqtTG9cdaucc3Vncs=
