@@ -58,6 +58,19 @@ class SpeedHistoryTest {
         assertFalse(history.isKnownSlow("Senge", host))
     }
 
+    /** Field case 2026-11-15: one 21.7 MB flow at 3.5 MB/s on Rusina was no proof because only two flows were graded. */
+    @Test
+    fun `one big fast video flow proves a server for YouTube, a small or slow one does not`() {
+        val history = SpeedHistory()
+        history.recordFlow("Rusina", "rr3.sn-x.googlevideo.com", "", 21 * mb, 6_000)
+        assertTrue(history.youtubeProven("Rusina", 300 * 1024))
+        history.recordFlow("Small", "rr3.sn-x.googlevideo.com", "", 1 * mb, 1_000)
+        assertFalse("too few bytes", history.youtubeProven("Small", 300 * 1024))
+        history.recordFlow("Slow", "rr3.sn-x.googlevideo.com", "", 6 * mb, 200_000)
+        assertFalse("slow", history.youtubeProven("Slow", 300 * 1024))
+        assertFalse("unknown", history.youtubeProven("Nobody", 300 * 1024))
+    }
+
     @Test
     fun `resets are counted per server and target`() {
         val history = SpeedHistory()

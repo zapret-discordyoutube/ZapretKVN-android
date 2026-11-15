@@ -381,6 +381,14 @@ connect started the YouTube slot on Rusge, not on Rusina that had just proven it
   result), then the profile's order. A server proven only for another slot is left to that slot when an equal server
   exists, so the AI slot does not take the YouTube slot's server.
 - **Separation still comes first:** proof is only a tie-break after «least used», as before.
+- **One big flow is proof** (Android 0.6.18, `SpeedHistory.youtubeProven`): the first field test of 0.6.17 (video
+  `2reQut8WNGc`) still started the slot on Rusge, because Rusina had only two graded YouTube flows and the average needs
+  three. A server now counts as proven for YouTube with at least 4 MB of video through it at 300 KB/s or more, however
+  few flows that took (Rusina: 21.7 MB at 3.5 MB/s in one flow).
+- Same test, honest result: Rusge, Hipnl and Tinul all failed the slot's DNS in turn (about 17 s each, 57 s in total
+  before the slot reached Rusina), the video started 58 s after the tap and froze at 0:28 because the flows through
+  Rusina were slow this time (23-36 KB/s): a server that delivered 3.5 MB/s an hour earlier did not now. Proof from history
+  is a hint, not a guarantee; the rescue episode stays the safety net.
 - Foreign-profile servers have no history key yet and are not proven; the pool of the active profile decides.
 
 Tests: `ServiceSlotsTest` (the YouTube slot starts on the proven server and no other slot takes it; proof never beats

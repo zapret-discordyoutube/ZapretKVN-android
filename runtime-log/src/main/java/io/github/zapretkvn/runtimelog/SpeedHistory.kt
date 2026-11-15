@@ -145,6 +145,20 @@ class SpeedHistory(
         return if (millis > 0) video.sumOf { it.bytes } * 1_000 / millis else null
     }
 
+    /**
+     * Доказано ли, что сервер быстро отдаёт видео YouTube: достаточно одного большого быстрого потока, не нужно
+     * [MIN_GRADED_TO_JUDGE] оценок (поле 2026-11-15: один поток 21 МБ со скоростью 3,5 МБ/с на Rusina не считался
+     * доказательством, и следующее подключение слота YouTube встало на другой сервер). Нужны не меньше [PROOF_MIN_BYTES]
+     * по видеоцелям и средняя не ниже [minBytesPerSecond].
+     */
+    @Synchronized
+    fun youtubeProven(server: String, minBytesPerSecond: Long): Boolean {
+        val video = entries.values.filter { it.server == server && it.target.startsWith("yt:") }
+        val bytes = video.sumOf { it.bytes }
+        val millis = video.sumOf { it.millis }
+        return bytes >= PROOF_MIN_BYTES && millis > 0 && bytes * 1_000 / millis >= minBytesPerSecond
+    }
+
     /** Все серверы, по которым есть записи (для ранжирования кандидатов). */
     @Synchronized
     fun servers(): Set<String> = entries.values.map { it.server }.toSet()
@@ -235,6 +249,9 @@ class SpeedHistory(
         const val HEADER = "#zkvn-speed 1"
         const val OTHER = "*другие"
         const val MIN_GRADED_TO_JUDGE = 3L
+
+        /** Сколько байт видео должно пройти через сервер, чтобы быстрая средняя считалась доказательством. */
+        const val PROOF_MIN_BYTES = 4L * 1024 * 1024
         private const val MAX_SERVERS_IN_SUMMARY = 6
         private const val WRITE_INTERVAL_MILLIS = 60_000L
         private const val DAY_MILLIS = 86_400_000L

@@ -458,7 +458,7 @@ internal class SessionStarter(
                     // Servers that played YouTube fast in the past go first for the YouTube slot (a fast ping says
                     // nothing about video: field case 2026-11-15, 4virtual answered in 5 ms and starved every video).
                     proven = mapOf(
-                        SlotIds.YOUTUBE to managed.tags.filter { (RuntimeLog.youtubeAverage(it) ?: 0L) >= SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND }.toSet(),
+                        SlotIds.YOUTUBE to managed.tags.filter { RuntimeLog.youtubeProven(it, SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND) }.toSet(),
                     ),
                 ).copy(foreign = foreignServers, skippedFailed = (health.failed - setOfNotNull(managed.selected)).size)
             }

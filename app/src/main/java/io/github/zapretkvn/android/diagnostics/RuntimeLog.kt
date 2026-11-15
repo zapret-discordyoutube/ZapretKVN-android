@@ -231,6 +231,9 @@ object RuntimeLog {
     /** Средняя скорость сервера по видео YouTube из истории; `null`, если оценок мало. */
     fun youtubeAverage(server: String): Long? = history?.youtubeAverage(server)
 
+    /** Сервер доказал быстрое видео YouTube (хотя бы [minBytesPerSecond]); хватает одного большого потока. */
+    fun youtubeProven(server: String, minBytesPerSecond: Long): Boolean = history?.youtubeProven(server, minBytesPerSecond) == true
+
     /** Включает или выключает сброс зависших потоков YouTube; вызывается при старте сессии из настроек. */
     fun configure(resetStalledFlows: Boolean) {
         resetStalledEnabled = resetStalledFlows
