@@ -151,7 +151,11 @@ class YoutubeSlowSwitchTest {
         val outcome = engine(host, policy).runEpisode()
         assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(4), outcome)
         assertEquals("only three candidates per episode", 3, host.calls.count { it.startsWith("trial") })
-        assertEquals(listOf("restore:Titiru", "notTheServer:Titiru<-Hosfinano,Plafi,Platifin"), host.calls.takeLast(2))
+        assertEquals(
+            "not to blame, so the original (a pin too) comes back",
+            listOf("notTheServer:Titiru<-Hosfinano,Plafi,Platifin", "restore:Titiru"),
+            host.calls.takeLast(2),
+        )
         listOf("Titiru", "Hosfinano", "Plafi", "Platifin").forEach { assertFalse(it, policy.isMarkedSlow(it)) }
         now += YoutubeSwitchDefaults.COOLDOWN_MILLIS
         assertEquals(YoutubeSwitchGate.Cooldown, policy.gate(enabled = true, busy = false))

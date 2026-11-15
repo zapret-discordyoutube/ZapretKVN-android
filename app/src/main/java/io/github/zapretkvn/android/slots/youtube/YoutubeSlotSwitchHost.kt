@@ -185,11 +185,15 @@ internal class YoutubeSlotSwitchHost(
     }
 
     override fun notTheServer(original: String, starved: List<String>) {
-        if (original == starvedOriginal) context.forgiveLeft(session, original)
+        if (original == starvedOriginal) {
+            context.forgiveLeft(session, original)
+            // Not to blame: the restore that follows may put the slot back on it.
+            starvedOriginal = null
+        }
         context.timeline(
             "YouTube голодает одинаково на ${redact(original)} и на ${starved.joinToString { redact(it) }}: дело не в " +
-                "сервере, а в приложении YouTube. Отметка с ${redact(original)} снята, серверы не меняются " +
-                "${YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS / 60_000} мин.",
+                "сервере, а в приложении YouTube. Отметка с ${redact(original)} снята, слот возвращается на него, " +
+                "серверы не меняются ${YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS / 60_000} мин.",
         )
     }
 

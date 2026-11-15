@@ -169,7 +169,7 @@ internal interface YoutubeSwitchHost {
 
     /**
      * Видео голодало одинаково на [original] и на отвечающих кандидатах [starved]: дело не в сервере. Хост снимает
-     * отметку, которую эпизод поставил [original], и пишет в журнал, почему.
+     * отметку, которую эпизод поставил [original], и пишет в журнал, почему; следом движок возвращает [original].
      */
     fun notTheServer(original: String, starved: List<String>) = Unit
 
@@ -311,16 +311,18 @@ internal class YoutubeSwitchEngine(
                 }
             }
         }
-        host.endWithoutWinner(original)
         val servers = starved.size + 1
         if (servers >= YoutubeSwitchDefaults.CLIENT_STALL_MIN_SERVERS) {
             // Одинаковое голодание везде: серверы не виноваты, их метки снимаются, а новый обход серверов ничего не даст,
-            // пока клиент YouTube не перезапустят.
+            // пока клиент YouTube не перезапустят. Раз прежний сервер не виноват, возвращается он (закрепление
+            // пользователя тоже): поле 2026-11-15 19:45, слот остался на Hosfinano вместо закреплённого Finohost.
             policy.clearSlow(starved + original)
             host.notTheServer(original, starved)
+            host.restore(original)
             policy.onEpisodeEnd(YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS)
             return YoutubeSwitchOutcome.StarvesEverywhere(servers)
         }
+        host.endWithoutWinner(original)
         policy.onEpisodeEnd()
         return YoutubeSwitchOutcome.AllCandidatesSlow
     }

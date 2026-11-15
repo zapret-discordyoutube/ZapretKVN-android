@@ -429,8 +429,8 @@ each episode marked the server it started on for one to eight hours, and later s
 - **Effect:** the episode's own "slow for YouTube" marks are cleared (`YoutubeSwitchPolicy.clearSlow`), the slot mark set
   on the original is undone exactly (`SlotServerMarks.forgive`, `SlotMarkRules.undo`: the strike count goes back too,
   and a newer mark from another failure stays), and switching pauses for 3 minutes instead of 90 s
-  (`CLIENT_STALL_COOLDOWN_MILLIS`). The notice "Закройте YouTube и откройте видео заново" is shown as before. The
-  slot stays where the episode left it (a server that answers).
+  (`CLIENT_STALL_COOLDOWN_MILLIS`). The notice "Закройте YouTube и откройте видео заново" is shown as before. In 0.6.20 the
+  slot stayed where the episode left it; since 0.6.21 it goes back (see below).
 - **Log:** «YouTube голодает одинаково на … и на …: дело не в сервере, а в приложении YouTube. Отметка с … снята,
   серверы не меняются 3 мин.» and the episode line «видео голодает на всех N проверенных серверах: дело не в сервере,
   отметки сняты».
@@ -441,6 +441,21 @@ each episode marked the server it started on for one to eight hours, and later s
 
 Tests: `YoutubeSlowSwitchTest` (the field case, dead candidates do not count, two servers are not enough),
 `SlotServerMarksTest` (undo of a mark and of a repeat strike, the file follows), `YoutubeWedgeNoticeTest`.
+
+### Proof on one server, and the slot goes back to the server it left (Android 0.6.21, 2026-11-15)
+
+Field check 2026-11-15 19:41-19:48 UTC, YouTube slot pinned to Finohost, one new 35-minute video (t_QuHSwB0HY):
+Chrome got 15.8 MB through Finohost in normal flows (518 KB sent) and played; then the YouTube app (Morphe), same
+video, same server, got 0.1 MB in flows that sent more than they received, and kept the spinner. The episode tried
+4vusa, 4vircosx and Hosfinano, saw the same shape everywhere and ended as `StarvesEverywhere` (0.6.20). This settles the
+earlier "best explanation": these stalls come from the YouTube app (or YouTube's answers to it), not from the servers.
+
+0.6.20 still left the slot on the last candidate (Hosfinano), so the pinned Finohost was abandoned and the card said
+«Закреплённый сервер не отвечал», which was false. Since 0.6.21 a `StarvesEverywhere` episode returns the slot to the
+server it started on (the pin, when there is one): the server is not to blame, so there is no reason to leave it.
+The log line says «…слот возвращается на него…».
+
+Tests: `YoutubeSlowSwitchTest` (the original comes back after `notTheServer`).
 
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
