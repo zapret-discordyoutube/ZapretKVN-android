@@ -300,6 +300,28 @@ the slot's DNS is not recorded as a ping result on purpose (the server may work 
 Tests: `SlotServerMarksTest` (expiry, size cap, encoding, file round trip), `SlotServerHealthTest` (failed, alive,
 mark, overruled mark, foreign profile), `ServiceSlotsTest` (proof of life never beats separation), `SlotFailoverTest`.
 
+### A pin cannot trap the video, and a dead rescue server does not end the rescue (Android 0.6.14, owner decision 2026-11-15)
+
+Field case 2026-11-15 (0.6.13, phone, all three slots pinned): the YouTube slot sat on the pin 4virtual, which answers
+fast (rtt 5-12 ms) but stops delivering googlevideo data after about 400 KB per connection; the player froze at 0:58.
+The slow-video episode found it in 10 s, but its only trial went to Clermany (a server that fails the slot's DNS), the
+slot's own failover left Clermany at once, the episode read the silence as "the viewer left", restored the pin and ended.
+The owner's rule: even a user who knows nothing about pins must not be able to block YouTube for themselves; the app
+works it out alone.
+
+- **Marks count for the rescue too** (`SlotCoordinator.switchContext`): candidates of the episode leave out the servers
+  with a slot mark (soft, like «dead» and «used by another slot»: only while another candidate remains).
+- **A dead trial server is a failed candidate** (`deadTrialPlace`): when the episode hears silence after a trial move and
+  the slot's own failover has already left the trial server, the candidate counts as «тоже медленный» and the episode goes
+  on to the next candidate from where the slot sits now. Silence with the slot still on the trial server is read as
+  before (the viewer left).
+- **A server that starved the video is remembered** (`SlotSwitchContext.markLeft`): when the episode moves the slot off a
+  server for a server that plays, the old one gets the one-hour slot mark, a pin on it included. The next connect and the
+  next episode do not go back to it; the pin stays set and takes effect again when the mark is gone.
+- **Log:** `Пробный сервер … не отвечает: слот ушёл с него сам, берём следующий.`; the mark shows as the usual slot move.
+
+Tests: `DeadTrialTest`, `YoutubeSlowSwitchTest` (Starving candidate then Healthy one).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

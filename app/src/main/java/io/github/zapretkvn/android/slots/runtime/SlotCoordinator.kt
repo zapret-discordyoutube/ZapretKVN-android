@@ -195,6 +195,10 @@ internal class SlotCoordinator(
                 val spec = session.slotPlan?.specs?.firstOrNull { it.slotId == slotId } ?: return@ask null
                 val currentId = policy.serverOf(slotId) ?: return@ask null
                 val usedByOthers = policy.assignments().filterKeys { it != slotId }.values.toSet() + listOfNotNull(main(session))
+                // The one-hour slot marks count here too: a replacement the slot has just left for DNS or connect
+                // failures is no candidate for a trial (field case 2026-11-15: the only rescue attempt of the episode
+                // went to a server that fails the slot's DNS, so the video never got a second try). Soft, like the rest.
+                val marked = host.slotServerHealth(session).failed
                 SlowSwitchSnapshot(
                     currentId = currentId,
                     targets = SlotCandidates.targets(
@@ -202,7 +206,7 @@ internal class SlotCoordinator(
                         planTargets = host.plannedTargets(session),
                         currentId = currentId,
                         usedByOthers = usedByOthers,
-                        dead = policy.deadServers() + host.mainDeadServers(),
+                        dead = policy.deadServers() + host.mainDeadServers() + marked,
                     ),
                     hints = host.latencyHints(session.profileId),
                     busy = host.busy(),
@@ -219,6 +223,16 @@ internal class SlotCoordinator(
                 publish(session)
                 // The new server's name must resolve before the command (it follows).
                 ServerNameRegistry.useForSlots(policy.slotServers())
+            }
+
+            override suspend fun placeOf(session: CoreSession, slotId: String) = host.ask {
+                if (host.isCurrent(session)) failover?.serverOf(slotId) else null
+            }
+
+            override fun markLeft(session: CoreSession, serverId: String) {
+                host.postToActor {
+                    if (host.isCurrent(session)) host.markSlotUnusable(session, serverId)
+                }
             }
 
             override fun announce(session: CoreSession, message: String, notificationDetail: String) =
