@@ -202,6 +202,14 @@ class ServiceSlotsTest {
     }
 
     @Test
+    fun `between equally used servers one with recent proof of life goes first, but never at the price of sharing`() {
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", alive = setOf("C"))
+        val servers = plan.assignments.filter { it.slotId != SlotIds.DEFAULT }.mapNotNull { it.serverId }
+        assertEquals("the first slot takes the proven server", "C", plan.assignments.first { it.slotId != SlotIds.DEFAULT }.serverId)
+        assertEquals("no slot shares a server while a free one exists", servers.size, servers.toSet().size)
+    }
+
+    @Test
     fun `the main server is never excluded by the failure list`() {
         val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("A"))
         assertEquals("A", plan.assignments.first { it.slotId == SlotIds.DEFAULT }.serverId)

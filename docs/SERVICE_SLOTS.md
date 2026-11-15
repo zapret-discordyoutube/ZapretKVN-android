@@ -270,11 +270,35 @@ not call it dead. Tests: `ServiceSlotsTest` (failed pin, main server), `SlotFail
 
 Field case 2026-11-14 (0.6.11, long-video test): the YouTube slot started on Clermany, which timed out, and the failover
 moved it to 4virtual, a server marked «не отвечает» four minutes earlier; 17 s later it left that one too and the video
-started only on the third server (about 47 s after the tap). `SlotFailoverPolicy` now takes the same failure marks
-(`recentlyFailed`, the shared `recentlyFailedRuntimeTags`) and looks for a replacement among the unmarked servers first.
-When every other candidate is marked the old search runs, so a slot never stays on the server that just failed because
-of a mark. The main server is never excluded by a mark. Tests: `SlotFailoverTest` (marked server skipped, only marked
-servers left, main server).
+started only on the third server (about 47 s after the tap). `SlotFailoverPolicy` takes the same failure marks
+(`recentlyFailed`) and looks for a replacement among the unmarked servers first. When every other candidate is marked the
+old search runs, so a slot never stays on the server that just failed because of a mark. The main server is never
+excluded by a mark. Tests: `SlotFailoverTest`.
+
+### A slot remembers the servers that did not work for it (Android 0.6.13, owner decision 2026-11-15)
+
+Field case 2026-11-15 (0.6.12): the YouTube slot started on the dead pin 4virtual and hopped 4virtual → Clermany →
+Rusge → Senge; both hops through Clermany and Rusge waited out a dead slot DNS, the slot settled 46 s after the tap, and
+the player gave up with «Видео недоступно» before that. Clermany and Rusge had failed the slot's DNS in three sessions in
+a row from the same phone, but nothing remembered it: the «не отвечает» mark lasts 10 minutes and a failure seen only in
+the slot's DNS is not recorded as a ping result on purpose (the server may work for ordinary traffic).
+
+- **Slot mark** (`SlotServerMarks`, file `slot-server-marks.json`, `SlotMarkRules`): every time a slot leaves a server for
+  any reason (DNS of the slot, failed connections, rejected credentials) the server is marked for one hour. The mark is
+  NOT the «не отвечает» row, the Servers tab does not show it and the main selector never reads it: a server can be good
+  for ordinary traffic and dead for a slot, because the slot's DNS goes through that server alone. A good relay result
+  newer than the mark overrules it (the server proved itself since).
+- **Where it acts** (`slotServerHealth`): a slot does not start on a marked server and a failover does not land on one
+  (a pin on it included: the pin stays set and the server stays a pool member, the slot goes there again when the mark is
+  gone); the main server is never excluded. When every other candidate is marked the old search runs.
+- **Proof of life** (`SlotServer.alive`): a server with a good relay result younger than six hours goes first among equally
+  used candidates. It is only a tie-break after «least used»: a slot does not share a server just because it is known
+  good, so the slots stay on separate servers when separate servers exist.
+- **Log:** the `слоты:` line at connect ends with «обойдено серверов с недавним отказом: N» when something was skipped;
+  every move still logs its reason.
+
+Tests: `SlotServerMarksTest` (expiry, size cap, encoding, file round trip), `SlotServerHealthTest` (failed, alive,
+mark, overruled mark, foreign profile), `ServiceSlotsTest` (proof of life never beats separation), `SlotFailoverTest`.
 
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 

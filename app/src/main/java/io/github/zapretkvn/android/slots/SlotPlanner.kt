@@ -6,6 +6,8 @@ internal data class SlotPlan(
     val assignments: List<SlotAssignment>,
     /** Servers of other profiles in the pool (their runtime tags are members of the specs). */
     val foreign: List<ForeignServer> = emptyList(),
+    /** Servers a slot does not start on now because they failed lately (for the log line). */
+    val skippedFailed: Int = 0,
 )
 
 /**
@@ -21,6 +23,7 @@ internal object SlotPlanner {
         installedPackages: Set<String> = emptySet(),
         previous: Map<String, String> = emptyMap(),
         unusable: Set<String> = emptySet(),
+        alive: Set<String> = emptySet(),
     ): SlotPlan {
         val servers = serverTags.distinct()
         if (servers.size < 2) return SlotPlan(emptyList(), emptyList())
@@ -29,7 +32,7 @@ internal object SlotPlanner {
         // A server that just failed is not where a slot starts, a pin on it included (it stays a pool member and stays
         // pinned; the slot goes there again once the failure is old). The main server is never excluded.
         val avoid = unusable - setOfNotNull(selectedTag)
-        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid) }, keep)
+        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid, alive = it in alive) }, keep)
         val specs = slots.filter { it.id != SlotIds.DEFAULT }.mapNotNull { slot ->
             val server = assignments.first { it.slotId == slot.id }.serverId ?: return@mapNotNull null
             val members = slot.pool?.let { pool -> servers.filter { it in pool } } ?: servers

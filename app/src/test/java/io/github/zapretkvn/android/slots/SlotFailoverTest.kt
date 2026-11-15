@@ -20,11 +20,13 @@ class SlotFailoverTest {
         list: List<SlotDefinition> = slots,
         pool: List<String> = servers,
         failed: Set<String> = emptySet(),
+        alive: Set<String> = emptySet(),
     ) = SlotFailoverPolicy(
         list,
         pool,
         mapOf(SlotIds.YOUTUBE to youtube, SlotIds.TELEGRAM to telegram, SlotIds.DEFAULT to main),
         recentlyFailed = { failed },
+        alive = { alive },
     ) { now }
 
     private fun SlotFailoverPolicy.fail(server: String, times: Int, main: String = "A", dead: Set<String> = emptySet()): SlotFailoverDecision {
@@ -52,6 +54,13 @@ class SlotFailoverTest {
     fun `a replacement is not a server that failed minutes ago`() {
         // Field case 2026-11-14: the slot left a dead server for another one that was marked dead 4 minutes before.
         val p = policy(pool = listOf("A", "B", "C", "D", "E"), failed = setOf("D"))
+        val decision = p.fail("B", 3) as SlotFailoverDecision.Move
+        assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "E"), decision.moves.single())
+    }
+
+    @Test
+    fun `a replacement prefers a server with recent proof of life`() {
+        val p = policy(pool = listOf("A", "B", "C", "D", "E"), alive = setOf("E"))
         val decision = p.fail("B", 3) as SlotFailoverDecision.Move
         assertEquals(SlotMove(SlotIds.YOUTUBE, "B", "E"), decision.moves.single())
     }

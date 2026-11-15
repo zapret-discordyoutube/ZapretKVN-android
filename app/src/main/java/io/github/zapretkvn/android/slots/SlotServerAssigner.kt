@@ -1,7 +1,7 @@
 package io.github.zapretkvn.android.slots
 
 /** A server of the active profile as the assigner sees it. */
-internal data class SlotServer(val id: String, val usable: Boolean = true)
+internal data class SlotServer(val id: String, val usable: Boolean = true, val alive: Boolean = false)
 
 internal enum class SlotChoice {
     /** The pinned server is usable and used. */
@@ -24,8 +24,9 @@ internal data class SlotAssignment(val slotId: String, val serverId: String?, va
 
 /**
  * Picks a server for every slot: pin first, then the server the slot already has, then the usable server the fewest
- * other slots use (with a small pool servers are shared evenly rather than a slot left without one). Server order is
- * the profile's order, so the result is deterministic. Failure handling is the same call with the failed server
+ * other slots use (with a small pool servers are shared evenly rather than a slot left without one); between equally
+ * used servers one with recent proof of life ([SlotServer.alive]) goes first, then the profile's order, so the result is
+ * deterministic. Proof of life never beats separation: a slot does not share a server just because it is known good. Failure handling is the same call with the failed server
  * marked unusable: the slot moves, other slots keep what they have.
  */
 internal object SlotServerAssigner {
@@ -35,6 +36,7 @@ internal object SlotServerAssigner {
         previous: Map<String, String> = emptyMap(),
     ): List<SlotAssignment> {
         val usable = servers.filter { it.usable }.map { it.id }.toSet()
+        val aliveIds = servers.filter { it.alive }.map { it.id }.toSet()
         val order = servers.map { it.id }
         val taken = mutableMapOf<String, Int>()
         val result = mutableListOf<SlotAssignment>()
@@ -57,8 +59,10 @@ internal object SlotServerAssigner {
                 continue
             }
             val pool = poolOf(slot, order).filter { it in usable }
-            // Least used first, profile order breaks ties: servers are shared evenly when the pool is small.
-            val pick = pool.minByOrNull { taken[it] ?: 0 }
+            // Least used first, then proven alive, then profile order: servers are shared evenly when the pool is small.
+            val pick = pool.withIndex().minWithOrNull(
+                compareBy({ taken[it.value] ?: 0 }, { if (it.value in aliveIds) 0 else 1 }, { it.index }),
+            )?.value
             if (pick == null) {
                 result += SlotAssignment(slot.id, null, SlotChoice.None)
                 continue

@@ -2,6 +2,7 @@ package io.github.zapretkvn.android.slots.runtime
 
 import io.github.zapretkvn.android.engines.failover.FailoverTarget
 import io.github.zapretkvn.android.engines.failover.LatencyHint
+import io.github.zapretkvn.android.slots.SlotServerHealth
 import io.github.zapretkvn.android.vpn.runtime.CoreSession
 
 /**
@@ -38,8 +39,11 @@ internal interface SlotRuntimeHost {
      */
     fun recordUnreachable(session: CoreSession, serverId: String)
 
-    /** Runtime tags of the servers that have a fresh «не отвечает» mark (the latency store). */
-    fun recentlyFailedServers(session: CoreSession): Set<String>
+    /** What is known about the slot servers: failed ones (latency store or slot mark) and proven-alive ones. */
+    fun slotServerHealth(session: CoreSession): SlotServerHealth
+
+    /** A slot left [serverId] because it did not work for the slot: remember it for slot placement (not a ping row). */
+    fun markSlotUnusable(session: CoreSession, serverId: String)
 
     /** Another switching operation (manual, failover, smart check) is running. */
     fun busy(): Boolean

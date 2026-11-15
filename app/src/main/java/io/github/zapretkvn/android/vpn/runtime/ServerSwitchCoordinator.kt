@@ -19,7 +19,9 @@ import io.github.zapretkvn.android.engines.failover.YoutubeWedgeNotice
 import io.github.zapretkvn.android.engines.hysteria.HysteriaFailureCode
 import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.slots.SlotIds
-import io.github.zapretkvn.android.slots.recentlyFailedRuntimeTags
+import io.github.zapretkvn.android.slots.ForeignServers
+import io.github.zapretkvn.android.slots.SlotServerHealth
+import io.github.zapretkvn.android.slots.slotServerHealth
 import io.github.zapretkvn.android.vpn.LatencyProbeState
 import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.slots.runtime.SlotCoordinator
@@ -887,10 +889,17 @@ internal class ServerSwitchCoordinator(
 
         override fun busy() = smartBusy()
 
-        override fun recentlyFailedServers(session: CoreSession): Set<String> {
-            val plan = session.slotPlan ?: return emptySet()
+        override fun slotServerHealth(session: CoreSession): SlotServerHealth {
+            val plan = session.slotPlan ?: return SlotServerHealth.Unknown
             val tags = plan.specs.flatMap { it.members }.distinct()
-            return container.serverLatencyStore.recentlyFailedRuntimeTags(session.profileId, tags, plan.foreign)
+            return slotServerHealth(
+                container.serverLatencyStore::forProfile, container.slotServerMarks.active(), session.profileId, tags, plan.foreign, clock(),
+            )
+        }
+
+        override fun markSlotUnusable(session: CoreSession, serverId: String) {
+            val foreign = session.slotPlan?.foreign.orEmpty()
+            container.slotServerMarks.mark(ForeignServers.refOf(serverId, session.profileId, foreign).encode())
         }
 
         override fun recordUnreachable(session: CoreSession, serverId: String) {

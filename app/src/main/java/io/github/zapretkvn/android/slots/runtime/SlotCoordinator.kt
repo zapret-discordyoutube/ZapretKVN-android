@@ -61,7 +61,8 @@ internal class SlotCoordinator(
                 SlotCatalog.withPins(runtimePins(session)),
                 servers,
                 initial,
-                recentlyFailed = { host.recentlyFailedServers(session) },
+                recentlyFailed = { host.slotServerHealth(session).failed },
+                alive = { host.slotServerHealth(session).alive },
             ) { clock() }
         }
         publish(session)
@@ -101,6 +102,9 @@ internal class SlotCoordinator(
         when (decision) {
             is SlotFailoverDecision.Ignore -> Unit
             is SlotFailoverDecision.Move -> {
+                // Any reason counts, DNS included: the slot's DNS goes through its server alone, so a server that fails
+                // it is no place for the slot for the next hour, whatever it does for ordinary traffic.
+                host.markSlotUnusable(session, decision.failedServer)
                 host.timeline(
                     "${host.serverName(decision.failedServer)}: ${decision.hints} отказов за минуту ($what), " +
                         "слоты уходят: ${decision.moves.joinToString { "${title(it.slotId)} → ${host.serverName(it.to)}" }}.",

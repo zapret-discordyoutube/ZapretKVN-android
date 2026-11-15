@@ -38,6 +38,8 @@ internal class SlotFailoverPolicy(
      * 2026-11-14: Clermany → 4virtual, failed 4 minutes before, cost 17 s of a video start).
      */
     private val recentlyFailed: () -> Set<String> = { emptySet() },
+    /** Servers with recent proof of life: among equally used candidates they go first. */
+    private val alive: () -> Set<String> = { emptySet() },
     private val clock: () -> Long,
 ) {
     private var slots: List<SlotDefinition> = slots
@@ -95,8 +97,10 @@ internal class SlotFailoverPolicy(
         val avoid = deadUntil.keys + serverId + mainDead
         val previous = current.toMutableMap()
         mainServer?.let { previous[SlotIds.DEFAULT] = it }
+        val provenAlive = alive()
         fun movesAvoiding(unusable: Set<String>): List<SlotMove> {
-            val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in unusable) }, previous)
+            val candidates = servers.map { SlotServer(it, usable = it !in unusable, alive = it in provenAlive) }
+            val assignments = SlotServerAssigner.assign(slots, candidates, previous)
             return assignments.mapNotNull { choice ->
                 val from = current[choice.slotId]
                 val to = choice.serverId

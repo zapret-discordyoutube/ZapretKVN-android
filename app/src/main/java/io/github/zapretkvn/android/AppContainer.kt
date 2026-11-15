@@ -33,6 +33,7 @@ import io.github.zapretkvn.android.network.geo.GeoIpCountry
 import io.github.zapretkvn.android.network.geo.ServerCountryStore
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
+import io.github.zapretkvn.android.slots.SlotServerMarks
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
 import io.github.zapretkvn.android.network.probes.services.AndroidDirectNetworkSource
 import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
@@ -212,6 +213,9 @@ class AppContainer(
         File(appContext.noBackupFilesDir, "server-latency.json"),
         backgroundScope,
     )
+
+    /** Servers a service slot had to leave (docs/SERVICE_SLOTS.md): only slot placement reads them. */
+    internal val slotServerMarks = SlotServerMarks(File(appContext.noBackupFilesDir, "slot-server-marks.json"), backgroundScope)
 
     /**
      * Страна сервера по его адресу: офлайн-таблица GeoIP из ассетов плюс разовое разрешение

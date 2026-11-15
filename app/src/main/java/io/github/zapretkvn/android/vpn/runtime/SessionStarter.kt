@@ -50,7 +50,8 @@ import io.github.zapretkvn.android.slots.ForeignServers
 import io.github.zapretkvn.android.slots.ProfileServers
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotPlanner
-import io.github.zapretkvn.android.slots.recentlyFailedRuntimeTags
+import io.github.zapretkvn.android.slots.SlotServerHealth
+import io.github.zapretkvn.android.slots.slotServerHealth
 import io.github.zapretkvn.android.vpn.VpnConnectionState
 import io.github.zapretkvn.android.vpn.ZapretVpnService
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureException
@@ -238,8 +239,8 @@ internal class SessionStarter(
      * Runtime tags of the servers whose last saved result is a fresh failure («не отвечает», see `hint()`): a slot does
      * not start on them, a pin on one included, so a connect does not begin with a minute of waiting on a dead server.
      */
-    private fun recentlyFailedServers(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): Set<String> =
-        container.serverLatencyStore.recentlyFailedRuntimeTags(profileId, activeTags, foreign)
+    private fun slotHealth(profileId: String, activeTags: List<String>, foreign: List<ForeignServer>): SlotServerHealth =
+        slotServerHealth(container.serverLatencyStore::forProfile, container.slotServerMarks.active(), profileId, activeTags, foreign)
 
     private suspend fun loadForeignServers(activeId: String, activeName: String, active: ParsedConfig): List<ForeignServer> {
         val others = container.profileStore.profiles.value.filter { it.id != activeId }.mapNotNull { meta ->
@@ -445,13 +446,15 @@ internal class SessionStarter(
         val slotPlan = if (uiSettings.serviceSlots) {
             SlotRoutes.managedServers(effectiveConfig.root)?.let { managed ->
                 val pins = ForeignServers.runtimePins(uiSettings.slotPins, profileId, foreignServers)
+                val health = slotHealth(profileId, managed.tags, foreignServers)
                 SlotPlanner.plan(
                     SlotCatalog.withPins(pins),
                     managed.tags + foreignServers.map { it.runtimeTag },
                     managed.selected,
                     selectedPackages,
-                    unusable = recentlyFailedServers(profileId, managed.tags, foreignServers),
-                ).copy(foreign = foreignServers)
+                    unusable = health.failed,
+                    alive = health.alive,
+                ).copy(foreign = foreignServers, skippedFailed = (health.failed - setOfNotNull(managed.selected)).size)
             }
         } else {
             null
@@ -464,6 +467,7 @@ internal class SessionStarter(
                 } else {
                     "слоты: " + slotPlan.specs.joinToString("; ") { "${it.slotId}=${it.defaultMember} из ${it.members.size}" } +
                         (if (foreignServers.isEmpty()) "" else "; серверов из других профилей: ${foreignServers.size}") +
+                        (if (slotPlan.skippedFailed == 0) "" else "; обойдено серверов с недавним отказом: ${slotPlan.skippedFailed}") +
                         "; остальные приложения идут через основной сервер"
                 },
             )
