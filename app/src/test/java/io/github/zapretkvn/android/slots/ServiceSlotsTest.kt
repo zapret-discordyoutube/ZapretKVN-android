@@ -209,6 +209,22 @@ class ServiceSlotsTest {
         assertEquals("no slot shares a server while a free one exists", servers.size, servers.toSet().size)
     }
 
+    /** Field case 2026-11-15: Rusina delivered 21 MB/s of video, the next connect still started on a server that starves it. */
+    @Test
+    fun `the YouTube slot starts on a server that played YouTube fast and no other slot takes it`() {
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D", "E"), selectedTag = "A", proven = mapOf(SlotIds.YOUTUBE to setOf("D")))
+        assertEquals("D", plan.assignments.first { it.slotId == SlotIds.YOUTUBE }.serverId)
+        val others = plan.assignments.filter { it.slotId != SlotIds.YOUTUBE && it.slotId != SlotIds.DEFAULT }.mapNotNull { it.serverId }
+        assertTrue("no other slot sits on the proven server", "D" !in others)
+    }
+
+    @Test
+    fun `proof for YouTube never beats separation`() {
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", proven = mapOf(SlotIds.YOUTUBE to setOf("B", "C", "D")))
+        val servers = plan.assignments.filter { it.slotId != SlotIds.DEFAULT }.mapNotNull { it.serverId }
+        assertEquals("slots stay on separate servers", servers.size, servers.toSet().size)
+    }
+
     @Test
     fun `the main server is never excluded by the failure list`() {
         val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("A"))

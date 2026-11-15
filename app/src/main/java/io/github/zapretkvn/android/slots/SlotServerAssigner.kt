@@ -1,7 +1,13 @@
 package io.github.zapretkvn.android.slots
 
 /** A server of the active profile as the assigner sees it. */
-internal data class SlotServer(val id: String, val usable: Boolean = true, val alive: Boolean = false)
+internal data class SlotServer(
+    val id: String,
+    val usable: Boolean = true,
+    val alive: Boolean = false,
+    /** Slots this server has proven itself for (the YouTube slot: it delivered video fast before). */
+    val provenFor: Set<String> = emptySet(),
+)
 
 internal enum class SlotChoice {
     /** The pinned server is usable and used. */
@@ -37,6 +43,7 @@ internal object SlotServerAssigner {
     ): List<SlotAssignment> {
         val usable = servers.filter { it.usable }.map { it.id }.toSet()
         val aliveIds = servers.filter { it.alive }.map { it.id }.toSet()
+        val provenFor = servers.filter { it.provenFor.isNotEmpty() }.associate { it.id to it.provenFor }
         val order = servers.map { it.id }
         val taken = mutableMapOf<String, Int>()
         val result = mutableListOf<SlotAssignment>()
@@ -60,8 +67,16 @@ internal object SlotServerAssigner {
             }
             val pool = poolOf(slot, order).filter { it in usable }
             // Least used first, then proven alive, then profile order: servers are shared evenly when the pool is small.
+            // A server proven for this slot goes before a merely alive one; a server proven only for ANOTHER slot is left
+            // to that slot when an equal server exists (the YouTube slot does not lose its proven server to the AI slot).
             val pick = pool.withIndex().minWithOrNull(
-                compareBy({ taken[it.value] ?: 0 }, { if (it.value in aliveIds) 0 else 1 }, { it.index }),
+                compareBy(
+                    { taken[it.value] ?: 0 },
+                    { if (slot.id in provenFor[it.value].orEmpty()) 0 else 1 },
+                    { if (it.value in aliveIds) 0 else 1 },
+                    { if (provenFor[it.value].orEmpty().let { proven -> proven.isNotEmpty() && slot.id !in proven }) 1 else 0 },
+                    { it.index },
+                ),
             )?.value
             if (pick == null) {
                 result += SlotAssignment(slot.id, null, SlotChoice.None)

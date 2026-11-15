@@ -16,6 +16,9 @@ internal data class SlotPlan(
  * that server while the profile has more. A profile with one server (or none) gets no slots: nothing to separate.
  */
 internal object SlotPlanner {
+    /** A server whose average YouTube speed in the history is at least this counts as proven for the YouTube slot. */
+    const val YOUTUBE_PROVEN_BYTES_PER_SECOND = 300L * 1024
+
     fun plan(
         slots: List<SlotDefinition>,
         serverTags: List<String>,
@@ -24,6 +27,8 @@ internal object SlotPlanner {
         previous: Map<String, String> = emptyMap(),
         unusable: Set<String> = emptySet(),
         alive: Set<String> = emptySet(),
+        /** Slot id to the servers that delivered that slot's traffic well before (YouTube: video speed history). */
+        proven: Map<String, Set<String>> = emptyMap(),
     ): SlotPlan {
         val servers = serverTags.distinct()
         if (servers.size < 2) return SlotPlan(emptyList(), emptyList())
@@ -32,7 +37,7 @@ internal object SlotPlanner {
         // A server that just failed is not where a slot starts, a pin on it included (it stays a pool member and stays
         // pinned; the slot goes there again once the failure is old). The main server is never excluded.
         val avoid = unusable - setOfNotNull(selectedTag)
-        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid, alive = it in alive) }, keep)
+        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid, alive = it in alive, provenFor = proven.filterValues { ids -> it in ids }.keys) }, keep)
         val specs = slots.filter { it.id != SlotIds.DEFAULT }.mapNotNull { slot ->
             val server = assignments.first { it.slotId == slot.id }.serverId ?: return@mapNotNull null
             val members = slot.pool?.let { pool -> servers.filter { it in pool } } ?: servers

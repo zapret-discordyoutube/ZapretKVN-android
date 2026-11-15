@@ -49,6 +49,7 @@ import io.github.zapretkvn.android.slots.ForeignServer
 import io.github.zapretkvn.android.slots.ForeignServers
 import io.github.zapretkvn.android.slots.ProfileServers
 import io.github.zapretkvn.android.slots.SlotCatalog
+import io.github.zapretkvn.android.slots.SlotIds
 import io.github.zapretkvn.android.slots.SlotPlanner
 import io.github.zapretkvn.android.slots.SlotServerHealth
 import io.github.zapretkvn.android.slots.slotServerHealth
@@ -454,6 +455,11 @@ internal class SessionStarter(
                     selectedPackages,
                     unusable = health.failed,
                     alive = health.alive,
+                    // Servers that played YouTube fast in the past go first for the YouTube slot (a fast ping says
+                    // nothing about video: field case 2026-11-15, 4virtual answered in 5 ms and starved every video).
+                    proven = mapOf(
+                        SlotIds.YOUTUBE to managed.tags.filter { (RuntimeLog.youtubeAverage(it) ?: 0L) >= SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND }.toSet(),
+                    ),
                 ).copy(foreign = foreignServers, skippedFailed = (health.failed - setOfNotNull(managed.selected)).size)
             }
         } else {

@@ -367,6 +367,25 @@ Open: a mark lasts one hour whatever the history, so a server that fails the slo
 slot dead in four sessions) is tried again after each hour. Doubling the mark on a repeat is the next step if it keeps
 costing the viewer 15 s per try.
 
+### The YouTube slot starts on a server that played video fast (Android 0.6.17, owner decision 2026-11-15)
+
+Field case 2026-11-15 (0.6.16, phone on Wi-Fi, YouTube pinned to 4virtual): with the YouTube slot off, everything went
+through the main server Titiru and the video never started (the clusters sn-4g5ednre and sn-8ph2xajvh did not answer).
+With slots on, the rescue chain worked: 4fin dead for TCP → 4vircosx (cluster sn-gvnuxaxjvh dead) → Rusina, where one
+googlevideo connection delivered 21.7 MB at 3.5 MB/s and the video played, but only 105 s after the tap, and the next
+connect started the YouTube slot on Rusge, not on Rusina that had just proven itself.
+
+- **Proof for a slot** (`SlotPlanner.plan(proven = …)`, `SlotServer.provenFor`): servers whose average YouTube speed in the
+  speed history (`SpeedHistory.youtubeAverage`, at least `YOUTUBE_PROVEN_BYTES_PER_SECOND` = 300 KB/s) is good are proven
+  for the YouTube slot. Among equally used servers the slot picks a proven one first, then a merely alive one (relay
+  result), then the profile's order. A server proven only for another slot is left to that slot when an equal server
+  exists, so the AI slot does not take the YouTube slot's server.
+- **Separation still comes first:** proof is only a tie-break after «least used», as before.
+- Foreign-profile servers have no history key yet and are not proven; the pool of the active profile decides.
+
+Tests: `ServiceSlotsTest` (the YouTube slot starts on the proven server and no other slot takes it; proof never beats
+separation).
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:
