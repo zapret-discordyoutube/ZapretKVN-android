@@ -412,6 +412,36 @@ failing the slot's DNS (Clermany: four sessions in a row) was tried again every 
 Tests: `SlotServerMarksTest` (escalation to the ceiling, repeat during a running mark, forgetting after a day, old file
 format, clamping).
 
+### When the video starves on every server, the servers are not blamed (Android 0.6.20, 2026-11-15)
+
+Field case 2026-11-15 18:44-18:50 UTC (0.6.19, new 25-minute video in the YouTube app): the player stayed in
+BUFFERING at 0:00, and in 5 minutes three episodes walked the YouTube slot through nine servers. On every server that
+answered (Finohost, 4vusa, Rusina, Hosfinano, Plafi, Platifin) the video flows looked the same: about 100 KB sent and
+35 KB received per 12 s, while a healthy flow on the same servers receives MBs for 25 KB sent. Rusina had delivered
+60 MB of video an hour earlier. Six minutes later Chrome and then the same app played a new video through Platifin
+(10.3 MB and 15 MB on the same cluster). So the cause was the client or YouTube's answers to it, not the servers; yet
+each episode marked the server it started on for one to eight hours, and later sessions would avoid good servers.
+
+- **Rule** (`YoutubeSwitchEngine`, constant `YoutubeSwitchDefaults.CLIENT_STALL_MIN_SERVERS = 3`): an episode with no
+  winner, in which the video starved on the original server and on at least two candidates that answered, ends as
+  `StarvesEverywhere`. A candidate that did not answer at all (`VideoOutcome.Dead`: the slot's own failover left it during
+  the trial) keeps its mark and does not count, because a dead server says nothing about the client.
+- **Effect:** the episode's own "slow for YouTube" marks are cleared (`YoutubeSwitchPolicy.clearSlow`), the slot mark set
+  on the original is undone exactly (`SlotServerMarks.forgive`, `SlotMarkRules.undo`: the strike count goes back too,
+  and a newer mark from another failure stays), and switching pauses for 3 minutes instead of 90 s
+  (`CLIENT_STALL_COOLDOWN_MILLIS`). The notice "Закройте YouTube и откройте видео заново" is shown as before. The
+  slot stays where the episode left it (a server that answers).
+- **Log:** «YouTube голодает одинаково на … и на …: дело не в сервере, а в приложении YouTube. Отметка с … снята,
+  серверы не меняются 3 мин.» and the episode line «видео голодает на всех N проверенных серверах: дело не в сервере,
+  отметки сняты».
+- **Switch:** set `CLIENT_STALL_MIN_SERVERS` to `Int.MAX_VALUE` to get the old behaviour back.
+- **Not explained yet:** why the client got no media on any server for those minutes. Chrome was not running at the
+  same moment, so a client-side cause is the best explanation for the pattern, not a measured fact. Windows has no
+  slow-video episode, so there is nothing to port.
+
+Tests: `YoutubeSlowSwitchTest` (the field case, dead candidates do not count, two servers are not enough),
+`SlotServerMarksTest` (undo of a mark and of a repeat strike, the file follows), `YoutubeWedgeNoticeTest`.
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

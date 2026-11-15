@@ -747,6 +747,8 @@ internal class ServerSwitchCoordinator(
         is YoutubeSwitchOutcome.SwitchedUnverified -> "выбран ${server(outcome.serverId)}, перезапустите видео"
         YoutubeSwitchOutcome.Inconclusive -> "видео не пошло, прежний сервер возвращён"
         YoutubeSwitchOutcome.AllCandidatesSlow -> "запасные серверы тоже медленные, прежний возвращён"
+        is YoutubeSwitchOutcome.StarvesEverywhere ->
+            "видео голодает на всех ${outcome.servers} проверенных серверах: дело не в сервере, отметки сняты"
         YoutubeSwitchOutcome.TrialFailed -> "переключение не удалось"
         YoutubeSwitchOutcome.CommitRefused -> "выбор не сохранён, прежний сервер возвращён"
     }
@@ -900,6 +902,11 @@ internal class ServerSwitchCoordinator(
         override fun markSlotUnusable(session: CoreSession, serverId: String) {
             val foreign = session.slotPlan?.foreign.orEmpty()
             container.slotServerMarks.mark(ForeignServers.refOf(serverId, session.profileId, foreign).encode())
+        }
+
+        override fun forgiveSlotMark(session: CoreSession, serverId: String) {
+            val foreign = session.slotPlan?.foreign.orEmpty()
+            container.slotServerMarks.forgive(ForeignServers.refOf(serverId, session.profileId, foreign).encode())
         }
 
         override fun recordUnreachable(session: CoreSession, serverId: String) {

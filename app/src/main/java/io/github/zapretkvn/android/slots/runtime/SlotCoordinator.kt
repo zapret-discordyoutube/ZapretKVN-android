@@ -237,6 +237,12 @@ internal class SlotCoordinator(
                 }
             }
 
+            override fun forgiveLeft(session: CoreSession, serverId: String) {
+                host.postToActor {
+                    if (host.isCurrent(session)) host.forgiveSlotMark(session, serverId)
+                }
+            }
+
             override fun announce(session: CoreSession, message: String, notificationDetail: String) =
                 host.announce(session, message, notificationDetail)
 

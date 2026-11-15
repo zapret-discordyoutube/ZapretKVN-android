@@ -37,6 +37,18 @@ internal object YoutubeSwitchDefaults {
 
     /** Средняя по видео, ниже которой сервер по истории не берётся совсем (граница «медленно» в журнале). */
     const val BAD_HISTORY_BYTES_PER_SECOND = 50L * 1024
+
+    /**
+     * Видео голодает одинаково на стольких серверах подряд (прежний и отвечающие кандидаты): дело не в сервере, а в
+     * клиенте YouTube или в ответах YouTube этому клиенту. Поле 2026-11-15 18:44-18:50 UTC: за 5 минут эпизоды прошли
+     * девять серверов, включая Rusina, которая час назад отдала 60 МБ видео; на всех потоки отправляли больше, чем
+     * получали, а через 6 минут тот же клиент через Platifin играл. Отметки этого эпизода снимаются. Поставить
+     * [Int.MAX_VALUE], чтобы вернуть прежнее поведение (каждый голодающий сервер виноват).
+     */
+    const val CLIENT_STALL_MIN_SERVERS = 3
+
+    /** Пауза после вывода «дело не в сервере»: смена сервера не поможет, пользователь перезапускает YouTube. */
+    const val CLIENT_STALL_COOLDOWN_MILLIS = 3 * 60_000L
 }
 
 internal enum class YoutubeSwitchGate { Ready, Disabled, Busy, Cooldown, Limit }
@@ -111,6 +123,12 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
     @Synchronized
     fun isMarkedSlow(id: String): Boolean = (slowUntil[id] ?: Long.MIN_VALUE) > monotonicMillis()
 
+    /** Снимает метки «плох для YouTube»: эпизод выяснил, что эти серверы не виноваты. */
+    @Synchronized
+    fun clearSlow(ids: Collection<String>) {
+        ids.forEach { slowUntil.remove(it) }
+    }
+
     /** Любое переключение, даже пробное, расходует лимит окна. */
     @Synchronized
     fun onSwitch() {
@@ -120,8 +138,8 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
     }
 
     @Synchronized
-    fun onEpisodeEnd() {
-        cooldownUntil = monotonicMillis() + YoutubeSwitchDefaults.COOLDOWN_MILLIS
+    fun onEpisodeEnd(cooldownMillis: Long = YoutubeSwitchDefaults.COOLDOWN_MILLIS) {
+        cooldownUntil = monotonicMillis() + cooldownMillis
     }
 
     private fun prune(now: Long) {
@@ -131,8 +149,12 @@ internal class YoutubeSwitchPolicy(private val monotonicMillis: () -> Long) {
     }
 }
 
-/** Что видно после переключения: видео идёт здорово, голодает или не идёт вовсе. */
-internal enum class VideoOutcome { Healthy, Starving, Silent }
+/**
+ * Что видно после переключения: видео идёт здорово, голодает, не идёт вовсе, или пробный сервер мёртв (слот сам ушёл
+ * с него: DNS или соединения не прошли). Мёртвый сервер, как и голодающий, ведёт к следующему кандидату, но это другой
+ * признак: он не говорит, что видео голодает везде.
+ */
+internal enum class VideoOutcome { Healthy, Starving, Silent, Dead }
 
 /** Операции сервиса для эпизода. Переключение идёт общим `ServerSwitcher`, как у ручного выбора и failover. */
 internal interface YoutubeSwitchHost {
@@ -144,6 +166,12 @@ internal interface YoutubeSwitchHost {
      * слот на кандидате, который отвечал, чтобы не вернуться на сервер, на котором видео голодало.
      */
     suspend fun endWithoutWinner(original: String) = restore(original)
+
+    /**
+     * Видео голодало одинаково на [original] и на отвечающих кандидатах [starved]: дело не в сервере. Хост снимает
+     * отметку, которую эпизод поставил [original], и пишет в журнал, почему.
+     */
+    fun notTheServer(original: String, starved: List<String>) = Unit
 
     /** Пробно переключает селектор без сохранения; false: состояние изменилось или команда не прошла. */
     suspend fun trialSwitch(currentId: String, candidateId: String): Boolean
@@ -175,6 +203,9 @@ internal sealed interface YoutubeSwitchOutcome {
     data class SwitchedUnverified(val serverId: String) : YoutubeSwitchOutcome
     data object Inconclusive : YoutubeSwitchOutcome
     data object AllCandidatesSlow : YoutubeSwitchOutcome
+
+    /** Видео голодало на прежнем сервере и на отвечающих кандидатах: дело в клиенте YouTube, отметки сняты. */
+    data class StarvesEverywhere(val servers: Int) : YoutubeSwitchOutcome
     data object TrialFailed : YoutubeSwitchOutcome
     data object CommitRefused : YoutubeSwitchOutcome
 }
@@ -229,6 +260,8 @@ internal class YoutubeSwitchEngine(
             return YoutubeSwitchOutcome.NoCandidates
         }
         var current = original
+        // Кандидаты, которые отвечали, но видео на них голодало так же, как на прежнем сервере.
+        val starved = ArrayList<String>()
         for (candidate in candidates) {
             if (!host.trialSwitch(current, candidate.id)) {
                 host.restore(original)
@@ -253,6 +286,11 @@ internal class YoutubeSwitchEngine(
                 VideoOutcome.Starving -> {
                     host.log("YouTube на сервере ${candidate.id} тоже медленный.")
                     policy.markSlow(candidate.id)
+                    starved += candidate.id
+                    current = candidate.id
+                }
+                VideoOutcome.Dead -> {
+                    policy.markSlow(candidate.id)
                     current = candidate.id
                 }
                 VideoOutcome.Silent -> if (keepOnSilent) {
@@ -274,6 +312,15 @@ internal class YoutubeSwitchEngine(
             }
         }
         host.endWithoutWinner(original)
+        val servers = starved.size + 1
+        if (servers >= YoutubeSwitchDefaults.CLIENT_STALL_MIN_SERVERS) {
+            // Одинаковое голодание везде: серверы не виноваты, их метки снимаются, а новый обход серверов ничего не даст,
+            // пока клиент YouTube не перезапустят.
+            policy.clearSlow(starved + original)
+            host.notTheServer(original, starved)
+            policy.onEpisodeEnd(YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS)
+            return YoutubeSwitchOutcome.StarvesEverywhere(servers)
+        }
         policy.onEpisodeEnd()
         return YoutubeSwitchOutcome.AllCandidatesSlow
     }

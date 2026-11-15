@@ -10,8 +10,8 @@ class YoutubeWedgeNoticeTest {
     private val now = 1_000_000L
 
     @Test
-    fun `the two outcomes where the switch did not bring the video back ask for a restart of YouTube`() {
-        for (outcome in listOf(YoutubeSwitchOutcome.Inconclusive, YoutubeSwitchOutcome.AllCandidatesSlow)) {
+    fun `the outcomes where the switch did not bring the video back ask for a restart of YouTube`() {
+        for (outcome in listOf(YoutubeSwitchOutcome.Inconclusive, YoutubeSwitchOutcome.AllCandidatesSlow, YoutubeSwitchOutcome.StarvesEverywhere(3))) {
             val notice = YoutubeWedgeNotice.decide(outcome, null, now)
             assertNotNull(outcome.toString(), notice)
             assertTrue(notice!!.message.contains("Закройте YouTube"))

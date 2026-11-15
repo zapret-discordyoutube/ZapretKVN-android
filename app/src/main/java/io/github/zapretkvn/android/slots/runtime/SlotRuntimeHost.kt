@@ -45,6 +45,9 @@ internal interface SlotRuntimeHost {
     /** A slot left [serverId] because it did not work for the slot: remember it for slot placement (not a ping row). */
     fun markSlotUnusable(session: CoreSession, serverId: String)
 
+    /** The last mark of [serverId] was a mistake (the video starved everywhere, not on it): put back what was before. */
+    fun forgiveSlotMark(session: CoreSession, serverId: String)
+
     /** Another switching operation (manual, failover, smart check) is running. */
     fun busy(): Boolean
 

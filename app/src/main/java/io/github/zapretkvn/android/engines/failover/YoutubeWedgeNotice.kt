@@ -9,7 +9,8 @@ package io.github.zapretkvn.android.engines.failover
  * restored; the video stayed at 0:10 until the client was force-stopped, then another video played at once. The app
  * cannot close another app, so it asks the user to do the one tap that works.
  *
- * Only the two outcomes that mean "the switch did not help" produce a notice. A switch that worked, one that is
+ * Only the outcomes that mean "the switch did not help" produce a notice (since 0.6.20 also "the video starves on every
+ * server", the strongest sign that the client, not the server, is stuck). A switch that worked, one that is
  * unverified (it already says "restart the video"), a failed command and "no spare server" do not. A notice is shown
  * at most once per [MIN_GAP_MILLIS]: episodes already have their own cooldown, this keeps a stuck video from nagging.
  */
@@ -19,7 +20,9 @@ internal object YoutubeWedgeNotice {
     data class Notice(val message: String, val detail: String)
 
     fun decide(outcome: YoutubeSwitchOutcome, lastShownAtMillis: Long?, nowMillis: Long): Notice? {
-        val didNotHelp = outcome == YoutubeSwitchOutcome.Inconclusive || outcome == YoutubeSwitchOutcome.AllCandidatesSlow
+        val didNotHelp = outcome == YoutubeSwitchOutcome.Inconclusive ||
+            outcome == YoutubeSwitchOutcome.AllCandidatesSlow ||
+            outcome is YoutubeSwitchOutcome.StarvesEverywhere
         if (!didNotHelp) return null
         if (lastShownAtMillis != null && nowMillis - lastShownAtMillis < MIN_GAP_MILLIS) return null
         return Notice(

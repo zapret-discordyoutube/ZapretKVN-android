@@ -65,6 +65,15 @@ internal object SlotMarkRules {
         return remembered(marks + (key to Mark(now, strikes)), now)
     }
 
+    /**
+     * Undo of one [add]: [key] holds [set] (the mark that add made) and goes back to [before] (null: no mark). A later
+     * mark of the same server is not touched: it was made by another failure and stays.
+     */
+    fun undo(marks: Map<String, Mark>, key: String, before: Mark?, set: Mark): Map<String, Mark> {
+        if (marks[key] != set) return marks
+        return if (before == null) marks - key else marks + (key to before)
+    }
+
     /** One mark is a number (the time, one strike: files of 0.6.13-0.6.18) or `[time, strikes]`. */
     fun encode(marks: Map<String, Mark>): String =
         buildJsonObject {
@@ -107,6 +116,9 @@ internal class SlotServerMarks(
     private var marks: Map<String, SlotMarkRules.Mark> = emptyMap()
     private val writer = Mutex()
 
+    /** Per key, what the last [mark] replaced and what it set: [forgive] puts it back. */
+    private val lastChange = HashMap<String, Pair<SlotMarkRules.Mark?, SlotMarkRules.Mark>>()
+
     init {
         scope.launch(ioDispatcher) {
             val stored = SlotMarkRules.decode(runCatching { if (file.isFile) file.readText() else null }.getOrNull())
@@ -117,7 +129,28 @@ internal class SlotServerMarks(
     /** [key] did not work for a slot just now. */
     fun mark(key: String) {
         val now = clock()
-        synchronized(lock) { marks = SlotMarkRules.add(marks, key, now) }
+        synchronized(lock) {
+            val before = marks[key]
+            marks = SlotMarkRules.add(marks, key, now)
+            marks[key]?.let { lastChange[key] = before to it }
+        }
+        save()
+    }
+
+    /**
+     * The last [mark] of [key] was a mistake (the YouTube video starved on every server, so this one was not the cause):
+     * the mark and its strike go back to what they were before it. Nothing happens when the server was marked again since.
+     */
+    fun forgive(key: String) {
+        val changed = synchronized(lock) {
+            val (before, set) = lastChange.remove(key) ?: return
+            val next = SlotMarkRules.undo(marks, key, before, set)
+            (next !== marks).also { marks = next }
+        }
+        if (changed) save()
+    }
+
+    private fun save() {
         scope.launch(ioDispatcher) {
             writer.withLock {
                 val snapshot = synchronized(lock) { marks }

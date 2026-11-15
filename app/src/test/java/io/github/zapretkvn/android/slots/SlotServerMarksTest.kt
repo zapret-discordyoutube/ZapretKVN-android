@@ -94,4 +94,41 @@ class SlotServerMarksTest {
         now += hour + 1
         assertTrue("an hour later the mark is gone", second.active().isEmpty())
     }
+
+    /** 0.6.20: the video starved on every server, so the mark the episode set on the first one is taken back exactly. */
+    @Test
+    fun `a forgiven mark goes back to what it was, a later mark is not touched`() {
+        val now = 100 * hour
+        val before = mark(now - 3 * hour, 2)
+        val set = mark(now, 3)
+        assertEquals(mapOf("a" to before), SlotMarkRules.undo(mapOf("a" to set), "a", before, set))
+        assertTrue(SlotMarkRules.undo(mapOf("a" to set), "a", null, set).isEmpty())
+        val later = mark(now + 1_000, 3)
+        assertEquals(mapOf("a" to later), SlotMarkRules.undo(mapOf("a" to later), "a", before, set))
+    }
+
+    @Test
+    fun `forgive undoes the last mark in the store and in the file, a repeat strike included`() {
+        val file = File(folder.root, "slot-server-marks.json")
+        var now = 100 * hour
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val marks = SlotServerMarks(file, scope, { now }, Dispatchers.Unconfined)
+        marks.mark("fresh")
+        marks.forgive("fresh")
+        assertTrue(marks.active().isEmpty())
+        // a repeat after the first mark ran out would double the next one: forgiving it keeps the old strike count
+        marks.mark("repeat")
+        now += hour + 1
+        marks.mark("repeat")
+        marks.forgive("repeat")
+        assertTrue("the old mark has run out, nothing keeps the slot away", marks.active().isEmpty())
+        now += 1
+        marks.mark("repeat")
+        assertEquals("still the second strike, not the third", 1, marks.active().size)
+        now += hour + hour / 2
+        assertTrue("a second strike lasts two hours: still live after 1.5 h", "repeat" in marks.active())
+        val reread = SlotServerMarks(file, scope, { now }, Dispatchers.Unconfined)
+        assertEquals(setOf("repeat"), reread.active().keys)
+        marks.forgive("nothing-here")
+    }
 }

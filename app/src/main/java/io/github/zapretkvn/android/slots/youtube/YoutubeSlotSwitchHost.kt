@@ -8,6 +8,7 @@ import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.engines.failover.SlowSwitchSnapshot
 import io.github.zapretkvn.android.engines.failover.VideoOutcome
+import io.github.zapretkvn.android.engines.failover.YoutubeSwitchDefaults
 import io.github.zapretkvn.android.engines.failover.YoutubeSwitchHost
 import io.github.zapretkvn.android.vpn.VpnController
 import io.github.zapretkvn.runtimelog.SlowVideoDetector
@@ -33,6 +34,9 @@ internal interface SlotSwitchContext {
      * next connect (a pin included) and the next episode do not go back to the server that just starved the video.
      */
     fun markLeft(session: CoreSession, serverId: String)
+
+    /** [markLeft] of [serverId] was a mistake: the video starved on every server, so the server was not the cause. */
+    fun forgiveLeft(session: CoreSession, serverId: String)
 
     fun announce(session: CoreSession, message: String, notificationDetail: String)
 
@@ -153,7 +157,7 @@ internal class YoutubeSlotSwitchHost(
             baseAfterDeadTrial = left
             adoptFailoverPlace = left != starvedOriginal
             log("Пробный сервер ${redact(trial)} не отвечает: слот ушёл с него сам, берём следующий.")
-            return VideoOutcome.Starving
+            return VideoOutcome.Dead
         }
         return VideoOutcome.Silent
     }
@@ -178,6 +182,15 @@ internal class YoutubeSlotSwitchHost(
             return
         }
         restore(original)
+    }
+
+    override fun notTheServer(original: String, starved: List<String>) {
+        if (original == starvedOriginal) context.forgiveLeft(session, original)
+        context.timeline(
+            "YouTube голодает одинаково на ${redact(original)} и на ${starved.joinToString { redact(it) }}: дело не в " +
+                "сервере, а в приложении YouTube. Отметка с ${redact(original)} снята, серверы не меняются " +
+                "${YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS / 60_000} мин.",
+        )
     }
 
     /** Already in place since the trial; the slot's server is session state, so there is nothing to persist. */

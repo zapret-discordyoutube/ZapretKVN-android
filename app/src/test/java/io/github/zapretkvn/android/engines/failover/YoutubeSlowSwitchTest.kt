@@ -44,6 +44,9 @@ class YoutubeSlowSwitchTest {
         }
         override suspend fun restore(id: String) { calls += "restore:$id" }
         override fun log(message: String) { calls += "log" }
+        override fun notTheServer(original: String, starved: List<String>) {
+            calls += "notTheServer:$original<-${starved.joinToString(",")}"
+        }
         override fun announce(fromId: String, toId: String, restartVideo: Boolean) {
             calls += "announce:$fromId->$toId" + if (restartVideo) ":restart" else ""
         }
@@ -119,12 +122,50 @@ class YoutubeSlowSwitchTest {
     }
 
     @Test
-    fun `when every candidate is slow the original server comes back`() = runTest {
-        val host = FakeHost(snapshot("Hipge", "A", "B", "C", "D"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving))
-        val outcome = engine(host).runEpisode()
+    fun `when one answering candidate is slow too and the other is dead, the original server comes back`() = runTest {
+        val policy = policy()
+        val host = FakeHost(snapshot("Hipge", "A", "B"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Dead))
+        val outcome = engine(host, policy).runEpisode()
         assertEquals(YoutubeSwitchOutcome.AllCandidatesSlow, outcome)
-        assertEquals("only three candidates per episode", 3, host.calls.count { it.startsWith("trial") })
         assertEquals("restore:Hipge", host.calls.last())
+        assertTrue("two servers are not enough to blame the client", host.calls.none { it.startsWith("notTheServer") })
+        assertTrue(policy.isMarkedSlow("Hipge"))
+        assertTrue(policy.isMarkedSlow("A"))
+        assertTrue("a dead candidate stays marked", policy.isMarkedSlow("B"))
+        now += YoutubeSwitchDefaults.COOLDOWN_MILLIS
+        assertEquals(YoutubeSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+    }
+
+    /**
+     * Field 2026-11-15 18:44-18:50 UTC (0.6.19): the video starved on Titiru, then on Hosfinano, Plafi and Platifin, and
+     * before that on Finohost, 4vusa and Rusina (which had played 60 MB an hour earlier); six minutes later the same
+     * client played on Platifin. Not the servers: their marks go, and the servers are left alone for three minutes.
+     */
+    @Test
+    fun `when the video starves on every answering server it is not the server, marks go and switching pauses`() = runTest {
+        val policy = policy()
+        val host = FakeHost(
+            snapshot("Titiru", "Hosfinano", "Plafi", "Platifin", "D"),
+            mutableListOf(VideoOutcome.Starving, VideoOutcome.Starving, VideoOutcome.Starving),
+        )
+        val outcome = engine(host, policy).runEpisode()
+        assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(4), outcome)
+        assertEquals("only three candidates per episode", 3, host.calls.count { it.startsWith("trial") })
+        assertEquals(listOf("restore:Titiru", "notTheServer:Titiru<-Hosfinano,Plafi,Platifin"), host.calls.takeLast(2))
+        listOf("Titiru", "Hosfinano", "Plafi", "Platifin").forEach { assertFalse(it, policy.isMarkedSlow(it)) }
+        now += YoutubeSwitchDefaults.COOLDOWN_MILLIS
+        assertEquals(YoutubeSwitchGate.Cooldown, policy.gate(enabled = true, busy = false))
+        now += YoutubeSwitchDefaults.CLIENT_STALL_COOLDOWN_MILLIS - YoutubeSwitchDefaults.COOLDOWN_MILLIS
+        assertEquals(YoutubeSwitchGate.Ready, policy.gate(enabled = true, busy = false))
+    }
+
+    @Test
+    fun `dead candidates are no proof against the client, three servers that answer are`() = runTest {
+        val deadOnes = FakeHost(snapshot("A", "B", "C", "D"), mutableListOf(VideoOutcome.Starving, VideoOutcome.Dead, VideoOutcome.Dead))
+        assertEquals(YoutubeSwitchOutcome.AllCandidatesSlow, engine(deadOnes).runEpisode())
+        val answering = FakeHost(snapshot("A", "B", "C", "D"), mutableListOf(VideoOutcome.Dead, VideoOutcome.Starving, VideoOutcome.Starving))
+        assertEquals(YoutubeSwitchOutcome.StarvesEverywhere(3), engine(answering).runEpisode())
+        assertEquals(3, YoutubeSwitchDefaults.CLIENT_STALL_MIN_SERVERS)
     }
 
     /** Field case 2026-11-15 (0.6.14): the two replacements tried first were a slow one and a dead one; proof goes first. */
