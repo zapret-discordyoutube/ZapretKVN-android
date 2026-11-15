@@ -347,6 +347,26 @@ wedge notice (close YouTube and open the video again) stays the way out of that 
 
 Tests: `YoutubeSlowSwitchTest` (proof order, speed history beats proof, three tries).
 
+### The rescue follows the slot's own failover and never goes back (Android 0.6.16, owner decision 2026-11-15)
+
+Field case 2026-11-15 (0.6.15, phone, YouTube pinned to 4virtual): the first replacement was Clermany again (its mark of
+0.6.13 had expired eight minutes earlier) and it failed the slot's DNS; the slot's own failover left it at once for
+4vircosx, which connected («official Hysteria2 connected … udp=true»), but the episode then moved the slot on to Tinul,
+which stayed silent, and the silence made the engine restore the starved 4virtual. Two fixes, both in
+`YoutubeSlotSwitchHost`:
+
+- **Adopt the failover's choice** (`adoptFailoverPlace`): after a dead trial server, when the slot's failover has put the
+  slot on a live server that is not the starved one, the next trial of the episode judges the video THERE instead of
+  moving the slot again. The timeline says `слот сам перешёл на …, видео проверяется там`; the announcement names the
+  server the slot really sits on.
+- **No way back, whatever the outcome** (`restore`): the starved server is marked at the first trial; a restore to it
+  (silence, a cancelled episode) leaves the slot where it sits. Log: `Слот остаётся на …: на прежнем сервере … видео
+  голодало.` A failed trial command, where the slot never left, still restores normally.
+
+Open: a mark lasts one hour whatever the history, so a server that fails the slot again and again (Clermany: DNS of the
+slot dead in four sessions) is tried again after each hour. Doubling the mark on a repeat is the next step if it keeps
+costing the viewer 15 s per try.
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

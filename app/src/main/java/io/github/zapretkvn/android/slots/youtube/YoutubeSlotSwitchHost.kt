@@ -72,6 +72,13 @@ internal class YoutubeSlotSwitchHost(
      */
     private var baseAfterDeadTrial: String? = null
 
+    /**
+     * The slot's failover has already put the slot on a live server after a dead trial: the next trial of the episode
+     * judges the video there instead of moving the slot again (field case 2026-11-15: the failover landed on a server
+     * that connected, and the episode moved the slot on to another one that stayed silent).
+     */
+    private var adoptFailoverPlace = false
+
     /** The server YouTube starved on when this episode began; marked for the hour at the first trial. */
     private var starvedOriginal: String? = null
 
@@ -83,6 +90,13 @@ internal class YoutubeSlotSwitchHost(
     override suspend fun trialSwitch(currentId: String, candidateId: String): Boolean {
         val from = baseAfterDeadTrial ?: currentId
         baseAfterDeadTrial = null
+        if (adoptFailoverPlace) {
+            adoptFailoverPlace = false
+            if (!context.canTrial(session, slotId, from)) return false
+            trialId = from
+            context.timeline("YouTube медленный: слот сам перешёл на ${redact(from)}, видео проверяется там.")
+            return true
+        }
         if (starvedOriginal == null) {
             // The video starved on this server: remember it at once, whatever the trials turn out to be. The next
             // connect (a pin included), the next episode and the slot's failover do not return to it for the hour.
@@ -137,6 +151,7 @@ internal class YoutubeSlotSwitchHost(
         val left = deadTrialPlace(trial, context.placeOf(session, slotId))
         if (trial != null && left != null) {
             baseAfterDeadTrial = left
+            adoptFailoverPlace = left != starvedOriginal
             log("Пробный сервер ${redact(trial)} не отвечает: слот ушёл с него сам, берём следующий.")
             return VideoOutcome.Starving
         }
@@ -169,6 +184,17 @@ internal class YoutubeSlotSwitchHost(
     override suspend fun commit(candidateId: String): Boolean = true
 
     override suspend fun restore(id: String) {
+        if (id == starvedOriginal) {
+            // The video starved on this server and it is marked for the hour: the slot does not go back to it, it stays
+            // on the server it sits on now (a trial server, or where the slot's own failover put it).
+            val place = context.placeOf(session, slotId)
+            if (place != null && place != id) {
+                trialId = null
+                RuntimeLog.resetVideoDetector()
+                log("Слот остаётся на ${redact(place)}: на прежнем сервере ${redact(id)} видео голодало.")
+                return
+            }
+        }
         context.place(session, slotId, id)
         val failure = switcher.moveSlot(session, selectorTag, id)
         if (failure != null) {
@@ -188,7 +214,8 @@ internal class YoutubeSlotSwitchHost(
 
     override fun announce(fromId: String, toId: String, restartVideo: Boolean) {
         context.markLeft(session, fromId)
-        val server = redact(toId)
+        // The slot may sit on a server the slot's failover chose, not on the candidate the engine named last.
+        val server = redact(trialId ?: toId)
         context.announce(
             session,
             if (restartVideo) {
