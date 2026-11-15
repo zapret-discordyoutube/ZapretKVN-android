@@ -340,6 +340,19 @@ two defects of the *automation* froze it at 3:13 (the owner reports the freeze w
    instead of 14 s. Flows with a few bytes (a started handshake) keep the old limits. The cap (30 resets per 5 min) is unchanged.
    Windows `DeadVideoClusterTracker` has the same rule (`silent_min_age_sec`).
 
+6. **A pause after video is not a dead cluster (0.6.24, phone check of 0.6.23, 2026-11-15 21:01-21:07 UTC).** A new 5-minute
+   video played through the pinned Rusina: cluster `sn-ajcvh5` delivered 78.6 MB, the two long flows closed at 21:06:14, and
+   the player, with a full buffer, opened short flows that got 2-3 KB each (9 KB up). The stalled-flow reset closed them after
+   9 s, the third one made the verdict `МЁРТВЫЙ КЛАСТЕР`, and the slot left the working pinned server for 4vircosx, while the
+   screenshot 3 s later showed the video playing. Now a cluster that delivered a healthy flow (64 KB or more) in the last 90 s
+   (`healthyGraceMillis`) is not judged by its quiet flows; the log says so once per pause, layer `F`, level 4:
+   `кластер YouTube sn-ajcvh5 на <server>: тихий поток через 11с после здорового не засчитан (пауза плеера с полным буфером, не мёртвый кластер)`.
+   A live flow is fresh evidence (it clears a verdict and renews the pause) only while it receives at least 64 KB between two
+   snapshots, so an old flow stuck after a big download neither hides a dead cluster nor clears one. A cluster that really dies
+   after delivering is judged when the 90 s are over (about 2 minutes in the worst case, the buffer usually covers that).
+   `healthyGraceMillis = 0` restores the old rule. Windows `DeadVideoClusterTracker` has the same rule (`healthy_grace_sec`).
+   The tests replay the field numbers (`DeadVideoClusterTrackerTest`, Windows `tests/test_dead_video_cluster.py`).
+
 **Saving the archive without a messenger (0.5.50, owner 2026-11-14).** On Android 14+ the share window of «Экспортировать
 диагностику» has a custom action «Сохранить в Загрузки»: it copies the same zip to `Download/zapret-kvn-diagnostic-<UTC time>.zip`
 through MediaStore (no permission, only on that tap). A developer with adb pulls the exact name (`adb pull` of the file whose

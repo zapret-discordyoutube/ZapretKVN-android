@@ -193,6 +193,13 @@ object RuntimeLog {
                     4,
                     "кластер YouTube ${event.cluster} снова отвечает (был мёртв ${FlowTracker.formatDuration(event.deadForMillis)})",
                 )
+                is DeadVideoClusterTracker.Event.Excused -> target.log(
+                    LogLayer.Traffic,
+                    4,
+                    "кластер YouTube ${event.cluster} на ${event.outbound}: тихий поток через " +
+                        "${FlowTracker.formatDuration(event.sinceHealthyMillis)} после здорового не засчитан " +
+                        "(пауза плеера с полным буфером, не мёртвый кластер)",
+                )
             }
         }
     }

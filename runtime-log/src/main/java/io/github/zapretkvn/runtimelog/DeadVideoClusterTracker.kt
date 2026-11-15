@@ -18,6 +18,15 @@ package io.github.zapretkvn.runtimelog
  * Кластер активен, пока после последнего «мёртвого» потока прошло не больше [windowMillis]: если плеер перестал
  * повторять запросы, вердикт гаснет сам и не толкает на смену сервера задним числом.
  *
+ * Пауза после видео (Android 0.6.24, поле 2026-11-15 21:06 UTC, Rusina): кластер `sn-ajcvh5` только что отдал 78 МБ, два
+ * длинных потока закрылись, а плеер с полным буфером открывал короткие потоки, получавшие по 2-3 КБ. Сброс зависших
+ * потоков закрывал их через 9 с, третий такой поток дал вердикт «мёртвый кластер», и слот YouTube ушёл с рабочего
+ * закреплённого сервера, хотя видео на экране шло. Поэтому кластер, который за последние [healthyGraceMillis] отдал
+ * здоровый поток, тихими потоками не судится: событие [Event.Excused] пишется один раз на такую паузу. Живой поток
+ * считается свежим доказательством (и снимает приговор), только пока его входящий счётчик растёт: старый подвисший поток
+ * не продлевает паузу и не снимает приговор.
+ * `healthyGraceMillis = 0` выключает правило.
+ *
  * Чистая логика без часов и ядра: вызывающий даёт время и потоки (с уже подставленными именами).
  */
 class DeadVideoClusterTracker(
@@ -29,6 +38,8 @@ class DeadVideoClusterTracker(
     private val silentMinLivedMillis: Long = 2_500,
     private val healthyDownlinkBytes: Long = 64L * 1024,
     private val maxClusters: Int = 64,
+    /** Сколько после здорового потока кластера его тихие потоки не считаются (плеер с полным буфером); 0 выключает. */
+    private val healthyGraceMillis: Long = 90_000,
 ) {
     sealed interface Event {
         val cluster: String
@@ -38,6 +49,9 @@ class DeadVideoClusterTracker(
 
         /** Здоровый поток кластера снял приговор; мёртвым он считался [deadForMillis]. */
         data class Recovered(override val cluster: String, val deadForMillis: Long) : Event
+
+        /** Тихий поток кластера пришёл через [sinceHealthyMillis] после здорового и не засчитан (пауза плеера). */
+        data class Excused(override val cluster: String, val sinceHealthyMillis: Long, val outbound: String) : Event
     }
 
     private class State {
@@ -51,8 +65,20 @@ class DeadVideoClusterTracker(
 
     private val clusters = LinkedHashMap<String, State>()
 
+    /** Когда кластер последний раз отдал здоровый поток. */
+    private val lastHealthyAt = LinkedHashMap<String, Long>()
+
+    /** Для какого момента здоровья пауза уже записана в журнал (одно событие [Event.Excused] на паузу). */
+    private val excusedFor = HashMap<String, Long>()
+
+    /** Входящий счётчик живых видеопотоков на прошлом снимке: растёт ли поток. */
+    private val activeDownlink = HashMap<String, Long>()
+
     fun reset() {
         clusters.clear()
+        lastHealthyAt.clear()
+        excusedFor.clear()
+        activeDownlink.clear()
     }
 
     /** Кластеры, признанные мёртвыми и ещё «активные» (плеер повторяет запросы) на момент [nowMillis]. */
@@ -66,15 +92,21 @@ class DeadVideoClusterTracker(
         for (flow in closed.sortedBy { it.closedAtEpochMillis }) {
             val cluster = clusterOf(flow.domain) ?: continue
             if (!flow.network.equals("tcp", ignoreCase = true)) continue
+            val at = if (flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis else nowMillis
             if (flow.downlink >= healthyDownlinkBytes) {
                 recover(nowMillis, cluster)?.let(events::add)
+                noteHealthy(cluster, at)
                 continue
             }
             if (!isSilent(flow)) continue
+            excuse(cluster, at, flow.outbound)?.let {
+                events += it
+                continue
+            }
+            if (lastHealthyAt[cluster]?.let { at - it <= healthyGraceMillis } == true) continue
             val state = clusters.getOrPut(cluster) { State() }
             if (state.ids.size > MAX_IDS) state.ids.clear()
             if (!state.ids.add(flow.id)) continue
-            val at = if (flow.closedAtEpochMillis > 0) flow.closedAtEpochMillis else nowMillis
             state.times.addLast(at)
             state.lastDeadFlowAt = at
             state.outbound = flow.outbound
@@ -92,13 +124,38 @@ class DeadVideoClusterTracker(
     /** Живые потоки: здоровый поток кластера тоже снимает приговор (закрытия можно ждать минуты). */
     fun onActive(nowMillis: Long, active: List<FlowSnap>): List<Event> {
         val events = ArrayList<Event>()
+        val seen = HashMap<String, Long>()
         for (flow in active) {
             val cluster = clusterOf(flow.domain) ?: continue
-            if (flow.network.equals("tcp", ignoreCase = true) && flow.downlink >= healthyDownlinkBytes) {
+            if (!flow.network.equals("tcp", ignoreCase = true)) continue
+            seen[flow.id] = flow.downlink
+            // Доказательство здоровья только от растущего потока: подвисший старый поток не снимает приговор и не
+            // продлевает паузу после видео.
+            if (flow.downlink >= healthyDownlinkBytes && flow.downlink - (activeDownlink[flow.id] ?: 0L) >= healthyDownlinkBytes) {
                 recover(nowMillis, cluster)?.let(events::add)
+                noteHealthy(cluster, nowMillis)
             }
         }
+        activeDownlink.clear()
+        activeDownlink.putAll(seen)
         return events
+    }
+
+    private fun noteHealthy(cluster: String, at: Long) {
+        if (healthyGraceMillis <= 0) return
+        if ((lastHealthyAt[cluster] ?: Long.MIN_VALUE) < at) {
+            lastHealthyAt.remove(cluster)
+            lastHealthyAt[cluster] = at
+        }
+    }
+
+    /** Тихий поток в паузе после здорового: событие один раз на паузу, иначе `null` (вызывающий решает, считать ли). */
+    private fun excuse(cluster: String, at: Long, outbound: String): Event.Excused? {
+        val healthyAt = lastHealthyAt[cluster] ?: return null
+        val since = at - healthyAt
+        if (since > healthyGraceMillis || excusedFor[cluster] == healthyAt) return null
+        excusedFor[cluster] = healthyAt
+        return Event.Excused(cluster, since.coerceAtLeast(0), outbound)
     }
 
     private fun isSilent(flow: FlowSnap): Boolean {
@@ -121,6 +178,11 @@ class DeadVideoClusterTracker(
     /** Память ограничена: самые давние кластеры забываются первыми. */
     private fun trim() {
         while (clusters.size > maxClusters) clusters.remove(clusters.keys.first())
+        while (lastHealthyAt.size > maxClusters) {
+            val oldest = lastHealthyAt.keys.first()
+            lastHealthyAt.remove(oldest)
+            excusedFor.remove(oldest)
+        }
     }
 
     companion object {

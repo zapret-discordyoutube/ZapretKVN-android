@@ -180,6 +180,94 @@ class DeadVideoClusterTrackerTest {
         assertEquals(listOf("sn-8ph2xajvh"), tracker.activeDeadClusters(101_200))
     }
 
+    /** Поле 0.6.23, 2026-11-15 21:06 UTC, Rusina: 78 МБ с кластера sn-ajcvh5, затем короткие потоки плеера с полным буфером. */
+    private fun fieldPause(tracker: DeadVideoClusterTracker, t: Long): List<DeadVideoClusterTracker.Event> {
+        val name = "rr3.sn-ajcvh5-53.googlevideo.com"
+        val events = ArrayList<DeadVideoClusterTracker.Event>()
+        events += tracker.onClosed(
+            t,
+            listOf(
+                closed("long1", t, name, lived = 272_000, up = 66_000, down = 47_000_000),
+                closed("long2", t, name, lived = 272_000, up = 67_000, down = 31_600_000),
+            ),
+        )
+        // два потока по 9.3 с (вверх 9 КБ, вниз 3 КБ) сброшены и закрыты через 11 с, ещё два по 8.6 с через 24 с
+        events += tracker.onClosed(t + 11_000, listOf(closed("s1", t + 11_000, name, lived = 9_300, up = 9_216, down = 3_072), closed("s2", t + 11_000, name, lived = 9_300, up = 9_216, down = 3_072)))
+        events += tracker.onClosed(t + 24_000, listOf(closed("s3", t + 24_000, name, lived = 8_600, up = 6_144, down = 2_048), closed("s4", t + 24_000, name, lived = 8_600, up = 6_144, down = 2_048)))
+        return events
+    }
+
+    @Test
+    fun `quiet flows right after the cluster delivered video are a player pause, not a dead cluster`() {
+        val tracker = DeadVideoClusterTracker()
+        val t = 1_794_776_774_000L
+        val events = fieldPause(tracker, t)
+        assertEquals(listOf(DeadVideoClusterTracker.Event.Excused("sn-ajcvh5", 11_000, "hy2-titiru")), events)
+        assertTrue(tracker.activeDeadClusters(t + 24_000).isEmpty())
+    }
+
+    @Test
+    fun `without the grace the same field flows made the false verdict of 0-6-23`() {
+        val tracker = DeadVideoClusterTracker(healthyGraceMillis = 0)
+        val events = fieldPause(tracker, 1_794_776_774_000L)
+        assertEquals(1, events.size)
+        assertTrue(events.single() is DeadVideoClusterTracker.Event.Dead)
+    }
+
+    @Test
+    fun `a cluster that dies after delivering is judged once the grace is over`() {
+        val tracker = DeadVideoClusterTracker()
+        val t = 1_000_000L
+        fieldPause(tracker, t)
+        val after = t + 91_000
+        val events = tracker.onClosed(after + 2_000, listOf(closed("d1", after), closed("d2", after + 1_000), closed("d3", after + 2_000)))
+        assertEquals(1, events.size)
+        assertTrue(events.single() is DeadVideoClusterTracker.Event.Dead)
+    }
+
+    @Test
+    fun `only a growing live flow renews the grace, a stuck old one does not`() {
+        val tracker = DeadVideoClusterTracker()
+        val big = active("old", dead, down = 2_000_000, now = 100_000)
+        tracker.onActive(100_000, listOf(big))
+        // the same flow, no new bytes, for two minutes
+        tracker.onActive(160_000, listOf(big.copy()))
+        tracker.onActive(220_000, listOf(big.copy()))
+        val events = tracker.onClosed(222_000, listOf(closed("a", 220_000), closed("b", 221_000), closed("c", 222_000)))
+        assertEquals(1, events.size)
+        assertTrue("grace ran out 120 s after the last growth", events.single() is DeadVideoClusterTracker.Event.Dead)
+        // a flow that keeps growing renews it
+        val growing = DeadVideoClusterTracker()
+        growing.onActive(100_000, listOf(active("g", dead, down = 2_000_000, now = 100_000)))
+        growing.onActive(215_000, listOf(active("g", dead, down = 3_000_000, now = 215_000)))
+        val renewed = growing.onClosed(222_000, listOf(closed("a", 220_000), closed("b", 221_000), closed("c", 222_000)))
+        assertEquals(listOf(DeadVideoClusterTracker.Event.Excused("sn-8ph2xajvh", 5_000, "hy2-titiru")), renewed)
+    }
+
+    @Test
+    fun `a stuck old flow does not clear a verdict`() {
+        val tracker = DeadVideoClusterTracker()
+        val big = active("old", dead, down = 2_000_000, now = 100_000)
+        tracker.onActive(100_000, listOf(big))
+        tracker.onClosed(200_000, listOf(closed("a", 199_000), closed("b", 199_500), closed("c", 200_000)))
+        assertEquals(listOf("sn-8ph2xajvh"), tracker.activeDeadClusters(200_000))
+        assertTrue(tracker.onActive(205_000, listOf(big.copy())).isEmpty())
+        assertEquals(listOf("sn-8ph2xajvh"), tracker.activeDeadClusters(205_000))
+        // new bytes on it do
+        val events = tracker.onActive(210_000, listOf(big.copy(downlink = 2_500_000)))
+        assertEquals(listOf(DeadVideoClusterTracker.Event.Recovered("sn-8ph2xajvh", 10_000)), events)
+    }
+
+    @Test
+    fun `reset forgets the grace too`() {
+        val tracker = DeadVideoClusterTracker()
+        tracker.onClosed(100_000, listOf(closed("ok", 100_000, down = 5_000_000)))
+        tracker.reset()
+        val events = tracker.onClosed(102_000, listOf(closed("a", 101_000), closed("b", 101_500), closed("c", 102_000)))
+        assertEquals(1, events.size)
+        assertTrue(events.single() is DeadVideoClusterTracker.Event.Dead)
+    }
+
     @Test
     fun `the verdict field of the detector reports dead clusters`() {
         assertTrue(!SlowVideoDetector.Verdict.Idle.deadCluster)
