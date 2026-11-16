@@ -71,6 +71,10 @@ server). Junk and I1-I5 are sent by the initiator only, so they work with a plai
 - App: `Desync` in `XrayShaping` (codec shared with Windows), limits = `kvndesync.Parse`, presets
   «Обманка, TTL 3/5», «Беспорядок пакетов»; tester candidates on TCP-stream VLESS. The right TTL is
   per network (an Android app cannot read the SYN-ACK TTL): «Подобрать» tries 3 and 5.
+- Windows runs the same document: disorder/split by the same engine in its sing-box front
+  (`windows/core-patches/kvn-desync.patch`, route option `kvn_desync`), the decoy by sing-box
+  `tls_spoof` over WinDivert (wrong TCP sequence instead of a low TTL, so `fakeTtl` is unused
+  there), OOB not offered. Details: `windows/docs/MASKING.md`.
 
 ## Verified core facts (pinned versions)
 
