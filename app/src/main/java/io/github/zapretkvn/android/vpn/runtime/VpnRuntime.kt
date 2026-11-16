@@ -254,6 +254,7 @@ internal class VpnRuntime(
         controller.cancelCurrentConnectionDiagnostic()
         automation.close()
         val remaining = (sessions.detachAll() + closingSessions).distinct()
+        if (!stopInProgress && remaining.isNotEmpty()) timeline(destroyLogLine(remaining.size))
         remaining.forEach(CoreSession::closeTun)
         runBlocking(Dispatchers.IO) { remaining.forEach(CoreSession::close) }
         closeNetworkMonitor()
@@ -521,6 +522,8 @@ internal class VpnRuntime(
     private fun onStop(message: Message.Stop) {
         if (stopInProgress) return
         stopInProgress = true
+        // The stop diagnostic lives only in memory: this line keeps the reason in the on-disk log.
+        timeline(stopLogLine(message.trigger, message.errorMessage))
         val token = controller.nextGeneration()
         automation.cancelDebounce()
         recovery.cancel()

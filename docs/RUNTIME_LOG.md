@@ -104,6 +104,16 @@ written during the export.
   retried at most once every 5 s.
 - A masking failure never lets a raw line through: "строка не записана" ("line not written") is written
   instead.
+- Every VPN stop writes its reason to the log (0.6.25): "Путь: VPN останавливается (trigger), причина — …"
+  ("the VPN is stopping (trigger), reason: …") with `user_stop` (the Disconnect button, the notification or
+  external control), `permission_revoked` (Android revoked the VPN: another VPN app was turned on or the
+  consent was withdrawn) or `policy_stop` (an error or a system policy), plus the service message. If
+  Android closes the service while a session is still live and no stop was asked for, the line is "сервис
+  VPN закрыт системой без команды остановки (onDestroy)" ("the system closed the VPN service without a stop
+  command"). The stop diagnostic and the session history live in memory only, so before this line a VPN
+  that went off and an idle process killed later for low memory left no reason at all (field case
+  2026-11-16 09:40 UTC). Traffic that ends with neither line means the whole process died while the VPN was
+  running.
 
 ## Related core fix
 
