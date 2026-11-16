@@ -217,6 +217,7 @@ internal class SlotCoordinator(
                         currentId = currentId,
                         usedByOthers = usedByOthers,
                         dead = policy.deadServers() + host.mainDeadServers() + marked,
+                        machines = session.slotPlan?.machines.orEmpty(),
                     ),
                     hints = host.latencyHints(session.profileId),
                     busy = host.busy(),

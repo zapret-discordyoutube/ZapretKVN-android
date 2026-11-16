@@ -512,6 +512,26 @@ about 90 s after opening. Two causes, both fixed here:
 Tests: `SlotServerMarksTest` (kinds, a failure wins, file round trip, old files), `SlotServerHealthTest` (a pin beats a
 video mark only), `SlotFailoverTest` (a YouTube replacement prefers proof; YouTube proof does not steer Telegram).
 
+### One machine is one server (Android 0.6.31, 2026-11-16)
+
+The Windows e2e on real vpnbot nodes (synthetic test person, 12 entries) showed that one provider machine comes as
+several entries with their own host names: four VLESS gRPC entries and a Hysteria2 entry of «Finaltelekom» all resolve
+to one address. The slots counted them as five servers, so the main server, every slot and the move target could all be
+the same machine, and a YouTube rescue "to another server" left from the same address to the same cache cluster.
+
+- `ServerAddressMemory` (network-bootstrap) remembers the addresses the app's DNS transport answered for server names
+  (trusted and system paths, `AndroidDnsResolver`); only names of `ServerNameRegistry`, file
+  `noBackupFilesDir/server-addresses.txt` (device only, no backup), at most 512 names, an A answer replaces only the
+  IPv4 addresses and an AAAA answer only the IPv6 ones.
+- `SlotMachines.of` gives every slot server its host keys (server name or address, first peer of an endpoint, plus the
+  remembered addresses), read once at the session start and kept in `SlotPlan.machines`.
+- `SlotServerAssigner` counts use per machine: a slot does not start on a sibling entry of the main server's or another
+  slot's machine while another machine is free (a small pool still shares, as before). `SlotCandidates` leaves sibling
+  entries of the current and busy machines out of a YouTube move first, then falls back to the old soft steps.
+- No new DNS lookup is made for this: the memory only records answers the transport gives anyway (the core resolves a
+  pool server's name when it checks or uses it). A session reads the memory once at its start, so servers first
+  resolved in this session are grouped from the next connection.
+
 ## Review fixes of 2026-11-14 (five read-only audits, every claim re-read in the code)
 
 Behaviour that changed, all behind the existing beta switch «Раздельные серверы»:

@@ -230,4 +230,23 @@ class ServiceSlotsTest {
         val plan = SlotPlanner.plan(slots, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("A"))
         assertEquals("A", plan.assignments.first { it.slotId == SlotIds.DEFAULT }.serverId)
     }
+
+    /** 2026-11-16 e2e on vpnbot nodes: five entries (VLESS gRPC x4, Hysteria2) were one machine with one address. */
+    @Test
+    fun `sibling entries of the main server's machine are not a separate server`() {
+        val pair = listOf(SlotDefinition(SlotIds.DEFAULT, "main"), SlotDefinition(SlotIds.YOUTUBE, "YouTube"))
+        val machines = mapOf("fi1" to setOf("203.0.113.7"), "fi2" to setOf("fi2.example", "203.0.113.7"), "nl" to setOf("nl.example"))
+        val apart = SlotServerAssigner.assign(pair, servers("fi1", "fi2", "nl"), mapOf(SlotIds.DEFAULT to "fi1"), machines)
+        assertEquals("nl", apart.server(SlotIds.YOUTUBE))
+        // Without the machine map the sibling looked free (the bug).
+        assertEquals("fi2", SlotServerAssigner.assign(pair, servers("fi1", "fi2", "nl"), mapOf(SlotIds.DEFAULT to "fi1")).server(SlotIds.YOUTUBE))
+    }
+
+    @Test
+    fun `the plan carries the machine map for the session`() {
+        val machines = mapOf("A" to setOf("a"), "B" to setOf("a"), "C" to setOf("c"))
+        val plan = SlotPlanner.plan(slots, listOf("A", "B", "C"), selectedTag = "A", machines = machines)
+        assertEquals(machines, plan.machines)
+        assertEquals("C", plan.assignments.first { it.slotId != SlotIds.DEFAULT }.serverId)
+    }
 }

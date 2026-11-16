@@ -34,13 +34,24 @@ internal data class SlotAssignment(val slotId: String, val serverId: String?, va
  * used servers one with recent proof of life ([SlotServer.alive]) goes first, then the profile's order, so the result is
  * deterministic. Proof of life never beats separation: a slot does not share a server just because it is known good. Failure handling is the same call with the failed server
  * marked unusable: the slot moves, other slots keep what they have.
+ *
+ * Use is counted per machine, not per entry ([machines]: tag to its host keys, the server name or address plus the
+ * remembered addresses of the name): one provider machine often comes as several entries (VLESS gRPC, VLESS WS,
+ * Hysteria2 ...), and a slot on a sibling entry of the main server's machine separates nothing. A tag without keys is
+ * its own machine.
  */
 internal object SlotServerAssigner {
     fun assign(
         slots: List<SlotDefinition>,
         servers: List<SlotServer>,
         previous: Map<String, String> = emptyMap(),
+        machines: Map<String, Set<String>> = emptyMap(),
     ): List<SlotAssignment> {
+        fun keysOf(id: String): Set<String> = machines[id]?.takeIf { it.isNotEmpty() } ?: setOf("tag:$id")
+        fun used(id: String, taken: Map<String, Int>): Int {
+            val keys = keysOf(id)
+            return taken.entries.sumOf { (other, count) -> if (other == id || keysOf(other).any(keys::contains)) count else 0 }
+        }
         val usable = servers.filter { it.usable }.map { it.id }.toSet()
         val aliveIds = servers.filter { it.alive }.map { it.id }.toSet()
         val provenFor = servers.filter { it.provenFor.isNotEmpty() }.associate { it.id to it.provenFor }
@@ -71,7 +82,7 @@ internal object SlotServerAssigner {
             // to that slot when an equal server exists (the YouTube slot does not lose its proven server to the AI slot).
             val pick = pool.withIndex().minWithOrNull(
                 compareBy(
-                    { taken[it.value] ?: 0 },
+                    { used(it.value, taken) },
                     { if (slot.id in provenFor[it.value].orEmpty()) 0 else 1 },
                     { if (it.value in aliveIds) 0 else 1 },
                     { if (provenFor[it.value].orEmpty().let { proven -> proven.isNotEmpty() && slot.id !in proven }) 1 else 0 },

@@ -10,6 +10,8 @@ internal data class SlotPlan(
     val skippedFailed: Int = 0,
     /** Pinned servers a slot starts on although YouTube video starved there lately (for the log line). */
     val pinnedOverVideoMark: Int = 0,
+    /** Tag to its machine's host keys (SlotServerAssigner): fixed for the session, read again by the YouTube switch. */
+    val machines: Map<String, Set<String>> = emptyMap(),
 )
 
 /**
@@ -31,6 +33,7 @@ internal object SlotPlanner {
         alive: Set<String> = emptySet(),
         /** Slot id to the servers that delivered that slot's traffic well before (YouTube: video speed history). */
         proven: Map<String, Set<String>> = emptyMap(),
+        machines: Map<String, Set<String>> = emptyMap(),
     ): SlotPlan {
         val servers = serverTags.distinct()
         if (servers.size < 2) return SlotPlan(emptyList(), emptyList())
@@ -39,7 +42,7 @@ internal object SlotPlanner {
         // A server that just failed is not where a slot starts, a pin on it included (it stays a pool member and stays
         // pinned; the slot goes there again once the failure is old). The main server is never excluded.
         val avoid = unusable - setOfNotNull(selectedTag)
-        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid, alive = it in alive, provenFor = proven.filterValues { ids -> it in ids }.keys) }, keep)
+        val assignments = SlotServerAssigner.assign(slots, servers.map { SlotServer(it, usable = it !in avoid, alive = it in alive, provenFor = proven.filterValues { ids -> it in ids }.keys) }, keep, machines)
         val specs = slots.filter { it.id != SlotIds.DEFAULT }.mapNotNull { slot ->
             val server = assignments.first { it.slotId == slot.id }.serverId ?: return@mapNotNull null
             val members = slot.pool?.let { pool -> servers.filter { it in pool } } ?: servers
@@ -53,6 +56,6 @@ internal object SlotPlanner {
                 cidrs = slot.cidrs.sorted(),
             )
         }
-        return SlotPlan(specs, assignments)
+        return SlotPlan(specs, assignments, machines = machines)
     }
 }

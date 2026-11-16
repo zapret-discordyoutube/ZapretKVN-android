@@ -81,6 +81,16 @@ class SlotTrafficTest {
     }
 
     @Test
+    fun `a sibling entry of the current or a busy machine is no candidate while another machine is left`() {
+        val members = listOf("A", "A2", "B", "C", "C2")
+        val machines = mapOf("A" to setOf("1"), "A2" to setOf("1"), "B" to setOf("2"), "C" to setOf("3"), "C2" to setOf("3"))
+        fun ids(list: List<FailoverTarget>) = list.map { it.id }
+        assertEquals(listOf("A", "B"), ids(SlotCandidates.targets(members, null, "A", usedByOthers = setOf("C"), dead = emptySet(), machines = machines)))
+        // Only siblings left: the soft steps still give a replacement.
+        assertEquals(listOf("A", "A2"), ids(SlotCandidates.targets(listOf("A", "A2"), null, "A", emptySet(), emptySet(), machines)))
+    }
+
+    @Test
     fun `plan flags are kept and maintenance servers are not candidates`() {
         val plan = listOf(FailoverTarget("A", valid = true, maintenance = true), FailoverTarget("B", valid = true, maintenance = false))
         val result = SlotCandidates.targets(listOf("A", "B"), plan, "B", emptySet(), emptySet())

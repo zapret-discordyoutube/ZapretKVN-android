@@ -6,6 +6,7 @@ import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.diagnostics.AppCrashStore
 import io.github.zapretkvn.android.network.BrowserDohTransport
 import io.github.zapretkvn.networkbootstrap.DohTransports
+import io.github.zapretkvn.networkbootstrap.ServerAddressMemory
 import java.io.File
 
 class ZapretApplication : Application() {
@@ -29,5 +30,7 @@ class ZapretApplication : Application() {
         // DoH имён серверов — стеком Chromium (как браузер), GET ?dns=. Ядро загружается
         // только при первом запросе; без Cronet транспорт сам уступит прежнему пути.
         DohTransports.preferred = BrowserDohTransport
+        // Server-name answers remembered for the service slots (entries of one machine count as one server); device only.
+        ServerAddressMemory.attach(File(noBackupFilesDir, "server-addresses.txt"))
     }
 }

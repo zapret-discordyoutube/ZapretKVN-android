@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.vpn.runtime
 
+import io.github.zapretkvn.networkbootstrap.ServerAddressMemory
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
@@ -52,6 +53,7 @@ import io.github.zapretkvn.android.slots.ProfileServers
 import io.github.zapretkvn.android.slots.SlotCatalog
 import io.github.zapretkvn.android.slots.SlotIds
 import io.github.zapretkvn.android.slots.SlotPlanner
+import io.github.zapretkvn.android.slots.SlotMachines
 import io.github.zapretkvn.android.slots.SlotServerHealth
 import io.github.zapretkvn.android.slots.slotServerHealth
 import io.github.zapretkvn.android.vpn.VpnConnectionState
@@ -465,6 +467,8 @@ internal class SessionStarter(
                     proven = mapOf(
                         SlotIds.YOUTUBE to managed.tags.filter { RuntimeLog.youtubeProven(it, SlotPlanner.YOUTUBE_PROVEN_BYTES_PER_SECOND) }.toSet(),
                     ),
+                    // Entries of one machine count as one server (names and the addresses earlier sessions resolved).
+                    machines = SlotMachines.of(effectiveConfig.root, foreignServers, ServerAddressMemory::addressesOf),
                 ).copy(
                     foreign = foreignServers,
                     skippedFailed = (health.blockedFor(pins.values) - setOfNotNull(managed.selected)).size,

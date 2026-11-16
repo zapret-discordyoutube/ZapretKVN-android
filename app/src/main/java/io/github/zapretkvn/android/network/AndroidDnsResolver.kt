@@ -13,6 +13,7 @@ import io.github.zapretkvn.networkbootstrap.DnsResponseClassifier
 import io.github.zapretkvn.networkbootstrap.DnsWire
 import io.github.zapretkvn.networkbootstrap.HedgedQuery
 import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
+import io.github.zapretkvn.networkbootstrap.ServerAddressMemory
 import io.github.zapretkvn.networkbootstrap.TrustedDnsOutcome
 import io.github.zapretkvn.networkbootstrap.TrustedDohResolver
 import io.github.zapretkvn.networkbootstrap.BootstrapFailureCode
@@ -77,6 +78,7 @@ internal class AndroidLocalDnsTransport(
             // Имя VPN-сервера: сначала доверенный путь, системный — запасной.
             val outcome = runCatching { runBlocking { trusted.resolve(underlying, domain) } }.getOrNull()
             if (outcome is TrustedDnsOutcome.Addresses) {
+                ServerAddressMemory.record(domain, outcome.value.mapNotNull { it.hostAddress })
                 val family = outcome.value.filter { address ->
                     (network == "ip4" && address is Inet4Address) || (network == "ip6" && address is Inet6Address)
                 }
@@ -116,6 +118,7 @@ internal class AndroidLocalDnsTransport(
                 cancel
             } ?: return
             reportOutcome(context, outcome) { answer ->
+                if (ServerNameRegistry.contains(domain)) ServerAddressMemory.record(domain, answer.mapNotNull { it.hostAddress })
                 context.success(answer.joinToString("\n") { it.hostAddress.orEmpty() })
             }
         } else {
@@ -139,7 +142,12 @@ internal class AndroidLocalDnsTransport(
             val answer = runCatching { trusted.exchangeRaw(underlying, message) }.getOrNull()
             if (answer != null) {
                 val rcode = DnsWire.rcode(answer) ?: DnsResponseClassifier.RCODE_SERVER_FAILURE
-                if (rcode == DnsResponseClassifier.RCODE_SUCCESS) context.rawSuccess(answer) else context.errorCode(rcode)
+                if (rcode == DnsResponseClassifier.RCODE_SUCCESS) {
+                    rememberServerAnswer(question, answer)
+                    context.rawSuccess(answer)
+                } else {
+                    context.errorCode(rcode)
+                }
                 return
             }
             if (!ServerNameRegistry.allowsSystemFallback(question)) {
@@ -164,7 +172,16 @@ internal class AndroidLocalDnsTransport(
             val cancel: () -> Unit = { cancellation.cancel() }
             cancel
         } ?: return
-        reportOutcome(context, outcome) { answer -> context.rawSuccess(answer) }
+        reportOutcome(context, outcome) { answer ->
+            if (ServerNameRegistry.contains(question)) rememberServerAnswer(question, answer)
+            context.rawSuccess(answer)
+        }
+    }
+
+    /** A server name's answer teaches the slots which entries share a machine (docs/SERVICE_SLOTS.md). */
+    private fun rememberServerAnswer(name: String?, answer: ByteArray) {
+        val addresses = runCatching { DnsWire.parse(answer).addresses }.getOrNull() ?: return
+        ServerAddressMemory.record(name, addresses.mapNotNull { it.hostAddress })
     }
 
     private class DnsAnswer<T>(val value: T, val rcode: Int)
