@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android.ui.settings
 
+import io.github.zapretkvn.android.slots.ServerRef
+import io.github.zapretkvn.masking.merge.MaskingSettings
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -8,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -194,5 +197,31 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
         onResetStalledFlowsChange = deps.profiles.settings::setResetStalledFlows,
         onYoutubeSwitchChange = deps.profiles.settings::setYoutubeSwitch,
         onServiceSlotsChange = deps.profiles.settings::setServiceSlots,
+    )
+}
+
+@Composable
+internal fun rememberMaskingSettings(deps: AppDependencies): State<MaskingSettings> =
+    remember(deps.masking) { deps.masking.settings }.collectAsStateWithLifecycle(initialValue = MaskingSettings.OFF)
+
+@Composable
+internal fun MaskingRoute(deps: AppDependencies, padding: PaddingValues) {
+    val settings by rememberMaskingSettings(deps)
+    val profiles by deps.profiles.state.collectAsStateWithLifecycle()
+    val activeId = profiles.settings.activeProfileId
+    val servers = remember(profiles.serverSummaries, activeId, settings.overrides) {
+        val summary = activeId?.let(profiles.serverSummaries::get)
+        summary?.primaryGroup?.options.orEmpty().map { option ->
+            val key = ServerRef(checkNotNull(activeId), option.tag).encode()
+            MaskingServer(key = key, name = option.tag, type = option.type, override = settings.overrideFor(key))
+        }
+    }
+    MaskingScreen(
+        contentPadding = padding,
+        settings = settings,
+        onEnabledChange = deps.masking::setEnabled,
+        onApply = deps.masking::setGlobal,
+        servers = servers,
+        onOverride = deps.masking::setOverride,
     )
 }

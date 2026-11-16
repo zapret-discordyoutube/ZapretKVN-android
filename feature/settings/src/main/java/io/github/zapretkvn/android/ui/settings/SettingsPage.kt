@@ -9,6 +9,7 @@ enum class SettingsPage(val id: String, val title: String) {
     Automation("automation", "Автоматизация VPN"),
     Services("services", "Проверка сервисов"),
     Hiding("hiding", "Скрытие VPN"),
+    Masking("masking", "Маскировка"),
     Diagnostics("diagnostics", "Диагностика"),
     Updates("updates", "Обновления"),
     About("about", "О приложении"),

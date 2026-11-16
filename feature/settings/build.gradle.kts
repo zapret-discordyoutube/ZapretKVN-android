@@ -33,6 +33,7 @@ dependencies {
     add("implementation", project(":core:model"))
     add("implementation", project(":core:ui-model"))
     add("implementation", project(":core:designsystem"))
+    add("implementation", project(":masking"))
     add("implementation", composeBom)
     add("implementation", "androidx.compose.foundation:foundation")
     add("implementation", "androidx.compose.material:material-icons-core")

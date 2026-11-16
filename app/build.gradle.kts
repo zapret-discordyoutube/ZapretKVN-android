@@ -184,6 +184,7 @@ dependencies {
     implementation(project(":app-updater"))
     implementation(project(":network-bootstrap"))
     implementation(project(":runtime-log"))
+    implementation(project(":masking"))
     implementation(project(":wireguard-import"))
     implementation(project(":core:model"))
     implementation(project(":core:designsystem"))

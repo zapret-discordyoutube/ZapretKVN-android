@@ -4,6 +4,7 @@ import io.github.zapretkvn.networkbootstrap.ServerNameRegistry
 import android.os.SystemClock
 import io.github.zapretkvn.android.AppContainer
 import io.github.zapretkvn.android.diagnostics.RuntimeLog
+import io.github.zapretkvn.android.masking.MaskingServerKeys
 import io.github.zapretkvn.android.apps.AllowedApplicationSink
 import io.github.zapretkvn.android.apps.AppScopeMode
 import io.github.zapretkvn.android.apps.DisallowedApplicationSink
@@ -319,6 +320,7 @@ internal class SessionStarter(
         }
         profile = profile.copy(json = effectiveJson)
         val uiSettings = container.uiSettingsStore.settings.first()
+        val masking = container.maskingSettingsStore.settings.first()
         val configuredDnsMode = uiSettings.dnsMode
         check(dnsMode != DnsMode.Automatic) {
             "Автоматический DNS должен быть разрешён в один runtime-кандидат до запуска core."
@@ -510,6 +512,8 @@ internal class SessionStarter(
                     privateDnsRoute = privateDnsRoute,
                     slotRoutes = slotPlan?.specs.orEmpty(),
                     extraOutbounds = foreignServers.map { it.outbound },
+                    masking = masking,
+                    maskingServerKeys = MaskingServerKeys.of(profileId, effectiveConfig.root, foreignServers),
                 ),
             )
         ) {
@@ -518,6 +522,7 @@ internal class SessionStarter(
                 ?.let { code -> throw RuntimeConfigRejectedException(runtime.message, code) }
                 ?: error(runtime.message)
         }
+        MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
         val runtimeJson = runtimeReady.json
         val runtimeConfig = runtimeReady.config
         controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeConfig, dnsMode))

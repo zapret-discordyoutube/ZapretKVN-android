@@ -8,6 +8,8 @@ import io.github.zapretkvn.android.routing.RoutingConfigEditor
 import io.github.zapretkvn.android.hardening.RuntimeHardeningResult
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import io.github.zapretkvn.android.hardening.VpnRuntimeHardening
+import io.github.zapretkvn.masking.MaskingApplier
+import io.github.zapretkvn.masking.merge.MaskingSettings
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -108,6 +110,13 @@ data class RuntimeConfigOptions(
      * profile is never edited. Tags must already be unique (see `ForeignServers`).
      */
     val extraOutbounds: List<JsonObject> = emptyList(),
+    /**
+     * Маскировка (:masking): применяется к runtime-копии серверов при каждом запуске, сохранённый профиль не меняется.
+     * [maskingServerKeys] сопоставляет runtime-тег сервера с ключом, под которым хранится его собственная настройка
+     * (ServerRef.encode()); сервер без ключа получает общие настройки.
+     */
+    val masking: MaskingSettings = MaskingSettings.OFF,
+    val maskingServerKeys: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -118,7 +127,7 @@ data class RuntimeConfigOptions(
 data class PrivateDnsRoute(val hostname: String, val addresses: List<String>)
 
 sealed interface RuntimeConfigResult {
-    data class Ready(val json: String) : RuntimeConfigResult {
+    data class Ready(val json: String, val masking: MaskingReport = MaskingReport.NONE) : RuntimeConfigResult {
         @Volatile
         private var parsed: ParsedConfig? = null
 
@@ -133,6 +142,13 @@ sealed interface RuntimeConfigResult {
         internal fun withConfig(config: ParsedConfig): Ready = apply { parsed = config }
     }
     data class Invalid(val message: String, val code: String? = null) : RuntimeConfigResult
+}
+
+/** What masking did to this runtime copy: how many servers changed and the notes per runtime tag. */
+data class MaskingReport(val changed: Int, val notes: Map<String, List<String>>) {
+    companion object {
+        val NONE = MaskingReport(0, emptyMap())
+    }
 }
 
 /**
@@ -292,6 +308,15 @@ object RuntimeConfigBuilder {
             val extras = options.extraOutbounds.filter { it.string("tag").let { tag -> tag in used && tag !in present } }
             runtimeOutbounds = JsonArray(withoutOld + extras + slotRoutes.map(SlotRoutes::selector))
         }
+        val maskingKey = { tag: String -> options.maskingServerKeys[tag] }
+        val maskedOutbounds = runtimeOutbounds?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
+        val maskedEndpoints = runtimeEndpoints?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
+        maskedOutbounds?.let { runtimeOutbounds = it.entries }
+        maskedEndpoints?.let { runtimeEndpoints = it.entries }
+        val maskingReport = MaskingReport(
+            changed = (maskedOutbounds?.changed ?: 0) + (maskedEndpoints?.changed ?: 0),
+            notes = maskedOutbounds?.notes.orEmpty() + maskedEndpoints?.notes.orEmpty(),
+        )
         val storedLog = root["log"] as? JsonObject
         val runtimeLog = buildJsonObject {
             storedLog?.forEach { (key, value) ->
@@ -338,7 +363,8 @@ object RuntimeConfigBuilder {
             slotRoutes = slotRoutes,
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
-        return dnsOverlay as RuntimeConfigResult.Ready
+        val ready = dnsOverlay as RuntimeConfigResult.Ready
+        return if (maskingReport == MaskingReport.NONE) ready else ready.copy(masking = maskingReport).withConfig(ready.config)
     }
 
     /**

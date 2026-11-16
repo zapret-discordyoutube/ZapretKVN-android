@@ -122,6 +122,7 @@ class MainActivity : ComponentActivity() {
             resolveSupportUrl = { withContext(Dispatchers.IO) { SupportLinks.resolve() } },
             directServices = container.directServiceChecker.state,
             checkServicesDirect = container.directServiceChecker::check,
+            masking = container.maskingActions,
         )
         observeUpdates()
         syncExternalControlComponent(container)

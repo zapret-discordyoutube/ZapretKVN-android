@@ -1,5 +1,7 @@
 package io.github.zapretkvn.android
 
+import io.github.zapretkvn.android.masking.MaskingActions
+import io.github.zapretkvn.android.masking.MaskingSettingsStore
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
@@ -101,6 +103,10 @@ class AppContainer(
         validator = configValidator,
     )
     val uiSettingsStore = UiSettingsStore(appContext)
+    val maskingSettingsStore = MaskingSettingsStore(appContext)
+    val maskingActions by lazy {
+        MaskingActions(maskingSettingsStore, backgroundScope) { reason -> vpnController.restartIfConnected(reason) }
+    }
     val importReader = AndroidImportReader(appContext)
     val subscriptionFetchJournal = SubscriptionFetchJournal()
     val subscriptionFetcher = HttpSubscriptionFetcher(

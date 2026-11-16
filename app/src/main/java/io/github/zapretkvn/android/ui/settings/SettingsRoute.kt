@@ -9,6 +9,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.zapretkvn.android.masking.MaskingActions
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
 import io.github.zapretkvn.android.ui.UiSettings
@@ -27,8 +28,10 @@ fun SettingsRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingVal
     }.collectAsStateWithLifecycle(
         initialValue = remember(deps.updates) { updateSummary(deps.updates.state.value, CurrentAppInfo.versionName) },
     )
-    val ui = remember(settings, updateSummary) {
+    val masking by rememberMaskingSettings(deps)
+    val ui = remember(settings, updateSummary, masking) {
         buildSettingsMain(settings, updateSummary, CurrentAppInfo.versionName)
+            .copy(maskingSummary = MaskingActions.summary(masking))
     }
     SettingsMainScreen(
         ui = ui,
@@ -62,6 +65,7 @@ fun SettingsPageRoute(deps: AppDependencies, nav: AppNavigation, page: String) {
             SettingsPage.Automation -> AutomationRoute(deps, padding)
             SettingsPage.Services -> ServiceChecksRoute(deps, padding)
             SettingsPage.Hiding -> HidingRoute(deps, padding)
+            SettingsPage.Masking -> MaskingRoute(deps, padding)
             SettingsPage.Diagnostics -> DiagnosticsRoute(deps, nav, padding)
             SettingsPage.Updates -> UpdatesRoute(deps, padding)
             SettingsPage.About -> AboutScreen(padding, CurrentAppInfo)

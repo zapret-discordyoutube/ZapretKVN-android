@@ -95,6 +95,14 @@ fun SettingsMainScreen(
                     modifier = Modifier.testTag("settings-services"),
                 )
                 RowDivider()
+                SettingsRow(
+                    title = SettingsPage.Masking.title,
+                    subtitle = ui.maskingSummary,
+                    icon = ZapretIcons.Shield,
+                    onClick = { onOpenPage(SettingsPage.Masking) },
+                    modifier = Modifier.testTag("settings-masking"),
+                )
+                RowDivider()
                 SwitchRow(
                     title = "Автопереключение медленного сервера",
                     subtitle = "Если скорость долго низкая, переключимся на более быстрый сервер " +

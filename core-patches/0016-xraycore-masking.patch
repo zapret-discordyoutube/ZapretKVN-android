@@ -1,0 +1,144 @@
+diff --git a/option/vless.go b/option/vless.go
+index e4a16f2f..0bdefd25 100644
+--- a/option/vless.go
++++ b/option/vless.go
+@@ -27,4 +27,8 @@ type VLESSOutboundOptions struct {
+ 	Multiplex      *OutboundMultiplexOptions `json:"multiplex,omitempty"`
+ 	Transport      *V2RayTransportOptions    `json:"transport,omitempty"`
+ 	PacketEncoding *string                   `json:"packet_encoding,omitempty"`
++	// XrayMasking is the app's masking block for the Xray-owned VLESS outbound:
++	// "mux", "xmux" and "finalmask" in Xray's own JSON shape, merged by name into
++	// the config the xraycore adapter builds. Xray-core parses and owns them.
++	XrayMasking map[string]any `json:"xray_masking,omitempty"`
+ }
+diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
+index 94bea8cc..54855477 100644
+--- a/protocol/xraycore/config.go
++++ b/protocol/xraycore/config.go
+@@ -28,10 +28,44 @@ func buildConfig(options option.VLESSOutboundOptions, dialerID string) ([]byte,
+ 		return nil, err
+ 	}
+ 	stream := outbound["streamSettings"].(object)
++	if err := applyMasking(outbound, stream, options.XrayMasking); err != nil {
++		return nil, err
++	}
+ 	protectStream(stream, dialerID)
+ 	return json.Marshal(object{"outbounds": []any{outbound}})
+ }
+ 
++// applyMasking merges the app's masking block into the generated outbound, by
++// name and in Xray's own shape: "mux" on the outbound, "finalmask" on the
++// stream, "xmux" in the XHTTP settings. An XHTTP "extra" replaces the whole
++// XHTTP config inside Xray (infra/conf/transport_method.go SplitHTTPConfig.Build
++// keeps only host, path and mode), so xmux goes into "extra" when the link has
++// one; otherwise the core would silently ignore it. Unknown keys are refused:
++// the app never hands the core something it did not mean to.
++func applyMasking(outbound object, stream object, masking map[string]any) error {
++	for key, value := range masking {
++		switch key {
++		case "mux":
++			outbound["mux"] = value
++		case "finalmask":
++			stream["finalmask"] = value
++		case "xmux":
++			xhttp, ok := stream["xhttpSettings"].(object)
++			if !ok {
++				return fmt.Errorf("xray_masking.xmux needs an XHTTP transport")
++			}
++			if extra, ok := xhttp["extra"].(object); ok {
++				extra["xmux"] = value
++			} else {
++				xhttp["xmux"] = value
++			}
++		default:
++			return fmt.Errorf("unknown xray_masking key: %s", key)
++		}
++	}
++	return nil
++}
++
+ func protectStream(stream object, dialerID string) {
+ 	// App-owned socket boundary only; protocol/TLS fields remain core-native.
+ 	stream["sockopt"] = object{"interface": dialerID}
+diff --git a/protocol/xraycore/masking_test.go b/protocol/xraycore/masking_test.go
+new file mode 100644
+index 00000000..8ecdb48c
+--- /dev/null
++++ b/protocol/xraycore/masking_test.go
+@@ -0,0 +1,76 @@
++package xraycore
++
++import (
++	"encoding/base64"
++	"strings"
++	"testing"
++
++	"github.com/xtls/xray-core/transport/internet/splithttp"
++)
++
++const maskingID = "b831381d-6324-4d53-ad4f-8cda48b30811"
++
++// The masking block the app writes (Android masking module, XrayShapingRules)
++// must reach Xray in its native fields and be accepted by Xray's own parser.
++func TestMaskingMuxAndFinalmaskReachXray(t *testing.T) {
++	options := legacyOptions(t, `{"type":"vless","uri":"vless://`+maskingID+`@192.168.1.10:443?type=tcp&security=reality&sni=a.example&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=01",
++		"xray_masking":{
++			"mux":{"enabled":true,"concurrency":8,"xudpConcurrency":16,"xudpProxyUDP443":"reject"},
++			"finalmask":{"tcp":[{"type":"fragment","settings":{"packets":"tlshello","length":"100-200","delay":"10-20"}}]}}}`)
++	_, _, sender := xrayStream(t, options)
++	mux := sender.GetMultiplexSettings()
++	if mux == nil || !mux.Enabled || mux.Concurrency != 8 || mux.XudpConcurrency != 16 || mux.XudpProxyUDP443 != "reject" {
++		t.Fatalf("Xray mux settings: %+v", mux)
++	}
++	if masks := sender.StreamSettings.GetTcpmasks(); len(masks) != 1 {
++		t.Fatalf("Xray finalmask tcp masks: %d", len(masks))
++	}
++}
++
++func TestMaskingXmuxGoesToTopLevelWithoutExtra(t *testing.T) {
++	options := legacyOptions(t, `{"type":"vless","uri":"vless://`+maskingID+`@192.168.1.10:443?type=xhttp&security=none&path=/x&host=cdn.example.com",
++		"xray_masking":{"xmux":{"maxConcurrency":"16-32","cMaxReuseTimes":"8-16","hMaxReusableSecs":"60-120"}}}`)
++	_, _, sender := xrayStream(t, options)
++	xmux := transportSettings(t, sender, "splithttp").(*splithttp.Config).GetXmux()
++	if xmux.GetMaxConcurrency().GetFrom() != 16 || xmux.GetMaxConcurrency().GetTo() != 32 ||
++		xmux.GetCMaxReuseTimes().GetTo() != 16 || xmux.GetHMaxReusableSecs().GetFrom() != 60 {
++		t.Fatalf("Xray xmux: %+v", xmux)
++	}
++}
++
++// With "extra" in the link Xray replaces the whole XHTTP config by it, so xmux
++// placed at the top level would be dropped without a word.
++func TestMaskingXmuxGoesIntoExtraWhenTheLinkHasOne(t *testing.T) {
++	extra := base64.RawURLEncoding.EncodeToString([]byte(`{"xPaddingBytes":"100-1000","xmux":{"maxConnections":"8"}}`))
++	options := legacyOptions(t, `{"type":"vless","uri":"vless://`+maskingID+`@192.168.1.10:443?type=xhttp&security=none&path=/x&host=cdn.example.com&extra=`+extra+`",
++		"xray_masking":{"xmux":{"maxConnections":"2"}}}`)
++	_, _, sender := xrayStream(t, options)
++	xmux := transportSettings(t, sender, "splithttp").(*splithttp.Config).GetXmux()
++	if xmux.GetMaxConnections().GetFrom() != 2 || xmux.GetMaxConnections().GetTo() != 2 {
++		t.Fatalf("masking xmux must win over the link's extra: %+v", xmux)
++	}
++}
++
++func TestMaskingRefusesUnknownKeysAndXmuxWithoutXHTTP(t *testing.T) {
++	base := `{"type":"vless","uri":"vless://` + maskingID + `@192.168.1.10:443?type=tcp&security=none",`
++	for name, block := range map[string]string{
++		"unknown key":       `"xray_masking":{"sockopt":{"mark":1}}}`,
++		"xmux without xhttp": `"xray_masking":{"xmux":{"maxConnections":"2"}}}`,
++	} {
++		_, err := buildConfig(legacyOptions(t, base+block), "test-dialer")
++		if err == nil || !strings.Contains(err.Error(), "xray_masking") {
++			t.Fatalf("%s: want a refusal, got %v", name, err)
++		}
++	}
++}
++
++func TestNoMaskingKeepsTheConfigUnchanged(t *testing.T) {
++	options := legacyOptions(t, `{"type":"vless","uri":"vless://`+maskingID+`@192.168.1.10:443?type=tcp&security=none"}`)
++	_, _, sender := xrayStream(t, options)
++	if mux := sender.GetMultiplexSettings(); mux != nil && mux.Enabled {
++		t.Fatalf("mux must stay off without masking: %+v", mux)
++	}
++	if masks := sender.StreamSettings.GetTcpmasks(); len(masks) != 0 {
++		t.Fatalf("no finalmask without masking: %d", len(masks))
++	}
++}

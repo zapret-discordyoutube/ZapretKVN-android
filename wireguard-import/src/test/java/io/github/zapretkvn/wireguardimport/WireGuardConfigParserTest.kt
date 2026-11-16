@@ -127,6 +127,10 @@ class WireGuardConfigParserTest {
         assertThrows(WireGuardImportException::class.java) {
             WireGuardConfigParser.parse(WIREGUARD_CONF.replace("[Peer]", "I1 = <unknown 2>\n[Peer]"))
         }
+        // amneziawg-go v3.1 has no <c> builder: such a profile would import and then never connect.
+        assertThrows(WireGuardImportException::class.java) {
+            WireGuardConfigParser.parse(WIREGUARD_CONF.replace("[Peer]", "I1 = <b 0x01><c>\n[Peer]"))
+        }
         assertThrows(WireGuardImportException::class.java) {
             WireGuardConfigParser.parse(WIREGUARD_CONF.replace("AllowedIPs = 0.0.0.0/0", "AllowedIPs = 192.0.2.1/24"))
         }

@@ -29,6 +29,7 @@ data class SettingsMainUi(
     val aboutSummary: String,
     val advancedSummary: String,
     val subscriptionUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
+    val maskingSummary: String = "Выключена",
 )
 
 fun buildSettingsMain(

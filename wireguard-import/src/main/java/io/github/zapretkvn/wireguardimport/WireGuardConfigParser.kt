@@ -326,12 +326,15 @@ object WireGuardConfigParser {
                     }
                     fixedSize += size
                 }
-                "c", "t", "d", "ds" -> {
+                "t", "d", "ds" -> {
                     if (argument != null) {
                         throw WireGuardImportException("Тег <$tag> поля $name не принимает аргумент.")
                     }
-                    if (tag == "c" || tag == "t") fixedSize += 4
+                    if (tag == "t") fixedSize += 4
                 }
+                // amneziawg-go v3.1 has no builder for <c> (device/obf.go obfBuilders) and refuses
+                // the whole config, so a profile accepted here would never connect.
+                "c" -> throw WireGuardImportException("Тег <c> в $name не поддерживается ядром AmneziaWG.")
                 else -> throw WireGuardImportException("Неизвестный AWG 2.0 тег <$tag> в $name.")
             }
             if (fixedSize > MAX_OBFUSCATION_SIZE) {

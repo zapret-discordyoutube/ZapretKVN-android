@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.ui
 
+import io.github.zapretkvn.android.masking.MaskingActions
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -85,6 +86,8 @@ class AppDependencies(
     /** Проверка сервисов без VPN: результаты (только в памяти) и нажатие на карточку. */
     val directServices: StateFlow<ServiceAvailabilityState>,
     val checkServicesDirect: () -> Unit,
+    /** «Маскировка»: общие настройки и выбор для отдельного сервера. */
+    val masking: MaskingActions,
 )
 
 /** Действия навигации, общие для экранов. */
