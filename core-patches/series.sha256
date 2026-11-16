@@ -2,7 +2,7 @@
 d43dc2d3810a6f4a68c61c85c93cb2cd914ea8b7f80e5fd25b90976f074bab4b  core-patches/0002-read-only-relay-delay-probe.patch
 e0dc566f7e8671c1d4a8baa55c239d53264b5f03f68a79bc652e5c991a35801a  core-patches/0003-official-hysteria2-core.patch
 173f52159121249e9b9bca77b67c09c0c3df0b81cb1060d741c794916c5fded8  core-patches/0004-protocol-runtime-modules.patch
-78bdb10cfdd55607500a73dcd8a9a066e6803f52d19150d1aaa91060bca88231  core-patches/0005-official-amnezia-wg-unified.patch
+29b64e439388638f4237cd1ddaa23782adef63f15b51435c7d77e6a6144fd709  core-patches/0005-official-amnezia-wg-unified.patch
 00ba206cf6aa59043b1f7bfa6904067959a8d374eaba17cf3b00b80511f6195d  core-patches/0006-proxy-traffic-totals.patch
 0bca72ab0705121fa926a8933cb04e87a6ecd6bc44c6efe247982dc9dda96bd9  core-patches/0007-browser-fetch.patch
 977eb1555037ed7429e5af08a01fc5bb3265bbb2b67d7a48a1c4bb79b265c635  core-patches/0008-libbox-browser-socket-protector.patch
@@ -11,5 +11,5 @@ bbd07c6e839799cd3cd4762d00f3532cb63ef1854e3a2bfc68763acb72c93f22  core-patches/0
 212264daa02c0ce48d456c36304c1ce6963460f8055134eaa9ee6971625e72e8  core-patches/0011-proxy-flows-snapshot.patch
 75e6d5a5576ae2cf830e5aa3320f61e8c7189e5dabb5062ce0141bf037197f1b  core-patches/0012-hysteria2-tunnel-stats.patch
 b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0013-proxy-flows-close.patch
-83fe16bc13589b6fd79d6e025e569cd9ec742af5c303a44126c4c79faa214235  core-patches/0014-xray-core-v26-11-9.patch
+1fb3d7f1e44634c1b881485dcdb09546427ae85727e4700afc85cf127c2bae96  core-patches/0014-xray-core-v26-11-9.patch
 80d5300a08a2048f37a585095745595b2b637f8ecc50ef6ad1b386426a16c757  core-patches/0015-hysteria-2-14-api-and-xray-quic-go.patch

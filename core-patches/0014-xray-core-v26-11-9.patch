@@ -14,7 +14,7 @@ index fefc3d34..c00ee991 100644
  	github.com/AliRizaAynaci/gorl/v2 v2.2.0
  	github.com/Diniboy1123/connect-ip-go v0.0.0-20260409225322-8d7bb0a858a2
 +	github.com/ameshkov/dnscrypt/v2 v2.4.0
- 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260828
+ 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20261116
  	github.com/anthropics/anthropic-sdk-go v1.26.0
  	github.com/anytls/sing-anytls v0.0.11
 @@ -20,6 +21,7 @@ require (

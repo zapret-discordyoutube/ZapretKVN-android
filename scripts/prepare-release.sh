@@ -114,13 +114,17 @@ step "4. core pair"
 "$SCRIPT_DIR/prepare-stable-core.sh" "$TAG"
 WINDOWS_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["releases"]["windows"])' "$PROJECT_ROOT/core-release-freeze.json")"
 if ! repo_clean "$WINDOWS_ROOT"; then
-    git -C "$WINDOWS_ROOT" add core-release-freeze.json scripts/core-lock.windows-x64.json
+    # Every file prepare_core_release.py may write: an Amnezia move also changes the runtime module
+    # (2026-11-16, Amnezia v3.1.20261116: go.mod/go.sum were left uncommitted and publish refused).
+    git -C "$WINDOWS_ROOT" add core-release-freeze.json scripts/core-lock.windows-x64.json \
+        runtime/amnezia/go.mod runtime/amnezia/go.sum
     git -C "$WINDOWS_ROOT" commit -q -m "Core freeze of the pair: Windows $WINDOWS_VERSION + Android $TAG"
     git -C "$WINDOWS_ROOT" push -q origin main
     echo "Windows freeze committed and pushed"
 fi
 if ! repo_clean "$PROJECT_ROOT"; then
-    git add core-release-freeze.json
+    # The Amnezia retarget rewrites the pins and patches too, not only the freeze receipt.
+    git add core-release-freeze.json core.properties core-patches
     git commit -q -m "Release $TAG: core freeze of the pair"
 fi
 git push -q origin main
