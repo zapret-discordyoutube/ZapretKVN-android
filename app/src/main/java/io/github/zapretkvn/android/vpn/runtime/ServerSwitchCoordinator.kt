@@ -707,7 +707,7 @@ internal class ServerSwitchCoordinator(
             ).runEpisode(keepOnSilent = verdict.deadCluster)
             timeline(
                 (if (onSlot) "Слот YouTube, переключение при медленном видео" else "Переключение при медленном YouTube") +
-                    " ($cause): ${youtubeOutcomeText(outcome)}.",
+                    " ($cause): ${youtubeOutcomeText(outcome, if (onSlot) slots.serverOf(SlotIds.YOUTUBE) else null, ::server)}.",
             )
             // Смена сервера не вернула видео: плеер ReVanced держит мёртвые ссылки и оживает только после закрытия клиента.
             YoutubeWedgeNotice.decide(outcome, wedgeNoticeShownAt, clock())?.let { notice ->
@@ -742,19 +742,6 @@ internal class ServerSwitchCoordinator(
 
     private var deadClusterNoted = false
 
-    private fun youtubeOutcomeText(outcome: YoutubeSwitchOutcome): String = when (outcome) {
-        YoutubeSwitchOutcome.Gone -> "сессия закончилась"
-        YoutubeSwitchOutcome.NoCandidates -> "запасного сервера нет"
-        is YoutubeSwitchOutcome.Switched -> "выбран ${server(outcome.serverId)}"
-        is YoutubeSwitchOutcome.SwitchedUnverified -> "выбран ${server(outcome.serverId)}, перезапустите видео"
-        YoutubeSwitchOutcome.Inconclusive -> "видео не пошло, прежний сервер возвращён"
-        YoutubeSwitchOutcome.AllCandidatesSlow -> "запасные серверы тоже медленные, прежний возвращён"
-        is YoutubeSwitchOutcome.StarvesEverywhere ->
-            "видео голодает на всех ${outcome.servers} проверенных серверах, отметки сняты" +
-                (outcome.movedTo?.let { ", слот перешёл на ${server(it)}, где видео недавно шло быстро" } ?: "")
-        YoutubeSwitchOutcome.TrialFailed -> "переключение не удалось"
-        YoutubeSwitchOutcome.CommitRefused -> "выбор не сохранён, прежний сервер возвращён"
-    }
 
     /** Сессия стала активной: привязать антифлап к профилю и открыть монитор скорости. */
     fun onSessionActivated(session: CoreSession) {

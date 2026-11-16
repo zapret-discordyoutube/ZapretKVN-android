@@ -362,6 +362,10 @@ which stayed silent, and the silence made the engine restore the starved 4virtua
 - **No way back, whatever the outcome** (`restore`): the starved server is marked at the first trial; a restore to it
   (silence, a cancelled episode) leaves the slot where it sits. Log: `Слот остаётся на …: на прежнем сервере … видео
   голодало.` A failed trial command, where the slot never left, still restores normally.
+- **The episode line names the real place** (Android 0.6.27, `youtubeOutcomeText`): with a slot, a silent trial
+  («видео не пошло») or a run of slow candidates ends with `слот YouTube сейчас на …` instead of `прежний сервер возвращён`,
+  which was false when the rule above kept the slot off the starved server (field 2026-11-16 13:02 UTC: the slot stayed
+  on the dead trial server 4vusa while the line said Rusina was back; the slot's failover moved it a second later).
 
 Open: a mark lasts one hour whatever the history, so a server that fails the slot again and again (Clermany: DNS of the
 slot dead in four sessions) is tried again after each hour. Doubling the mark on a repeat is the next step if it keeps
