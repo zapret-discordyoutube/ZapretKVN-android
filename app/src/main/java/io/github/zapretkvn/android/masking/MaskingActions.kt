@@ -44,6 +44,7 @@ class MaskingActions(
                     if (xray.mux?.enabled == true) add("mux")
                     if (xray.xmux != null) add("xmux")
                     if (xray.fragment?.enabled == true) add("фрагментация")
+                    if (xray.desync?.enabled == true) add("пакеты-обманки")
                 }
                 settings.global.singbox?.takeIf { it.enabled }?.let { add("фрагментация TLS") }
             }
