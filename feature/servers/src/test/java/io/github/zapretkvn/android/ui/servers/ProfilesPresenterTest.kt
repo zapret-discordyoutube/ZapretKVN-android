@@ -64,6 +64,22 @@ class ProfilesPresenterTest {
     }
 
     @Test
+    fun serviceProfileNeverTakesCountryFromServerAddress() {
+        // Сервер без флага в имени на российском адресе: обычному профилю страну подскажет
+        // GeoIP, профилю подписки сервиса — нет (страна только по флагу имени).
+        val summary = ProfileServerSummary(
+            listOf(ProfileServerGroup("zapret-proxy", "a", listOf(ProfileServerOption("Velnor", "vless", "203.0.113.5:443")))),
+        )
+        val geo = mapOf("203.0.113.5" to "RU")
+        val profiles = listOf(profile("service", ProfileSource.Url), profile("plain", ProfileSource.Url))
+        val summaries = mapOf("service" to summary, "plain" to summary)
+        val cards = profileSections(profiles, summaries, null, setOf("service", "plain"), now, geo, setOf("service"))
+            .flatMap { it.cards }
+        assertEquals("🇷🇺", cards.first { it.id == "plain" }.flags)
+        assertEquals(null, cards.first { it.id == "service" }.flags)
+    }
+
+    @Test
     fun cardCarriesActiveRefreshableAndServerInfo() {
         val nl = "🇳🇱"
         val summary = ProfileServerSummary(

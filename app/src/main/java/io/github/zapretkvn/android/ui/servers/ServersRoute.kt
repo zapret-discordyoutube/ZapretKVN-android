@@ -70,8 +70,8 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
     }
     val ui = remember(
         state.profiles, activeId, state.serverSummaries, savedLatency,
-        groupsForUi, live, state.settings.hideServerAddresses, hostCountries, favorites,
-        state.refreshableProfileIds, state.settings.subscriptionAutoUpdateHours,
+        groupsForUi, live, state.hideActiveAddresses, hostCountries, favorites,
+        state.refreshableProfileIds, state.settings.subscriptionAutoUpdateHours, state.serviceProfileIds,
     ) {
         buildServersUi(
             profiles = state.profiles,
@@ -80,9 +80,9 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             savedLatency = savedLatency,
             runtimeGroups = groupsForUi,
             live = live,
-            hideAddresses = state.settings.hideServerAddresses,
+            hideAddresses = state.hideActiveAddresses,
             nowEpochMillis = System.currentTimeMillis(),
-            hostCountries = hostCountries,
+            hostCountries = state.hostCountriesFor(activeId, hostCountries),
             favorites = favorites,
             autoUpdate = SubscriptionAutoUpdate.shortLabel(state.settings.subscriptionAutoUpdateHours),
             subscriptionIds = state.refreshableProfileIds,
@@ -185,6 +185,7 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
     val hostCountries by deps.profiles.serverCountries.collectAsStateWithLifecycle()
     val sections = remember(
         state.profiles, state.serverSummaries, activeId, state.refreshableProfileIds, hostCountries,
+        state.serviceProfileIds,
     ) {
         profileSections(
             profiles = state.profiles,
@@ -193,6 +194,7 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
             refreshableIds = state.refreshableProfileIds,
             nowEpochMillis = System.currentTimeMillis(),
             hostCountries = hostCountries,
+            serviceIds = state.serviceProfileIds,
         )
     }
     val latestActive by rememberUpdatedState(activeId)

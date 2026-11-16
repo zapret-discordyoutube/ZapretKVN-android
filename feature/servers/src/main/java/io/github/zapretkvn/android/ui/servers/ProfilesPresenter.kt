@@ -69,10 +69,13 @@ fun profileSections(
     refreshableIds: Set<String>,
     nowEpochMillis: Long,
     hostCountries: Map<String, String> = emptyMap(),
+    /** Профили подписки сервиса Zapret VPN: страна только по флагу имени, без GeoIP. */
+    serviceIds: Set<String> = emptySet(),
 ): List<ProfileSectionUi> {
     fun card(profile: ProfileMetadata): ProfileCardUi {
         val summary = summaries[profile.id]
-        val stats = summary?.let { serverStats(memberTags(it), summaryCountryHints(it, hostCountries)) }
+        val geo = if (profile.id in serviceIds) emptyMap() else hostCountries
+        val stats = summary?.let { serverStats(memberTags(it), summaryCountryHints(it, geo)) }
         val active = profile.id == activeProfileId
         val meta = profileMeta(profile, nowEpochMillis)
         val counts = stats?.countsLabel()

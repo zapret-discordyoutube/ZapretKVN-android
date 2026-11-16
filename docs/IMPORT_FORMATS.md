@@ -109,6 +109,26 @@
 URL — читаются как профиль Zapret KVN без HWID и переводятся в новый формат при первой
 записи. HWID не сохраняется, пока передача выключена.
 
+### Subscriptions of the Zapret VPN service (owner decision 2026-11-16)
+
+A subscription reply that carries the response header `zapret-vpn-service` (any value;
+the vpnbot sends `1`) comes from our own service. Some of its servers enter through a relay
+node in Russia and leave in the country named by the leading flag, so for every profile
+bound to such a subscription the app shows the country only from that flag (GeoIP of the
+server address is never consulted) and never shows the server address: the list, the card,
+the Home screen, the Services screen and the notification behave as with "hide addresses"
+on, and the raw editor starts masked. Only the header's presence is checked; the
+subscription hostname is not built into the app, because that anti-block domain rotates and
+must not appear in public source. The mark is stored in `subscriptions/service.json` as
+SHA-256 of the normalized subscription URL (the token is not copied), is refreshed on every
+successful fetch, and disappears when a reply no longer carries the header. The fetch
+journal records "ответ сервиса Zapret VPN" when it acts. The diagnostics archive the user
+sends on purpose keeps real addresses (privacy rule 6).
+
+The manual "IP выхода" check shows «скрыт сервером» when api64.ipify.org does not answer
+but the same tunnel answers `generate_204`: Zapret VPN nodes close IP-lookup services on
+purpose. A timeout of the IP request no longer leaves the row stuck at «определяем…».
+
 Для VLESS импортёр принимает стандартный sing-box flow `xtls-rprx-vision` и
 Xray client alias `xtls-rprx-vision-udp443`. Alias преобразуется в
 `xtls-rprx-vision`: в sing-box этот режим соответствует Xray-варианту без

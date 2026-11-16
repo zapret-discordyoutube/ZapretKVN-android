@@ -74,13 +74,17 @@ internal class SessionTrafficAccumulator(
         return value
     }
 
-    /** null — запрос не удался: прежний адрес (если был) остаётся, статус становится Failed. */
-    fun updateExternalIp(generation: Long, externalIp: String?): VpnSessionStats? {
+    /**
+     * null — запрос не удался: прежний адрес (если был) остаётся, статус становится Failed,
+     * а при [hiddenByServer] (туннель жив, сервис IP закрыт узлом) — HiddenByServer без адреса.
+     */
+    fun updateExternalIp(generation: Long, externalIp: String?, hiddenByServer: Boolean = false): VpnSessionStats? {
         if (generation != this.generation) return null
-        value = if (externalIp != null) {
-            value.copy(externalIp = externalIp, externalIpStatus = ExternalIpStatus.NotRequested)
-        } else {
-            value.copy(externalIpStatus = ExternalIpStatus.Failed)
+        value = when {
+            externalIp != null ->
+                value.copy(externalIp = externalIp, externalIpStatus = ExternalIpStatus.NotRequested)
+            hiddenByServer -> value.copy(externalIp = null, externalIpStatus = ExternalIpStatus.HiddenByServer)
+            else -> value.copy(externalIpStatus = ExternalIpStatus.Failed)
         }
         return value
     }

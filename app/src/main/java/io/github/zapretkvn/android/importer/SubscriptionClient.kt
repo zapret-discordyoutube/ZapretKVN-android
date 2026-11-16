@@ -9,7 +9,12 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -51,6 +56,8 @@ class HttpSubscriptionFetcher(
     private val diagnose: ((host: String, port: Int) -> Diagnosis?)? = null,
     // Строки журнала загрузки (адрес замаскирован, путь и токен не пишутся никогда).
     private val log: (String) -> Unit = {},
+    // Ответ подписки получен: url источника и есть ли в ответе заголовок [SERVICE_HEADER].
+    private val onServiceMarker: (url: String, present: Boolean) -> Unit = { _, _ -> },
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
         val url = validatedUrl(source.url)
@@ -143,6 +150,7 @@ class HttpSubscriptionFetcher(
             SubscriptionIdentity.describeHwidRefusal(reply.status, reply.headerNames)
                 ?.let { throw ImportException(FetchJudge.answeredMessage(reply.status, it)) }
             val body = reply.body ?: throw ImportException("Подписка больше 4 МБ.")
+            onServiceMarker(source.url, isServiceReply(reply.headerNames))
             return body.toString(Charsets.UTF_8)
         }
         throw ImportException("Не удалось получить подписку.")
@@ -220,6 +228,17 @@ class HttpSubscriptionFetcher(
             return fetchUri.toASCIIString()
         }
 
+        /**
+         * Ответ подписки самого сервиса Zapret VPN (vpnbot, решение владельца 2026-11-16). Для
+         * её профилей приложение не показывает адрес сервера и не берёт страну из GeoIP:
+         * страна — только флаг в имени. Достаточно наличия заголовка; имя хоста подписки
+         * в приложение не зашивается (домен сменяется и не должен попасть в открытый код).
+         */
+        const val SERVICE_HEADER = "zapret-vpn-service"
+
+        fun isServiceReply(headerNames: Collection<String>): Boolean =
+            headerNames.any { it.equals(SERVICE_HEADER, ignoreCase = true) }
+
         private const val TIMEOUT_MILLIS = 15_000
         private const val MAX_REDIRECTS = 3
         const val MAX_IMPORT_BYTES = 4 * 1024 * 1024
@@ -247,6 +266,32 @@ class SubscriptionSourceStore(
     private val writer: AtomicProfileWriter = AndroidAtomicProfileWriter(),
 ) {
     private val mutex = Mutex()
+    private val serviceIds = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * Профили подписок сервиса Zapret VPN (ответ пришёл с [HttpSubscriptionFetcher.SERVICE_HEADER]).
+     * Обновляется при каждой записи источников и отметок; до [refreshServiceProfileIds] пуст.
+     */
+    val serviceProfileIds: StateFlow<Set<String>> = serviceIds.asStateFlow()
+
+    /**
+     * Отметка «ответ этой ссылки — от сервиса». Хранится SHA-256 нормализованного URL, а не
+     * сам URL: токен ссылки не копируется во второй файл. Вызывается из загрузчика подписки
+     * (поток IO, блокирующий вызов).
+     */
+    fun markService(url: String, present: Boolean) = runBlocking {
+        mutex.withLock {
+            val hash = urlHash(url) ?: return@withLock
+            val marks = readMarks()
+            val next = if (present) marks + hash else marks - hash
+            if (next != marks) writeMarks(next)
+            publishServiceIds(read(), next)
+        }
+    }
+
+    suspend fun refreshServiceProfileIds() = withContext(Dispatchers.IO) {
+        mutex.withLock { publishServiceIds(read(), readMarks()) }
+    }
 
     suspend fun get(profileId: String): SubscriptionSource? = withContext(Dispatchers.IO) {
         mutex.withLock { read()[profileId]?.source }
@@ -356,7 +401,36 @@ class SubscriptionSourceStore(
         else -> null
     }
 
+    private fun publishServiceIds(entries: Map<String, SubscriptionBinding>, marks: Set<String>) {
+        serviceIds.value = if (marks.isEmpty()) {
+            emptySet()
+        } else {
+            entries.filterValues { urlHash(it.source.url) in marks }.keys
+        }
+    }
+
+    private fun readMarks(): Set<String> {
+        if (!serviceFile.isFile) return emptySet()
+        // Повреждённый файл отметок — не повод ломать подписки: отметки вернёт следующая загрузка.
+        val array = runCatching { JsonConfig.parse(serviceFile.readText(Charsets.UTF_8)) as? JsonArray }
+            .getOrNull() ?: return emptySet()
+        return array.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }.toSet()
+    }
+
+    private fun writeMarks(marks: Set<String>) {
+        val json = buildJsonArray { marks.sorted().forEach { add(JsonPrimitive(it)) } }
+        writer.writeAtomic(serviceFile, JsonConfig.format(json).toByteArray(Charsets.UTF_8))
+    }
+
+    private fun urlHash(url: String): String? {
+        val normalized = runCatching { HttpSubscriptionFetcher.validatedUrl(url) }.getOrNull() ?: return null
+        return MessageDigest.getInstance("SHA-256")
+            .digest(normalized.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+    }
+
     private fun write(entries: Map<String, SubscriptionBinding>) {
+        publishServiceIds(entries, readMarks())
         val json = buildJsonObject {
             entries.toSortedMap().forEach { (id, binding) ->
                 val source = binding.source
@@ -406,6 +480,7 @@ class SubscriptionSourceStore(
     )
 
     private val file: File get() = File(root, "index.json")
+    private val serviceFile: File get() = File(root, "service.json")
 
     private companion object {
         const val URL_KEY = "url"

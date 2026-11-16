@@ -226,6 +226,9 @@ enum class ExternalIpStatus {
     NotRequested,
     Loading,
     Failed,
+
+    /** Туннель жив, а сервис определения IP закрыт узлом: адрес «скрыт сервером». */
+    HiddenByServer,
 }
 
 data class VpnSessionStats(

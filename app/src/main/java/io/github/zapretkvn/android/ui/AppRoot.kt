@@ -355,7 +355,8 @@ private fun EditorRoute(deps: AppDependencies, snackbarHostState: SnackbarHostSt
         deps.profiles,
         editor,
         state.settings.rawEditorLineWrap,
-        state.settings.hideServerAddresses,
+        // Подписка сервиса: адреса в редакторе скрыты, как при настройке приватности (раскрыть можно).
+        state.settings.hideServerAddresses || state.editor?.let { it.profileId in state.serviceProfileIds } == true,
         state.busy,
         snackbarHost = { SnackbarHost(snackbarHostState) },
     )

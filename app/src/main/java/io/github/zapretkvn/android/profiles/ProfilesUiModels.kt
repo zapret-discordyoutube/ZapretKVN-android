@@ -41,7 +41,22 @@ data class ProfilesUiState(
     val subscriptionSettings: SubscriptionSettingsState? = null,
     val subscriptionLinkPrompt: SubscriptionLinkPrompt? = null,
     val initialized: Boolean = false,
-)
+    /** Профили подписки сервиса Zapret VPN: адрес сервера не показывается, страна только по флагу имени. */
+    val serviceProfileIds: Set<String> = emptySet(),
+) {
+    /** Активный профиль — подписка сервиса Zapret VPN. */
+    val activeIsService: Boolean get() = settings.activeProfileId?.let(serviceProfileIds::contains) == true
+
+    /**
+     * Скрывать ли адреса серверов на экранах активного профиля: настройка пользователя или
+     * подписка сервиса (там адрес не показывается никогда, решение владельца 2026-11-16).
+     */
+    val hideActiveAddresses: Boolean get() = settings.hideServerAddresses || activeIsService
+
+    /** Страны по адресу сервера (GeoIP) — не для подписки сервиса: там страна только из флага имени. */
+    fun hostCountriesFor(profileId: String?, hostCountries: Map<String, String>): Map<String, String> =
+        if (profileId != null && profileId in serviceProfileIds) emptyMap() else hostCountries
+}
 
 /** Откуда пришла ссылка подписки, которую надо подтвердить в форме импорта по URL. */
 enum class SubscriptionLinkOrigin(val title: String) {

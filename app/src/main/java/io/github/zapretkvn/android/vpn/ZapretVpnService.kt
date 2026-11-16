@@ -102,11 +102,19 @@ class ZapretVpnService : VpnService() {
      * приходит из групп ядра и перерисовывает уведомление с прежним состоянием.
      */
     private fun observeCurrentServer() {
+        // Подписка сервиса Zapret VPN: адрес не показывается и страна не берётся из GeoIP.
+        val serviceActive = combine(
+            container.vpnController.state.map { (it as? VpnConnectionState.Connected)?.profileId },
+            container.subscriptionSourceStore.serviceProfileIds,
+        ) { profileId, ids -> profileId != null && profileId in ids }.distinctUntilChanged()
         combine(
             container.vpnController.selectorGroups,
             container.serverCountryStore.countries,
             container.uiSettingsStore.settings.map { it.hideServerAddresses }.distinctUntilChanged(),
-        ) { groups, countries, hide -> CurrentServerLabel.of(groups, countries, hide) }
+            serviceActive,
+        ) { groups, countries, hide, service ->
+            CurrentServerLabel.of(groups, if (service) emptyMap() else countries, hide || service)
+        }
             .distinctUntilChanged()
             .onEach { label -> serverLabel = label }
             .drop(1)

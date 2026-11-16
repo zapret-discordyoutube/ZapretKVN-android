@@ -20,7 +20,7 @@ fun ServicesRoute(deps: AppDependencies, padding: PaddingValues) {
     val groups by deps.vpn.selectorGroups.collectAsStateWithLifecycle()
 
     val connected = vpnState is VpnConnectionState.Connected
-    val hide = state.settings.hideServerAddresses
+    val hide = state.hideActiveAddresses
     val mainTag = if (connected) groups.primaryGroup()?.selected else null
     val ui = remember(
         state.settings.serviceSlots, connected, slotStates, state.profiles, state.serverSummaries,

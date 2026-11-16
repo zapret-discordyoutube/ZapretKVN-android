@@ -986,6 +986,7 @@ internal fun externalIpLabel(stats: VpnSessionStats): String {
     return when {
         stats.externalIpStatus == ExternalIpStatus.Loading -> "определяем…"
         address != null -> address
+        stats.externalIpStatus == ExternalIpStatus.HiddenByServer -> "скрыт сервером"
         stats.externalIpStatus == ExternalIpStatus.Failed -> "Не удалось · нажмите ещё раз"
         else -> "Показать IP"
     }

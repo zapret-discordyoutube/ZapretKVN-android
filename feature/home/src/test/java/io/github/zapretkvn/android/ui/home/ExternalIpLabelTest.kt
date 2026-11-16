@@ -30,4 +30,12 @@ class ExternalIpLabelTest {
         assertEquals("203.0.113.9", externalIpLabel(known))
         assertEquals("определяем…", externalIpLabel(known.copy(externalIpStatus = ExternalIpStatus.Loading)))
     }
+
+    @Test
+    fun `an IP service closed by the server reads as hidden, not as a failure`() {
+        assertEquals(
+            "скрыт сервером",
+            externalIpLabel(VpnSessionStats(externalIpStatus = ExternalIpStatus.HiddenByServer)),
+        )
+    }
 }

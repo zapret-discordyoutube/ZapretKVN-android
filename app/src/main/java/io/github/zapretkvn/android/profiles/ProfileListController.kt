@@ -26,10 +26,16 @@ internal class ProfileListController(
 ) {
     fun start() {
         scope.launch {
+            subscriptionSourceStore.serviceProfileIds.collect { ids ->
+                state.update { it.copy(serviceProfileIds = ids) }
+            }
+        }
+        scope.launch {
             try {
                 val profiles = store.initialize()
                 subscriptionSourceStore.retain(profiles.map(ProfileMetadata::id).toSet())
                 state.update { it.copy(refreshableProfileIds = subscriptionSourceStore.ids()) }
+                subscriptionSourceStore.refreshServiceProfileIds()
                 combine(store.profiles, settings.settings) { profiles, settings ->
                     profiles to settings
                 }.collect { (profiles, settings) ->

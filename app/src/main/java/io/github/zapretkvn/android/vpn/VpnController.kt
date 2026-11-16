@@ -597,9 +597,9 @@ class VpnController(
         }
     }
 
-    internal fun publishExternalIp(generation: Long, externalIp: String?) {
+    internal fun publishExternalIp(generation: Long, externalIp: String?, hiddenByServer: Boolean = false) {
         synchronized(trafficLock) {
-            trafficAccumulator.updateExternalIp(generation, externalIp)?.let {
+            trafficAccumulator.updateExternalIp(generation, externalIp, hiddenByServer)?.let {
                 mutableSessionStats.value = it
             }
         }

@@ -36,6 +36,7 @@ import io.github.zapretkvn.android.network.VpnNetworkProvider
 import io.github.zapretkvn.android.network.geo.DohHostAddressResolver
 import io.github.zapretkvn.android.network.geo.GeoIpCountry
 import io.github.zapretkvn.android.network.geo.ServerCountryStore
+import io.github.zapretkvn.android.network.probes.LivenessResult
 import io.github.zapretkvn.android.network.probes.ProxyBootstrapper
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
 import io.github.zapretkvn.android.slots.SlotServerMarks
@@ -166,6 +167,12 @@ class AppContainer(
             )
         },
         log = subscriptionFetchJournal::add,
+        // Подписка сервиса Zapret VPN: её серверы показываются без адреса и без GeoIP.
+        // Сбой записи отметки не должен ронять саму загрузку подписки.
+        onServiceMarker = { url, present ->
+            if (present) subscriptionFetchJournal.add("subscription: ответ сервиса Zapret VPN — адреса скрыты, страна по флагу имени")
+            runCatching { subscriptionSourceStore.markService(url, present) }
+        },
     )
     init {
         // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
@@ -225,13 +232,19 @@ class AppContainer(
     val proxyBootstrapper = ProxyBootstrapper(BootstrapResolver(), bootstrapCache)
     private val vpnNetworkProvider = VpnNetworkProvider(appContext)
     val vpnHealthPipeline = VpnHealthPipeline(vpnNetworkProvider, vpnController.probeLane)
-    val vpnExternalIpProbe = VpnExternalIpProbe(vpnNetworkProvider)
+    val vpnExternalIpProbe = VpnExternalIpProbe(vpnNetworkProvider) { vpnLivenessProbe.check() is LivenessResult.Alive }
     val vpnThroughputProbe = VpnThroughputProbe(vpnNetworkProvider, vpnController.probeLane)
     val vpnLivenessProbe = VpnLivenessProbe(vpnNetworkProvider)
     internal val serviceProbePaths = AndroidServiceProbePaths(vpnNetworkProvider)
 
     /** Фоновые записи хранилищ, живущие вместе с процессом. */
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    init {
+        // Уведомление VPN может появиться раньше экрана профилей: отметки сервиса читаются сразу.
+        backgroundScope.launch { runCatching { subscriptionSourceStore.refreshServiceProfileIds() } }
+    }
+
     val serverLatencyStore = ServerLatencyStore(
         File(appContext.noBackupFilesDir, "server-latency.json"),
         backgroundScope,

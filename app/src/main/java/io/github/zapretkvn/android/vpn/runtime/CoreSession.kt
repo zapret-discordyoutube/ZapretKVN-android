@@ -18,6 +18,7 @@ import io.github.zapretkvn.android.vpn.LatencyFailure
 import io.github.zapretkvn.android.network.probes.ServerLatencyFingerprint
 import io.github.zapretkvn.android.network.probes.ServerLatencyReducer
 import io.github.zapretkvn.android.network.probes.ServerLatencyStore
+import io.github.zapretkvn.android.network.probes.ExternalIpLookup
 import io.github.zapretkvn.android.network.probes.VpnExternalIpProbe
 import io.github.zapretkvn.android.network.probes.services.AndroidServiceProbePaths
 import io.github.zapretkvn.android.network.probes.services.ServiceAvailabilityCoordinator
@@ -245,10 +246,11 @@ internal class CoreSession(
             if (closing.get() || externalIpJob?.isActive == true) return
             scope.launch(start = CoroutineStart.LAZY) {
                 controller.publishExternalIpLoading(generation)
-                val address = runCatching { externalIpProbe.fetch() }
-                    .onFailure { if (it is CancellationException) throw it }
-                    .getOrNull()
-                controller.publishExternalIp(generation, address)
+                when (val result = externalIpProbe.lookup()) {
+                    is ExternalIpLookup.Found -> controller.publishExternalIp(generation, result.address)
+                    ExternalIpLookup.HiddenByServer -> controller.publishExternalIp(generation, null, hiddenByServer = true)
+                    ExternalIpLookup.Failed -> controller.publishExternalIp(generation, null)
+                }
             }.also { externalIpJob = it }
         }
         job.start()

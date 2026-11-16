@@ -351,10 +351,10 @@ for path in sources:
     text = path.read_text()
     if "ipify" in text and relative != ip_probe:
         raise SystemExit(f"The external IP service is only called from VpnExternalIpProbe: {relative}")
-    if re.search(r"[eE]xternalIpProbe\.fetch\(", text) and relative != core_session:
+    if re.search(r"[eE]xternalIpProbe\.(fetch|lookup)\(", text) and relative != core_session:
         raise SystemExit(f"External IP is fetched only on demand from CoreSession.requestExternalIp: {relative}")
 session = (root / core_session).read_text()
-if len(re.findall(r"[eE]xternalIpProbe\.fetch\(", session)) != 1:
+if len(re.findall(r"[eE]xternalIpProbe\.(?:fetch|lookup)\(", session)) != 1:
     raise SystemExit("CoreSession must fetch the external IP in exactly one place: requestExternalIp")
 callers = sorted(
     str(path.relative_to(root))

@@ -302,6 +302,61 @@ class SubscriptionClientTest {
         assertEquals(known, group.getValue(firstId).knownMemberKeys)
     }
 
+    @Test
+    fun `service header on the subscription reply is reported for its url`() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/service") { exchange ->
+            exchange.responseHeaders.add("Zapret-VPN-Service", "1")
+            val body = VALID_JSON.toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.createContext("/other") { exchange ->
+            val body = VALID_JSON.toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val marks = mutableListOf<Pair<String, Boolean>>()
+            val fetcher = HttpSubscriptionFetcher(onServiceMarker = { url, present -> marks += url to present })
+            val base = "http://127.0.0.1:${server.address.port}"
+            fetcher.fetch(SubscriptionSource("$base/service"))
+            fetcher.fetch(SubscriptionSource("$base/other"))
+            assertEquals(listOf("$base/service" to true, "$base/other" to false), marks)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `service marks follow the url and never store it in clear`() = runBlocking {
+        val root = temporaryFolder.newFolder("service-subscriptions")
+        val store = SubscriptionSourceStore(root, JvmWriter())
+        val serviceUrl = "https://sub.example/secret-token"
+        store.put("service-profile", SubscriptionSource(serviceUrl))
+        store.put("other-profile", SubscriptionSource("https://other.example/x"))
+
+        store.markService("$serviceUrl#label", present = true)
+        assertEquals(setOf("service-profile"), store.serviceProfileIds.value)
+        assertFalse(File(root, "service.json").readText().contains("secret-token"))
+
+        val reopened = SubscriptionSourceStore(root, JvmWriter())
+        reopened.refreshServiceProfileIds()
+        assertEquals(setOf("service-profile"), reopened.serviceProfileIds.value)
+
+        // Заголовок пропал из ответа — профиль снова обычный.
+        reopened.markService(serviceUrl, present = false)
+        assertEquals(emptySet<String>(), reopened.serviceProfileIds.value)
+    }
+
+    @Test
+    fun `service header name is matched case-insensitively`() {
+        assertTrue(HttpSubscriptionFetcher.isServiceReply(setOf("Content-Type", "zapret-vpn-service")))
+        assertTrue(HttpSubscriptionFetcher.isServiceReply(setOf("ZAPRET-VPN-SERVICE")))
+        assertFalse(HttpSubscriptionFetcher.isServiceReply(setOf("profile-update-interval")))
+    }
+
     private class JvmWriter : AtomicProfileWriter {
         override fun writeAtomic(target: File, bytes: ByteArray) {
             target.parentFile?.mkdirs()

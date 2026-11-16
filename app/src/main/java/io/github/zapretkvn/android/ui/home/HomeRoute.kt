@@ -32,17 +32,19 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
     val summary = activeProfile?.let { state.serverSummaries[it.id] }
     val latency = activeProfile?.let { serverLatency[it.id] }.orEmpty()
-    val hide = state.settings.hideServerAddresses
-    val server = remember(vpnState is VpnConnectionState.Connected, selectorGroups, summary, latency, hide, hostCountries) {
+    val hide = state.hideActiveAddresses
+    // Подписка сервиса Zapret VPN: страна только по флагу имени, GeoIP адреса не участвует.
+    val countries = state.hostCountriesFor(activeProfile?.id, hostCountries)
+    val server = remember(vpnState is VpnConnectionState.Connected, selectorGroups, summary, latency, hide, countries) {
         if (vpnState is VpnConnectionState.Connected) {
             onlineServer(
                 selectorGroups,
                 hide,
-                hostCountries,
+                countries,
                 connectedAtEpochMillis = (vpnState as VpnConnectionState.Connected).connectedAtEpochMillis,
             )
         } else {
-            offlineServer(summary, latency, hide, hostCountries)
+            offlineServer(summary, latency, hide, countries)
         }
     }
     val input = HomeInput(

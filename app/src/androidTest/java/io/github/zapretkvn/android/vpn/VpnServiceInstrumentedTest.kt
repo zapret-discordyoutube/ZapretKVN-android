@@ -364,10 +364,14 @@ class VpnServiceInstrumentedTest {
             container.vpnController.requestExternalIp()
             val answered = withTimeout(20_000) {
                 container.vpnController.sessionStats.first {
-                    it.externalIp != null || it.externalIpStatus == ExternalIpStatus.Failed
+                    it.externalIp != null || it.externalIpStatus == ExternalIpStatus.Failed ||
+                        it.externalIpStatus == ExternalIpStatus.HiddenByServer
                 }
             }
-            assertTrue(answered.externalIp != null || answered.externalIpStatus == ExternalIpStatus.Failed)
+            assertTrue(
+                answered.externalIp != null || answered.externalIpStatus == ExternalIpStatus.Failed ||
+                    answered.externalIpStatus == ExternalIpStatus.HiddenByServer,
+            )
         } finally {
             stopIfNeeded(container.vpnController, context)
             container.profileStore.delete(profile.id)

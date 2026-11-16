@@ -71,6 +71,19 @@ class SessionTrafficAccumulatorTest {
     }
 
     @Test
+    fun `a server that closes IP services hides the address instead of failing`() {
+        val accumulator = SessionTrafficAccumulator()
+        accumulator.start(5, "profile", 100)
+        accumulator.updateExternalIp(5, "203.0.113.1")
+
+        accumulator.beginExternalIp(5)
+        accumulator.updateExternalIp(5, null, hiddenByServer = true)
+        // Адрес прежнего сервера не выдаётся за адрес этого: «скрыт сервером» без адреса.
+        assertNull(accumulator.value.externalIp)
+        assertEquals(ExternalIpStatus.HiddenByServer, accumulator.value.externalIpStatus)
+    }
+
+    @Test
     fun `server switch and reconnect forget the cached external IP`() {
         val accumulator = SessionTrafficAccumulator()
         accumulator.start(5, "profile", 100)
