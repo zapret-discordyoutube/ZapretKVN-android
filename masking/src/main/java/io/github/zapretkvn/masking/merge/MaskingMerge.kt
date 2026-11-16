@@ -19,6 +19,18 @@ data class MaskingSettings(
     fun overrideFor(serverKey: String?): MaskingOverride =
         serverKey?.let(overrides::get) ?: MaskingOverride.Inherit
 
+    /**
+     * The settings one "Подбор" step runs with: [override] for [serverKey] only. Never stored.
+     * With the master switch off every other server stays unmasked, so the trial changes
+     * exactly one server.
+     */
+    fun withTrial(serverKey: String, override: MaskingOverride): MaskingSettings =
+        if (enabled) {
+            copy(overrides = overrides + (serverKey to override))
+        } else {
+            MaskingSettings(enabled = true, global = Masking.NONE, overrides = mapOf(serverKey to override))
+        }
+
     companion object {
         val OFF = MaskingSettings()
     }

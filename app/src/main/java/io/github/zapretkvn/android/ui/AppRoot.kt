@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.ui
 
 import io.github.zapretkvn.android.masking.MaskingActions
+import io.github.zapretkvn.android.masking.MaskingTuner
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -88,6 +89,7 @@ class AppDependencies(
     val checkServicesDirect: () -> Unit,
     /** «Маскировка»: общие настройки и выбор для отдельного сервера. */
     val masking: MaskingActions,
+    val maskingTuner: MaskingTuner,
 )
 
 /** Действия навигации, общие для экранов. */

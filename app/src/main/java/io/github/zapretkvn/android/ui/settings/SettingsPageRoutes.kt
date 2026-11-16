@@ -23,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.network.CurrentWifiSsidReader
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
+import io.github.zapretkvn.android.vpn.VpnConnectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -209,6 +210,8 @@ internal fun MaskingRoute(deps: AppDependencies, padding: PaddingValues) {
     val settings by rememberMaskingSettings(deps)
     val profiles by deps.profiles.state.collectAsStateWithLifecycle()
     val activeId = profiles.settings.activeProfileId
+    val tuneState by deps.maskingTuner.state.collectAsStateWithLifecycle()
+    val vpnState by deps.vpn.state.collectAsStateWithLifecycle()
     val servers = remember(profiles.serverSummaries, activeId, settings.overrides) {
         val summary = activeId?.let(profiles.serverSummaries::get)
         summary?.primaryGroup?.options.orEmpty().map { option ->
@@ -223,5 +226,13 @@ internal fun MaskingRoute(deps: AppDependencies, padding: PaddingValues) {
         onApply = deps.masking::setGlobal,
         servers = servers,
         onOverride = deps.masking::setOverride,
+        tune = MaskingTune(
+            state = tuneState,
+            canStart = vpnState is VpnConnectionState.Connected,
+            onStart = deps.maskingTuner::start,
+            onCancel = deps.maskingTuner::cancel,
+            onKeep = deps.maskingTuner::keep,
+            onDismiss = deps.maskingTuner::dismiss,
+        ),
     )
 }

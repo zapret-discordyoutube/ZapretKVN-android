@@ -30,7 +30,27 @@ server). Junk and I1-I5 are sent by the initiator only, so they work with a plai
 - Core patch `0016-xraycore-masking.patch`: VLESS option `xray_masking` (`mux`, `xmux`, `finalmask`),
   merged by name into the Xray config; `xmux` goes into XHTTP `extra` when the link has one (Xray
   replaces the whole XHTTP config by `extra`); unknown keys are refused.
-- UI: Settings -> «Маскировка» (global set, «Применить»; per-server choice for the active profile).
+- UI: Settings -> «Маскировка» (global set, «Применить»; per-server choice for the active profile;
+  card «Подобрать»).
+
+## «Подобрать» (the tester)
+
+- Decisions in `masking/tester`: `CandidateTester.candidates` (baseline «Без маскировки», the server's
+  own set when it is no preset, then the presets that fit its core), `plan` (2 transfers per candidate,
+  jittered 1.5-4 s pauses, one target, no fan-out), `judge` (the control is the run itself: the most
+  bytes any transfer carried) and `FreezeDetector` (>= 8 s stall at the same offset on both transfers).
+- `app/.../masking/MaskingTrial`: the in-memory candidate the next session start runs with
+  (`MaskingSettings.withTrial`: one server only; with masking off nothing else changes). Never stored;
+  the session publishes its servers (runtime tag -> key + shape) for the runner.
+- `MaskingTuner`: per candidate sets the trial, restarts (reason «Подбор маскировки», trigger
+  `masking_tune`), waits for Connected (45 s), checks the primary group still selects the same server,
+  runs the transfers, and at the end drops the trial and restarts once more («Подбор маскировки
+  завершён»). A VPN the user switched off is never switched back on. «Оставить» is the normal
+  per-server write.
+- `MaskingTransferProbe`: 256 KB (`Range`) of the speed-check file through the VPN network, fresh
+  connection, read timeout 12 s, cap 40 s, byte count sampled every 500 ms; holds the probe lane.
+  It measures the inner stream: the outer connection's freeze stops it a few percent of bytes earlier.
+- Runtime log: «маскировка: подбор, вариант «…»» at every trial session start.
 
 ## Verified core facts (pinned versions)
 

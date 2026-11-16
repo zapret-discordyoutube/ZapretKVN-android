@@ -2,6 +2,8 @@ package io.github.zapretkvn.android.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,13 +16,16 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,6 +45,9 @@ import io.github.zapretkvn.masking.model.MaskingOverride
 import io.github.zapretkvn.masking.model.MuxCool
 import io.github.zapretkvn.masking.presets.ServerChoices
 import io.github.zapretkvn.masking.model.Problem
+import io.github.zapretkvn.masking.tester.CandidateTester
+import io.github.zapretkvn.masking.tester.FreezeDetector
+import io.github.zapretkvn.masking.tester.TuneState
 import io.github.zapretkvn.masking.wireguard.DnsSignature
 
 /**
@@ -56,6 +64,7 @@ fun MaskingScreen(
     onApply: (Masking) -> Unit,
     servers: List<MaskingServer> = emptyList(),
     onOverride: (serverKey: String, override: MaskingOverride) -> Unit = { _, _ -> },
+    tune: MaskingTune = MaskingTune(),
 ) {
     var form by remember(settings.global) { mutableStateOf(MaskingForm.from(settings.global)) }
     var dnsDomain by remember { mutableStateOf(DnsSignature.DOMAINS.first()) }
@@ -78,7 +87,7 @@ fun MaskingScreen(
                 HintText(
                     "Каждый сервер получает только то, что понимает его ядро: WireGuard — мусорные и " +
                         "сигнатурные пакеты, VLESS — настройки Xray. Для отдельного сервера маскировку можно " +
-                        "выключить или выбрать свою в его карточке.",
+                        "выключить или выбрать свою ниже, в списке серверов.",
                     modifier = Modifier.padding(horizontal = Spacing.l),
                 )
             }
@@ -213,6 +222,10 @@ fun MaskingScreen(
             }
         }
 
+        item(key = "tune", contentType = "card") {
+            TuneCard(tune)
+        }
+
         if (servers.isNotEmpty()) {
             item(key = "servers", contentType = "card") {
                 ZapretCard {
@@ -236,6 +249,93 @@ fun MaskingScreen(
                 if (result.hasErrors) "Исправьте ошибки выше: настройки с ошибкой ядру не передаются."
                 else "Подключённый VPN перезапустится. Сохранённые профили не переписываются.",
             )
+        }
+    }
+}
+
+/** «Подобрать»: the runner's state and its actions; [canStart] is true while the VPN is connected. */
+data class MaskingTune(
+    val state: TuneState = TuneState.Idle,
+    val canStart: Boolean = false,
+    val onStart: () -> Unit = {},
+    val onCancel: () -> Unit = {},
+    val onKeep: (CandidateTester.Candidate) -> Unit = {},
+    val onDismiss: () -> Unit = {},
+)
+
+@Composable
+private fun TuneCard(tune: MaskingTune) {
+    ZapretCard {
+        CardTitle("Подобрать")
+        when (val state = tune.state) {
+            TuneState.Idle -> {
+                HintText(
+                    "Проверяет варианты на выбранном сервере: для каждого VPN переподключается и дважды " +
+                        "загружает 256 КБ тестового файла через туннель. Видно, на каком варианте соединение " +
+                        "замирает, а на каком нет. Запросы идут по одному, с паузами, к одному адресу. " +
+                        "Сохранённые настройки не меняются, пока вы не нажмёте «Оставить».",
+                )
+                Button(
+                    onClick = tune.onStart,
+                    enabled = tune.canStart,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("masking-tune-start"),
+                ) { Text("Подобрать для текущего сервера") }
+                if (!tune.canStart) HintText("Сначала подключите VPN.")
+            }
+            is TuneState.Running -> {
+                Text(
+                    "${state.serverName}: вариант ${state.candidate} из ${state.candidates} — «${state.title}»",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("masking-tune-progress"),
+                )
+                HintText("VPN переподключается для каждого варианта. Подбор занимает 1-3 минуты.")
+                OutlinedButton(
+                    onClick = tune.onCancel,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .testTag("masking-tune-cancel"),
+                ) { Text("Остановить") }
+            }
+            is TuneState.Done -> {
+                Text("${state.serverName}: лучшие сверху", style = MaterialTheme.typography.bodyMedium)
+                state.ranked.forEach { ranked -> TuneRow(ranked, kept = ranked.result.candidate.id == state.kept, onKeep = tune.onKeep) }
+                HintText("«Оставить» сохраняет вариант как выбор этого сервера; VPN перезапустится.")
+                TextButton(onClick = tune.onDismiss, modifier = Modifier.testTag("masking-tune-dismiss")) { Text("Закрыть") }
+            }
+            is TuneState.Failed -> {
+                Text(state.message, color = toneColor(Tone.Warning), style = MaterialTheme.typography.bodyMedium)
+                TextButton(onClick = tune.onDismiss, modifier = Modifier.testTag("masking-tune-dismiss")) { Text("Понятно") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TuneRow(ranked: CandidateTester.Ranked, kept: Boolean, onKeep: (CandidateTester.Candidate) -> Unit) {
+    val candidate = ranked.result.candidate
+    val tone = when (ranked.result.verdict) {
+        is FreezeDetector.Verdict.Pass -> Tone.Good
+        is FreezeDetector.Verdict.Frozen -> Tone.Bad
+        else -> Tone.Neutral
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("masking-tune-row-${candidate.id}"),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(candidate.title, style = MaterialTheme.typography.bodyLarge)
+            Text(ranked.reason, style = MaterialTheme.typography.bodySmall, color = toneColor(tone))
+        }
+        if (kept) {
+            Text("Оставлен", style = MaterialTheme.typography.labelLarge, color = toneColor(Tone.Good))
+        } else {
+            TextButton(onClick = { onKeep(candidate) }, modifier = Modifier.testTag("masking-tune-keep-${candidate.id}")) { Text("Оставить") }
         }
     }
 }

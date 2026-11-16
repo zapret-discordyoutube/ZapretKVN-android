@@ -150,6 +150,12 @@ class VpnController(
         )
     }
 
+    /** Restarts the profile's session in any state: "Подбор" brings the tunnel back after a candidate failed. */
+    fun restart(profileId: String, reason: String) {
+        require(profileId.isNotBlank()) { "Профиль не выбран." }
+        ContextCompat.startForegroundService(context, ZapretVpnService.restartIntent(context, profileId, reason))
+    }
+
     fun restartUpdaterRouting(profileId: String, enabled: Boolean) {
         require(profileId.isNotBlank()) { "Профиль не выбран." }
         ContextCompat.startForegroundService(

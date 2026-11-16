@@ -30,6 +30,9 @@ internal object RestartTriggers {
         "Смена защиты от localhost-чекеров" to "endpoint_policy_change",
         "Смена имени VPN-сессии" to "session_name_change",
         "Смена MTU для скрытия VPN" to "mtu_change",
+        "Смена маскировки" to "masking_change",
+        "Подбор маскировки" to "masking_tune",
+        "Подбор маскировки завершён" to "masking_tune_end",
         // Маршрут для обновления приложения.
         "Временный маршрут updater" to "updater_route_on",
         "Завершение маршрута updater" to "updater_route_off",

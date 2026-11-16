@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.masking
 import io.github.zapretkvn.android.config.MaskingReport
 import io.github.zapretkvn.android.slots.ForeignServer
 import io.github.zapretkvn.android.slots.ServerRef
+import io.github.zapretkvn.masking.MaskingApplier
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,6 +21,22 @@ internal object MaskingServerKeys {
             }
         }.associateWith { tag -> ServerRef(profileId, tag).encode() }
         return own + foreign.associate { it.runtimeTag to it.ref.encode() }
+    }
+
+    /** The servers of a session start with their stored keys and shapes, for "Подбор". */
+    fun tunable(profileId: String, root: JsonObject?, foreign: List<ForeignServer>): Map<String, TunableServer> {
+        val own = listOf("outbounds", "endpoints").flatMap { section ->
+            (root?.get(section) as? JsonArray).orEmpty().mapNotNull { element ->
+                val entry = element as? JsonObject ?: return@mapNotNull null
+                val tag = (entry["tag"] as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content ?: return@mapNotNull null
+                val shape = MaskingApplier.shapeOf(entry) ?: return@mapNotNull null
+                TunableServer(tag, ServerRef(profileId, tag).encode(), shape)
+            }
+        }
+        val others = foreign.mapNotNull { server ->
+            MaskingApplier.shapeOf(server.outbound)?.let { TunableServer(server.runtimeTag, server.ref.encode(), it) }
+        }
+        return (own + others).associateBy(TunableServer::tag)
     }
 
     /** One compact line per session: nothing when masking is off and did nothing. */

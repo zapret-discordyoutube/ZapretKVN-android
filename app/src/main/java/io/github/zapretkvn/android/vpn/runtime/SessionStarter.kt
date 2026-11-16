@@ -320,7 +320,7 @@ internal class SessionStarter(
         }
         profile = profile.copy(json = effectiveJson)
         val uiSettings = container.uiSettingsStore.settings.first()
-        val masking = container.maskingSettingsStore.settings.first()
+        val masking = container.maskingTrial.applyTo(container.maskingSettingsStore.settings.first())
         val configuredDnsMode = uiSettings.dnsMode
         check(dnsMode != DnsMode.Automatic) {
             "Автоматический DNS должен быть разрешён в один runtime-кандидат до запуска core."
@@ -523,6 +523,8 @@ internal class SessionStarter(
                 ?: error(runtime.message)
         }
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
+        container.maskingTrial.logLine()?.let { RuntimeLog.app(4, it) }
+        container.maskingTrial.publish(MaskingServerKeys.tunable(profileId, effectiveConfig.root, foreignServers))
         val runtimeJson = runtimeReady.json
         val runtimeConfig = runtimeReady.config
         controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeConfig, dnsMode))

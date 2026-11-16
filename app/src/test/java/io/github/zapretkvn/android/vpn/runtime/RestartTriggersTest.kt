@@ -45,7 +45,7 @@ class RestartTriggersTest {
         val reasonFiles = setOf(
             "MainActivity.kt", "ProfileSettingsActions.kt", "ImportController.kt", "RoutingViewModel.kt",
             "ZapretVpnService.kt", "VpnController.kt", "RecoveryCoordinator.kt", "ServerSwitchCoordinator.kt",
-            "NetworkAutomationCoordinator.kt", "VpnRuntime.kt",
+            "NetworkAutomationCoordinator.kt", "VpnRuntime.kt", "MaskingActions.kt", "MaskingTuner.kt",
         )
         val found = sortedSetOf<String>()
         sources.filter { it.name in reasonFiles }.forEach { file ->
@@ -68,6 +68,7 @@ class RestartTriggersTest {
             "Смена DNS-переопределения", "Временный маршрут updater", "Завершение маршрута updater",
             "Подключение до смены сети", "Автоматическое подключение по сети",
             "Перезапуск после сбоя управления ядром", "Перезапуск VPN",
+            "Смена маскировки", "Подбор маскировки", "Подбор маскировки завершён",
         ).forEach { assertTrue("not found in sources: $it", it in reasons) }
     }
 }

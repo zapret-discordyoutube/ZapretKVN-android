@@ -1,6 +1,10 @@
 package io.github.zapretkvn.masking
 
+import io.github.zapretkvn.masking.merge.MaskingSettings
+import io.github.zapretkvn.masking.model.Masking
+import io.github.zapretkvn.masking.model.MaskingOverride
 import io.github.zapretkvn.masking.model.ServerShape
+import io.github.zapretkvn.masking.model.WireGuardMasking
 import io.github.zapretkvn.masking.presets.MaskingPresets
 import io.github.zapretkvn.masking.tester.CandidateTester
 import io.github.zapretkvn.masking.tester.FreezeDetector
@@ -78,8 +82,8 @@ class TesterTest {
 
     @Test
     fun `rank puts a passing wireguard preset above a frozen run`() {
-        val wg = CandidateTester.Candidate(MaskingPresets.wireGuardJunkOnly)
-        val xmux = CandidateTester.Candidate(MaskingPresets.xmuxFew)
+        val wg = CandidateTester.Candidate.of(MaskingPresets.wireGuardJunkOnly)
+        val xmux = CandidateTester.Candidate.of(MaskingPresets.xmuxFew)
         val ranked = CandidateTester.rank(
             listOf(
                 CandidateTester.Result(xmux, Verdict.Frozen(18 * kb), 300),
@@ -93,10 +97,11 @@ class TesterTest {
     @Test
     fun `candidates fit the server core`() {
         val wg = CandidateTester.candidates(ServerShape(ServerShape.Core.Amnezia, "wireguard"))
-        assertTrue(wg.isNotEmpty() && wg.all { it.preset.masking.wireguard != null })
+        assertEquals(CandidateTester.Candidate.BASELINE, wg.first())
+        assertTrue(wg.drop(1).isNotEmpty() && wg.drop(1).all { (it.override as MaskingOverride.Custom).masking.wireguard != null })
         val xhttp = CandidateTester.candidates(ServerShape(ServerShape.Core.Xray, "vless", network = "xhttp", security = "reality"))
-        assertTrue(xhttp.none { it.preset.id == "xray-mux" })
-        assertTrue(xhttp.any { it.preset.id == "xmux-rotate" })
+        assertTrue(xhttp.none { it.id == "xray-mux" })
+        assertTrue(xhttp.any { it.id == "xmux-rotate" })
         assertTrue(CandidateTester.candidates(ServerShape(ServerShape.Core.Hysteria, "hysteria2")).isEmpty())
     }
 
@@ -107,5 +112,49 @@ class TesterTest {
         assertEquals(candidates.size * CandidateTester.TRANSFERS_PER_CANDIDATE, plan.size)
         assertTrue(plan.all { it.pauseBeforeMs in CandidateTester.PAUSE_MS })
         assertTrue(plan.map { it.pauseBeforeMs }.toSet().size > 1)
+    }
+
+    @Test
+    fun `the user's own set is a candidate unless it is a preset`() {
+        val shape = ServerShape(ServerShape.Core.Amnezia, "wireguard")
+        val own = Masking(wireguard = WireGuardMasking(jc = 5, jmin = 20, jmax = 40))
+        assertEquals("current", CandidateTester.candidates(shape, own)[1].id)
+        val preset = CandidateTester.candidates(shape, MaskingPresets.wireGuardJunkOnly.masking)
+        assertTrue(preset.none { it.id == "current" })
+    }
+
+    @Test
+    fun `judge takes the control from the run, so a frozen baseline below a passing preset is a freeze`() {
+        val baseline = CandidateTester.Measurement(CandidateTester.Candidate.BASELINE, listOf(stalled(18 * kb, 9_000), stalled(17 * kb, 9_000)))
+        val wg = CandidateTester.Candidate.of(MaskingPresets.wireGuardJunkOnly)
+        val ranked = CandidateTester.judge(listOf(baseline, CandidateTester.Measurement(wg, listOf(steady(), steady()), firstByteMs = 250)))
+        assertEquals(wg, ranked.first().result.candidate)
+        assertTrue(ranked.last().result.verdict is Verdict.Frozen)
+        assertEquals(250L, ranked.first().result.handshakeMs)
+    }
+
+    @Test
+    fun `everything stalled is not blamed on the candidates`() {
+        val all = listOf(CandidateTester.Candidate.BASELINE, CandidateTester.Candidate.of(MaskingPresets.wireGuardJunkOnly)).map {
+            CandidateTester.Measurement(it, listOf(stalled(18 * kb, 9_000), stalled(18 * kb, 9_000)))
+        }
+        assertTrue(CandidateTester.judge(all).all { it.result.verdict is Verdict.Inconclusive })
+    }
+
+    @Test
+    fun `a candidate the tunnel did not come up with is inconclusive`() {
+        val ranked = CandidateTester.judge(listOf(CandidateTester.Measurement(CandidateTester.Candidate.BASELINE, emptyList(), connected = false)))
+        assertEquals("не ясно: туннель не поднялся с этими настройками", ranked.single().reason)
+    }
+
+    @Test
+    fun `a trial changes one server and nothing else`() {
+        val off = MaskingSettings().withTrial("k", MaskingOverride.Custom(MaskingPresets.wireGuardJunkOnly.masking))
+        assertTrue(off.enabled)
+        assertEquals(Masking.NONE, off.global)
+        assertEquals(setOf("k"), off.overrides.keys)
+        val on = MaskingSettings(true, MaskingPresets.xmuxRotate.masking, mapOf("other" to MaskingOverride.Off)).withTrial("k", MaskingOverride.Off)
+        assertEquals(MaskingPresets.xmuxRotate.masking, on.global)
+        assertEquals(mapOf("other" to MaskingOverride.Off, "k" to MaskingOverride.Off), on.overrides)
     }
 }

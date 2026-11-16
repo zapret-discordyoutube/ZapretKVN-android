@@ -123,6 +123,7 @@ class MainActivity : ComponentActivity() {
             directServices = container.directServiceChecker.state,
             checkServicesDirect = container.directServiceChecker::check,
             masking = container.maskingActions,
+            maskingTuner = container.maskingTuner,
         )
         observeUpdates()
         syncExternalControlComponent(container)

@@ -2,6 +2,9 @@ package io.github.zapretkvn.android
 
 import io.github.zapretkvn.android.masking.MaskingActions
 import io.github.zapretkvn.android.masking.MaskingSettingsStore
+import io.github.zapretkvn.android.masking.MaskingTransferProbe
+import io.github.zapretkvn.android.masking.MaskingTrial
+import io.github.zapretkvn.android.masking.MaskingTuner
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
@@ -85,6 +88,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
@@ -106,6 +110,19 @@ class AppContainer(
     val maskingSettingsStore = MaskingSettingsStore(appContext)
     val maskingActions by lazy {
         MaskingActions(maskingSettingsStore, backgroundScope) { reason -> vpnController.restartIfConnected(reason) }
+    }
+    val maskingTrial = MaskingTrial()
+    val maskingTuner by lazy {
+        MaskingTuner(
+            trial = maskingTrial,
+            storedSettings = { maskingSettingsStore.settings.first() },
+            vpnState = vpnController.state,
+            selectedTag = vpnController.selectorGroups.map { groups -> groups.firstOrNull { it.primary }?.selected },
+            restart = vpnController::restart,
+            transfer = MaskingTransferProbe(vpnNetworkProvider, vpnController.probeLane)::run,
+            keepOverride = maskingActions::setOverride,
+            scope = backgroundScope,
+        )
     }
     val importReader = AndroidImportReader(appContext)
     val subscriptionFetchJournal = SubscriptionFetchJournal()
