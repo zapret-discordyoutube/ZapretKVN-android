@@ -52,6 +52,26 @@ server). Junk and I1-I5 are sent by the initiator only, so they work with a plai
   It measures the inner stream: the outer connection's freeze stops it a few percent of bytes earlier.
 - Runtime log: «маскировка: подбор, вариант «…»» at every trial session start.
 
+## Packet tricks (desync, core patch 0017)
+
+- `common/kvndesync` (new Go package): the Xray outbound's protected dialer wraps every TCP socket
+  to the server and shapes its first write. `fake` = a decoy ClientHello of the same length with
+  `fake_sni`, sent with `fake_ttl` from a page the socket references (vmsplice + splice); after it
+  left the host (`tcpi_notsent_bytes`, 50 ms cap) the real bytes are written into the same page and
+  the TTL restored, so every retransmission carries the real bytes. `disorder` = first piece at TTL
+  1, `split` = two segments, `oob` = one urgent byte. No root, no raw socket.
+- Plan: `xray_masking.desync` `{method, split_at, fake_ttl, fake_sni}`, parsed strictly in
+  `NewOutbound` (bad plan = the outbound does not start); never part of the Xray config. One log
+  line per outbound when the plan is set, one warning per outbound if it could not run (the write
+  then goes out plainly).
+- Lab (2026-11-16, real router hop to 10.10.10.14:443, `TestLab`): fake TTL 1, disorder and split
+  keep the TLS handshake intact; the decoy at TTL 64 breaks it (nginx: unrecognized name), which
+  proves it is on the wire; OOB times out on this path (hypothesis: URG cleared on the way), so OOB
+  is not in presets or the tester and the form warns.
+- App: `Desync` in `XrayShaping` (codec shared with Windows), limits = `kvndesync.Parse`, presets
+  «Обманка, TTL 3/5», «Беспорядок пакетов»; tester candidates on TCP-stream VLESS. The right TTL is
+  per network (an Android app cannot read the SYN-ACK TTL): «Подобрать» tries 3 and 5.
+
 ## Verified core facts (pinned versions)
 
 - Xray: mux `concurrency` 0..128 all become 128 (on/off in practice); `xudpProxyUDP443`
