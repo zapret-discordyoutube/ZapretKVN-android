@@ -138,7 +138,7 @@ mapfile -t ANDROID_MODULES < <(
         | sed "s|$PROJECT_ROOT/||" \
         | sort
 )
-EXPECTED_ANDROID_MODULES=(app app-updater network-bootstrap runtime-log wireguard-import)
+EXPECTED_ANDROID_MODULES=(app app-updater masking network-bootstrap runtime-log wireguard-import)
 if [[ "${ANDROID_MODULES[*]}" != "${EXPECTED_ANDROID_MODULES[*]}" ]]; then
     echo "Unexpected Android module set: ${ANDROID_MODULES[*]:-none}" >&2
     exit 1
@@ -155,7 +155,8 @@ if grep -Eq 'WAKE_LOCK|REQUEST_IGNORE_BATTERY_OPTIMIZATIONS|android:process=' "$
 fi
 
 # Every production Kotlin source root: :app, :app-updater, the :core:* libraries and :feature:* modules.
-SCAN_ROOTS=("$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" "$PROJECT_ROOT/runtime-log/src/main/java")
+SCAN_ROOTS=("$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" "$PROJECT_ROOT/runtime-log/src/main/java"
+    "$PROJECT_ROOT/masking/src/main/java")
 for module_dir in "$PROJECT_ROOT"/core/*/ "$PROJECT_ROOT"/feature/*/; do
     [[ -d "${module_dir}src/main/java" ]] && SCAN_ROOTS+=("${module_dir}src/main/java")
 done
@@ -258,6 +259,13 @@ expected = [
     # Одна пауза pause(): после сбоя связи 60 → 180 с и 2 мин после разрешения или слишком быстрого
     # ответа. Остальное время вопрос держит сама служба (до 4,5 мин), таймера на стороне приложения нет.
     ("app-updater/src/main/java/io/github/zapretkvn/android/updates/ReleaseWaitClient.kt", 1),
+    # Выборка прогресса одной загрузки подбора раз в 500 мс, только пока эта загрузка идёт (не дольше
+    # MAX_TRANSFER_MILLIS): так видно, на каком КБ соединение замерло. Цикл отменяется вместе с загрузкой.
+    ("app/src/main/java/io/github/zapretkvn/android/masking/MaskingTransferProbe.kt", 1),
+    # «Подобрать» маскировки: запускает только кнопка пользователя, один прогон на нажатие. Пауза
+    # pauseBeforeMs перед каждой из двух загрузок 256 КБ варианта (запросы по одному, не залпом,
+    # чтобы проверка не выдала серверы). Повторов по времени и периодического таймера нет.
+    ("app/src/main/java/io/github/zapretkvn/android/masking/MaskingTuner.kt", 1),
     # Случайная пауза 0,15–1,2 с между разовыми DoH-запросами страны сервера внутри
     # одной пачки (не больше 3 параллельно): запросы не идут залпом. Пачка стартует
     # только после импорта/обновления профиля или при запуске; повторов и циклов нет.
