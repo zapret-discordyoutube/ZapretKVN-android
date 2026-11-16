@@ -86,7 +86,7 @@ fun MaskingScreen(
                 )
                 HintText(
                     "Каждый сервер получает только то, что понимает его ядро: WireGuard — мусорные и " +
-                        "сигнатурные пакеты, VLESS — настройки Xray. Для отдельного сервера маскировку можно " +
+                        "сигнатурные пакеты, VLESS, VMess и Trojan — настройки Xray. Для отдельного сервера маскировку можно " +
                         "выключить или выбрать свою ниже, в списке серверов.",
                     modifier = Modifier.padding(horizontal = Spacing.l),
                 )
@@ -132,11 +132,11 @@ fun MaskingScreen(
 
         item(key = "xray", contentType = "card") {
             ZapretCard {
-                CardTitle("Xray-соединения (VLESS)")
+                CardTitle("Xray-соединения (VLESS, VMess, Trojan)")
                 SwitchRow(
                     title = "Mux",
                     subtitle = "Запросы идут в нескольких долгих соединениях: меньше рукопожатий подряд. " +
-                        "Для VLESS по TCP и REALITY; с XTLS Vision в mux идёт только UDP.",
+                        "Для VLESS, VMess и Trojan по TCP и REALITY; с XTLS Vision в mux идёт только UDP.",
                     checked = form.muxEnabled,
                     onCheckedChange = { form = form.copy(muxEnabled = it) },
                     modifier = Modifier.testTag("masking-mux"),
@@ -199,8 +199,8 @@ fun MaskingScreen(
                     TextField("Пауза между кусками, мс", form.fragmentDelay, "masking-fragment-delay") { form = form.copy(fragmentDelay = it) }
                 }
                 SwitchRow(
-                    title = "Фрагментация TLS (Trojan, VMess)",
-                    subtitle = "То же для протоколов sing-box. На REALITY не действует.",
+                    title = "Фрагментация TLS (AnyTLS, HTTP, ShadowTLS)",
+                    subtitle = "Для протоколов sing-box. Для VLESS, VMess и Trojan есть фрагментация Xray. На REALITY не действует.",
                     checked = form.singboxEnabled,
                     onCheckedChange = { form = form.copy(singboxEnabled = it) },
                     modifier = Modifier.testTag("masking-singbox"),
@@ -219,7 +219,7 @@ fun MaskingScreen(
                     NumberField("Запасная задержка, мс (пусто — как в ядре)", form.singboxDelayMs, "masking-singbox-delay") { form = form.copy(singboxDelayMs = it) }
                 }
                 SwitchRow(
-                    title = "Пакеты-обманки (VLESS)",
+                    title = "Пакеты-обманки (VLESS, VMess, Trojan)",
                     subtitle = "Без root: первый пакет к серверу уходит так, чтобы фильтр прочитал его неверно.",
                     checked = form.desyncEnabled,
                     onCheckedChange = { form = form.copy(desyncEnabled = it) },

@@ -74,6 +74,7 @@ sealed interface OutboundSpec {
         val uuid: String,
         val security: String = "auto",
         val alterId: Int = 0,
+        val uri: String? = null,
         val tls: TlsSettings = TlsSettings(),
         val transport: TransportSettings? = null,
     ) : OutboundSpec {
@@ -81,6 +82,7 @@ sealed interface OutboundSpec {
 
         override fun toSingBoxJson(): JsonObject = buildJsonObject {
             put("type", "vmess")
+            uri?.let { put("uri", it) }
             put("server", server)
             put("server_port", serverPort)
             put("uuid", uuid)
@@ -95,6 +97,7 @@ sealed interface OutboundSpec {
         val server: String,
         val serverPort: Int,
         val password: String,
+        val uri: String? = null,
         val tls: TlsSettings = TlsSettings(enabled = true, serverName = server),
         val transport: TransportSettings? = null,
     ) : OutboundSpec {
@@ -102,6 +105,7 @@ sealed interface OutboundSpec {
 
         override fun toSingBoxJson(): JsonObject = buildJsonObject {
             put("type", "trojan")
+            uri?.let { put("uri", it) }
             put("server", server)
             put("server_port", serverPort)
             put("password", password)

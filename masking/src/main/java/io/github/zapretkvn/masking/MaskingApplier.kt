@@ -75,7 +75,8 @@ object MaskingApplier {
     fun shapeOf(entry: JsonObject): ServerShape? {
         val type = entry.string("type")?.lowercase() ?: return null
         return when (type) {
-            "vless" -> vlessShape(entry)
+            // Owner decision 2026-11-16: the official Xray core owns VLESS, VMess and Trojan.
+            "vless", "vmess", "trojan" -> xrayShape(entry, type)
             "wireguard" -> ServerShape(ServerShape.Core.Amnezia, type)
             "hysteria2" -> ServerShape(ServerShape.Core.Hysteria, type)
             in NOT_SERVERS -> null
@@ -91,25 +92,15 @@ object MaskingApplier {
         }
     }
 
-    private fun vlessShape(entry: JsonObject): ServerShape {
+    private fun xrayShape(entry: JsonObject, protocol: String): ServerShape {
         val uri = entry.string("uri")
         if (uri != null) {
-            val query = runCatching { URI(uri).rawQuery }.getOrNull().orEmpty()
-            val params = query.split('&').filter(String::isNotEmpty).associate { part ->
-                decode(part.substringBefore('=')) to decode(part.substringAfter('=', ""))
-            }
-            return ServerShape(
-                core = ServerShape.Core.Xray,
-                protocol = "vless",
-                network = params["type"]?.lowercase()?.ifEmpty { null } ?: "tcp",
-                security = params["security"]?.lowercase()?.ifEmpty { null } ?: "none",
-                flow = params["flow"]?.ifEmpty { null },
-            )
+            uriShape(uri, protocol)?.let { return it }
         }
         val tls = entry["tls"] as? JsonObject
         return ServerShape(
             core = ServerShape.Core.Xray,
-            protocol = "vless",
+            protocol = protocol,
             network = (entry["transport"] as? JsonObject)?.string("type")?.lowercase() ?: "tcp",
             security = when {
                 tls?.bool("enabled") != true -> "none"
@@ -117,6 +108,37 @@ object MaskingApplier {
                 else -> "tls"
             },
             flow = entry.string("flow"),
+        )
+    }
+
+    /** The shape the original share link describes; null when it cannot be read (then the stored fields are used). */
+    private fun uriShape(uri: String, protocol: String): ServerShape? {
+        if (protocol == "vmess") {
+            val body = uri.substringAfter("vmess://", "").substringBefore('#').trim()
+            val payload = runCatching {
+                val bytes = runCatching { java.util.Base64.getMimeDecoder().decode(body) }
+                    .getOrElse { java.util.Base64.getUrlDecoder().decode(body) }
+                kotlinx.serialization.json.Json.parseToJsonElement(String(bytes, Charsets.UTF_8)) as? JsonObject
+            }.getOrNull() ?: return null
+            val tlsField = payload.string("tls")?.lowercase()
+            return ServerShape(
+                core = ServerShape.Core.Xray,
+                protocol = "vmess",
+                network = payload.string("net")?.lowercase()?.ifEmpty { null } ?: "tcp",
+                security = if (tlsField == "tls" || tlsField == "reality") tlsField else "none",
+            )
+        }
+        val query = runCatching { URI(uri).rawQuery }.getOrNull().orEmpty()
+        val params = query.split('&').filter(String::isNotEmpty).associate { part ->
+            decode(part.substringBefore('=')) to decode(part.substringAfter('=', ""))
+        }
+        return ServerShape(
+            core = ServerShape.Core.Xray,
+            protocol = protocol,
+            network = params["type"]?.lowercase()?.ifEmpty { null } ?: "tcp",
+            // A Trojan link without `security` is TLS; a VLESS link without it is plain.
+            security = params["security"]?.lowercase()?.ifEmpty { null } ?: if (protocol == "trojan") "tls" else "none",
+            flow = params["flow"]?.ifEmpty { null },
         )
     }
 

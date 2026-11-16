@@ -270,3 +270,20 @@ Xray 26.11 refuses to build a VLESS outbound without TLS, Reality or encryption 
 skipped with a warning), provider stub servers (`vless://…@0.0.0.0:1?security=none`, kept as information nodes) are removed from the
 RUNTIME config together with their group entries (the stored profile is unchanged), and a profile whose selected server or whole
 group is affected stops with code `CFG-121`. Windows mirrors the rule in `xray_outbound_compat.py`.
+
+## F-IMPORT-XRAY-FAMILY — VMess и Trojan на Xray-core
+
+Решение владельца 2026-11-16: VLESS, VMess и Trojan исполняет официальный Xray-core (патч ядра 0018, тот же
+`protocol/xraycore`). sing-box остаётся прокладкой: TUN, маршруты, DNS и защищённые сокеты.
+
+- Импортёр сохраняет исходную ссылку в поле `uri` outbound, как для VLESS. Ядро читает профиль из неё; поля
+  sing-box (`tls`, `transport`) остаются только как запасной путь для профилей, сохранённых до перехода (без `uri`).
+- `XtlsXhttpExtraConverter` больше не нужен ядру для VMess/Trojan: `extra` уходит в Xray как есть. Конвертер
+  остаётся проверкой формата при импорте.
+- Проверка сертификата не отключается никогда: `allowInsecure`/`insecure` без `pcs`/`vcn` отбрасывается с
+  предупреждением, как у VLESS (Xray 26.x убрал `allowInsecure`).
+- Транспорты `http`/`h2`/`h3`/`quic` Xray удалил для всех протоколов: такой VMess/Trojan отвергается при импорте
+  сообщением про `type=xhttp`. VMess с `alterId > 0` (старый протокол без AEAD) отвергается тоже.
+- WebSocket и HTTPUpgrade работают только по HTTP/1.1: из `alpn` убираются `h2` и `h3`.
+- Профили, пришедшие не ссылкой (Clash YAML, полный sing-box JSON) и сохранённые без `uri`, преобразуются в
+  JSON Xray из полей sing-box (`legacyTrojan`/`legacyVMess`); транспорт, которого нет в Xray, требует ссылку.

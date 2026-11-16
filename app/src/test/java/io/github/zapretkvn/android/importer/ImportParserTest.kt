@@ -454,7 +454,7 @@ class ImportParserTest {
     }
 
     @Test
-    fun `vless http2 transport removed from xray fails at import while trojan keeps it`() {
+    fun `http2 transport removed from xray fails at import for vless vmess and trojan`() {
         for (type in listOf("http", "h2")) {
             val error = assertThrows(ImportException::class.java) {
                 ImportParser.parse(
@@ -465,11 +465,24 @@ class ImportParserTest {
             }
             assertTrue(error.message.orEmpty().contains("type=xhttp"))
         }
-        // Trojan работает на нативном sing-box, где HTTP/2-транспорт есть.
-        ImportParser.parse(
-            "trojan://secret@h2.example:443?security=tls&type=http&path=%2Fh2&host=h2.example",
-            ProfileSource.Clipboard,
-        )
+        // Trojan и VMess тоже исполняет Xray-core (решение владельца 2026-11-16): HTTP/2-транспорта в нём нет.
+        for (type in listOf("http", "h2", "quic")) {
+            val trojanError = assertThrows(ImportException::class.java) {
+                ImportParser.parse(
+                    "trojan://secret@h2.example:443?security=tls&type=$type&path=%2Fh2&host=h2.example",
+                    ProfileSource.Clipboard,
+                )
+            }
+            assertTrue(trojanError.message.orEmpty().contains("type=xhttp"))
+        }
+        val vmessPayload = """{"v":"2","ps":"v","add":"h2.example","port":"443","id":"11111111-1111-4111-8111-111111111111","net":"h2","tls":"tls"}"""
+        val vmessError = assertThrows(ImportException::class.java) {
+            ImportParser.parse(
+                "vmess://" + java.util.Base64.getEncoder().encodeToString(vmessPayload.toByteArray()),
+                ProfileSource.Clipboard,
+            )
+        }
+        assertTrue(vmessError.message.orEmpty().contains("type=xhttp"))
     }
 
     @Test

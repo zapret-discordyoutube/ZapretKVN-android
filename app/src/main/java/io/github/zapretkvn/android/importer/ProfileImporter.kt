@@ -87,6 +87,11 @@ class InsecureTlsImportException : ImportException(TlsVerificationPolicy.IMPORT_
 private const val MAX_IMPORT_WARNINGS = 8
 private const val HYSTERIA2_MAX_PACKET_SIZE = 2048
 private val VLESS_REMOVED_TRANSPORTS = setOf("http", "h2")
+private val XRAY_REMOVED_TRANSPORTS = setOf("http", "h2", "h3", "quic")
+private const val XRAY_INSECURE_WARNING =
+    "Ссылка просит отключить проверку сертификата, но Xray-core это больше не " +
+        "поддерживает: без отпечатка (pcs) сертификат сервера проверяется как обычно. " +
+        "Если сервер не подключится, попросите у провайдера ссылку с pcs."
 private val HYSTERIA2_SUPPORTED_OBFS_TYPES = setOf("none", "plain", "salamander", "gecko")
 private val HYSTERIA2_PASSWORD_OBFS_TYPES = setOf("salamander", "gecko")
 private val HYSTERIA2_DURATION = Regex(
@@ -434,9 +439,22 @@ object ShareLinkParser {
      * обычным образом. Поэтому у VLESS проверка не отключается никогда; исходная
      * ссылка с `pcs` и `vcn` уходит в ядро как есть.
      */
-    private fun vlessTls(query: Map<String, String>, host: String): TlsSettings {
+    private fun vlessTls(query: Map<String, String>, host: String): TlsSettings = xrayTls(query, host)
+
+    /** TLS для протоколов Xray-core (VLESS, VMess, Trojan): проверка сертификата не отключается никогда. */
+    private fun xrayTls(query: Map<String, String>, host: String, defaultEnabled: Boolean = false): TlsSettings {
         query["pcs"]?.takeIf(String::isNotBlank)?.let(::requireVlessCertificatePins)
-        return tls(query, host).copy(insecure = false)
+        return tls(query, host, defaultEnabled).copy(insecure = false)
+    }
+
+    /** Xray-core удалил транспорт HTTP/2 (и QUIC) для всех протоколов; ядро отвергло бы такой профиль при запуске. */
+    private fun rejectRemovedXrayTransport(type: String?, protocol: String) {
+        if (type?.lowercase() in XRAY_REMOVED_TRANSPORTS) {
+            throw ImportException(
+                "$protocol с транспортом '$type' (HTTP/2 или QUIC) больше не поддерживается Xray-core. " +
+                    "Попросите у провайдера ссылку с type=xhttp.",
+            )
+        }
     }
 
     private fun requireVlessCertificatePins(value: String) {
@@ -450,27 +468,23 @@ object ShareLinkParser {
         }
         if (!valid) {
             throw ImportException(
-                "VLESS pcs должен содержать SHA-256 сертификата сервера " +
+                "pcs должен содержать SHA-256 сертификата сервера " +
                     "(64 шестнадцатеричных знака, можно через двоеточия).",
             )
         }
     }
 
-    private fun vlessCertificateWarning(query: Map<String, String>): List<String> =
-        if (
-            query.boolean("insecure") &&
-            query["security"]?.lowercase() == "tls" &&
-            query["pcs"].isNullOrBlank() &&
-            query["vcn"].isNullOrBlank()
-        ) {
-            listOf(
-                "Ссылка просит отключить проверку сертификата, но Xray-core это больше не " +
-                    "поддерживает: без отпечатка (pcs) сертификат сервера проверяется как обычно. " +
-                    "Если сервер не подключится, попросите у провайдера ссылку с pcs.",
-            )
+    private fun vlessCertificateWarning(query: Map<String, String>): List<String> = xrayCertificateWarning(query)
+
+    private fun xrayCertificateWarning(query: Map<String, String>, tlsByDefault: Boolean = false): List<String> {
+        val security = query["security"]?.lowercase()
+        val tlsOn = security == "tls" || (tlsByDefault && security.isNullOrBlank())
+        return if (query.boolean("insecure") && tlsOn && query["pcs"].isNullOrBlank() && query["vcn"].isNullOrBlank()) {
+            listOf(XRAY_INSECURE_WARNING)
         } else {
             emptyList()
         }
+    }
 
     private fun normalizeVlessFlow(flow: String?): String? = when (
         val normalized = flow?.trim()?.lowercase().orEmpty()
@@ -490,14 +504,17 @@ object ShareLinkParser {
         val notes = classifyParameters(query, TROJAN_QUERY_KEYS, "Trojan")
         val password = decode(uri.rawUserInfo).takeIf(String::isNotBlank)
             ?: throw ImportException("В Trojan отсутствует пароль.")
+        rejectRemovedXrayTransport(query["type"], "Trojan")
+        // Trojan, как и VLESS, исполняет Xray-core (решение владельца 2026-11-16): ссылка уходит в ядро как есть.
         return ProtocolOutboundBuilders.trojan(
+            uri = link,
             displayName = displayName(uri, "Trojan ${index + 1}"),
             server = host,
             serverPort = requirePort(uri, 443),
             password = password,
-            tls = tls(query, host, defaultEnabled = true),
+            tls = xrayTls(query, host, defaultEnabled = true),
             transport = transport(query),
-        ).withWarnings(insecureWarning(query)).withNotes(notes)
+        ).withWarnings(xrayCertificateWarning(query, tlsByDefault = true)).withNotes(notes)
     }
 
     private fun parseVmess(link: String, index: Int): ManagedServer {
@@ -509,9 +526,15 @@ object ShareLinkParser {
         val uuid = data.text("id") ?: throw ImportException("В VMess отсутствует UUID.")
         val notes = classifyFields(data, VMESS_FIELDS, "VMess")
         val network = data.text("net").orEmpty()
+        rejectRemovedXrayTransport(network, "VMess")
+        if ((data.number("aid") ?: 0) > 0) {
+            throw ImportException(
+                "VMess с alterId > 0 (старый протокол без AEAD) ядро Xray не поддерживает: нужен сервер с alterId=0.",
+            )
+        }
         val transport = when (network) {
             "", "tcp" -> null
-            "ws", "http", "httpupgrade" -> TransportSettings(
+            "ws", "httpupgrade" -> TransportSettings(
                 type = network,
                 path = data.text("path"),
                 host = data.text("host"),
@@ -529,7 +552,9 @@ object ShareLinkParser {
             else -> throw ImportException("VMess transport '$network' пока не поддерживается.")
         }
         val tlsEnabled = data.text("tls")?.lowercase() in setOf("tls", "reality")
+        // VMess, как и VLESS, исполняет Xray-core (решение владельца 2026-11-16): ссылка уходит в ядро как есть.
         return ProtocolOutboundBuilders.vmess(
+            uri = link,
             displayName = data.text("ps") ?: "VMess ${index + 1}",
             server = host,
             serverPort = port,
@@ -539,7 +564,7 @@ object ShareLinkParser {
             tls = TlsSettings(
                 enabled = tlsEnabled,
                 serverName = data.text("sni") ?: host,
-                insecure = data.boolean("allowInsecure"),
+                insecure = false, // Xray 26.x не умеет отключать проверку сертификата
                 utlsFingerprint = data.text("fp"),
                 realityPublicKey = data.text("pbk"),
                 realityShortId = data.text("sid"),
@@ -549,6 +574,12 @@ object ShareLinkParser {
                     .filter(String::isNotBlank),
             ),
             transport = transport,
+        ).withWarnings(
+            if (data.boolean("allowInsecure") && data.text("pcs").isNullOrBlank()) {
+                listOf(XRAY_INSECURE_WARNING)
+            } else {
+                emptyList()
+            },
         ).withNotes(notes)
     }
 

@@ -8,8 +8,8 @@ runtime config is byte-for-byte what it was before.
 | Section | Native core | What the app writes |
 |---|---|---|
 | WireGuard masking | Amnezia (amneziawg-go v3.1) | `jc`, `jmin`, `jmax`, `i1`..`i5` in the endpoint's `amnezia` object |
-| Xray shaping | Xray-core | `mux` on the outbound, `xmux` in XHTTP settings, `finalmask.tcp` fragment |
-| TLS fragment | sing-box (Trojan, VMess, AnyTLS, HTTP, ShadowTLS) | `tls.fragment`, `tls.record_fragment`, `tls.fragment_fallback_delay` |
+| Xray shaping (VLESS, VMess, Trojan) | Xray-core | `mux` on the outbound, `xmux` in XHTTP settings, `finalmask.tcp` fragment |
+| TLS fragment | sing-box (AnyTLS, HTTP, ShadowTLS; Trojan and VMess moved to Xray on 2026-11-16, which uses `finalmask`) | `tls.fragment`, `tls.record_fragment`, `tls.fragment_fallback_delay` |
 | Hysteria2 | Hysteria | nothing: obfs is part of the link |
 
 Only fields the native core already parses. H1-H4/S1-S4 are never touched (they must equal the

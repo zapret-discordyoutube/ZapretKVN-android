@@ -20,6 +20,8 @@ import kotlinx.serialization.json.contentOrNull
  * в Xray, который поле `tls` не читает (там проверка по `pcs`/`vcn` или обычная).
  */
 object TlsVerificationPolicy {
+    private val XRAY_URI_TYPES = setOf("vless", "vmess", "trojan")
+
     const val FAILURE_CODE = "CFG-120"
 
     const val IMPORT_MESSAGE =
@@ -42,7 +44,7 @@ object TlsVerificationPolicy {
         val tls = outbound["tls"] as? JsonObject ?: return false
         if (tls.flag("insecure") != true) return false
         val type = outbound.text("type")?.lowercase()
-        if (type == "vless" && !outbound.text("uri").isNullOrBlank()) return false
+        if (type in XRAY_URI_TYPES && !outbound.text("uri").isNullOrBlank()) return false
         if (!outbound.text("certificate_sha256").isNullOrBlank()) return false
         if (tls.hasValues("certificate_public_key_sha256")) return false
         if (type == "hysteria2" && outbound.text("uri")?.let(::uriHasPin) == true) return false

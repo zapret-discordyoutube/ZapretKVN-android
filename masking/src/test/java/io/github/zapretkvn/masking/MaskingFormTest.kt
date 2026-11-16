@@ -73,7 +73,11 @@ class MaskingFormTest {
         val vless = io.github.zapretkvn.masking.presets.ServerChoices.forType("vless").map { it.id }
         assertTrue("xray-mux" in vless && "xmux-rotate" in vless && "singbox-fragment" !in vless)
         assertEquals(listOf("inherit", "off"), io.github.zapretkvn.masking.presets.ServerChoices.forType("hysteria2").map { it.id })
-        assertEquals(listOf("inherit", "off", "singbox-fragment"), io.github.zapretkvn.masking.presets.ServerChoices.forType("trojan").map { it.id })
+        assertEquals(listOf("inherit", "off", "singbox-fragment"), io.github.zapretkvn.masking.presets.ServerChoices.forType("anytls").map { it.id })
+        // Trojan and VMess run on Xray since 2026-11-16: they get the Xray presets, like VLESS.
+        for (type in listOf("trojan", "vmess")) {
+            assertEquals(vless, io.github.zapretkvn.masking.presets.ServerChoices.forType(type).map { it.id })
+        }
         val custom = io.github.zapretkvn.masking.model.MaskingOverride.Custom(MaskingPresets.xmuxFew.masking)
         assertEquals("XHTTP: мало соединений", io.github.zapretkvn.masking.presets.ServerChoices.label(custom))
         assertEquals("Своя", io.github.zapretkvn.masking.presets.ServerChoices.label(

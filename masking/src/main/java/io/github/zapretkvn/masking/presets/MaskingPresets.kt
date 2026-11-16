@@ -60,7 +60,7 @@ object MaskingPresets {
     val xrayMux = Preset(
         id = "xray-mux",
         group = Group.Xray,
-        title = "Mux (VLESS по TCP)",
+        title = "Mux (VLESS, VMess, Trojan по TCP)",
         note = "Много запросов идут в нескольких долгих соединениях: меньше рукопожатий подряд. " +
             "QUIC в mux отклоняется, приложения перейдут на TCP.",
         masking = Masking(xray = XrayShaping(mux = MuxCool())),
@@ -115,8 +115,8 @@ object MaskingPresets {
     val singboxFragment = Preset(
         id = "singbox-fragment",
         group = Group.Experiment,
-        title = "Фрагментация TLS (Trojan, VMess)",
-        note = "Эксперимент. То же для протоколов sing-box. На REALITY не действует.",
+        title = "Фрагментация TLS (AnyTLS, HTTP, ShadowTLS)",
+        note = "Эксперимент. Для протоколов sing-box. На REALITY не действует.",
         masking = Masking(singbox = SingboxFragment()),
     )
 

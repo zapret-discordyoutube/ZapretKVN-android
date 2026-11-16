@@ -17,8 +17,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * which an ordinary Android app cannot do without root.
  */
 object SingboxFragmentRules {
-    /** sing-box-owned TCP+TLS protocols; VLESS is Xray's, Hysteria2/TUIC are QUIC. */
-    val PROTOCOLS = setOf("trojan", "vmess", "anytls", "http", "shadowtls")
+    /** sing-box-owned TCP+TLS protocols; VLESS, VMess and Trojan are Xray's, Hysteria2/TUIC are QUIC. */
+    val PROTOCOLS = setOf("anytls", "http", "shadowtls")
 
     const val MAX_FALLBACK_DELAY_MS = 10_000
 

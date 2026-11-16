@@ -77,7 +77,16 @@ class TlsVerificationPolicyTest {
     }
 
     @Test
-    fun `trojan vmess and tuic that disable verification are refused`() {
+    fun `tuic that disables verification is refused`() {
+        val link = "tuic://11111111-1111-4111-8111-111111111111:secret@tuic.example:443?sni=tuic.example&insecure=1#TUIC"
+        assertThrows(link, InsecureTlsImportException::class.java) {
+            ImportParser.parse(link, ProfileSource.Link)
+        }
+    }
+
+    @Test
+    fun `trojan and vmess run on xray so insecure is dropped with a warning like vless`() {
+        // Owner decision 2026-11-16: Xray 26.x has no allowInsecure, the certificate is verified normally.
         val vmessPayload = Base64.getEncoder().encodeToString(
             (
                 """{"v":"2","ps":"VM","add":"vm.example","port":"443","id":"11111111-1111-4111-8111-111111111111",""" +
@@ -86,14 +95,14 @@ class TlsVerificationPolicyTest {
         )
         listOf(
             "trojan://secret@tr.example:443?security=tls&sni=tr.example&allowInsecure=1#TR",
-            // Отпечаток pcs для Trojan ядро не применяет: отключение проверки осталось бы без него.
-            "trojan://secret@tr.example:443?security=tls&sni=tr.example&allowInsecure=1&pcs=$pcs#TR",
+            "trojan://secret@tr.example:443?security=tls&sni=tr.example&insecure=1#TR",
             "vmess://$vmessPayload",
-            "tuic://11111111-1111-4111-8111-111111111111:secret@tuic.example:443?sni=tuic.example&insecure=1#TUIC",
         ).forEach { link ->
-            assertThrows(link, InsecureTlsImportException::class.java) {
-                ImportParser.parse(link, ProfileSource.Link)
-            }
+            val candidate = ImportParser.parse(link, ProfileSource.Link) as ImportCandidate.Managed
+            val outbound = candidate.servers.single().outbound
+            assertFalse(link, TlsVerificationPolicy.violates(outbound))
+            assertEquals(link, link, outbound["uri"]?.let { (it as kotlinx.serialization.json.JsonPrimitive).content })
+            assertTrue(link, candidate.servers.single().importWarnings.any { it.contains("Xray-core") })
         }
     }
 
@@ -101,7 +110,7 @@ class TlsVerificationPolicyTest {
     fun `subscription skips insecure servers and keeps the rest`() {
         val candidate = ImportParser.parse(
             listOf(
-                "trojan://secret@tr.example:443?security=tls&sni=tr.example&allowInsecure=1#Bad",
+                "tuic://11111111-1111-4111-8111-111111111111:secret@tuic.example:443?sni=tuic.example&insecure=1#Bad",
                 "trojan://secret@ok.example:443?security=tls&sni=ok.example#Good",
             ).joinToString("\n"),
             ProfileSource.Subscription,
@@ -116,8 +125,8 @@ class TlsVerificationPolicyTest {
         assertThrows(InsecureTlsImportException::class.java) {
             ImportParser.parse(
                 listOf(
-                    "trojan://secret@a.example:443?security=tls&sni=a.example&allowInsecure=1#A",
-                    "trojan://secret@b.example:443?security=tls&sni=b.example&allowInsecure=1#B",
+                    "tuic://11111111-1111-4111-8111-111111111111:secret@a.example:443?sni=a.example&insecure=1#A",
+                    "tuic://11111111-1111-4111-8111-111111111111:secret@b.example:443?sni=b.example&insecure=1#B",
                 ).joinToString("\n"),
                 ProfileSource.Subscription,
                 "Подписка",

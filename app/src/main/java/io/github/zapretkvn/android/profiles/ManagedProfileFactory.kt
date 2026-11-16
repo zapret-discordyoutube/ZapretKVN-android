@@ -57,6 +57,7 @@ object ProtocolOutboundBuilders {
         uuid: String,
         security: String = "auto",
         alterId: Int = 0,
+        uri: String? = null,
         tls: TlsSettings = TlsSettings(),
         transport: TransportSettings? = null,
     ): ManagedServer = ManagedServer(
@@ -68,6 +69,7 @@ object ProtocolOutboundBuilders {
             uuid = uuid,
             security = security,
             alterId = alterId,
+            uri = uri,
             tls = tls,
             transport = transport,
         ).toSingBoxJson(),
@@ -78,6 +80,7 @@ object ProtocolOutboundBuilders {
         server: String,
         serverPort: Int,
         password: String,
+        uri: String? = null,
         tls: TlsSettings = TlsSettings(enabled = true, serverName = server),
         transport: TransportSettings? = null,
     ): ManagedServer = ManagedServer(
@@ -87,6 +90,7 @@ object ProtocolOutboundBuilders {
             server = server,
             serverPort = serverPort,
             password = password,
+            uri = uri,
             tls = tls,
             transport = transport,
         ).toSingBoxJson(),

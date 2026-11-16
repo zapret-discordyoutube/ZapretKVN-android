@@ -1,0 +1,796 @@
+diff --git a/option/vmess.go b/option/vmess.go
+index f4dd282..9974928 100644
+--- a/option/vmess.go
++++ b/option/vmess.go
+@@ -15,6 +15,8 @@ type VMessUser struct {
+ }
+ 
+ type VMessOutboundOptions struct {
++	// URI is the original share link: the Xray core owns VMess and reads the profile from it (xraycore).
++	URI string `json:"uri,omitempty"`
+ 	DialerOptions
+ 	ServerOptions
+ 	UUID                string      `json:"uuid"`
+@@ -27,4 +29,6 @@ type VMessOutboundOptions struct {
+ 	PacketEncoding string                    `json:"packet_encoding,omitempty" enum:"packetaddr,xudp"`
+ 	Multiplex      *OutboundMultiplexOptions `json:"multiplex,omitempty"`
+ 	Transport      *V2RayTransportOptions    `json:"transport,omitempty"`
++	// XrayMasking: see VLESSOutboundOptions.
++	XrayMasking map[string]any `json:"xray_masking,omitempty"`
+ }
+diff --git a/option/trojan.go b/option/trojan.go
+index 7d36c8d..820e06e 100644
+--- a/option/trojan.go
++++ b/option/trojan.go
+@@ -16,6 +16,8 @@ type TrojanUser struct {
+ }
+ 
+ type TrojanOutboundOptions struct {
++	// URI is the original share link: the Xray core owns Trojan and reads the profile from it (xraycore).
++	URI string `json:"uri,omitempty"`
+ 	DialerOptions
+ 	ServerOptions
+ 	Password string      `json:"password"`
+@@ -23,4 +25,6 @@ type TrojanOutboundOptions struct {
+ 	OutboundTLSOptionsContainer
+ 	Multiplex *OutboundMultiplexOptions `json:"multiplex,omitempty"`
+ 	Transport *V2RayTransportOptions    `json:"transport,omitempty"`
++	// XrayMasking: see VLESSOutboundOptions.
++	XrayMasking map[string]any `json:"xray_masking,omitempty"`
+ }
+diff --git a/include/registry.go b/include/registry.go
+index 2ecd771..26e8ad7 100644
+--- a/include/registry.go
++++ b/include/registry.go
+@@ -121,8 +121,6 @@ func OutboundRegistry() *outbound.Registry {
+ 	http.RegisterOutbound(registry)
+ 	shadowsocks.RegisterOutbound(registry)
+ 	snell.RegisterOutbound(registry)
+-	vmess.RegisterOutbound(registry)
+-	trojan.RegisterOutbound(registry)
+ 	registerNaiveOutbound(registry)
+ 	tor.RegisterOutbound(registry)
+ 	ssh.RegisterOutbound(registry)
+diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
+index 9e49917..5e32aec 100644
+--- a/protocol/xraycore/config.go
++++ b/protocol/xraycore/config.go
+@@ -17,18 +17,32 @@ import (
+ type object = map[string]any
+ 
+ func buildConfig(options option.VLESSOutboundOptions, dialerID string) ([]byte, error) {
++	return buildOutboundConfig(options.URI, options.XrayMasking, dialerID, func() (object, error) { return legacyOutbound(options) })
++}
++
++func buildTrojanConfig(options option.TrojanOutboundOptions, dialerID string) ([]byte, error) {
++	return buildOutboundConfig(options.URI, options.XrayMasking, dialerID, func() (object, error) { return legacyTrojan(options) })
++}
++
++func buildVMessConfig(options option.VMessOutboundOptions, dialerID string) ([]byte, error) {
++	return buildOutboundConfig(options.URI, options.XrayMasking, dialerID, func() (object, error) { return legacyVMess(options) })
++}
++
++// buildOutboundConfig is the one place that turns an app profile into Xray's JSON, for every protocol Xray owns:
++// the original share link when the profile kept it, otherwise the saved sing-box fields (legacy).
++func buildOutboundConfig(uri string, masking map[string]any, dialerID string, legacy func() (object, error)) ([]byte, error) {
+ 	var outbound object
+ 	var err error
+-	if options.URI != "" {
+-		outbound, err = outboundFromURI(options.URI)
++	if uri != "" {
++		outbound, err = outboundFromURI(uri)
+ 	} else {
+-		outbound, err = legacyOutbound(options)
++		outbound, err = legacy()
+ 	}
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	stream := outbound["streamSettings"].(object)
+-	if err := applyMasking(outbound, stream, options.XrayMasking); err != nil {
++	if err := applyMasking(outbound, stream, masking); err != nil {
+ 		return nil, err
+ 	}
+ 	protectStream(stream, dialerID)
+@@ -92,7 +106,19 @@ func vlessOutbound(server string, port int, user object, stream object) object {
+ 	}
+ }
+ 
++// outboundFromURI reads the original share link of a profile. VLESS, VMess and Trojan are the protocols the
++// official Xray core owns (owner decision 2026-11-16); each keeps its own link syntax and shares the stream part.
+ func outboundFromURI(raw string) (object, error) {
++	switch lower := strings.ToLower(raw); {
++	case strings.HasPrefix(lower, "vmess://"):
++		return vmessFromURI(raw)
++	case strings.HasPrefix(lower, "trojan://"):
++		return trojanFromURI(raw)
++	}
++	return vlessFromURI(raw)
++}
++
++func vlessFromURI(raw string) (object, error) {
+ 	u, err := url.Parse(raw)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("invalid VLESS URI syntax")
+@@ -126,13 +152,44 @@ func outboundFromURI(raw string) (object, error) {
+ 	if q.Has("flow") {
+ 		user["flow"] = q.Get("flow")
+ 	}
++	stream, err := streamFromQuery(q, u.Hostname(), "VLESS", "none")
++	if err != nil {
++		return nil, err
++	}
++	return vlessOutbound(u.Hostname(), port, user, stream), nil
++}
++
++// streamFromQuery builds Xray's streamSettings from share-link parameters. The three
++// Xray-owned protocols (VLESS, VMess, Trojan) use the same transport and TLS parameters,
++// so they share this one reading; only the user part differs.
++func streamFromQuery(q url.Values, hostname, label, defaultSecurity string) (object, error) {
++	value := func(key, fallback string) string {
++		if q.Has(key) {
++			return q.Get(key)
++		}
++		return fallback
++	}
+ 	network := value("type", "tcp")
+-	security := value("security", "none")
++	security := value("security", defaultSecurity)
+ 	stream := object{"network": network, "security": security}
+ 	if security == "tls" || security == "reality" {
+-		tls := object{"serverName": value("sni", u.Hostname()), "fingerprint": value("fp", "chrome")}
++		tls := object{"serverName": value("sni", hostname), "fingerprint": value("fp", "chrome")}
+ 		if q.Has("alpn") {
+-			tls["alpn"] = strings.Split(q.Get("alpn"), ",")
++			alpn := strings.Split(q.Get("alpn"), ",")
++			if network == "ws" || network == "httpupgrade" {
++				// HTTP/1.1-only transports: a server that picks h2 drops the handshake. Xray falls back to
++				// http/1.1 itself only when no alpn is given, so h2 and h3 are removed here.
++				kept := alpn[:0]
++				for _, item := range alpn {
++					if lower := strings.ToLower(strings.TrimSpace(item)); lower != "h2" && lower != "h3" {
++						kept = append(kept, item)
++					}
++				}
++				alpn = kept
++			}
++			if len(alpn) > 0 {
++				tls["alpn"] = alpn
++			}
+ 		}
+ 		if security == "reality" {
+ 			for from, to := range map[string]string{"pbk": "publicKey", "sid": "shortId", "spx": "spiderX", "pqv": "mldsa65Verify"} {
+@@ -165,7 +222,7 @@ func outboundFromURI(raw string) (object, error) {
+ 	case "tcp", "raw":
+ 		if q.Get("headerType") != "" && q.Get("headerType") != "none" {
+ 			transport["header"] = object{"type": q.Get("headerType"), "request": object{
+-				"path": []string{value("path", "/")}, "headers": object{"Host": strings.Split(value("host", u.Hostname()), ",")},
++				"path": []string{value("path", "/")}, "headers": object{"Host": strings.Split(value("host", hostname), ",")},
+ 			}}
+ 		}
+ 	case "ws", "httpupgrade":
+@@ -199,7 +256,7 @@ func outboundFromURI(raw string) (object, error) {
+ 			}
+ 			var extra object
+ 			if json.Unmarshal(extraBytes, &extra) != nil || extra == nil {
+-				return nil, fmt.Errorf("invalid VLESS XHTTP extra JSON")
++				return nil, fmt.Errorf("invalid %s XHTTP extra JSON", label)
+ 			}
+ 			transport["extra"] = extra
+ 		}
+@@ -207,7 +264,7 @@ func outboundFromURI(raw string) (object, error) {
+ 		transport["seed"] = q.Get("seed")
+ 		transport["header"] = object{"type": value("headerType", "none")}
+ 	default:
+-		return nil, fmt.Errorf("unsupported VLESS URI transport: %s", network)
++		return nil, fmt.Errorf("unsupported %s URI transport: %s", label, network)
+ 	}
+ 	key := network
+ 	if key == "raw" {
+@@ -217,7 +274,7 @@ func outboundFromURI(raw string) (object, error) {
+ 		key = "xhttp"
+ 	}
+ 	stream[key+"Settings"] = transport
+-	return vlessOutbound(u.Hostname(), port, user, stream), nil
++	return stream, nil
+ }
+ 
+ // queryValue reads a share-link parameter by any of its spellings. Panels write
+@@ -293,15 +350,47 @@ func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
+ 	if o.Encryption == "" {
+ 		user["encryption"] = "none"
+ 	}
++	stream, err := legacyStream("VLESS", o.Multiplex, o.TLS, o.Transport)
++	if err != nil {
++		return nil, err
++	}
++	return vlessOutbound(o.Server, int(o.ServerPort), user, stream), nil
++}
++
++func legacyTrojan(o option.TrojanOutboundOptions) (object, error) {
++	stream, err := legacyStream("Trojan", o.Multiplex, o.TLS, o.Transport)
++	if err != nil {
++		return nil, err
++	}
++	return trojanOutbound(o.Server, int(o.ServerPort), o.Password, stream), nil
++}
++
++func legacyVMess(o option.VMessOutboundOptions) (object, error) {
++	if o.AlterId > 0 {
++		return nil, errVMessAlterID
++	}
++	security := o.Security
++	if security == "" {
++		security = "auto"
++	}
++	stream, err := legacyStream("VMess", o.Multiplex, o.TLS, o.Transport)
++	if err != nil {
++		return nil, err
++	}
++	return vmessOutbound(o.Server, int(o.ServerPort), o.UUID, security, stream), nil
++}
++
++// legacyStream converts the saved sing-box TLS and transport fields of a profile that has no share link.
++func legacyStream(label string, multiplex *option.OutboundMultiplexOptions, tlsOptions *option.OutboundTLSOptions, transport *option.V2RayTransportOptions) (object, error) {
+ 	stream := object{"network": "tcp", "security": "none"}
+-	if o.Multiplex != nil && o.Multiplex.Enabled {
+-		return nil, fmt.Errorf("legacy sing-box multiplex is not an Xray protocol; reimport the original VLESS link")
++	if multiplex != nil && multiplex.Enabled {
++		return nil, fmt.Errorf("legacy sing-box multiplex is not an Xray protocol; reimport the original %s link", label)
+ 	}
+-	if t := o.TLS; t != nil && t.Enabled {
++	if t := tlsOptions; t != nil && t.Enabled {
+ 		// Xray no longer accepts allowInsecure (see outboundFromURI), and a saved
+ 		// sing-box JSON carries no certificate pin to replace it with.
+ 		if t.Insecure {
+-			return nil, fmt.Errorf("legacy VLESS insecure TLS was removed from Xray; reimport the original VLESS link")
++			return nil, fmt.Errorf("legacy %s insecure TLS was removed from Xray; reimport the original %s link", label, label)
+ 		}
+ 		tls := object{"serverName": t.ServerName, "alpn": t.ALPN}
+ 		if t.UTLS != nil && t.UTLS.Enabled {
+@@ -315,7 +404,7 @@ func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
+ 		}
+ 		if t.DisableSNI || len(t.Certificate) > 0 || t.CertificatePath != "" ||
+ 			len(t.CertificatePublicKeySHA256) > 0 || t.ECH != nil || len(t.ClientCertificate) > 0 || t.ClientCertificatePath != "" {
+-			return nil, fmt.Errorf("legacy VLESS TLS extensions require the original VLESS link or native Xray configuration")
++			return nil, fmt.Errorf("legacy %s TLS extensions require the original %s link or native Xray configuration", label, label)
+ 		}
+ 		if t.MinVersion != "" {
+ 			tls["minVersion"] = t.MinVersion
+@@ -326,7 +415,7 @@ func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
+ 		stream["security"] = security
+ 		stream[security+"Settings"] = tls
+ 	}
+-	if t := o.Transport; t != nil {
++	if t := transport; t != nil {
+ 		var settings object
+ 		switch t.Type {
+ 		case "ws":
+@@ -376,10 +465,10 @@ func legacyOutbound(o option.VLESSOutboundOptions) (object, error) {
+ 				settings[strings.Join(pieces, "")] = value
+ 			}
+ 		default:
+-			return nil, fmt.Errorf("legacy VLESS transport %s requires the original link", t.Type)
++			return nil, fmt.Errorf("legacy %s transport %s requires the original link", label, t.Type)
+ 		}
+ 		stream["network"] = t.Type
+ 		stream[t.Type+"Settings"] = settings
+ 	}
+-	return vlessOutbound(o.Server, int(o.ServerPort), user, stream), nil
++	return stream, nil
+ }
+diff --git a/protocol/xraycore/outbound.go b/protocol/xraycore/outbound.go
+index c19d492..0979d86 100644
+--- a/protocol/xraycore/outbound.go
++++ b/protocol/xraycore/outbound.go
+@@ -1,4 +1,4 @@
+-// Package xraycore delegates VLESS and its transports to the official Xray core.
++// Package xraycore delegates VLESS, VMess, Trojan and their transports to the official Xray core.
+ // sing-box owns routing and all underlying socket creation. No second TUN or
+ // localhost proxy is needed inside Android.
+ package xraycore
+@@ -33,7 +33,9 @@ import (
+ 	_ "github.com/xtls/xray-core/app/policy"
+ 	_ "github.com/xtls/xray-core/app/proxyman/inbound"
+ 	_ "github.com/xtls/xray-core/app/proxyman/outbound"
++	_ "github.com/xtls/xray-core/proxy/trojan"
+ 	_ "github.com/xtls/xray-core/proxy/vless/outbound"
++	_ "github.com/xtls/xray-core/proxy/vmess/outbound"
+ 	_ "github.com/xtls/xray-core/transport/internet/grpc"
+ 	_ "github.com/xtls/xray-core/transport/internet/headers/http"
+ 	_ "github.com/xtls/xray-core/transport/internet/headers/noop"
+@@ -62,6 +64,9 @@ func init() {
+ 
+ func RegisterOutbound(registry *outbound.Registry) {
+ 	outbound.Register[option.VLESSOutboundOptions](registry, C.TypeVLESS, NewOutbound)
++	// Owner decision 2026-11-16: VMess and Trojan are Xray protocols too (sing-box had no XHTTP for them).
++	outbound.Register[option.VMessOutboundOptions](registry, C.TypeVMess, NewVMessOutbound)
++	outbound.Register[option.TrojanOutboundOptions](registry, C.TypeTrojan, NewTrojanOutbound)
+ }
+ 
+ type Outbound struct {
+@@ -77,11 +82,27 @@ type Outbound struct {
+ }
+ 
+ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.VLESSOutboundOptions) (adapter.Outbound, error) {
+-	protected, err := dialer.New(ctx, options.DialerOptions, true)
++	return newXrayOutbound(ctx, logger, tag, C.TypeVLESS, options.DialerOptions, options.Network, options.XrayMasking,
++		func(id string) ([]byte, error) { return buildConfig(options, id) })
++}
++
++func NewVMessOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.VMessOutboundOptions) (adapter.Outbound, error) {
++	return newXrayOutbound(ctx, logger, tag, C.TypeVMess, options.DialerOptions, options.Network, options.XrayMasking,
++		func(id string) ([]byte, error) { return buildVMessConfig(options, id) })
++}
++
++func NewTrojanOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.TrojanOutboundOptions) (adapter.Outbound, error) {
++	return newXrayOutbound(ctx, logger, tag, C.TypeTrojan, options.DialerOptions, options.Network, options.XrayMasking,
++		func(id string) ([]byte, error) { return buildTrojanConfig(options, id) })
++}
++
++// newXrayOutbound runs one Xray instance for a profile of any protocol the official core owns.
++func newXrayOutbound(ctx context.Context, logger log.ContextLogger, tag, protocolType string, dialerOptions option.DialerOptions, network option.NetworkList, masking map[string]any, build func(dialerID string) ([]byte, error)) (adapter.Outbound, error) {
++	protected, err := dialer.New(ctx, dialerOptions, true)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	desync, err := desyncPlan(options)
++	desync, err := desyncPlanFrom(masking)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -89,7 +110,7 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
+ 		logger.Info("masking desync: ", desync)
+ 	}
+ 	id := fmt.Sprintf("zapret-xray-%d", nextDialerID.Add(1))
+-	configBytes, err := buildConfig(options, id)
++	configBytes, err := build(id)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -125,7 +146,7 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
+ 		return nil, err
+ 	}
+ 	return &Outbound{
+-		Adapter:  outbound.NewAdapterWithDialerOptions(C.TypeVLESS, tag, options.Network.Build(), options.DialerOptions),
++		Adapter:  outbound.NewAdapterWithDialerOptions(protocolType, tag, network.Build(), dialerOptions),
+ 		instance: instance, logger: logger, factory: factory, dialerID: id, ctx: ownedContext, cancel: cancel,
+ 	}, nil
+ }
+@@ -217,7 +238,11 @@ type ownedDialer struct {
+ 
+ // desyncPlan reads `xray_masking.desync` (the app's plan, masking-design/04); absent = off.
+ func desyncPlan(options option.VLESSOutboundOptions) (*kvndesync.Plan, error) {
+-	value, ok := options.XrayMasking["desync"]
++	return desyncPlanFrom(options.XrayMasking)
++}
++
++func desyncPlanFrom(masking map[string]any) (*kvndesync.Plan, error) {
++	value, ok := masking["desync"]
+ 	if !ok {
+ 		return nil, nil
+ 	}
+diff --git a/protocol/xraycore/protocols.go b/protocol/xraycore/protocols.go
+new file mode 100644
+index 0000000..5e1b1ce
+--- /dev/null
++++ b/protocol/xraycore/protocols.go
+@@ -0,0 +1,196 @@
++package xraycore
++
++import (
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"net/url"
++	"strconv"
++	"strings"
++)
++
++// VMess and Trojan are native Xray protocols (owner decision 2026-11-16). Their share links are read here and
++// handed to Xray in its own JSON; the transport and TLS part is the same code as VLESS (streamFromQuery).
++
++var errVMessAlterID = errors.New("VMess with alterId > 0 (legacy protocol without AEAD) is not supported by Xray")
++
++func trojanOutbound(server string, port int, password string, stream object) object {
++	return object{
++		"tag": "proxy", "protocol": "trojan",
++		"settings":       object{"servers": []any{object{"address": server, "port": port, "password": password}}},
++		"streamSettings": stream,
++	}
++}
++
++func vmessOutbound(server string, port int, id, security string, stream object) object {
++	return object{
++		"tag": "proxy", "protocol": "vmess",
++		"settings": object{"vnext": []any{object{"address": server, "port": port, "users": []any{
++			object{"id": id, "security": security},
++		}}}},
++		"streamSettings": stream,
++	}
++}
++
++func trojanFromURI(raw string) (object, error) {
++	u, err := url.Parse(raw)
++	if err != nil {
++		return nil, fmt.Errorf("invalid Trojan URI syntax")
++	}
++	if !strings.EqualFold(u.Scheme, "trojan") || u.User == nil || u.User.Username() == "" || u.Hostname() == "" {
++		return nil, fmt.Errorf("Trojan URI requires a password and server")
++	}
++	password := u.User.Username()
++	if rest, ok := u.User.Password(); ok {
++		password += ":" + rest // a password that itself contains ':'
++	}
++	q, err := singleValueQuery(u, "Trojan")
++	if err != nil {
++		return nil, err
++	}
++	port, err := serverPort(u, "Trojan")
++	if err != nil {
++		return nil, err
++	}
++	stream, err := streamFromQuery(q, u.Hostname(), "Trojan", "tls")
++	if err != nil {
++		return nil, err
++	}
++	return trojanOutbound(u.Hostname(), port, password, stream), nil
++}
++
++func singleValueQuery(u *url.URL, label string) (url.Values, error) {
++	q, err := url.ParseQuery(u.RawQuery)
++	if err != nil {
++		return nil, fmt.Errorf("invalid %s URI query", label)
++	}
++	for key, values := range q {
++		if len(values) != 1 {
++			return nil, fmt.Errorf("duplicate %s query parameter: %s", label, key)
++		}
++	}
++	return q, nil
++}
++
++func serverPort(u *url.URL, label string) (int, error) {
++	if u.Port() == "" {
++		return 443, nil
++	}
++	port, err := strconv.Atoi(u.Port())
++	if err != nil || port < 1 || port > 65535 {
++		return 0, fmt.Errorf("invalid %s server port", label)
++	}
++	return port, nil
++}
++
++// vmessFromURI reads the v2rayN link: vmess://base64(JSON). The JSON fields map onto the same query parameters the
++// other two protocols use, so the stream is built by the one shared function.
++func vmessFromURI(raw string) (object, error) {
++	body := raw[len("vmess://"):]
++	if hash := strings.IndexByte(body, '#'); hash >= 0 {
++		body = body[:hash]
++	}
++	var payload map[string]any
++	decoded := false
++	for _, decoder := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
++		if data, err := decoder.DecodeString(strings.TrimSpace(body)); err == nil && json.Unmarshal(data, &payload) == nil {
++			decoded = true
++			break
++		}
++	}
++	if !decoded || payload == nil {
++		return nil, fmt.Errorf("invalid VMess URI: expected base64 JSON")
++	}
++	text := func(key string) string {
++		switch value := payload[key].(type) {
++		case string:
++			return strings.TrimSpace(value)
++		case float64:
++			return strconv.FormatFloat(value, 'f', -1, 64)
++		}
++		return ""
++	}
++	address, id := text("add"), text("id")
++	if address == "" || id == "" {
++		return nil, fmt.Errorf("VMess URI requires a server and an id")
++	}
++	port := 443
++	if text("port") != "" {
++		parsed, err := strconv.Atoi(text("port"))
++		if err != nil || parsed < 1 || parsed > 65535 {
++			return nil, fmt.Errorf("invalid VMess server port")
++		}
++		port = parsed
++	}
++	if alter := text("aid"); alter != "" && alter != "0" {
++		return nil, errVMessAlterID
++	}
++	security := text("scy")
++	if security == "" {
++		security = "auto"
++	}
++	network := strings.ToLower(text("net"))
++	if network == "" {
++		network = "tcp"
++	}
++	q := url.Values{"type": {network}}
++	set := func(name, value string) {
++		if value != "" {
++			q.Set(name, value)
++		}
++	}
++	switch tls := strings.ToLower(text("tls")); tls {
++	case "tls", "reality":
++		q.Set("security", tls)
++	default:
++		q.Set("security", "none")
++	}
++	set("host", text("host"))
++	set("path", text("path"))
++	set("sni", firstNonEmpty(text("sni"), text("host")))
++	set("alpn", text("alpn"))
++	set("fp", text("fp"))
++	set("pcs", firstNonEmpty(text("pcs"), text("pinnedPeerCertSha256")))
++	set("vcn", firstNonEmpty(text("vcn"), text("verifyPeerCertByName")))
++	for from, to := range map[string]string{"pbk": "pbk", "sid": "sid", "spx": "spx"} {
++		set(to, text(from))
++	}
++	// v2rayN keeps different things in one field "type": the header for tcp/kcp, the mode for xhttp,
++	// "multi" for gRPC; a gRPC service name travels in "path".
++	switch network {
++	case "xhttp", "splithttp":
++		set("mode", text("type"))
++		switch extra := payload["extra"].(type) {
++		case string:
++			set("extra", extra)
++		case map[string]any:
++			data, err := json.Marshal(extra)
++			if err != nil {
++				return nil, fmt.Errorf("invalid VMess XHTTP extra JSON")
++			}
++			q.Set("extra", string(data))
++		}
++	case "grpc":
++		set("serviceName", firstNonEmpty(text("serviceName"), text("path")))
++		if text("type") == "multi" {
++			q.Set("mode", "multi")
++		}
++	default:
++		set("headerType", text("type"))
++	}
++	stream, err := streamFromQuery(q, address, "VMess", "none")
++	if err != nil {
++		return nil, err
++	}
++	return vmessOutbound(address, port, id, security, stream), nil
++}
++
++func firstNonEmpty(values ...string) string {
++	for _, value := range values {
++		if value != "" {
++			return value
++		}
++	}
++	return ""
++}
+diff --git a/protocol/xraycore/protocols_test.go b/protocol/xraycore/protocols_test.go
+new file mode 100644
+index 0000000..f1c57a2
+--- /dev/null
++++ b/protocol/xraycore/protocols_test.go
+@@ -0,0 +1,216 @@
++package xraycore
++
++import (
++	"bytes"
++	"context"
++	"encoding/base64"
++	"encoding/json"
++	"errors"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/sagernet/sing-box/option"
++	singjson "github.com/sagernet/sing/common/json"
++	"github.com/xtls/xray-core/infra/conf/serial"
++)
++
++const vmessID = "b831381d-6324-4d53-ad4f-8cda48b30811"
++
++// xrayAccepts runs a generated document through Xray's own parser and builder, the same way newXrayOutbound does.
++func xrayAccepts(t *testing.T, data []byte) map[string]any {
++	t.Helper()
++	document, err := serial.DecodeJSONConfig(bytes.NewReader(data))
++	if err != nil {
++		t.Fatalf("Xray rejected the document: %v\n%s", err, data)
++	}
++	if _, err = document.Build(); err != nil {
++		t.Fatalf("Xray rejected the document: %v\n%s", err, data)
++	}
++	var parsed struct {
++		Outbounds []map[string]any `json:"outbounds"`
++	}
++	if err = json.Unmarshal(data, &parsed); err != nil || len(parsed.Outbounds) != 1 {
++		t.Fatal(err)
++	}
++	return parsed.Outbounds[0]
++}
++
++func trojanDocument(t *testing.T, uri string) map[string]any {
++	t.Helper()
++	data, err := buildTrojanConfig(option.TrojanOutboundOptions{URI: uri}, "test-dialer")
++	if err != nil {
++		t.Fatal(err)
++	}
++	return xrayAccepts(t, data)
++}
++
++func vmessLink(payload map[string]any) string {
++	data, _ := json.Marshal(payload)
++	return "vmess://" + base64.StdEncoding.EncodeToString(data) + "#name"
++}
++
++func vmessDocument(t *testing.T, payload map[string]any) map[string]any {
++	t.Helper()
++	data, err := buildVMessConfig(option.VMessOutboundOptions{URI: vmessLink(payload)}, "test-dialer")
++	if err != nil {
++		t.Fatal(err)
++	}
++	return xrayAccepts(t, data)
++}
++
++func TestTrojanURIBecomesAnXrayTrojanOutbound(t *testing.T) {
++	outbound := trojanDocument(t, "trojan://p%40ss:word@vpn.example.com:8443?type=xhttp&sni=front.example&path=%2Fapi&host=cdn.example&mode=packet-up&extra=%7B%22xPaddingObfsMode%22%3Atrue%7D")
++	if outbound["protocol"] != "trojan" {
++		t.Fatalf("protocol = %v", outbound["protocol"])
++	}
++	server := outbound["settings"].(map[string]any)["servers"].([]any)[0].(map[string]any)
++	if server["address"] != "vpn.example.com" || server["port"] != float64(8443) || server["password"] != "p@ss:word" {
++		t.Fatalf("server = %v", server)
++	}
++	stream := outbound["streamSettings"].(map[string]any)
++	if stream["security"] != "tls" {
++		t.Fatalf("Trojan defaults to TLS, got %v", stream["security"])
++	}
++	if stream["tlsSettings"].(map[string]any)["serverName"] != "front.example" {
++		t.Fatalf("tlsSettings = %v", stream["tlsSettings"])
++	}
++	xhttp := stream["xhttpSettings"].(map[string]any)
++	want := map[string]any{"host": "cdn.example", "path": "/api", "mode": "packet-up", "extra": map[string]any{"xPaddingObfsMode": true}}
++	if !reflect.DeepEqual(xhttp, want) {
++		t.Fatalf("xhttpSettings = %v, want %v", xhttp, want)
++	}
++	if stream["sockopt"].(map[string]any)["interface"] != "test-dialer" {
++		t.Fatalf("socket is not bound to the protected dialer: %v", stream["sockopt"])
++	}
++}
++
++func TestTrojanURIKeepsPinAndRefusesBadInput(t *testing.T) {
++	pin := strings.Repeat("ab", 32)
++	outbound := trojanDocument(t, "trojan://pw@vpn.example.com:443?security=tls&allowInsecure=1&pcs="+pin)
++	tls := outbound["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)
++	if tls["pinnedPeerCertSha256"] != pin || tls["allowInsecure"] != nil {
++		t.Fatalf("pin must replace allowInsecure: %v", tls)
++	}
++	for _, uri := range []string{"trojan://@vpn.example.com:443", "trojan://pw@:443", "trojan://pw@vpn.example.com:99999", "trojan://pw@vpn.example.com:443?type=http"} {
++		if _, err := buildTrojanConfig(option.TrojanOutboundOptions{URI: uri}, "d"); err == nil {
++			t.Fatalf("%s must be refused", uri)
++		}
++	}
++}
++
++func TestVMessURIBecomesAnXrayVMessOutbound(t *testing.T) {
++	outbound := vmessDocument(t, map[string]any{
++		"add": "vpn.example.com", "port": 443, "id": vmessID, "aid": "0", "scy": "chacha20-poly1305", "net": "xhttp",
++		"type": "packet-up", "host": "cdn.example", "path": "/v", "tls": "tls", "sni": "front.example",
++		"extra": map[string]any{"uplinkHTTPMethod": "GET"},
++	})
++	user := outbound["settings"].(map[string]any)["vnext"].([]any)[0].(map[string]any)["users"].([]any)[0].(map[string]any)
++	if user["id"] != vmessID || user["security"] != "chacha20-poly1305" {
++		t.Fatalf("user = %v", user)
++	}
++	xhttp := outbound["streamSettings"].(map[string]any)["xhttpSettings"].(map[string]any)
++	want := map[string]any{"host": "cdn.example", "path": "/v", "mode": "packet-up", "extra": map[string]any{"uplinkHTTPMethod": "GET"}}
++	if !reflect.DeepEqual(xhttp, want) {
++		t.Fatalf("xhttpSettings = %v, want %v", xhttp, want)
++	}
++}
++
++func TestVMessURITransportsAndDefaults(t *testing.T) {
++	grpc := vmessDocument(t, map[string]any{"add": "vpn.example.com", "port": "443", "id": vmessID, "net": "grpc", "path": "svc", "tls": "tls"})
++	stream := grpc["streamSettings"].(map[string]any)
++	if stream["grpcSettings"].(map[string]any)["serviceName"] != "svc" {
++		t.Fatalf("gRPC service name comes from path: %v", stream["grpcSettings"])
++	}
++	plain := vmessDocument(t, map[string]any{"add": "vpn.example.com", "port": 8080, "id": vmessID, "net": "tcp"})
++	if plain["streamSettings"].(map[string]any)["security"] != "none" {
++		t.Fatalf("no tls field means no TLS: %v", plain["streamSettings"])
++	}
++	user := plain["settings"].(map[string]any)["vnext"].([]any)[0].(map[string]any)["users"].([]any)[0].(map[string]any)
++	if user["security"] != "auto" {
++		t.Fatalf("default VMess security: %v", user["security"])
++	}
++}
++
++func TestVMessAlterIDAndBrokenLinksAreRefused(t *testing.T) {
++	_, err := buildVMessConfig(option.VMessOutboundOptions{URI: vmessLink(map[string]any{"add": "h.example", "port": 443, "id": vmessID, "aid": "4"})}, "d")
++	if !errors.Is(err, errVMessAlterID) {
++		t.Fatalf("alterId > 0 must be refused, got %v", err)
++	}
++	for _, uri := range []string{"vmess://not-base64!!", "vmess://" + base64.StdEncoding.EncodeToString([]byte(`{"add":"h.example"}`))} {
++		if _, err = buildVMessConfig(option.VMessOutboundOptions{URI: uri}, "d"); err == nil {
++			t.Fatalf("%s must be refused", uri)
++		}
++	}
++}
++
++// WebSocket and HTTPUpgrade are HTTP/1.1-only: a server that selects h2 drops the handshake.
++func TestHTTP1OnlyTransportsDropH2FromALPN(t *testing.T) {
++	for _, network := range []string{"ws", "httpupgrade"} {
++		outbound := trojanDocument(t, "trojan://pw@vpn.example.com:443?type="+network+"&path=%2Fp&alpn=h2%2Chttp%2F1.1")
++		alpn := outbound["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)["alpn"]
++		if !reflect.DeepEqual(alpn, []any{"http/1.1"}) {
++			t.Fatalf("%s alpn = %v", network, alpn)
++		}
++		only := trojanDocument(t, "trojan://pw@vpn.example.com:443?type="+network+"&path=%2Fp&alpn=h2")
++		if _, ok := only["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)["alpn"]; ok {
++			t.Fatalf("%s with only h2 must fall back to Xray's own default", network)
++		}
++	}
++	grpc := trojanDocument(t, "trojan://pw@vpn.example.com:443?type=grpc&serviceName=g&alpn=h2")
++	if !reflect.DeepEqual(grpc["streamSettings"].(map[string]any)["tlsSettings"].(map[string]any)["alpn"], []any{"h2"}) {
++		t.Fatal("gRPC keeps h2")
++	}
++}
++
++func TestMaskingAndDesyncReachTrojanAndVMess(t *testing.T) {
++	masking := map[string]any{"mux": map[string]any{"enabled": true, "concurrency": 4}, "desync": map[string]any{"mode": "off"}}
++	data, err := buildTrojanConfig(option.TrojanOutboundOptions{URI: "trojan://pw@vpn.example.com:443", XrayMasking: map[string]any{"mux": masking["mux"]}}, "d")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if outbound := xrayAccepts(t, data); outbound["mux"] == nil {
++		t.Fatal("the masking block must be merged into the Trojan outbound")
++	}
++	if _, err = desyncPlanFrom(nil); err != nil {
++		t.Fatalf("absent desync is off: %v", err)
++	}
++}
++
++// A profile saved before the move has no link: its sing-box fields are converted, like VLESS.
++func TestLegacyTrojanAndVMessProfiles(t *testing.T) {
++	var trojan option.TrojanOutboundOptions
++	if err := singjson.UnmarshalContext(context.Background(), []byte(`{"type":"trojan","server":"vpn.example.com","server_port":443,"password":"pw",
++		"tls":{"enabled":true,"server_name":"front.example"},"transport":{"type":"ws","path":"/ws","headers":{"Host":"cdn.example"}}}`), &trojan); err != nil {
++		t.Fatal(err)
++	}
++	data, err := buildTrojanConfig(trojan, "d")
++	if err != nil {
++		t.Fatal(err)
++	}
++	outbound := xrayAccepts(t, data)
++	if outbound["protocol"] != "trojan" || outbound["streamSettings"].(map[string]any)["wsSettings"].(map[string]any)["host"] != "cdn.example" {
++		t.Fatalf("legacy trojan = %v", outbound)
++	}
++
++	var vmess option.VMessOutboundOptions
++	if err = singjson.UnmarshalContext(context.Background(), []byte(`{"type":"vmess","server":"vpn.example.com","server_port":443,"uuid":"`+vmessID+`","security":"auto",
++		"tls":{"enabled":true,"server_name":"front.example"},"transport":{"type":"grpc","service_name":"svc"}}`), &vmess); err != nil {
++		t.Fatal(err)
++	}
++	if data, err = buildVMessConfig(vmess, "d"); err != nil {
++		t.Fatal(err)
++	}
++	outbound = xrayAccepts(t, data)
++	if outbound["streamSettings"].(map[string]any)["grpcSettings"].(map[string]any)["serviceName"] != "svc" {
++		t.Fatalf("legacy vmess = %v", outbound)
++	}
++	vmess.AlterId = 2
++	if _, err = buildVMessConfig(vmess, "d"); !errors.Is(err, errVMessAlterID) {
++		t.Fatalf("legacy alterId > 0 must be refused, got %v", err)
++	}
++	trojan.Multiplex = &option.OutboundMultiplexOptions{Enabled: true}
++	if _, err = buildTrojanConfig(trojan, "d"); err == nil || !strings.Contains(err.Error(), "reimport the original Trojan link") {
++		t.Fatalf("legacy multiplex must ask for the link, got %v", err)
++	}
++}

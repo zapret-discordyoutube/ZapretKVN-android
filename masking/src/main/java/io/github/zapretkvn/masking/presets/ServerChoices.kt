@@ -9,19 +9,22 @@ import io.github.zapretkvn.masking.model.MaskingOverride
 object ServerChoices {
     data class Choice(val id: String, val title: String, val override: MaskingOverride)
 
+    /** Protocols the official Xray core owns (owner decision 2026-11-16). */
+    private val XRAY_TYPES = setOf("vless", "vmess", "trojan")
+
     private val INHERIT = Choice("inherit", "Как в общих", MaskingOverride.Inherit)
     private val OFF = Choice("off", "Выключить", MaskingOverride.Off)
 
     fun forType(type: String): List<Choice> {
         val groups = when (type.lowercase()) {
             "wireguard" -> setOf(MaskingPresets.Group.WireGuard)
-            "vless" -> setOf(MaskingPresets.Group.Xray, MaskingPresets.Group.Experiment)
+            in XRAY_TYPES -> setOf(MaskingPresets.Group.Xray, MaskingPresets.Group.Experiment)
             "hysteria2" -> emptySet()
             else -> setOf(MaskingPresets.Group.Experiment)
         }
         val presets = MaskingPresets.all.filter { preset ->
             preset.group in groups && when (type.lowercase()) {
-                "vless" -> preset.masking.xray != null
+                in XRAY_TYPES -> preset.masking.xray != null
                 "wireguard" -> preset.masking.wireguard != null
                 else -> preset.masking.singbox != null
             }

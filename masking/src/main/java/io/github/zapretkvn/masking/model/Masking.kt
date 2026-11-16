@@ -52,7 +52,7 @@ data class WireGuardMasking(
     }
 }
 
-/** Xray-core connection shaping for VLESS (mux.cool, XHTTP xmux, finalmask TCP fragment, desync). */
+/** Xray-core connection shaping for VLESS, VMess and Trojan (mux.cool, XHTTP xmux, finalmask TCP fragment, desync). */
 data class XrayShaping(
     val enabled: Boolean = true,
     val mux: MuxCool? = null,
@@ -130,7 +130,8 @@ data class XrayFragment(
 /**
  * sing-box's own TLS fragmentation (option/tls.go OutboundTLSOptions `fragment`,
  * `record_fragment`, `fragment_fallback_delay`) for the TLS protocols sing-box owns
- * (Trojan, VMess, ...). Client side only; REALITY ignores it. Experiment.
+ * (AnyTLS, HTTP, ShadowTLS; Trojan and VMess moved to Xray on 2026-11-16, which has `finalmask`).
+ * Client side only; REALITY ignores it. Experiment.
  */
 data class SingboxFragment(
     val enabled: Boolean = true,

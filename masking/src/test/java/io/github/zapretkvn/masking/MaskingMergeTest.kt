@@ -24,7 +24,7 @@ import org.junit.Test
 class MaskingMergeTest {
     private val wg = ServerShape(ServerShape.Core.Amnezia, "wireguard")
     private val tcp = ServerShape(ServerShape.Core.Xray, "vless", network = "tcp", security = "reality")
-    private val trojan = ServerShape(ServerShape.Core.SingBox, "trojan", security = "tls")
+    private val trojan = ServerShape(ServerShape.Core.SingBox, "anytls", security = "tls")
 
     private val global = Masking(
         wireguard = MaskingPresets.wireGuardJunkOnly.masking.wireguard,
@@ -101,9 +101,50 @@ class MaskingMergeTest {
     }
 
     @Test
+    fun `trojan and vmess are xray servers since 2026-11-16`() {
+        fun shape(json: String) = MaskingApplier.shapeOf(Json.parseToJsonElement(json) as JsonObject)!!
+
+        val trojan = shape("""{"type":"trojan","uri":"trojan://pw@h:443?type=ws&path=%2Fw"}""")
+        assertEquals(ServerShape.Core.Xray, trojan.core)
+        assertEquals("trojan", trojan.protocol)
+        assertEquals("ws", trojan.network)
+        // A Trojan link without `security` is TLS.
+        assertEquals("tls", trojan.security)
+
+        val payload = java.util.Base64.getEncoder()
+            .encodeToString("""{"add":"h","port":"443","id":"i","net":"xhttp","tls":"tls"}""".toByteArray())
+        val vmess = shape("""{"type":"vmess","uri":"vmess://$payload#name"}""")
+        assertEquals(ServerShape.Core.Xray, vmess.core)
+        assertEquals("xhttp", vmess.network)
+        assertEquals("tls", vmess.security)
+
+        // A profile saved before the move has no link: the stored sing-box fields give the same answer.
+        val legacy = shape("""{"type":"trojan","tls":{"enabled":true},"transport":{"type":"grpc"}}""")
+        assertEquals(ServerShape.Core.Xray, legacy.core)
+        assertEquals("grpc", legacy.network)
+        assertEquals("tls", legacy.security)
+        // sing-box fragment no longer fits them; the Xray finalmask fragment does.
+        assertFalse(io.github.zapretkvn.masking.singbox.SingboxFragmentRules.applies(trojan))
+    }
+
+    @Test
+    fun `an old sing-box fragment override on a trojan server is ignored and the profile stays intact`() {
+        val trojanJson = Json.parseToJsonElement(
+            """{"type":"trojan","tag":"t","uri":"trojan://pw@h:443","tls":{"enabled":true,"server_name":"h"}}""",
+        ) as JsonObject
+        val settings = MaskingSettings(
+            enabled = true,
+            global = Masking(singbox = SingboxFragment(recordFragment = true)),
+        )
+        val masked = MaskingApplier.apply(JsonArray(listOf(trojanJson)), settings) { it }.entries.single() as JsonObject
+        assertNull((masked["tls"] as JsonObject)["record_fragment"])
+        assertNull((masked["tls"] as JsonObject)["fragment"])
+    }
+
+    @Test
     fun `applier sets sing-box tls fragment but not on reality`() {
         val settings = MaskingSettings(enabled = true, global = Masking(singbox = SingboxFragment(recordFragment = true, fallbackDelayMs = 500)))
-        val trojanJson = Json.parseToJsonElement("""{"type":"trojan","tag":"t","tls":{"enabled":true,"server_name":"x"}}""") as JsonObject
+        val trojanJson = Json.parseToJsonElement("""{"type":"anytls","tag":"t","tls":{"enabled":true,"server_name":"x"}}""") as JsonObject
         val tls = ((MaskingApplier.apply(JsonArray(listOf(trojanJson)), settings) { it }.entries.single() as JsonObject)["tls"] as JsonObject)
         assertEquals("true", tls["fragment"].toString())
         assertEquals("true", tls["record_fragment"].toString())
