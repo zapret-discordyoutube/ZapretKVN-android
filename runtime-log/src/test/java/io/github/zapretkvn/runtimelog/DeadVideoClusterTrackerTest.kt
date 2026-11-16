@@ -274,4 +274,16 @@ class DeadVideoClusterTrackerTest {
         val verdict = SlowVideoDetector.Verdict.Idle.copy(deadClusters = listOf("sn-8ph2xajvh"))
         assertTrue(verdict.deadCluster)
     }
+
+    @Test
+    fun `an excuse in the same snapshot is not called a player pause`() {
+        // Field 2026-11-16: three excuses 0-2 ms after the healthy flow (flows closed together by a switch).
+        listOf(0L, 2L, 999L).forEach {
+            assertEquals("закрыт вместе со здоровым потоком того же кластера, кластер отдаёт видео",
+                DeadVideoClusterTracker.excuseReason(it))
+        }
+        listOf(1_000L, 11_000L, 89_000L).forEach {
+            assertEquals("пауза плеера с полным буфером, не мёртвый кластер", DeadVideoClusterTracker.excuseReason(it))
+        }
+    }
 }

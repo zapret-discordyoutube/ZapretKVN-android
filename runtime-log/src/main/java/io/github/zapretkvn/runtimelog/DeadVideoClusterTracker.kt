@@ -50,7 +50,7 @@ class DeadVideoClusterTracker(
         /** Здоровый поток кластера снял приговор; мёртвым он считался [deadForMillis]. */
         data class Recovered(override val cluster: String, val deadForMillis: Long) : Event
 
-        /** Тихий поток кластера пришёл через [sinceHealthyMillis] после здорового и не засчитан (пауза плеера). */
+        /** A quiet flow of the cluster came [sinceHealthyMillis] after a healthy one and was not counted ([excuseReason]). */
         data class Excused(override val cluster: String, val sinceHealthyMillis: Long, val outbound: String) : Event
     }
 
@@ -197,5 +197,20 @@ class DeadVideoClusterTracker(
          */
         fun clusterOf(domain: String): String? =
             CLUSTER.find(domain.trimEnd('.').lowercase())?.groupValues?.get(1)
+
+        /** Below this gap the quiet flow closed in the same snapshot as the healthy one: not a player pause. */
+        const val SAME_SNAPSHOT_MILLIS = 1_000L
+
+        /**
+         * Why an excused flow is not a dead cluster, for the log line. Field 2026-11-16 (Rusina, sn-ojnpo5): all three
+         * excuses came 0-2 ms after the healthy flow, i.e. the flows were closed together by a server switch or a
+         * stall reset, while the line claimed a full-buffer pause.
+         */
+        fun excuseReason(sinceHealthyMillis: Long): String =
+            if (sinceHealthyMillis < SAME_SNAPSHOT_MILLIS) {
+                "закрыт вместе со здоровым потоком того же кластера, кластер отдаёт видео"
+            } else {
+                "пауза плеера с полным буфером, не мёртвый кластер"
+            }
     }
 }

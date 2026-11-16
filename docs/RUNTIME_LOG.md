@@ -360,6 +360,10 @@ two defects of the *automation* froze it at 3:13 (the owner reports the freeze w
    A live flow is fresh evidence (it clears a verdict and renews the pause) only while it receives at least 64 KB between two
    snapshots, so an old flow stuck after a big download neither hides a dead cluster nor clears one. A cluster that really dies
    after delivering is judged when the 90 s are over (about 2 minutes in the worst case, the buffer usually covers that).
+   Field proof 2026-11-16 (0.6.24, Rusina, `sn-ojnpo5`): three excuses at 10:30:09 and 10:30:54 UTC, all 0-2 ms after the
+   healthy flow, i.e. flows closed together in one snapshot by a switch or a stall reset, not a player pause. Since 0.6.26
+   (Windows 0.8.79) a gap under 1 s (`SAME_SNAPSHOT_MILLIS`) is worded `(закрыт вместе со здоровым потоком того же
+   кластера, кластер отдаёт видео)`; the rule itself is unchanged.
    `healthyGraceMillis = 0` restores the old rule. Windows `DeadVideoClusterTracker` has the same rule (`healthy_grace_sec`).
    The tests replay the field numbers (`DeadVideoClusterTrackerTest`, Windows `tests/test_dead_video_cluster.py`).
 
