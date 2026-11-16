@@ -218,7 +218,29 @@ fun MaskingScreen(
                     )
                     NumberField("Запасная задержка, мс (пусто — как в ядре)", form.singboxDelayMs, "masking-singbox-delay") { form = form.copy(singboxDelayMs = it) }
                 }
-                Problems(result.problems, prefixes = listOf("fragment", "singbox"))
+                SwitchRow(
+                    title = "Пакеты-обманки (VLESS)",
+                    subtitle = "Без root: первый пакет к серверу уходит так, чтобы фильтр прочитал его неверно.",
+                    checked = form.desyncEnabled,
+                    onCheckedChange = { form = form.copy(desyncEnabled = it) },
+                    modifier = Modifier.testTag("masking-desync"),
+                )
+                if (form.desyncEnabled) {
+                    ChipRow(
+                        listOf("fake" to "Обманка", "disorder" to "Беспорядок", "split" to "Разрез", "oob" to "OOB"),
+                        selected = form.desyncMethod,
+                        onSelect = { form = form.copy(desyncMethod = it) },
+                        tagPrefix = "masking-desync-method",
+                    )
+                    HintText(desyncHint(form.desyncMethod))
+                    if (form.desyncMethod == "fake") {
+                        NumberField("TTL обманки (обычно 2-8)", form.desyncTtl, "masking-desync-ttl") { form = form.copy(desyncTtl = it) }
+                        TextField("Имя сайта в обманке", form.desyncSni, "masking-desync-sni") { form = form.copy(desyncSni = it) }
+                    } else {
+                        TextField("Место разреза: sni или номер байта", form.desyncSplitAt, "masking-desync-split") { form = form.copy(desyncSplitAt = it) }
+                    }
+                }
+                Problems(result.problems, prefixes = listOf("fragment", "singbox", "desync"))
             }
         }
 
@@ -421,6 +443,14 @@ private fun Problems(problems: List<Problem>, prefixes: List<String>) {
             color = toneColor(if (problem.severity == Problem.Severity.Error) Tone.Bad else Tone.Warning),
         )
     }
+}
+
+private fun desyncHint(method: String): String = when (method) {
+    "fake" -> "Перед настоящим пакетом уходит обманка с другим именем сайта и коротким TTL: фильтр её видит, " +
+        "сервер нет. Подходящий TTL зависит от сети: «Подобрать» пробует несколько."
+    "disorder" -> "Начало пакета, с частью имени сайта, теряется по пути и уходит повторно после остального."
+    "split" -> "Первый пакет уходит двумя кусками, разрез внутри имени сайта."
+    else -> "Лишний срочный байт после начала пакета. На части сетей ломает подключение: проверьте подбором."
 }
 
 private fun udp443Title(mode: String): String = when (mode) {

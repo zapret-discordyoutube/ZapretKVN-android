@@ -52,13 +52,43 @@ data class WireGuardMasking(
     }
 }
 
-/** Xray-core connection shaping for VLESS (mux.cool, XHTTP xmux, finalmask TCP fragment). */
+/** Xray-core connection shaping for VLESS (mux.cool, XHTTP xmux, finalmask TCP fragment, desync). */
 data class XrayShaping(
     val enabled: Boolean = true,
     val mux: MuxCool? = null,
     val xmux: Xmux? = null,
     val fragment: XrayFragment? = null,
+    val desync: Desync? = null,
 )
+
+/**
+ * Packet tricks on the TCP socket to the VPN server (masking-design/04), run by the protected
+ * dialer the app owns, not by Xray (Android core patch 0017, `common/kvndesync`): no root, no raw
+ * socket, no driver. VLESS only for now. Experiment, behind «Подобрать».
+ *
+ * - `fake`: a decoy ClientHello with [fakeSni] and a low [fakeTtl] that dies before the server;
+ *   the kernel then resends the real bytes.
+ * - `disorder`: the first piece (cut at [splitAt]) goes with TTL 1 and is resent after the rest.
+ * - `split`: the first write in two TCP segments, cut at [splitAt].
+ * - `oob`: one urgent byte after the first piece; breaks on paths that clear the URG flag.
+ */
+data class Desync(
+    val enabled: Boolean = true,
+    val method: String = "fake",
+    /** `sni` (one byte into the server name) or a byte offset 1..[MAX_OFFSET]. */
+    val splitAt: String = "sni",
+    val fakeTtl: Int = 3,
+    val fakeSni: String = "vk.com",
+) {
+    companion object {
+        val METHODS = listOf("fake", "disorder", "split", "oob")
+        const val MAX_OFFSET = 1400
+        const val MAX_TTL = 32
+
+        /** Above this, a decoy is likely to reach the server and break the connection. */
+        const val SAFE_TTL = 8
+    }
+}
 
 /**
  * Xray `mux` of an outbound (infra/conf/xray.go MuxConfig). The core treats

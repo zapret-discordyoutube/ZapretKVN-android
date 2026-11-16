@@ -1,5 +1,6 @@
 package io.github.zapretkvn.masking.form
 
+import io.github.zapretkvn.masking.model.Desync
 import io.github.zapretkvn.masking.model.Masking
 import io.github.zapretkvn.masking.model.MuxCool
 import io.github.zapretkvn.masking.model.Problem
@@ -38,6 +39,11 @@ data class MaskingForm(
     val fragmentPackets: String = XrayFragment().packets,
     val fragmentLength: String = XrayFragment().length.toString(),
     val fragmentDelay: String = XrayFragment().delay.toString(),
+    val desyncEnabled: Boolean = false,
+    val desyncMethod: String = Desync().method,
+    val desyncSplitAt: String = Desync().splitAt,
+    val desyncTtl: String = Desync().fakeTtl.toString(),
+    val desyncSni: String = Desync().fakeSni,
     val singboxEnabled: Boolean = false,
     val singboxFragment: Boolean = true,
     val singboxRecordFragment: Boolean = false,
@@ -128,8 +134,14 @@ data class MaskingForm(
                 XrayFragment(packets = fragmentPackets.trim().ifEmpty { "tlshello" }, length = length, delay = delay)
             }
         }
-        val xray = XrayShaping(mux = mux, xmux = xmux, fragment = fragment)
-            .takeIf { mux != null || xmux != null || fragment != null }
+        val desync = if (!desyncEnabled) null else Desync(
+            method = desyncMethod,
+            splitAt = desyncSplitAt.trim().lowercase().ifEmpty { "sni" },
+            fakeTtl = int("desync.fakeTtl", desyncTtl, "TTL обманки") ?: Desync().fakeTtl,
+            fakeSni = desyncSni.trim().lowercase(),
+        )
+        val xray = XrayShaping(mux = mux, xmux = xmux, fragment = fragment, desync = desync)
+            .takeIf { mux != null || xmux != null || fragment != null || desync != null }
 
         val singbox = if (!singboxEnabled) null else SingboxFragment(
             fragment = singboxFragment,
@@ -149,6 +161,7 @@ data class MaskingForm(
             val xmux = masking.xray?.xmux
             val fragment = masking.xray?.fragment
             val singbox = masking.singbox
+            val desync = masking.xray?.desync
             return defaults.copy(
                 wireguardEnabled = wg?.enabled == true,
                 jc = wg?.jc?.toString().orEmpty(),
@@ -169,6 +182,11 @@ data class MaskingForm(
                 fragmentPackets = fragment?.packets ?: defaults.fragmentPackets,
                 fragmentLength = fragment?.length?.toString() ?: defaults.fragmentLength,
                 fragmentDelay = fragment?.delay?.toString() ?: defaults.fragmentDelay,
+                desyncEnabled = desync?.enabled == true,
+                desyncMethod = desync?.method ?: defaults.desyncMethod,
+                desyncSplitAt = desync?.splitAt ?: defaults.desyncSplitAt,
+                desyncTtl = desync?.fakeTtl?.toString() ?: defaults.desyncTtl,
+                desyncSni = desync?.fakeSni ?: defaults.desyncSni,
                 singboxEnabled = singbox?.enabled == true,
                 singboxFragment = singbox?.fragment ?: defaults.singboxFragment,
                 singboxRecordFragment = singbox?.recordFragment ?: defaults.singboxRecordFragment,

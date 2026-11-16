@@ -14,3 +14,4 @@ b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0
 1fb3d7f1e44634c1b881485dcdb09546427ae85727e4700afc85cf127c2bae96  core-patches/0014-xray-core-v26-11-9.patch
 80d5300a08a2048f37a585095745595b2b637f8ecc50ef6ad1b386426a16c757  core-patches/0015-hysteria-2-14-api-and-xray-quic-go.patch
 fcda75afcd38f0b2caeb8bc3b6566c4749af86baed587b5a8fd9ef2970991c4e  core-patches/0016-xraycore-masking.patch
+3d878aa2e01223bd20ae7b495acac8ed4d3a4f5599e999aa12b45fa7641e79eb  core-patches/0017-kvn-desync-dialer.patch

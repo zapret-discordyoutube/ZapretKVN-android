@@ -1,5 +1,6 @@
 package io.github.zapretkvn.masking.xray
 
+import io.github.zapretkvn.masking.model.Desync
 import io.github.zapretkvn.masking.model.MuxCool
 import io.github.zapretkvn.masking.model.Problem
 import io.github.zapretkvn.masking.model.ServerShape
@@ -33,7 +34,32 @@ object XrayShapingRules {
         shaping.mux?.let { addAll(validateMux(it)) }
         shaping.xmux?.let { addAll(validateXmux(it)) }
         shaping.fragment?.let { addAll(validateFragment(it)) }
+        shaping.desync?.takeIf(Desync::enabled)?.let { addAll(validateDesync(it)) }
     }
+
+    /** The limits of core patch 0017 `kvndesync.Parse`; anything else is refused there. */
+    private fun validateDesync(desync: Desync): List<Problem> = buildList {
+        if (desync.method !in Desync.METHODS) add(Problem.error("desync.method", "Способ: fake, disorder, split или oob."))
+        val splitAt = desync.splitAt.trim().lowercase()
+        if (splitAt != "sni" && splitAt.toIntOrNull()?.takeIf { it in 1..Desync.MAX_OFFSET } == null) {
+            add(Problem.error("desync.splitAt", "Место разреза: sni или номер байта от 1 до ${Desync.MAX_OFFSET}."))
+        }
+        if (desync.method == "fake") {
+            if (desync.fakeTtl !in 1..Desync.MAX_TTL) {
+                add(Problem.error("desync.fakeTtl", "TTL обманки: от 1 до ${Desync.MAX_TTL}."))
+            } else if (desync.fakeTtl > Desync.SAFE_TTL) {
+                add(Problem.warning("desync.fakeTtl", "TTL больше ${Desync.SAFE_TTL}: обманка может дойти до сервера и сломать подключение."))
+            }
+            if (!HOSTNAME.matches(desync.fakeSni.trim().lowercase()) || desync.fakeSni.length > 253) {
+                add(Problem.error("desync.fakeSni", "Имя в обманке: домен, например vk.com."))
+            }
+        }
+        if (desync.method == "oob") {
+            add(Problem.warning("desync.method", "OOB ломает подключение там, где сеть срезает флаг URG: проверьте подбором."))
+        }
+    }
+
+    private val HOSTNAME = Regex("^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$")
 
     private fun validateMux(mux: MuxCool): List<Problem> = buildList {
         if (mux.concurrency !in 1..MAX_CONCURRENCY) {
@@ -108,6 +134,13 @@ object XrayShapingRules {
                     notes += "Фрагментация не применена: ${shape.network} идёт не по TCP."
                 }
             }
+            shaping.desync?.takeIf(Desync::enabled)?.let { desync ->
+                if (shape.isTcpStream) {
+                    put("desync", desyncJson(desync))
+                } else {
+                    notes += "Пакеты-обманки не применены: ${shape.network} идёт не по TCP."
+                }
+            }
         }
         return Emission(json.takeIf { it.isNotEmpty() }, notes)
     }
@@ -146,6 +179,16 @@ object XrayShapingRules {
             fragment.maxSplit?.let { put("maxSplit", it.toString()) }
         }
         put("tcp", JsonArray(listOf(buildJsonObject { put("type", "fragment"); put("settings", settings) })))
+    }
+
+    /** Patch 0017 field names (snake case, like the rest of the sing-box options). */
+    private fun desyncJson(desync: Desync): JsonObject = buildJsonObject {
+        put("method", desync.method)
+        put("split_at", desync.splitAt.trim().lowercase())
+        if (desync.method == "fake") {
+            put("fake_ttl", desync.fakeTtl)
+            put("fake_sni", desync.fakeSni.trim().lowercase())
+        }
     }
 
     internal fun JsonObject.stringAt(key: String): String? = (this[key] as? JsonPrimitive)?.content

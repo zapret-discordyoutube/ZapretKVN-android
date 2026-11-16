@@ -145,6 +145,16 @@ class MaskingMergeTest {
     }
 
     @Test
+    fun `codec writes the desync section Windows reads`() {
+        // Same vector as windows tests/test_masking.py CodecTests.test_android_desync_document_reads_the_same.
+        val document = """{"schema":1,"enabled":true,"global":{"xray":{"enabled":true,"desync":""" +
+            """{"enabled":true,"method":"fake","splitAt":"sni","fakeTtl":5,"fakeSni":"vk.com"}}},"overrides":{}}"""
+        val settings = MaskingSettings(enabled = true, global = MaskingPresets.desyncFake(5).masking)
+        assertEquals(document, MaskingCodec.encodeString(settings))
+        assertEquals(settings, MaskingCodec.decodeString(document))
+    }
+
+    @Test
     fun `codec reads garbage as off and never crashes`() {
         assertEquals(MaskingSettings.OFF, MaskingCodec.decodeString("not json"))
         assertEquals(MaskingSettings.OFF, MaskingCodec.decodeString(null))

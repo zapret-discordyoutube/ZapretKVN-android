@@ -157,4 +157,12 @@ class TesterTest {
         assertEquals(MaskingPresets.xmuxRotate.masking, on.global)
         assertEquals(mapOf("other" to MaskingOverride.Off, "k" to MaskingOverride.Off), on.overrides)
     }
+
+    @Test
+    fun `desync presets are tried on TCP stream VLESS only`() {
+        val tcp = CandidateTester.candidates(ServerShape(ServerShape.Core.Xray, "vless", network = "tcp", security = "tls")).map { it.id }
+        assertTrue(tcp.containsAll(listOf("desync-fake-3", "desync-fake-5", "desync-disorder")))
+        val kcp = CandidateTester.candidates(ServerShape(ServerShape.Core.Xray, "vless", network = "kcp", security = "none")).map { it.id }
+        assertTrue(kcp.none { it.startsWith("desync") })
+    }
 }

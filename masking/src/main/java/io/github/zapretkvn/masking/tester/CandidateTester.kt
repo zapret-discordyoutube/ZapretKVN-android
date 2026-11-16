@@ -72,6 +72,7 @@ object CandidateTester {
             when {
                 xray.xmux != null -> shape.isXhttp
                 xray.mux != null -> !shape.isMultiplexedTransport
+                xray.desync != null -> shape.isTcpStream
                 else -> xray.fragment != null && shape.isTcpStream
             }
         } ?: false

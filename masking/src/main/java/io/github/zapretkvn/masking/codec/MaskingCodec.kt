@@ -1,6 +1,7 @@
 package io.github.zapretkvn.masking.codec
 
 import io.github.zapretkvn.masking.merge.MaskingSettings
+import io.github.zapretkvn.masking.model.Desync
 import io.github.zapretkvn.masking.model.Masking
 import io.github.zapretkvn.masking.model.MaskingOverride
 import io.github.zapretkvn.masking.model.MuxCool
@@ -150,6 +151,18 @@ object MaskingCodec {
                 },
             )
         }
+        section.desync?.let { desync ->
+            put(
+                "desync",
+                buildJsonObject {
+                    put("enabled", desync.enabled)
+                    put("method", desync.method)
+                    put("splitAt", desync.splitAt)
+                    put("fakeTtl", desync.fakeTtl)
+                    put("fakeSni", desync.fakeSni)
+                },
+            )
+        }
     }
 
     private fun decodeXray(root: JsonObject): XrayShaping {
@@ -182,6 +195,16 @@ object MaskingCodec {
                     length = fragment.span("length") ?: fragmentDefaults.length,
                     delay = fragment.span("delay") ?: fragmentDefaults.delay,
                     maxSplit = fragment.span("maxSplit"),
+                )
+            },
+            desync = (root["desync"] as? JsonObject)?.let { desync ->
+                val defaults = Desync()
+                Desync(
+                    enabled = desync.bool("enabled") ?: true,
+                    method = desync.string("method") ?: defaults.method,
+                    splitAt = desync.string("splitAt") ?: defaults.splitAt,
+                    fakeTtl = desync.int("fakeTtl") ?: defaults.fakeTtl,
+                    fakeSni = desync.string("fakeSni") ?: defaults.fakeSni,
                 )
             },
         )

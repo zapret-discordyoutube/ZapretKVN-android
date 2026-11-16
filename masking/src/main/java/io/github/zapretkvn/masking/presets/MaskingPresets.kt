@@ -1,5 +1,6 @@
 package io.github.zapretkvn.masking.presets
 
+import io.github.zapretkvn.masking.model.Desync
 import io.github.zapretkvn.masking.model.Masking
 import io.github.zapretkvn.masking.model.MuxCool
 import io.github.zapretkvn.masking.model.SingboxFragment
@@ -119,6 +120,24 @@ object MaskingPresets {
         masking = Masking(singbox = SingboxFragment()),
     )
 
+    fun desyncFake(ttl: Int) = Preset(
+        id = "desync-fake-$ttl",
+        group = Group.Experiment,
+        title = "Обманка, TTL $ttl",
+        note = "Эксперимент. Перед настоящим первым пакетом уходит пакет-обманка с другим именем сайта и " +
+            "коротким TTL: его видит фильтр, но не сервер. TTL зависит от сети: подбор пробует несколько.",
+        masking = Masking(xray = XrayShaping(desync = Desync(method = "fake", fakeTtl = ttl))),
+    )
+
+    val desyncDisorder = Preset(
+        id = "desync-disorder",
+        group = Group.Experiment,
+        title = "Беспорядок пакетов",
+        note = "Эксперимент. Начало первого пакета, с частью имени сайта, отправляется так, что теряется по пути, " +
+            "и уходит повторно после остального: фильтр видит куски не по порядку.",
+        masking = Masking(xray = XrayShaping(desync = Desync(method = "disorder"))),
+    )
+
     val all: List<Preset>
         get() = listOf(
             wireGuardDns(),
@@ -129,6 +148,9 @@ object MaskingPresets {
             xmuxRotate,
             xmuxFew,
             xrayFragment,
+            desyncFake(3),
+            desyncFake(5),
+            desyncDisorder,
             singboxFragment,
         )
 }

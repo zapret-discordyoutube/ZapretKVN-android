@@ -1,5 +1,6 @@
 package io.github.zapretkvn.masking
 
+import io.github.zapretkvn.masking.model.Desync
 import io.github.zapretkvn.masking.model.MuxCool
 import io.github.zapretkvn.masking.model.Problem
 import io.github.zapretkvn.masking.model.ServerShape
@@ -116,5 +117,35 @@ class XrayShapingTest {
         assertNull(Span.parse("1-2-3"))
         assertEquals("8-16", Span(8, 16).toString())
         assertEquals("3", Span.of(3).toString())
+    }
+
+    @Test
+    fun `desync goes to the dialer key in patch 0017 names, only on TCP streams`() {
+        val fake = XrayShaping(desync = Desync(method = "fake", fakeTtl = 4, fakeSni = " VK.com "))
+        assertEquals(
+            json("""{"desync":{"method":"fake","split_at":"sni","fake_ttl":4,"fake_sni":"vk.com"}}"""),
+            XrayShapingRules.emit(fake, realityTcp).json,
+        )
+        assertEquals(
+            json("""{"desync":{"method":"disorder","split_at":"sni"}}"""),
+            XrayShapingRules.emit(XrayShaping(desync = Desync(method = "disorder")), xhttp).json,
+        )
+        val skipped = XrayShapingRules.emit(fake, kcp)
+        assertNull(skipped.json)
+        assertTrue(skipped.notes.single().startsWith("Пакеты-обманки не применены"))
+    }
+
+    @Test
+    fun `desync refuses what kvndesync Parse refuses and warns on a TTL that may reach the server`() {
+        fun problems(desync: Desync) = XrayShapingRules.validate(XrayShaping(desync = desync))
+        assertTrue(problems(Desync()).isEmpty())
+        assertEquals(listOf("desync.method"), problems(Desync(method = "spoof")).errors.map(Problem::field))
+        assertEquals(listOf("desync.splitAt"), problems(Desync(splitAt = "0")).errors.map(Problem::field))
+        assertEquals(listOf("desync.splitAt"), problems(Desync(splitAt = "1401")).errors.map(Problem::field))
+        assertEquals(listOf("desync.fakeTtl"), problems(Desync(fakeTtl = 33)).errors.map(Problem::field))
+        assertEquals(listOf("desync.fakeSni"), problems(Desync(fakeSni = "not a host")).errors.map(Problem::field))
+        assertTrue(problems(Desync(fakeTtl = 12)).single().severity == Problem.Severity.Warning)
+        assertTrue(problems(Desync(method = "oob")).single().message.startsWith("OOB ломает"))
+        assertTrue("TTL and SNI only matter for fake", problems(Desync(method = "split", fakeTtl = 99, fakeSni = "")).isEmpty())
     }
 }
