@@ -8,8 +8,8 @@ internal data class SlotPlan(
     val foreign: List<ForeignServer> = emptyList(),
     /** Servers a slot does not start on now because they failed lately (for the log line). */
     val skippedFailed: Int = 0,
-    /** Pinned servers a slot starts on although YouTube video starved there lately (for the log line). */
-    val pinnedOverVideoMark: Int = 0,
+    /** Pinned servers a slot does not start on because they are bad now (owner 2026-11-17; for the log line). */
+    val pinnedSkipped: Int = 0,
     /** Tag to its machine's host keys (SlotServerAssigner): fixed for the session, read again by the YouTube switch. */
     val machines: Map<String, Set<String>> = emptyMap(),
 )

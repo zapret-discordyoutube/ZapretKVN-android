@@ -460,7 +460,7 @@ internal class SessionStarter(
                     managed.tags + foreignServers.map { it.runtimeTag },
                     managed.selected,
                     selectedPackages,
-                    unusable = health.blockedFor(pins.values),
+                    unusable = health.blocked(),
                     alive = health.alive,
                     // Servers that played YouTube fast in the past go first for the YouTube slot (a fast ping says
                     // nothing about video: field case 2026-11-15, 4virtual answered in 5 ms and starved every video).
@@ -471,8 +471,8 @@ internal class SessionStarter(
                     machines = SlotMachines.of(effectiveConfig.root, foreignServers, ServerAddressMemory::addressesOf),
                 ).copy(
                     foreign = foreignServers,
-                    skippedFailed = (health.blockedFor(pins.values) - setOfNotNull(managed.selected)).size,
-                    pinnedOverVideoMark = (health.failed - health.blockedFor(pins.values)).size,
+                    skippedFailed = (health.blocked() - setOfNotNull(managed.selected)).size,
+                    pinnedSkipped = (pins.values.toSet() intersect health.blocked()).size,
                 )
             }
         } else {
@@ -487,7 +487,7 @@ internal class SessionStarter(
                     "слоты: " + slotPlan.specs.joinToString("; ") { "${it.slotId}=${it.defaultMember} из ${it.members.size}" } +
                         (if (foreignServers.isEmpty()) "" else "; серверов из других профилей: ${foreignServers.size}") +
                         (if (slotPlan.skippedFailed == 0) "" else "; обойдено серверов с недавним отказом: ${slotPlan.skippedFailed}") +
-                        (if (slotPlan.pinnedOverVideoMark == 0) "" else "; закрепление сильнее отметки «видео голодало»: ${slotPlan.pinnedOverVideoMark}") +
+                        (if (slotPlan.pinnedSkipped == 0) "" else "; закреплённый сервер плохой, выбран лучший: ${slotPlan.pinnedSkipped}") +
                         "; остальные приложения идут через основной сервер"
                 },
             )

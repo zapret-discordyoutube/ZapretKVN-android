@@ -15,10 +15,13 @@ internal data class SlotServerHealth(
     val videoOnly: Set<String> = emptySet(),
 ) {
     /**
-     * Servers a slot must not start on, given the user's [pinned] servers: a pin beats a "video starved" mark (0.6.23,
-     * owner 2026-11-15: such marks were set for stalls of the YouTube app itself), never a real failure.
+     * Servers a slot must not start on, the user's pinned ones included (owner decision 2026-11-17: "the program should
+     * choose the best server on its own, even if the user explicitly selected another one, if the server selected by
+     * the user is bad"). This replaces the 0.6.23 exception where a pin beat a "video starved" mark: since 0.6.20 a
+     * video mark is set only when video starved on that server and not on every server, so it means the server is bad.
+     * The pin stays saved: the slot goes back to the pinned server once its mark runs out.
      */
-    fun blockedFor(pinned: Collection<String>): Set<String> = failed - (videoOnly intersect pinned.toSet())
+    fun blocked(): Set<String> = failed
 
     companion object {
         val Unknown = SlotServerHealth(emptySet(), emptySet())

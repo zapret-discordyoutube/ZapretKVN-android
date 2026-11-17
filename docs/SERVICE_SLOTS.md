@@ -512,6 +512,17 @@ about 90 s after opening. Two causes, both fixed here:
 Tests: `SlotServerMarksTest` (kinds, a failure wins, file round trip, old files), `SlotServerHealthTest` (a pin beats a
 video mark only), `SlotFailoverTest` (a YouTube replacement prefers proof; YouTube proof does not steer Telegram).
 
+### A bad pinned server gives way to the best one (Android 0.6.32, owner decision 2026-11-17)
+
+Owner, asked whether to keep the YouTube pin on Rusina: "the program should choose the best server on its own, even if
+the user explicitly selected another one, if the server selected by the user is bad". This replaces the 0.6.23 rule
+"a pin beats a video starved mark": `SlotServerHealth.blocked()` now holds every marked or failed server, pinned or not,
+so a slot does not start on a pinned server that is bad now and takes the best one instead (`SlotChoice.PinUnavailable`).
+Since 0.6.20 a video mark is set only when video starved on that server and not on every server, so it does mean the
+server is bad (the field case behind 0.6.23 was the YouTube app's own stall, which 0.6.20 no longer blames on servers).
+The pin stays saved; once the mark runs out the slot starts on the pinned server again. Log at connect: «закреплённый
+сервер плохой, выбран лучший: N». Test: `ServiceSlotsTest` (a pinned server that is bad now gives way), `SlotServerHealthTest`.
+
 ### One machine is one server (Android 0.6.31, 2026-11-16)
 
 The Windows e2e on real vpnbot nodes (synthetic test person, 12 entries) showed that one provider machine comes as

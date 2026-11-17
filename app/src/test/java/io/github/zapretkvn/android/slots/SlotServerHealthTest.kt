@@ -59,9 +59,9 @@ class SlotServerHealthTest {
         assertEquals(setOf("X@abcd1234"), alive.alive)
     }
 
-    /** 0.6.23, field 2026-11-15 20:35: a "video starved" mark on Rusina kept the user's pin off it at connect. */
+    /** Owner 2026-11-17: a bad pinned server is skipped like any other (replaces the 0.6.23 "pin beats a video mark"). */
     @Test
-    fun `a pin beats a video mark but never a real failure`() {
+    fun `a pin never beats a mark, a video mark included`() {
         val video = ServerRef(profile, "B").encode()
         val failure = ServerRef(profile, "C").encode()
         val h = health(
@@ -71,8 +71,6 @@ class SlotServerHealthTest {
         )
         assertEquals(setOf("A", "B", "C"), h.failed)
         assertEquals(setOf("B"), h.videoOnly)
-        assertEquals("pinned B starts there, unpinned servers stay avoided", setOf("A", "C"), h.blockedFor(listOf("B")))
-        assertEquals("a pin on a failed server or a failure mark does not help", setOf("A", "B", "C"), h.blockedFor(listOf("A", "C", "D")))
-        assertEquals(setOf("A", "C"), h.blockedFor(listOf("A", "B", "C")))
+        assertEquals("pinned or not, every marked server is avoided", setOf("A", "B", "C"), h.blocked())
     }
 }

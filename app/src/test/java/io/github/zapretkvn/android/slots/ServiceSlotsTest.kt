@@ -249,4 +249,16 @@ class ServiceSlotsTest {
         assertEquals(machines, plan.machines)
         assertEquals("C", plan.assignments.first { it.slotId != SlotIds.DEFAULT }.serverId)
     }
+
+    /** Owner 2026-11-17: a bad pinned server is not where the slot starts; the pin stays and wins again once it is good. */
+    @Test
+    fun `a pinned server that is bad now gives way to the best one`() {
+        val pinned = SlotCatalog.withPins(mapOf(SlotIds.YOUTUBE to "B"))
+        val bad = SlotPlanner.plan(pinned, listOf("A", "B", "C", "D"), selectedTag = "A", unusable = setOf("B"))
+        val youtube = bad.assignments.first { it.slotId == SlotIds.YOUTUBE }
+        assertEquals(SlotChoice.PinUnavailable, youtube.choice)
+        assertTrue(youtube.serverId != "B")
+        val good = SlotPlanner.plan(pinned, listOf("A", "B", "C", "D"), selectedTag = "A")
+        assertEquals("B", good.assignments.first { it.slotId == SlotIds.YOUTUBE }.serverId)
+    }
 }
