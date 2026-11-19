@@ -1262,8 +1262,10 @@ object RuntimeConfigBuilder {
 
     private val PACKAGE_FIELDS = setOf("include_package", "exclude_package")
     private val ANDROID_PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
-    private val UPDATER_DOMAINS = listOf("zapret.moe")
-    private val UPDATER_DOMAIN_SUFFIXES = listOf(".zapret.moe")
+    // The app's own site and report requests: zapret.moe and the zapret-links pool domains its mirrors and report
+    // names live under (owner 2026-11-19); with the VPN up they go through it, whatever the user's routing says.
+    private val UPDATER_DOMAINS = io.github.zapretkvn.android.updates.ForgejoHosts.TRUSTED_DOMAINS
+    private val UPDATER_DOMAIN_SUFFIXES = UPDATER_DOMAINS.map { ".$it" }
     private val ROUTE_EXCLUDE_FIELDS = setOf(
         "route_exclude_address",
         "route_exclude_address_set",

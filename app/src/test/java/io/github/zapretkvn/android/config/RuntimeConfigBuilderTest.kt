@@ -385,8 +385,8 @@ class RuntimeConfigBuilderTest {
             "io.github.zapretkvn.android",
             ((updaterRule["package_name"] as JsonArray).single() as JsonPrimitive).content,
         )
-        assertEquals("[\"zapret.moe\"]", updaterRule["domain"].toString())
-        assertEquals("[\".zapret.moe\"]", updaterRule["domain_suffix"].toString())
+        assertEquals("[\"zapret.moe\",\"fuckingspeedtest.com\",\"osjcpjzipyb.click\"]", updaterRule["domain"].toString())
+        assertEquals("[\".zapret.moe\",\".fuckingspeedtest.com\",\".osjcpjzipyb.click\"]", updaterRule["domain_suffix"].toString())
         assertEquals("zapret-proxy", updaterRule.string("outbound"))
         assertTrue(
             dnsRules.any { rule ->
@@ -407,7 +407,7 @@ class RuntimeConfigBuilderTest {
             .map { it as JsonObject }
         val updaterRule = rules.first { "package_name" in it }
         assertEquals("zapret-proxy", updaterRule.string("outbound"))
-        assertEquals("[\".zapret.moe\"]", updaterRule["domain_suffix"].toString())
+        assertEquals("[\".zapret.moe\",\".fuckingspeedtest.com\",\".osjcpjzipyb.click\"]", updaterRule["domain_suffix"].toString())
 
         // Профиль без выбранного proxy: правило молча пропускается — результат тот же,
         // что и без него (ни лишнего правила, ни ошибки «нужен proxy»).

@@ -120,7 +120,10 @@ class ForgejoUpdateSourceTest {
             .latest(UpdateChannel.Stable)
 
         assertEquals(APK, candidate.apkAsset.name)
-        assertEquals("git2.zapret.moe", ForgejoHosts.BUILT_IN.first())
+        // Pool mirrors first (zapret.moe is cut by name in Russia), the old zapret.moe names after them.
+        assertEquals("vaavlvfila.fuckingspeedtest.com", ForgejoHosts.BUILT_IN.first())
+        assertEquals("git.zapret.moe", ForgejoHosts.BUILT_IN.last())
+        assertTrue(ForgejoHosts.BUILT_IN.all { ForgejoHosts.accepts(it) })
     }
 
     @Test
@@ -200,6 +203,41 @@ class ForgejoUpdateSourceTest {
             text[CHECKSUM_URL.replace("https://git.zapret.moe/", "https://git2.zapret.moe/")] = "$SHA  $APK"
         }
         ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        assertFalse(http.asked.any { it in ForgejoHosts.ENTRY_LISTS })
+    }
+
+    @Test
+    fun `mirrors under the pool domains of the entry page are learned and trusted`() {
+        // The entry page of 2026-11-19: names under fuckingspeedtest.com / osjcpjzipyb.click, plus a domain that is new to the app.
+        val learned = ForgejoHosts.learnFromEntry(
+            """{"schema": 1, "domains": ["zapret.moe", "fuckingspeedtest.com", "osjcpjzipyb.click", "newpool.top"],
+               "families": {"git": {"hosts": ["vaavlvfila.fuckingspeedtest.com", "abcdefghij.newpool.top", "evil.example",
+               "x.y.newpool.top", "fuckingspeedtest.com", "wiki3.zapret.moe", "cwdnvtsqdc.zapret.moe"]}}}""",
+        )
+        assertEquals(listOf("vaavlvfila.fuckingspeedtest.com", "abcdefghij.newpool.top", "cwdnvtsqdc.zapret.moe"), learned)
+        assertTrue(ForgejoHosts.isKnown("abcdefghij.newpool.top"))
+        assertEquals(
+            "https://abcdefghij.newpool.top/zapretkvn/ZapretKVN-android/releases/download/v1/file",
+            ForgejoHttpsClient.validatedUrl("https://abcdefghij.newpool.top/zapretkvn/ZapretKVN-android/releases/download/v1/file"),
+        )
+        assertThrows(UpdateException::class.java) { ForgejoHttpsClient.validatedUrl("https://other.newpool.top/x") }
+        // Without `domains` only the domains the app knows by itself are trusted.
+        assertEquals(
+            listOf("qqqqqqqqqq.osjcpjzipyb.click"),
+            ForgejoHosts.learnFromEntry("""{"schema": 1, "families": {"git": {"hosts": ["qqqqqqqqqq.osjcpjzipyb.click", "a.newpool.top"]}}}"""),
+        )
+    }
+
+    @Test
+    fun `when only a pool mirror answers the update comes from it`() {
+        val onPool = { url: String -> url.replace("https://git.zapret.moe/", "https://yhpwvzkvik.osjcpjzipyb.click/") }
+        val http = FakeHttp().apply {
+            text[onPool(LIST)] = onPool("[${release(prerelease = false)}]")
+            text[onPool(METADATA_URL)] = metadata(SHA)
+            text[onPool(CHECKSUM_URL)] = "$SHA  $APK"
+        }
+        val candidate = ForgejoUpdateSource(REPOSITORY, APPLICATION_ID, http, listOf("arm64-v8a")).latest(UpdateChannel.Stable)
+        assertEquals(APK, candidate.apkAsset.name)
         assertFalse(http.asked.any { it in ForgejoHosts.ENTRY_LISTS })
     }
 

@@ -458,22 +458,45 @@ class ForgejoUpdateSource(
  * том же зеркале. С 30.10.2026 людям раздаются зеркала со случайными именами (cwdnvtsqdc.zapret.moe):
  * их приложение узнаёт со входной страницы на большой платформе (Google Apps Script, gist GitHub;
  * их пишет zapret-beacon на сервере, pve-admin servers.md «Entry pages»), когда молчат все известные
- * имена. Принимается только одна метка под zapret.moe, имя с приставкой — только git: чужой хост
- * в проверку адресов ([ForgejoHttpsClient.validatedUrl]) так не попадёт. Тот же принцип, что у
- * zapret_update/mirrors.py в Windows-версии.
+ * имена. С 17.11.2026 zapret-links раздаёт зеркала и под другими доменами пула (fuckingspeedtest.com,
+ * osjcpjzipyb.click): зону zapret.moe в России режут по имени целиком. Принимается одна метка под
+ * доменом из `domains` того же документа входной страницы (или под [TRUSTED_DOMAINS]); имя с
+ * приставкой под zapret.moe — только git. Чужой хост в проверку адресов
+ * ([ForgejoHttpsClient.validatedUrl]) так не попадёт. Тот же принцип, что у zapret_update/mirrors.py
+ * в Windows-версии (решение владельца 19.11.2026).
  */
 object ForgejoHosts {
-    val BUILT_IN = listOf("git2.zapret.moe", "git3.zapret.moe", "git4.zapret.moe", "git.zapret.moe")
+    /**
+     * Неизменная затравка: зеркала пула на 19.11.2026 (zapret-links не удаляет имена, только перестаёт их
+     * раздавать), затем прежние имена под zapret.moe — они работают вне России и через VPN.
+     */
+    val BUILT_IN = listOf(
+        "vaavlvfila.fuckingspeedtest.com",
+        "yhpwvzkvik.osjcpjzipyb.click",
+        "mjzbydgnae.fuckingspeedtest.com",
+        "pzqhmjqhwp.osjcpjzipyb.click",
+        "git2.zapret.moe",
+        "git3.zapret.moe",
+        "git4.zapret.moe",
+        "git.zapret.moe",
+    )
+
+    /** Домены, которым приложение верит без входной страницы: zapret.moe и домены пула затравки. */
+    val TRUSTED_DOMAINS = listOf("zapret.moe", "fuckingspeedtest.com", "osjcpjzipyb.click")
     val ENTRY_LISTS = listOf(
         "https://script.google.com/macros/s/AKfycbzcEPk67WW6fYC0vPVm397QyDFHd4m-SrfKDBnfvG8jAD-n_HXVv8AqQnEHZ6A42oIh/exec?format=json",
         "https://gist.githubusercontent.com/fuckyourkn/ecb9b6a03f53bddcdd47023ebc12d4f9/raw/targets.json",
     )
     val ENTRY_HOSTS = setOf("script.google.com", "script.googleusercontent.com", "gist.githubusercontent.com")
-    private val NAME = Regex("[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.zapret\\.moe")
+    private val LABEL = Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+    private val DOMAIN = Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+")
     private val PREFIXED = Regex("(git|wiki)\\d*\\.zapret\\.moe")
 
     @Volatile
     private var learned: List<String> = emptyList()
+
+    @Volatile
+    private var learnedDomains: List<String> = emptyList()
 
     /** Имена в порядке, в котором их пробовать: узнанные со входной страницы, затем встроенные. */
     fun all(): List<String> = (learned + BUILT_IN).distinct()
@@ -504,30 +527,47 @@ object ForgejoHosts {
         return "https://github.com/$GITHUB_OWNER/${parts[1]}/releases/download/${parts[4]}/${parts[5]}"
     }
 
-    fun accepts(name: String): Boolean {
-        if (!NAME.matches(name)) return false
+    /** Одна метка под доменом из [domains] (по умолчанию — узнанные и [TRUSTED_DOMAINS]); с приставкой — только git. */
+    fun accepts(name: String, domains: List<String> = learnedDomains + TRUSTED_DOMAINS): Boolean {
+        if (name.length > 253) return false
+        val label = name.substringBefore('.', "")
+        val domain = name.substringAfter('.', "")
+        if (!LABEL.matches(label) || domain !in domains) return false
         val family = PREFIXED.matchEntire(name)?.groupValues?.get(1)
         return family == null || family == "git"
     }
 
-    /** Имена git со входной страницы (схема 1, families.git.hosts); запоминаются. */
+    /**
+     * Имена git со входной страницы (схема 1, families.git.hosts) под её `domains` (без них — под
+     * [TRUSTED_DOMAINS]); имена и домены запоминаются.
+     */
     fun learnFromEntry(text: String): List<String> {
+        var domains = TRUSTED_DOMAINS
         val hosts = try {
             val document = Json.parseToJsonElement(text).jsonObject
             if (document["schema"]?.jsonPrimitive?.intOrNull != 1) return emptyList()
+            (document["domains"] as? kotlinx.serialization.json.JsonArray)
+                ?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.trim()?.lowercase() }
+                ?.filter { DOMAIN.matches(it) }
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { domains = it }
             document["families"]?.jsonObject?.get("git")?.jsonObject?.get("hosts")?.jsonArray
                 ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.lowercase() }
-                ?.filter(::accepts)?.distinct().orEmpty()
+                ?.filter { accepts(it, domains) }?.distinct().orEmpty()
         } catch (error: SerializationException) {
             throw UpdateException("Входная страница вернула не JSON.", error)
         } catch (error: IllegalArgumentException) {
             throw UpdateException("Входная страница вернула неожиданный JSON.", error)
         }
-        if (hosts.isNotEmpty()) learned = hosts
+        if (hosts.isNotEmpty()) {
+            learnedDomains = domains
+            learned = hosts
+        }
         return hosts
     }
 
     internal fun forgetForTests() {
         learned = emptyList()
+        learnedDomains = emptyList()
     }
 }
