@@ -304,6 +304,13 @@ group is affected stops with code `CFG-121`. Windows mirrors the rule in `xray_o
   предупреждением, как у VLESS (Xray 26.x убрал `allowInsecure`).
 - Транспорты `http`/`h2`/`h3`/`quic` Xray удалил для всех протоколов: такой VMess/Trojan отвергается при импорте
   сообщением про `type=xhttp`. VMess с `alterId > 0` (старый протокол без AEAD) отвергается тоже.
+- Режим XHTTP (патч ядра 0019, 2026-11-19). Xray принимает только `auto`, `packet-up`, `stream-up`, `stream-one`
+  (`infra/conf/transport_method.go`), иначе весь профиль не запускается с «unsupported mode». В VMess v2rayN поле
+  `type` хранит и заголовок (по умолчанию `none`), и режим XHTTP: режимом оно становится, только если называет один
+  из четырёх, иначе режим `auto`. Режим ссылки VLESS/Trojan (`mode=`) приводится к нижнему регистру, неизвестный
+  (`mode=none`) заменяется на `auto`. Так делает v2rayN (`V2rayOutboundService`: режим передаётся, только если он
+  есть в `Global.XhttpMode`), и Windows `link_parser.py` с 2026-11-19. Проверка: `TestVMessXHTTPHeaderTypeIsNotAMode`,
+  `TestURIXHTTPModeIsNormalised` через сборщик самого Xray.
 - WebSocket и HTTPUpgrade работают только по HTTP/1.1: из `alpn` убираются `h2` и `h3`.
 - Профили, пришедшие не ссылкой (Clash YAML, полный sing-box JSON) и сохранённые без `uri`, преобразуются в
   JSON Xray из полей sing-box (`legacyTrojan`/`legacyVMess`); транспорт, которого нет в Xray, требует ссылку.

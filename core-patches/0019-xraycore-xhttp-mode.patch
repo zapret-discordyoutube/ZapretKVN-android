@@ -1,0 +1,94 @@
+diff --git a/protocol/xraycore/config.go b/protocol/xraycore/config.go
+index 5e32aecc..cbc89619 100644
+--- a/protocol/xraycore/config.go
++++ b/protocol/xraycore/config.go
+@@ -243,7 +243,7 @@ func streamFromQuery(q url.Values, hostname, label, defaultSecurity string) (obj
+ 	case "xhttp", "splithttp":
+ 		transport["host"] = q.Get("host")
+ 		transport["path"] = value("path", "/")
+-		transport["mode"] = value("mode", "auto")
++		transport["mode"] = xhttpMode(q.Get("mode"))
+ 		if q.Has("extra") {
+ 			extraBytes := []byte(q.Get("extra"))
+ 			if !json.Valid(extraBytes) {
+@@ -472,3 +472,17 @@ func legacyStream(label string, multiplex *option.OutboundMultiplexOptions, tlsO
+ 	}
+ 	return stream, nil
+ }
++
++// xhttpModes are the XHTTP modes Xray accepts (infra/conf/transport_method.go); any other value stops the whole
++// profile with "unsupported mode".
++var xhttpModes = map[string]bool{"auto": true, "packet-up": true, "stream-up": true, "stream-one": true}
++
++// xhttpMode keeps a link mode only when it names an Xray mode (any case) and otherwise uses "auto", as v2rayN
++// does (V2rayOutboundService: the mode is passed only when Global.XhttpMode contains it). Links carry "none"
++// there: the header default of the shared v2rayN field.
++func xhttpMode(raw string) string {
++	if mode := strings.ToLower(strings.TrimSpace(raw)); xhttpModes[mode] {
++		return mode
++	}
++	return "auto"
++}
+diff --git a/protocol/xraycore/config_test.go b/protocol/xraycore/config_test.go
+index 708bda8c..a61c59c2 100644
+--- a/protocol/xraycore/config_test.go
++++ b/protocol/xraycore/config_test.go
+@@ -255,3 +255,15 @@ func TestLegacyInsecureTLSAsksForTheLink(t *testing.T) {
+ 		t.Fatalf("legacy insecure TLS: %v", err)
+ 	}
+ }
++
++// A link mode Xray does not know falls back to auto, as in v2rayN, instead of stopping the profile with
++// Xray's "unsupported mode"; the case of a known mode does not matter.
++func TestURIXHTTPModeIsNormalised(t *testing.T) {
++	const base = "vless://b831381d-6324-4d53-ad4f-8cda48b30811@192.168.1.10:443?type=xhttp&security=none&path=/x&mode="
++	for raw, want := range map[string]string{"Stream-One": "stream-one", "none": "auto", "": "auto", "gun": "auto", "packet-up": "packet-up"} {
++		stream, _, _ := xrayStream(t, option.VLESSOutboundOptions{URI: base + raw})
++		if mode := stream["xhttpSettings"].(map[string]any)["mode"]; mode != want {
++			t.Fatalf("mode %q = %v, want %s", raw, mode, want)
++		}
++	}
++}
+diff --git a/protocol/xraycore/protocols.go b/protocol/xraycore/protocols.go
+index 5e1b1cea..874d04b1 100644
+--- a/protocol/xraycore/protocols.go
++++ b/protocol/xraycore/protocols.go
+@@ -160,7 +160,10 @@ func vmessFromURI(raw string) (object, error) {
+ 	// "multi" for gRPC; a gRPC service name travels in "path".
+ 	switch network {
+ 	case "xhttp", "splithttp":
+-		set("mode", text("type"))
++		// "type" is the mode only when it names one; "none" there is v2rayN's header default (Xray: auto).
++		if mode := strings.ToLower(strings.TrimSpace(text("type"))); xhttpModes[mode] {
++			q.Set("mode", mode)
++		}
+ 		switch extra := payload["extra"].(type) {
+ 		case string:
+ 			set("extra", extra)
+diff --git a/protocol/xraycore/protocols_test.go b/protocol/xraycore/protocols_test.go
+index f1c57a21..9507cebe 100644
+--- a/protocol/xraycore/protocols_test.go
++++ b/protocol/xraycore/protocols_test.go
+@@ -214,3 +214,22 @@ func TestLegacyTrojanAndVMessProfiles(t *testing.T) {
+ 		t.Fatalf("legacy multiplex must ask for the link, got %v", err)
+ 	}
+ }
++
++// v2rayN keeps the header type in "type" ("none" by default) and the XHTTP mode in the same field. Xray accepts
++// only auto, packet-up, stream-up and stream-one (infra/conf/transport_method.go), so a header value must not
++// become the mode: "unsupported mode: none" stopped the whole profile (field report 2026-11-19).
++func TestVMessXHTTPHeaderTypeIsNotAMode(t *testing.T) {
++	for _, header := range []string{"none", "", "http", "Packet-Up"} {
++		outbound := vmessDocument(t, map[string]any{
++			"add": "vpn.example.com", "port": 443, "id": vmessID, "net": "xhttp", "type": header, "path": "/v", "tls": "tls",
++		})
++		mode := outbound["streamSettings"].(map[string]any)["xhttpSettings"].(map[string]any)["mode"]
++		want := "auto"
++		if header == "Packet-Up" {
++			want = "packet-up"
++		}
++		if mode != want {
++			t.Fatalf("type %q: mode = %v, want %s", header, mode, want)
++		}
++	}
++}

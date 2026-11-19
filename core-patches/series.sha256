@@ -16,3 +16,4 @@ b0d03e7fa84574a4c042b5c5dd9211dca739ec468928d49e5bb213e9c9dfc7aa  core-patches/0
 fcda75afcd38f0b2caeb8bc3b6566c4749af86baed587b5a8fd9ef2970991c4e  core-patches/0016-xraycore-masking.patch
 3d878aa2e01223bd20ae7b495acac8ed4d3a4f5599e999aa12b45fa7641e79eb  core-patches/0017-kvn-desync-dialer.patch
 c597e35529307ed39eca510a919721cc53bcd2bb6184280e0859632554c73b63  core-patches/0018-xraycore-vmess-trojan.patch
+d9505610b88b9f1df2a26f4b0cb69bd2ebdad3390912927d30451364ff3e439d  core-patches/0019-xraycore-xhttp-mode.patch
