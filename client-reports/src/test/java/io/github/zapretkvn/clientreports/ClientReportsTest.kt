@@ -160,6 +160,21 @@ class ClientReportsTest {
     }
 
     @Test
+    fun relayKeyTravelsWithTheTargetOnly() {
+        val relayed = record().copy(via = "3f9a0c21be")
+        assertEquals("3f9a0c21be", reports(ClientReportJson.batch(installId, app, listOf(relayed), "direct")).single()["via"]!!.jsonPrimitive.content)
+        assertFalse("via" in reports(ClientReportJson.batch(installId, app, listOf(record()), "direct")).single())
+        val dir = Files.createTempDirectory("queue-via").toFile()
+        val file = File(dir, "queue.jsonl")
+        ReportQueue(file).add(relayed)
+        assertEquals("3f9a0c21be", ReportQueue(file).pending(now).single().via)
+        dir.deleteRecursively()
+        val foreign = AttemptRecord("", "", ReportOutcome.Failed, "connect", "ip_blocked", 900, now - 1_000, "", ForeignServer.of("x.example", "vless", "Сервер")!!, via = "3f9a0c21be")
+        assertFalse(ClientReportContract.isValid(foreign))
+        assertFalse(ClientReportContract.isValid(record().copy(via = "3F9A0C21BE")))
+    }
+
+    @Test
     fun connectedReportHasNoFailedStepNoTokenNoDetail() {
         val body = ClientReportJson.batch(
             installId,

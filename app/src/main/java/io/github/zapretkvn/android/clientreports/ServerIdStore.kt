@@ -17,7 +17,7 @@ import kotlinx.serialization.json.put
  * Хранится по SHA-256 адреса подписки (сам адрес с токеном во второй файл не копируется); новое
  * обновление подписки заменяет её карту целиком, ответ без заголовка карту удаляет.
  */
-internal class ServerIdStore(private val file: File) {
+internal class ServerIdStore(private val file: File, private val legacy: File? = null) {
     @Volatile
     private var byUrl: Map<String, Map<String, ServerRef>>? = null
 
@@ -59,6 +59,8 @@ internal class ServerIdStore(private val file: File) {
     @Synchronized
     private fun load(): Map<String, Map<String, ServerRef>> {
         byUrl?.let { return it }
+        // A map of an older format is not read: it is dropped once and learned again from the header.
+        legacy?.takeIf { it.exists() }?.delete()
         val parsed = runCatching {
             val root = Json.parseToJsonElement(file.readText()) as JsonObject
             root.mapValues { (_, tags) ->
@@ -66,7 +68,8 @@ internal class ServerIdStore(private val file: File) {
                     val fields = value as? JsonObject ?: return@mapNotNull null
                     val id = (fields["server_id"] as? JsonPrimitive)?.content ?: return@mapNotNull null
                     val product = (fields["product"] as? JsonPrimitive)?.content ?: return@mapNotNull null
-                    tag to ServerRef(id, product)
+                    val via = (fields["via"] as? JsonPrimitive)?.content.orEmpty()
+                    tag to ServerRef(id, product, via)
                 }.toMap()
             }
         }.getOrDefault(emptyMap())
@@ -87,6 +90,7 @@ internal class ServerIdStore(private val file: File) {
                                 buildJsonObject {
                                     put("server_id", ref.serverId)
                                     put("product", ref.product)
+                                    if (ref.via.isNotEmpty()) put("via", ref.via)
                                 },
                             )
                         }

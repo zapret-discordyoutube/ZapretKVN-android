@@ -73,7 +73,9 @@ internal class ClientReporter(
 ) {
     private val app = AppIdentity(APP_NAME, safeVersion(appVersion), PLATFORM)
     private val queue = ReportQueue(File(root, "queue.jsonl"))
-    private val tokens = NetworkTokenCache(File(root, "network-token"))
+    // «-2»: vpnbot's v2 (2026-11-19 19:37 UTC) no longer places a v1 value in any network, so one kept by an
+    // older version is left behind and a fresh one is asked (the value itself stays opaque).
+    private val tokens = NetworkTokenCache(File(root, "network-token-2"))
     private val ingest = IngestHostCache(File(root, "ingest-hosts"))
     private val random = SecureRandom().asKotlinRandom()
 
@@ -341,6 +343,7 @@ internal class ClientReporter(
             foreign = foreign,
             details = details,
             reportId = ClientReportContract.newReportId(),
+            via = ref?.via.orEmpty(),
         )
         queue.add(record)
         log(

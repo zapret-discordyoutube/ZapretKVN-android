@@ -39,6 +39,7 @@ object ClientReportContract {
     // Те же выражения, что у приёмника: отчёт, который он отклонил бы, не ставится в очередь.
     private val INSTALL_ID = Regex("^[0-9a-f]{32}$")
     private val REPORT_ID = Regex("^[0-9a-f]{32}$")
+    private val RELAY_KEY = Regex("^[0-9a-f]{10}$")
     private val SERVER_ID = Regex("^[a-z0-9_-]{1,64}$")
     private val CODE = Regex("^[a-z][a-z0-9_]{0,47}$")
     private val VERSION = Regex("^[0-9A-Za-z.+-]{1,32}$")
@@ -63,6 +64,7 @@ object ClientReportContract {
     fun isForeignHost(value: String): Boolean = isIpLiteral(value) || HOST_NAME.matches(value) && value.any(Char::isLetter)
 
     fun isInstallId(value: String): Boolean = INSTALL_ID.matches(value)
+    fun isRelayKey(value: String): Boolean = RELAY_KEY.matches(value)
 
     /** 32 lowercase hex characters from [java.security.SecureRandom]. */
     fun newReportId(): String {
@@ -85,6 +87,7 @@ object ClientReportContract {
         if (record.detail.isNotEmpty() && !CODE.matches(record.detail)) return false
         if (record.networkToken.isNotEmpty() && !isNetworkToken(record.networkToken)) return false
         if (record.reportId.isNotEmpty() && !REPORT_ID.matches(record.reportId)) return false
+        if (record.via.isNotEmpty() && (record.foreign != null || !RELAY_KEY.matches(record.via))) return false
         return when (record.outcome) {
             ReportOutcome.Failed -> record.failedStep in STEPS
             ReportOutcome.Connected, ReportOutcome.Cancelled -> record.failedStep.isEmpty()
@@ -135,7 +138,15 @@ enum class ReportOutcome(val code: String) {
 data class AppIdentity(val name: String, val version: String, val platform: String)
 
 /** Сервер каталога vpnbot, названный подпиской (заголовок `zapret-server-ids`). */
-data class ServerRef(val serverId: String, val product: String)
+data class ServerRef(
+    val serverId: String,
+    val product: String,
+    /**
+     * «… через Россию» lines (vpnbot «via live» 2026-11-19 19:37 UTC): a neutral 10-hex key of the relay node the
+     * line dials; the report carries it so vpnbot keeps such attempts out of the target's own verdict.
+     */
+    val via: String = "",
+)
 
 /**
  * Чужой сервер (не из подписок сервиса): только по кнопке «Отправить отчёт» (решение владельца
@@ -232,6 +243,8 @@ data class AttemptRecord(
      * the queue, so a re-send after a lost reply is stored once. Empty for queue lines written before it.
      */
     val reportId: String = "",
+    /** The relay key of a «… через Россию» line ([ServerRef.via]); only with [serverId], never with [foreign]. */
+    val via: String = "",
 )
 
 object ClientReportJson {
@@ -270,6 +283,7 @@ object ClientReportJson {
             if (foreign == null) {
                 put("server_id", record.serverId)
                 put("product", record.product)
+                if (record.via.isNotEmpty()) put("via", record.via)
             } else {
                 put(
                     "foreign",
@@ -330,6 +344,7 @@ object ClientReportJson {
         put("t", record.attemptedAtMillis)
         put("n", record.networkToken)
         if (record.reportId.isNotEmpty()) put("r", record.reportId)
+        if (record.via.isNotEmpty()) put("w", record.via)
         record.foreign?.let { foreign ->
             put("g", buildJsonObject { put("h", foreign.host); put("p", foreign.protocol); put("m", foreign.name) })
         }
@@ -357,6 +372,7 @@ object ClientReportJson {
             foreign = foreign,
             details = (json["x"] as? JsonObject)?.let(::parseDetails) ?: AttemptDetails(),
             reportId = text("r"),
+            via = text("w"),
         ).takeIf(ClientReportContract::isValid)
     }.getOrNull()
 

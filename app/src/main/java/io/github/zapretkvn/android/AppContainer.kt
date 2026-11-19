@@ -255,7 +255,10 @@ class AppContainer(
         appVersion = BuildConfig.VERSION_NAME,
         scope = backgroundScope,
         serverIds = io.github.zapretkvn.android.clientreports.ServerIdStore(
-            File(appContext.noBackupFilesDir, "subscriptions/server-ids.json"),
+            // "-2": maps saved by 0.6.39 between vpnbot's two relay-line shapes may list a «через Россию» line as its
+            // target; the old file is dropped and the backfill asks the header again.
+            File(appContext.noBackupFilesDir, "subscriptions/server-ids-2.json"),
+            legacy = File(appContext.noBackupFilesDir, "subscriptions/server-ids.json"),
         ),
         directConnection = { url -> nonVpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },

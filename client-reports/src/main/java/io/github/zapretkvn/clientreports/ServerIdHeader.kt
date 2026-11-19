@@ -32,15 +32,34 @@ object ServerIdHeader {
         val root = runCatching { Json.parseToJsonElement(decoded) as? JsonObject }.getOrNull() ?: return emptyMap()
         val result = LinkedHashMap<String, ServerRef>()
         root.forEach { (name, entry) ->
-            val fields = entry as? JsonObject ?: return@forEach
-            val serverId = (fields["server_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@forEach
-            val product = (fields["product"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return@forEach
-            if (name.isBlank() || !ClientReportContract.isServerId(serverId)) return@forEach
-            if (product !in ClientReportContract.PRODUCTS) return@forEach
-            result[name] = ServerRef(serverId, product)
+            if (name.isBlank()) return@forEach
+            val ref = (entry as? JsonObject)?.let(::entryRef) ?: return@forEach
+            result[name] = ref
         }
         return result
     }
+
+    /**
+     * One header entry. A server's own line is `{"server_id", "product"}`; a line through a Russian
+     * entry point is `{"relay_of", "product", "via"}` with no `server_id` (vpnbot, owner decision
+     * 19.11.2026), so a parser that does not know `via` skips it instead of counting the relay attempt
+     * against the target. Every other shape is skipped.
+     */
+    private fun entryRef(fields: JsonObject): ServerRef? {
+        val product = fields.text("product") ?: return null
+        if (product !in ClientReportContract.PRODUCTS) return null
+        if ("server_id" in fields) {
+            if ("relay_of" in fields || "via" in fields) return null
+            val serverId = fields.text("server_id") ?: return null
+            return serverId.takeIf(ClientReportContract::isServerId)?.let { ServerRef(it, product) }
+        }
+        val target = fields.text("relay_of")?.takeIf(ClientReportContract::isServerId) ?: return null
+        val via = fields.text("via")?.takeIf(ClientReportContract::isRelayKey) ?: return null
+        return ServerRef(target, product, via)
+    }
+
+    private fun JsonObject.text(key: String): String? =
+        (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     /** Распаковка zlib с потолком: значение заголовка не должно раздуться в память. */
     private fun inflate(compressed: ByteArray): ByteArray {

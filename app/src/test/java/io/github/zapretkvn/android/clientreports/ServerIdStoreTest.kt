@@ -6,6 +6,7 @@ import java.nio.file.Files
 import java.util.Base64
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -103,5 +104,48 @@ class ServerIdStoreTest {
         // A failed fetch never breaks the start of the app.
         val failing = ServerIdBackfill({ listOf(io.github.zapretkvn.android.importer.SubscriptionSource("https://x.example/s")) }, { false }, { error("offline") })
         kotlinx.coroutines.runBlocking { failing.runOnce() }
+    }
+
+    @Test
+    fun relayLineKeepsItsViaThroughTheStore() {
+        // vpnbot 2026-11-19: a «… через Россию» line is {"relay_of", "product", "via"} with no server_id, so a parser
+        // that does not know via skips it; the key must reach the report, or a relay failure would count against the
+        // target itself.
+        val store = ServerIdStore(file)
+        val url = "https://sub.example/hy2/token"
+        store.update(
+            url,
+            serviceReply = true,
+            headerValue = header(
+                """{"Velnor через Россию": {"relay_of": "hipnl", "product": "hysteria2", "via": "3f9a0c21be"},
+                   "Velnor": {"server_id": "hipnl", "product": "hysteria2"},
+                   "Broken": {"relay_of": "hipnl", "product": "hysteria2", "via": "RU-NODE-1"},
+                   "No key": {"relay_of": "hipnl", "product": "hysteria2"},
+                   "Interim": {"server_id": "hipnl", "product": "hysteria2", "via": "3f9a0c21be"},
+                   "Both ids": {"server_id": "hipnl", "relay_of": "hipnl", "product": "hysteria2"}}""",
+            ),
+        )
+        val restarted = ServerIdStore(file)
+        fun tag(name: String) = io.github.zapretkvn.android.profiles.ManagedProfileFactory.serverTag(name)
+        assertEquals(ServerRef("hipnl", "hysteria2", "3f9a0c21be"), restarted.lookup(tag("Velnor через Россию"), "hysteria2"))
+        assertEquals(ServerRef("hipnl", "hysteria2"), restarted.lookup(tag("Velnor"), "hysteria2"))
+        // A relay line that cannot be told apart from the target is never reported as the target.
+        for (name in listOf("Broken", "No key", "Interim", "Both ids")) assertNull(name, restarted.lookup(tag(name), "hysteria2"))
+    }
+
+    @Test
+    fun mapOfTheOldFormatIsDroppedAndLearnedAgain() {
+        // 0.6.39 ignored via: its map may list a «через Россию» line as the target, so it is never read.
+        val legacy = File(dir, "old-server-ids.json")
+        val url = "https://sub.example/hy2/token"
+        ServerIdStore(legacy).update(
+            url,
+            serviceReply = true,
+            headerValue = header("""{"Velnor через Россию": {"server_id": "hipnl", "product": "hysteria2"}}"""),
+        )
+        val store = ServerIdStore(file, legacy = legacy)
+        assertFalse(store.knows(url))
+        assertFalse(legacy.exists())
+        assertNull(store.lookup(io.github.zapretkvn.android.profiles.ManagedProfileFactory.serverTag("Velnor через Россию"), "hysteria2"))
     }
 }
