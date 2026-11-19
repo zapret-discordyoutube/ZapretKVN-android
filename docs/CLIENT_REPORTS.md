@@ -48,6 +48,26 @@ obtained on and attached to reports of attempts made on that network, so a repor
 through the tunnel still counts for the right network. 202 removes the batch, 400/413 drop it,
 429/5xx keep it until the next report.
 
+## Ingest names and small requests (owner 2026-11-19)
+
+`reports.zapret.moe` alone is usually cut in Russia: the whole zone `zapret.moe` is filtered by name (SNI).
+The ingest is therefore also served under random names of the zapret-links pool (service `reports`, a bridge
+in CT 204 to the same ingest; the visitor goes on in `CF-Connecting-IP`, so the ingest still sees the
+sender's network). `IngestHosts` (module `client-reports`) keeps a fixed seed (the two pool names of the
+release day, which zapret-links never removes, and `reports.zapret.moe` last) and learns more from the shared
+feed: `services.reports.hosts` of the zapret-links entry pages (script.google.com `?format=json` and the GitHub
+gist, both hard to block). A name is accepted only under `domains` of the same document. The feed is asked on
+a send, never by a timer: when the names are older than a day, or when none answered (at most once an hour);
+`client-reports/ingest-hosts` keeps them.
+
+Each send tries up to 4 names per path (directly, then through the tunnel), in a shuffled order that
+alternates domains, with names silent in the last 30 minutes at the end. One request is one batch on its own
+new connection (`Connection: close`, fixed-length body) of at most 8 KB (`IngestHosts.MAX_BODY_BYTES`): the
+TSPU freezes a TCP connection to part of the foreign networks after ~25 packets both ways (~16 KB), counted
+per connection, and a TLS handshake plus 8 KB and the answer stay near 15 packets. A long queue goes as
+several small requests. The log line names the domain and the size:
+`пакет 3, 1180 Б (direct, osjcpjzipyb.click) → HTTP 202`.
+
 ## Seeing it act
 
 The runtime log (layer `app`) has a `client-report:` line per queued report and per sent batch
