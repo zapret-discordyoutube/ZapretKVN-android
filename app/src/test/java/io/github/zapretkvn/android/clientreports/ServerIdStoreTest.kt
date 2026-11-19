@@ -18,7 +18,16 @@ class ServerIdStoreTest {
         dir.deleteRecursively()
     }
 
-    private fun header(json: String) = Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())
+    private fun header(json: String): String {
+        val deflater = java.util.zip.Deflater()
+        deflater.setInput(json.toByteArray())
+        deflater.finish()
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (!deflater.finished()) out.write(buffer, 0, deflater.deflate(buffer))
+        deflater.end()
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(out.toByteArray())
+    }
 
     @Test
     fun headerNamesBecomeServerTagsAndSurviveRestart() {
@@ -39,6 +48,10 @@ class ServerIdStoreTest {
         assertEquals(ServerRef("hiphopgen", "hysteria2"), reloaded.lookup("Hiphopgen", "hysteria2"))
         assertNull(reloaded.lookup("Hiphopgen", "vless"))
         assertNull(reloaded.lookup("Unknown", "vless"))
+        // A repeated name got the tag «name · 2»; the header names it once, all its lines are one server.
+        assertEquals(ServerRef("hiphopgen", "hysteria2"), reloaded.lookup("Hiphopgen · 2", "hysteria2"))
+        // Trojan lines of the VLESS product subscription are product vless.
+        assertEquals(ServerRef("hipnl", "vless"), reloaded.lookup("🇳🇱 Velnor (main)", "trojan"))
     }
 
     @Test

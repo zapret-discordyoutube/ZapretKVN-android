@@ -42,8 +42,13 @@ internal class ServerIdStore(private val file: File) {
     fun lookup(tag: String, outboundType: String?): ServerRef? {
         val products = ServerIdHeader.productsForOutboundType(outboundType)
         if (products.isEmpty()) return null
-        val matches = load().values.mapNotNull { it[tag] }.filter { it.product in products }.toSet()
-        return matches.singleOrNull()
+        val maps = load().values
+        val exact = maps.mapNotNull { it[tag] }.filter { it.product in products }.toSet()
+        if (exact.isNotEmpty()) return exact.singleOrNull()
+        // Повтор имени в подписке получил тег «имя · 2» (ManagedProfileFactory.stableTags); заголовок
+        // называет такое имя один раз, и все его строки ведут на один сервер (vpnbot, 19.11.2026).
+        val base = DUPLICATE_SUFFIX.find(tag)?.let { tag.substring(0, it.range.first) } ?: return null
+        return maps.mapNotNull { it[base] }.filter { it.product in products }.toSet().singleOrNull()
     }
 
     fun mappedServers(): Int = load().values.sumOf { it.size }
@@ -93,6 +98,10 @@ internal class ServerIdStore(private val file: File) {
             file.delete()
             temp.renameTo(file)
         }
+    }
+
+    private companion object {
+        val DUPLICATE_SUFFIX = Regex(" · \\d+$")
     }
 
     private fun urlHash(url: String): String =

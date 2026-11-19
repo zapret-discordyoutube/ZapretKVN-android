@@ -13,8 +13,12 @@ One report per check of one server of the service's own subscriptions (the reply
 `client_reports/contract.py` of vpnbot, schema 1:
 
 - `server_id` and `product` — the catalogue id from the `zapret-server-ids` header of the subscription
-  reply (base64url JSON `{"<link fragment>": {"server_id", "product"}}`). A server without an entry is
-  never reported, and the id is never guessed from the name.
+  reply: unpadded base64url of zlib-compressed (RFC 1950) JSON `{"<link fragment>": {"server_id",
+  "product"}}`, at most 14 336 chars (vpnbot omits the header rather than truncate it; the app inflates
+  at most 512 KB). VLESS product subscriptions name VLESS/Trojan/Shadowsocks lines as product `vless`;
+  Hysteria 2 subscriptions `hysteria2`. Relay rows «… через Россию» are not in the header (a report
+  would not be about the foreign server). A repeated name (tag «name · 2») uses the entry of its name.
+  A server without an entry is never reported, and the id is never guessed from the name.
 - `outcome` `connected` / `failed` / `cancelled`, the failed step of the vpnbot ladder
   (resolve → connect → handshake → auth → tunnel → request), a short code (`udp_no_answer`,
   `tls_failed`, `auth_rejected`, `handshake_timeout`, `no_response`, …), elapsed ms, attempt time.

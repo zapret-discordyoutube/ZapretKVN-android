@@ -26,6 +26,17 @@ class ClientReportsTest {
         token: String = "",
     ) = AttemptRecord("hiphopgen", "hysteria2", outcome, step, detail, 4_200, at, token)
 
+    private fun compressed(json: String): String {
+        val deflater = java.util.zip.Deflater()
+        deflater.setInput(json.toByteArray())
+        deflater.finish()
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (!deflater.finished()) out.write(buffer, 0, deflater.deflate(buffer))
+        deflater.end()
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(out.toByteArray())
+    }
+
     private fun reports(body: String): List<JsonObject> =
         ((Json.parseToJsonElement(body) as JsonObject)["reports"] as JsonArray).map { it as JsonObject }
 
@@ -91,12 +102,15 @@ class ClientReportsTest {
              "Bad product": {"server_id": "x1", "product": "vless_fragment"},
              "Extra": "plain"}
         """.trimIndent()
-        val value = Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())
-        val map = ServerIdHeader.parse(value)
+        val map = ServerIdHeader.parse(compressed(json))
         assertEquals(
             mapOf("🇳🇱 Velnor" to ServerRef("hipnl", "vless"), "Hiphopgen" to ServerRef("hiphopgen", "hysteria2")),
             map,
         )
+        // Uncompressed JSON is not the agreed encoding (zlib since 19.11.2026).
+        assertTrue(ServerIdHeader.parse(Base64.getUrlEncoder().withoutPadding().encodeToString(json.toByteArray())).isEmpty())
+        // A zip bomb is refused by the inflated-size ceiling.
+        assertTrue(ServerIdHeader.parse(compressed("{\"a\": \"" + "x".repeat(ServerIdHeader.MAX_INFLATED_BYTES) + "\"}")).isEmpty())
         assertTrue(ServerIdHeader.parse("not base64 !!").isEmpty())
         assertTrue(ServerIdHeader.parse(null).isEmpty())
         assertTrue(ServerIdHeader.parse("A".repeat(ServerIdHeader.MAX_VALUE_CHARS + 1)).isEmpty())
@@ -106,6 +120,7 @@ class ClientReportsTest {
     fun outboundTypeLimitsTheProduct() {
         assertEquals(setOf("vless"), ServerIdHeader.productsForOutboundType("vless"))
         assertEquals(setOf("hysteria2"), ServerIdHeader.productsForOutboundType("hysteria2"))
+        assertEquals(setOf("vless"), ServerIdHeader.productsForOutboundType("trojan"))
         assertTrue(ServerIdHeader.productsForOutboundType("selector").isEmpty())
     }
 
