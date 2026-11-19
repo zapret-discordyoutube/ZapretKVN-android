@@ -264,13 +264,19 @@ class AppContainer(
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
         networkKey = { nonVpnNetwork(appContext)?.networkHandle?.toString() },
         log = { line -> io.github.zapretkvn.android.diagnostics.RuntimeLog.app(4, line) },
-        // Проверка пути после отказа: мимо VPN; контроль и «имя на рабочем адресе» — наш фронт пула.
+        // Проверка пути после отказа: мимо VPN, редкая и минимальная; контроль — наш фронт пула.
         probe = io.github.zapretkvn.android.clientreports.BlockProbe(
             physical = { nonVpnNetwork(appContext) },
             frontHosts = { io.github.zapretkvn.clientreports.IngestHosts.SEED.filterNot { it.endsWith(".zapret.moe") } },
             random = java.security.SecureRandom().let { secure -> kotlin.random.Random(secure.nextLong()) },
         ),
         vpnNetwork = { vpnNetwork(appContext) },
+        // Туннель поднят, данных нет: тот же сервис проверки связи через туннель и напрямую; сервер не трогается.
+        noDataProbe = io.github.zapretkvn.android.clientreports.NoDataProbe(
+            physical = { nonVpnNetwork(appContext) },
+            vpn = { vpnNetwork(appContext) },
+            random = java.security.SecureRandom().let { secure -> kotlin.random.Random(secure.nextLong()) },
+        ),
         // Schema 2: то, что одинаково для всех попыток сейчас (тип сети, настройки, версии).
         context = { reportContext(appContext, uiSettingsStore.settings.first(), maskingSettingsStore.settings.first().enabled) },
     ).also { it.flush() }

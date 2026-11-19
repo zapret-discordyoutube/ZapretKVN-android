@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android.clientreports
 
+import io.github.zapretkvn.clientreports.ReportChecks
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.string
 import kotlinx.serialization.json.JsonArray
@@ -38,6 +39,11 @@ internal object ProbeTargets {
                     tlsOn || type in QUIC_TYPES -> "tls"
                     else -> "none"
                 },
+                carrier = ReportChecks.carrierOf(
+                    type,
+                    (outbound["transport"] as? JsonObject)?.string("type"),
+                    (tls?.get("alpn") as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }.orEmpty(),
+                ),
             )
         }
         val endpoint = (root["endpoints"] as? JsonArray)?.firstTagged(tag) ?: return null
@@ -45,7 +51,7 @@ internal object ProbeTargets {
         val host = peer.string("address")?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val port = (peer["port"] as? JsonPrimitive)?.intOrNull?.takeIf { it in 1..65535 } ?: return null
         val type = endpoint.string("type")?.lowercase().orEmpty()
-        return ProbeTarget(host = host, port = port, serverName = null, usesTls = false, udp = true, protocol = type, transport = "udp", security = "none")
+        return ProbeTarget(host = host, port = port, serverName = null, usesTls = false, udp = true, protocol = type, transport = "udp", security = "none", carrier = "udp")
     }
 
     private fun JsonArray.firstTagged(tag: String): JsonObject? =

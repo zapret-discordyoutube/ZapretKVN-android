@@ -10,7 +10,7 @@ on at least 2 networks (ASNs) reported the same within 24 hours.
 
 One report per check of one server of the service's own subscriptions (the reply carries
 `zapret-vpn-service`), to `POST https://reports.zapret.moe/v1/reports`, contract
-`client_reports/contract.py` of vpnbot, schema 2:
+`client_reports/contract.py` of vpnbot, schema 3 since 2026-11-19:
 
 - `server_id` and `product` — the catalogue id from the `zapret-server-ids` header of the subscription
   reply: unpadded base64url of zlib-compressed (RFC 1950) JSON `{"<link fragment>": {"server_id",
@@ -19,9 +19,15 @@ One report per check of one server of the service's own subscriptions (the reply
   Hysteria 2 subscriptions `hysteria2`. Relay rows «… через Россию» are not in the header (a report
   would not be about the foreign server). A repeated name (tag «name · 2») uses the entry of its name.
   A server without an entry is reported as `foreign` (see below), and the id is never guessed from the name.
-- `outcome` `connected` / `failed` / `cancelled`, the failed step of the vpnbot ladder
-  (resolve → connect → handshake → auth → tunnel → request), a short code (`udp_no_answer`,
-  `tls_failed`, `auth_rejected`, `handshake_timeout`, `no_response`, …), elapsed ms, attempt time.
+- `outcome` `connected` / `failed` / `cancelled`, elapsed ms, attempt time.
+- Schema 3 (vpnbot «schema 3 live» 2026-11-19 21:37 UTC; owner: analytics live in vpnbot, the apps are open
+  source): facts, never a verdict. `carrier` (`tcp`/`udp`, `ReportChecks.carrierOf`: UDP for Hysteria 2, TUIC,
+  WireGuard/AWG, mKCP and QUIC transports, XHTTP whose ALPN is only `h3`); `core_code` (the core's own code in the
+  shape `^(TARGET|LOCAL)_[A-Z0-9_]{1,48}$`, or `NETWORK_LOST`); `checks` {probe: {`r`, `ms`[, `b`][, `same`]}}:
+  every probe that ran, by its wire name, with `answered` / `timeout` / `reset` (RST or EOF after the connection
+  was up) / `refused` (RST to SYN) / `unknown` / `nxdomain` (DNS), its time and, for a flow probe, bytes. vpnbot
+  judges and answers each batch with `verdicts[i]` {`detail`, `level`, `confidence`, `text`} in batch order
+  (`ClientReportJson.parseReply`). A queue line written by an older version still goes out as schema 2.
 - app name, version and platform; a random 32-hex `install_id` made on the device (not tied to the
   account); `sent_via` `direct` or `tunnel`; the `network_token` described below.
 
@@ -74,13 +80,13 @@ fetch, `_learn_missing_server_ids`; Android: `ServerIdBackfill` at the first con
 ## Where the decision lives
 
 - Module `client-reports` (pure Kotlin, JVM tests): the contract and its JSON, the header parser,
-  `AttemptClassifier` (core failure code + traffic facts → ladder step; failures that are not about
-  the server — local errors, lost Android network, DNS mode with no core evidence — produce no report),
-  the disk queue (`ReportQueue`, at most 500 records, a week at most) and `NetworkTokenCache`.
+  `ReportChecks` (probe names and limits, carrier, core code shape), `AttemptOutcome` (the attempt as a fact),
+  the reply's verdicts, the disk queue (`ReportQueue`, at most 500 records, a week at most; one line per
+  `report_id`) and `NetworkTokenCache`. No rule and no verdict text: vpnbot judges.
 - `app/.../clientreports/ClientReporter.kt`: network and Android glue only.
 - The hook is `SessionHealthVerifier.verify`, the single DNS/HTTPS check of the selected server for
-  start, fallback and switch; the bootstrap TCP preflight result is attached to the same server
-  (`SessionStarter`) so a TCP connect timeout is told from a handshake timeout.
+  start, fallback and switch; the bootstrap TCP preflight (part of every start, `ProxyBootstrapper.reach`)
+  records the first address's result and time, sent as `tcp_preflight` when the path was not checked.
 
 ## How it is sent
 
@@ -114,44 +120,66 @@ several small requests. The log line names the domain and the size:
 
 ## Path check after a failure (owner 2026-11-19)
 
-After a failed attempt the app checks where the path to the server is closed and swaps one thing at each
-step (pure decision `client-reports/.../BlockDiagnosis.kt`, network `app/.../clientreports/BlockProbe.kt (sockets of the non-VPN network)`, the same steps and codes on both platforms):
+The owner asked three times that the check stay quiet on the wire: «always do it randomly so TSPU doesn't notice,
+and not make unnecessary requests to the servers»; «make sure there are no unnecessary checks that could trigger
+DPI»; «check as rarely as possible and only if it's really necessary». Offered a design with no probe outside the
+tunnel at all, he chose to keep these rare minimal probes («if it happens very rarely then let's keep it … it
+won't be possible to correlate any pattern from it»; no QUIC probe: «quic is often blocked in Russia»). So
+(`app/.../clientreports/BlockProbe.kt`, sockets of the non-VPN network; the same ladder as Windows):
 
-1. Control: TCP to our pool front (the ingest names, a Russian AS). No answer means the device's own network
-   is down (captive portal, no internet): no verdict at all.
-2. DNS: the system resolver against our DoH for the server name. `dns_nxdomain` (every DoH says the name does
-   not exist), `dns_no_answer`, `dns_poisoned` (no common address). Named only when nothing below is closed:
-   the app connects by the DoH address, so a poisoned system DNS alone does not stop it.
-3. TCP to IP:port, then the same IP on 443: `port_blocked` (443 answers, even with a reset), `ip_blocked`
-   (both silent), `tcp_reset` (a reset proves the address is alive), `tcp_timeout` (443 not tried).
-4. TLS: one ClientHello (`TlsProbe.clientHello`, byte-identical on both platforms, only the first answer byte is read)
-   with the real name on the server IP, then a neutral name (ya.ru, vk.com or www.gosuslugi.ru, open even
-   under white lists) on the same IP, then the real name on our front: `sni_blocked`,
-   `sni_blocked_everywhere`, `tls_blocked`. Any TLS record is an answer (a server that dislikes the name
-   sends an alert, Reality forwards it to its sample site). On the swapped probes only silence is a filter:
-   our front and many servers close the connection without an answer for a name that is not theirs
-   (seen 2026-11-19), so a reset there proves nothing.
-5. UDP servers (Hysteria 2, WireGuard/AWG): only whether the IP is alive, by TCP 443 (silence →
-   `ip_blocked`); the protocol verdict stays with the core's own code.
-6. Freeze: after a successful check, at most once per server per 10 minutes, the app reads up to 64 KB of the
-   speed-test file (`fra.download.datapacket.com`, not Russian, so "Russia directly" routing cannot take it
-   past the server) through the session. A stall between 1 000 and 24 000 bytes (the TSPU freezes a TCP
-   connection after ~25 packets, ~16 KB) turns the report into `failed` at `request` with `freeze_16k`:
-   such a server passes the small check but sites do not open.
+- No hand-made packet goes on the wire. TLS probes use Android's own TLS (`SSLSocketFactory.getDefault()`), the
+  ClientHello of ordinary apps, never one that could become this app's fingerprint; a certificate (trusted or not)
+  or an alert from the server is an answer. There is no QUIC probe.
+- No probe when the core's code already proves the server answered (`TARGET_AUTH_REJECTED`, `_CONNECTION_REFUSED`,
+  `_CONNECTION_CLOSED`, `_OBFS_REJECTED`, `_TLS_*`, `_PIN_MISMATCH`, `_DESTINATION_UNREACHABLE`), for `LOCAL_*`
+  and `NETWORK_LOST`, and never for a server that works.
+- Rarely: one check per server (its name and its IP) a day, one per install in ten minutes
+  (`ClientReporter.PATH_CHECK_PER_SERVER_MILLIS`, `PATH_CHECK_PER_INSTALL_MILLIS`); vpnbot sums every install.
+- Random gaps of 150–700 ms between probes (`BlockProbe.gap`, the one allowed `delay` of the file in
+  `scripts/verify-project.sh`); neutral names drawn from a pool on each run.
 
-The check runs only after a failure, at most once per server per 10 minutes, in the background (one pass
-takes 1–40 s). The verdict refines the report (`AttemptClassifier.classify(facts, diagnosis)`), and makes a
-report out of a failure that had no core code (Xray, no evidence) when it proves a block; a failure that is
-not about the server (`LOCAL_*`, lost network) never becomes a server failure. The screen shows one Russian
-line («Проверка пути: …», `describe`) for any server, ours or not; it contains no address.
+The ladder, each step only while it can still change the answer:
+
+1. `control_front`: TCP to our pool front. Silent → `control_neutral` (TCP and TLS to a neutral Russian name:
+   ya.ru, vk.com, www.gosuslugi.ru, ozon.ru, www.wildberries.ru) and stop: the server is never touched.
+2. The address the start itself used; without one `dns_doh` (our resolver, encrypted), and `dns_system` (the
+   server's name in plaintext) only when DoH did not answer.
+3. TCP lines: `tcp_target`; silent and the port is not 443 → `tcp_443`; answered and TLS → `tls_real`; no answer
+   → `tls_neutral`. The real name is never sent to our front.
+4. UDP lines: no probe of the server; the core's own handshake already was one.
+
+Inside the tunnel anything is invisible to DPI as a separate probe:
+
+- `flow` after a success on a TCP line, at most once per server in 6 hours: up to 64 KB of the speed-test file
+  (`fra.download.datapacket.com`, not Russian) through the VPN network; `b` is the bytes before a stall.
+- Tunnel up, no data (the HTTPS check through the server failed, `trafficFailed`): `NoDataProbe` sends HEAD to a
+  connectivity-check name (`generate_204`) by the literal address our DoH gave (`tunnel_a`, no DNS in the tunnel)
+  and by name (`tunnel_b`, DNS through the tunnel) over the VPN network, and the same two over the non-VPN network
+  (`direct_a`/`direct_b`). Only while the same session still serves the same server (`stillServing`, passed by
+  `SessionHealthVerifier`): after a failover the tunnel would test another server. No probe of the server's path
+  then: the tunnel proved it.
+
+## Completion: the failure at once, the checks after (vpnbot «completion live» 2026-11-19 22:16 UTC)
+
+A failure that will be checked goes at once as schema 3 with `complete: false` and what the core knows, so the
+panel sees it without waiting and the attempt is placed in the network it was made from. After the check the same
+report goes whole: the same `report_id`, `attempted_at` and server, `complete: true`, with the checks; vpnbot
+replaces the waiting copy. An unsent first copy gives way to its completion in the queue. A failure with no check
+goes once, without `complete`.
+
+## The notice shows vpnbot's verdict
+
+The line under the error is vpnbot's `text` for this report, as is (the app keeps no rule and no verdict text): a
+preliminary one after the first copy, the final one after the completion. While the check runs it says
+«Проверяем, где закрыт путь до сервера…»; until an answer arrives «Разбор сбоя появится, когда отчёт дойдёт до
+сервиса.» (`ClientReporter.WAITING_TEXT`).
 
 ## Every failure is sent by itself; «Отправить отчёт» (owner 2026-11-19)
 
 Every failed attempt is written and sent without asking (owner 2026-11-19, after a failure on his screen never
-reached the panel): a failure that is not about the server goes as `failed` at `connect` with `detail`
-`local_<code>` (the core's `LOCAL_*` or the app's own start code such as `CORE-…`), `local_network` or
-`local_unknown`; vpnbot keeps `local_*` out of the server verdict and ranking. Servers of the user's own go
-as `foreign` (see «What is sent»).
+reached the panel): a failure that is not about the server goes with its raw `LOCAL_*` code or `NETWORK_LOST`
+(the app's own start codes such as `CORE-…` have no contract shape and are left out), which vpnbot keeps out of
+the server verdict and ranking. Servers of the user's own go as `foreign` (see «What is sent»).
 
 The button «Отправить отчёт» next to the error stays for a user who wants to send it himself: it sends the queue
 at once (the report is normally already written; it never writes a second one). The note under it says «Отчёт
@@ -160,8 +188,9 @@ at once (the report is normally already written; it never writes a second one). 
 ## Seeing it act
 
 The runtime log (layer `app`) has a `client-report:` line per queued report and per sent batch
-(`пакет N (direct) → HTTP 202`), one per path check (`проверка пути → handshake/sni_blocked (control=…
-tcp=… tls=… neutral=…)`, no addresses), per freeze measure and per button press. The files are in `noBackupFilesDir/client-reports/`
+(`пакет N (direct) → HTTP 202`), the first copy and the completion (`… failed TARGET_…, проб 4, дополнение`), one
+per path check (`проверка пути → control_front=answered/41мс tcp_target=timeout/4000мс …`, no addresses), vpnbot's
+verdict (`вердикт sni_blocked (sni, proven)`), per flow measure and per button press. The files are in `noBackupFilesDir/client-reports/`
 (`queue.jsonl`, `install-id`, `network-token`) and `subscriptions/server-ids.json`.
 
 ## Test runs send nothing (2026-11-19)

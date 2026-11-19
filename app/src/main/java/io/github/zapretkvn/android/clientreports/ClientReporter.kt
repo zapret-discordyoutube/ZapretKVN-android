@@ -1,24 +1,25 @@
 package io.github.zapretkvn.android.clientreports
 
 import io.github.zapretkvn.clientreports.AppIdentity
-import io.github.zapretkvn.clientreports.AttemptClassifier
 import io.github.zapretkvn.clientreports.AttemptFacts
+import io.github.zapretkvn.clientreports.AttemptOutcome
 import io.github.zapretkvn.clientreports.AttemptDetails
 import io.github.zapretkvn.clientreports.AttemptRecord
 import io.github.zapretkvn.clientreports.ForeignServer
-import io.github.zapretkvn.clientreports.BlockDiagnosis
-import io.github.zapretkvn.clientreports.Diagnosis
-import io.github.zapretkvn.clientreports.DiagnosisFacts
 import io.github.zapretkvn.clientreports.ClientReportContract
 import io.github.zapretkvn.clientreports.ClientReportJson
 import io.github.zapretkvn.clientreports.IngestHostCache
 import io.github.zapretkvn.clientreports.IngestHosts
 import io.github.zapretkvn.clientreports.NetworkToken
 import io.github.zapretkvn.clientreports.NetworkTokenCache
+import io.github.zapretkvn.clientreports.ReportCheck
+import io.github.zapretkvn.clientreports.ReportChecks
+import io.github.zapretkvn.clientreports.ReportOutcome
 import io.github.zapretkvn.clientreports.ReportQueue
 import io.github.zapretkvn.clientreports.ReportSendPolicy
 import io.github.zapretkvn.clientreports.SendAction
 import io.github.zapretkvn.clientreports.ServerRef
+import io.github.zapretkvn.clientreports.ServerVerdict
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -47,9 +48,11 @@ import kotlinx.serialization.json.JsonPrimitive
  * новая попытка и подключение. Каждый запрос — своё новое соединение с телом не больше 8 КБ, имена
  * приёмника и их домены чередуются (решение владельца 19.11.2026).
  *
- * После отказа [BlockProbe] проверяет путь до сервера по ступеням ([BlockDiagnosis]): вывод идёт и в
- * отчёт, и на экран ошибки ([failureReport]); кнопка «Отправить отчёт» — [forceReport]. После удачи
- * один раз в [BlockDiagnosis.MIN_INTERVAL_MILLIS] на сервер меряется заморозка через туннель.
+ * Schema 3 (vpnbot «schema 3 live» / «completion live» 19.11.2026): приложение шлёт факты, vpnbot судит и отвечает
+ * вердиктом на каждый отчёт; его текст — на экране ошибки ([failureReport]). Отказ уходит сразу; если путь
+ * проверяется ([BlockProbe], редко: [PATH_CHECK_PER_SERVER_MILLIS], [PATH_CHECK_PER_INSTALL_MILLIS]), тот же отчёт
+ * приходит целиком после проверки. Кнопка «Отправить отчёт» — [forceReport]. После удачи раз в
+ * [FLOW_CHECK_PER_SERVER_MILLIS] на сервер меряется поток через туннель.
  */
 internal class ClientReporter(
     private val root: File,
@@ -65,8 +68,10 @@ internal class ClientReporter(
     private val log: (String) -> Unit,
     /** Пробы пути мимо VPN; null — без проверки (тесты). */
     private val probe: BlockProbe? = null,
-    /** Сеть поднятого туннеля для замера заморозки. */
+    /** Сеть поднятого туннеля для замера потока. */
     private val vpnNetwork: () -> Network? = { null },
+    /** Туннель поднят, данных нет: тот же сервис через туннель и напрямую; null — без неё (тесты). */
+    private val noDataProbe: NoDataProbe? = null,
     /** Подробности, общие для попыток (schema 2): тип сети, настройки, версии ОС и ядер. */
     private val context: suspend () -> AttemptDetails = { AttemptDetails() },
     private val now: () -> Long = System::currentTimeMillis,
@@ -88,16 +93,21 @@ internal class ClientReporter(
     /** Имя → когда оно не ответило; такое имя идёт последним [IngestHosts.FAILED_FOR_MILLIS]. */
     private val failedHosts = HashMap<String, Long>()
     private val flushing = Mutex()
-    private val preflight = object : LinkedHashMap<String, Boolean>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?) = size > 32
+    private val preflight = object : LinkedHashMap<String, ReportCheck>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReportCheck>?) = size > 32
     }
 
     @Volatile
     private var stoppedUntilNextAttempt = false
 
-    /** Сервер (адрес) → когда его проверяли; проба не чаще [BlockDiagnosis.MIN_INTERVAL_MILLIS]. */
+    /** Имя, адрес сервера и установка → когда проверяли (см. [probeSlot]). */
     private val probedAt = HashMap<String, Long>()
-    private val frozenCheckedAt = HashMap<String, Long>()
+    private val flowCheckedAt = HashMap<String, Long>()
+
+    /** report_id → вердикт vpnbot для экрана (последние несколько). */
+    private val verdicts = object : LinkedHashMap<String, ServerVerdict>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ServerVerdict>?) = size > 64
+    }
 
     /** Попытки, о которых отчёт уже пишет проверка сервера: отказ запуска их не дублирует. */
     private val attemptedGenerations = object : LinkedHashMap<Long, Boolean>() {
@@ -117,12 +127,15 @@ internal class ClientReporter(
     val failureReport: StateFlow<FailureReport?> = failureState.asStateFlow()
 
     /** Итог предварительного TCP-соединения к [tag] в сессии [generation] (только для его же отчёта). */
-    fun notePreflight(generation: Long, tag: String, failed: Boolean) {
-        synchronized(preflight) { preflight["$generation|$tag"] = failed }
+    fun notePreflight(generation: Long, tag: String, check: ReportCheck?) {
+        if (check == null) return
+        synchronized(preflight) { preflight["$generation|$tag"] = check }
     }
 
     fun preflightFailed(generation: Long, tag: String): Boolean =
-        synchronized(preflight) { preflight["$generation|$tag"] == true }
+        synchronized(preflight) { preflight["$generation|$tag"] }?.let { it.result != ReportChecks.ANSWERED } == true
+
+    private fun preflightOf(generation: Long, tag: String): ReportCheck? = synchronized(preflight) { preflight["$generation|$tag"] }
 
     /** Адрес сервера [host], выбранный запуском (DoH, система или кэш). */
     fun noteAddress(host: String, address: String?) {
@@ -158,19 +171,27 @@ internal class ClientReporter(
         attemptedAtMillis: Long,
         generation: Long = 0,
         target: ProbeTarget? = null,
+        /** Туннель той же попытки ещё обслуживает этот сервер: только тогда пробы «нет данных» что-то значат. */
+        stillServing: (() -> Boolean)? = null,
     ) {
         if (!facts.succeeded && !facts.cancelled) synchronized(attemptedGenerations) { attemptedGenerations[generation] = true }
         scope.launch {
             runCatching {
                 val ref = serverIds.lookup(tag, outboundType)
                 if (facts.cancelled || facts.succeeded) {
-                    // Заморозка меряется только у серверов сервиса: о чужом отчёта нет, а 64 КБ тратятся.
-                    val diagnosis = if (facts.succeeded && ref != null) checkFreeze(target) else null
+                    // Поток меряется только у серверов сервиса: о чужом удачном отчёта нет, а 64 КБ тратятся.
+                    val found = LinkedHashMap<String, ReportCheck>()
+                    if (facts.succeeded && ref != null) checkFlow(target)?.let { found["flow"] = it }
                     if (facts.succeeded) clearFailure()
-                    if (ref != null) record(ref, null, AttemptClassifier.classify(facts, diagnosis), elapsedMs, attemptedAtMillis, details(target, null))
+                    if (ref != null) {
+                        record(
+                            ref, null, AttemptOutcome.of(facts), elapsedMs, attemptedAtMillis, details(target, null),
+                            carrier = carrierOf(target, outboundType), coreCode = "", checks = found,
+                        )
+                    }
                     return@runCatching
                 }
-                onFailure(PendingFailure(generation, tag, ref, facts, elapsedMs, attemptedAtMillis, target))
+                onFailure(PendingFailure(generation, tag, ref, facts, elapsedMs, attemptedAtMillis, target, outboundType, stillServing, preflightOf(generation, tag)))
             }.onFailure { log("client-report: запись не удалась: ${it.javaClass.simpleName}") }
         }
     }
@@ -189,7 +210,7 @@ internal class ClientReporter(
                     networkLost = networkLost,
                     udpTransport = target?.udp == true,
                 )
-                onFailure(PendingFailure(generation, tag, serverIds.lookup(tag, outboundType), facts, 0, startedAt, target))
+                onFailure(PendingFailure(generation, tag, serverIds.lookup(tag, outboundType), facts, 0, startedAt, target, outboundType, null, preflightOf(generation, tag)))
             }.onFailure { log("client-report: отказ запуска не записан: ${it.javaClass.simpleName}") }
         }
     }
@@ -204,31 +225,73 @@ internal class ClientReporter(
         }
         val target = pending.target
         val probe = probe
-        if (target != null && !pending.facts.networkLost && probe != null && takeSlot(probedAt, target.host)) {
+        val coreCode = AttemptOutcome.coreCode(pending.facts)
+        // Туннель поднят, данных нет: путь до сервера доказан, говорить могут только пробы «нет данных».
+        val noData = pending.facts.trafficFailed && noDataProbe != null && target != null &&
+            pending.stillServing?.invoke() == true && probeSlot(target)
+        val path = !noData && !pending.facts.trafficFailed && target != null && probe != null &&
+            ReportChecks.needsPathCheck(coreCode) && probeSlot(target)
+        // Completion (vpnbot «completion live» 19.11.2026): часть ядра уходит сразу — панель видит отказ без ожидания,
+        // и попытка встаёт в сеть, из которой сделана; целиком тот же отчёт — после проверки.
+        pending.record = recordFailure(pending, complete = if (noData || path) false else null)
+        pending.status = statusOf(pending)
+        publish(pending)
+        if (noData) {
             pending.checking = true
             publish(pending)
-            val facts = runCatching { probe.run(target) }.getOrNull()
-            val diagnosis = facts?.let { if (target.udp) BlockDiagnosis.diagnoseUdp(it) else BlockDiagnosis.diagnose(it) }
-            pending.diagnosisFacts = facts
-            pending.diagnosis = diagnosis
-            pending.checked = true
-            pending.checking = false
-            log("client-report: проверка пути → ${diagnosis?.let { "${it.failedStep}/${it.detail}" } ?: "без вывода"} (${summary(facts)})")
+            runCatching { noDataProbe?.run() }.getOrNull()?.let { pending.checks.putAll(it) }
+        } else if (path && target != null && probe != null) {
+            pending.checking = true
+            publish(pending)
+            val known = synchronized(addresses) { addresses[target.host.lowercase()] }
+            val facts = runCatching { probe.run(target, known) }.getOrNull() ?: PathFacts()
+            pending.checks.putAll(facts.checks)
+            pending.probedAddress = facts.probedAddress
+            facts.probedAddress?.let { takeSlot(probedAt, "ip:$it", PATH_CHECK_PER_SERVER_MILLIS) }
+        } else if (!pending.facts.udpTransport && pending.preflight != null) {
+            // Предпроверка TCP уже была частью запуска (не новая проба): её факт идёт, когда путь не проверялся.
+            pending.checks["tcp_preflight"] = pending.preflight
         }
-        val ref = pending.ref
-        // Everything that can be sent goes by itself (owner 2026-11-19: «send everything we possibly can automatically,
-        // even without the button»; the button is for a user who wants to send it himself). A failure not about the
-        // server goes as local_*, which vpnbot never counts against it; a server of the user's own goes in full
-        // (address, port, protocol, name: owner's explicit choice the same day).
-        val foreign = if (ref == null) foreignOf(pending) else null
-        if (ref != null || foreign != null) {
-            pending.record = record(
-                ref, foreign, AttemptClassifier.classifyForced(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt,
-                details(pending.target, pending.diagnosisFacts),
-            )
+        if (pending.checking) {
+            pending.checking = false
+            pending.checked = true
+            log("client-report: проверка пути → ${summary(pending.checks)}")
+            // Everything that can be sent goes by itself (owner 2026-11-19: «send everything we possibly can
+            // automatically, even without the button»); a server of the user's own goes in full.
+            pending.record?.let { first -> pending.record = recordFailure(pending, complete = true, reportId = first.reportId) }
         }
         pending.status = statusOf(pending)
         publish(pending)
+    }
+
+    private suspend fun recordFailure(pending: PendingFailure, complete: Boolean? = null, reportId: String = "", flushNow: Boolean = true): AttemptRecord? {
+        val ref = pending.ref
+        val foreign = if (ref == null) foreignOf(pending) ?: return null else null
+        return record(
+            ref, foreign, ReportOutcome.Failed, pending.elapsedMs, pending.attemptedAt, details(pending.target, pending.probedAddress),
+            carrier = carrierOf(pending.target, pending.outboundType), coreCode = AttemptOutcome.coreCode(pending.facts),
+            checks = pending.checks, complete = complete, reportId = reportId, flushNow = flushNow,
+        )
+    }
+
+    private fun carrierOf(target: ProbeTarget?, outboundType: String?): String = target?.carrier ?: ReportChecks.carrierOf(outboundType)
+
+    /**
+     * Не чаще одной проверки на установку за [PATH_CHECK_PER_INSTALL_MILLIS] и на имя и адрес сервера за
+     * [PATH_CHECK_PER_SERVER_MILLIS] (строки на одном адресе, например «через Россию», делят его).
+     */
+    private fun probeSlot(target: ProbeTarget): Boolean {
+        val address = BlockProbe.literalAddress(target.host)?.hostAddress ?: synchronized(addresses) { addresses[target.host.lowercase()] }
+        val keys = buildList {
+            add("install" to PATH_CHECK_PER_INSTALL_MILLIS)
+            add("host:${target.host.lowercase()}" to PATH_CHECK_PER_SERVER_MILLIS)
+            address?.let { add("ip:$it" to PATH_CHECK_PER_SERVER_MILLIS) }
+        }
+        synchronized(probedAt) {
+            if (keys.any { (key, interval) -> probedAt[key]?.let { now() - it < interval } == true }) return false
+        }
+        keys.forEach { (key, interval) -> takeSlot(probedAt, key, interval) }
+        return true
     }
 
     /**
@@ -240,15 +303,10 @@ internal class ClientReporter(
             runCatching {
                 val pending = failure ?: return@runCatching
                 // Чужой сервер — полностью (адрес, порт, протокол, имя); обычно уже записан сам, кнопка лишь отправляет сразу.
-                val foreign = if (pending.ref == null) foreignOf(pending) ?: return@runCatching else null
+                if (pending.ref == null && foreignOf(pending) == null) return@runCatching
                 pending.status = SendStatus.Sending
                 publish(pending)
-                if (pending.record == null) {
-                    pending.record = record(
-                        pending.ref, foreign, AttemptClassifier.classifyForced(pending.facts, pending.diagnosis),
-                        pending.elapsedMs, pending.attemptedAt, details(pending.target, pending.diagnosisFacts), flushNow = false,
-                    )
-                }
+                if (pending.record == null) pending.record = recordFailure(pending, flushNow = false)
                 stoppedUntilNextAttempt = false
                 flushLocked(wait = true)
                 pending.status = statusOf(pending)
@@ -264,13 +322,13 @@ internal class ClientReporter(
     }
 
     /** Подробности отчёта: общие из [context] и про этот сервер (адрес, порт, транспорт, защита). */
-    private suspend fun details(target: ProbeTarget?, facts: DiagnosisFacts?): AttemptDetails {
+    private suspend fun details(target: ProbeTarget?, probedAddress: String?): AttemptDetails {
         val base = runCatching { context() }.getOrDefault(AttemptDetails())
         if (target == null) return base.cleaned()
         val literal = BlockProbe.literalAddress(target.host)?.hostAddress
         val noted = synchronized(addresses) { addresses[target.host.lowercase()] }
         return base.copy(
-            serverIp = literal ?: noted ?: facts?.probedAddress,
+            serverIp = literal ?: noted ?: probedAddress,
             port = target.port,
             transport = target.transport,
             security = target.security,
@@ -284,11 +342,12 @@ internal class ClientReporter(
 
     private fun publish(pending: PendingFailure) {
         if (failure !== pending) return
+        val verdict = pending.record?.let { record -> synchronized(verdicts) { verdicts[record.reportId] } }
         failureState.value = FailureReport(
             generation = pending.generation,
             checking = pending.checking,
-            diagnosisText = if (pending.checked) BlockDiagnosis.describe(pending.diagnosis, pending.diagnosisFacts) else null,
-            detail = pending.diagnosis?.detail,
+            diagnosisText = verdict?.text ?: if (pending.record != null && !pending.checking) WAITING_TEXT else null,
+            detail = verdict?.detail,
             status = pending.status,
         )
     }
@@ -304,63 +363,70 @@ internal class ClientReporter(
         }
     }
 
-    /** Заморозка после удачи: не чаще раза в [BlockDiagnosis.MIN_INTERVAL_MILLIS] на сервер, только TCP. */
-    private suspend fun checkFreeze(target: ProbeTarget?): Diagnosis? {
+    /** `flow` после удачи: не чаще раза в [FLOW_CHECK_PER_SERVER_MILLIS] на сервер, только TCP-строки. */
+    private suspend fun checkFlow(target: ProbeTarget?): ReportCheck? {
         val probe = probe
-        if (target == null || target.udp || probe == null || !takeSlot(frozenCheckedAt, target.host)) return null
-        val stalled = runCatching { probe.freeze(vpnNetwork()) }.getOrNull()
-        val diagnosis = BlockDiagnosis.freeze(stalled)
-        log("client-report: замер заморозки → ${stalled?.let { "остановка после $it Б" } ?: "без остановки"}${if (diagnosis != null) ", freeze_16k" else ""}")
-        return diagnosis
+        if (target == null || target.carrier != "tcp" || probe == null || !takeSlot(flowCheckedAt, target.host, FLOW_CHECK_PER_SERVER_MILLIS)) return null
+        val flow = runCatching { probe.flow(vpnNetwork()) }.getOrNull()
+        log("client-report: замер потока → ${flow?.let { "${it.result}, ${it.bytes} Б, ${it.millis} мс" } ?: "не запускался"}")
+        return flow
     }
 
-    private fun takeSlot(map: HashMap<String, Long>, key: String): Boolean = synchronized(map) {
+    private fun takeSlot(map: HashMap<String, Long>, key: String, intervalMillis: Long): Boolean = synchronized(map) {
         val last = map[key]
-        if (last != null && now() - last < BlockDiagnosis.MIN_INTERVAL_MILLIS) return false
+        if (last != null && now() - last < intervalMillis) return false
+        if (map.size > 64) map.entries.removeAll { now() - it.value >= PATH_CHECK_PER_SERVER_MILLIS }
         map[key] = now()
-        if (map.size > 64) map.entries.removeAll { now() - it.value >= BlockDiagnosis.MIN_INTERVAL_MILLIS }
         true
     }
 
-    /** Ступени проверки одной строкой для журнала (без адресов). */
-    private fun summary(facts: DiagnosisFacts?): String = facts?.let {
-        "control=${it.control} tcp=${it.tcpTarget} tcp443=${it.tcpOtherPort} tls=${it.tlsRealName} " +
-            "neutral=${it.tlsNeutralName} elsewhere=${it.tlsRealNameElsewhere} dns=${it.systemDns?.size}/${it.dohDns?.size}" +
-            if (it.dohNameMissing) " nxdomain" else ""
-    } ?: "проба не удалась"
+    /** Пробы одной строкой для журнала: имена, итоги и время, без адресов. */
+    private fun summary(checks: Map<String, ReportCheck>): String =
+        ReportChecks.ordered(checks).entries.joinToString(" ") { (probe, check) ->
+            "$probe=${check.result}/${check.millis}мс" + (check.bytes?.let { "/${it}Б" } ?: "")
+        }.ifEmpty { "проб нет" }
 
     private suspend fun record(
         ref: ServerRef?,
         foreign: ForeignServer?,
-        verdict: io.github.zapretkvn.clientreports.AttemptVerdict?,
+        outcome: ReportOutcome,
         elapsedMs: Long,
         attemptedAtMillis: Long,
         details: AttemptDetails,
+        carrier: String,
+        coreCode: String,
+        checks: Map<String, ReportCheck>,
+        complete: Boolean? = null,
+        reportId: String = "",
         flushNow: Boolean = true,
     ): AttemptRecord? {
-        verdict ?: return null
         if (ref == null && foreign == null || !enabled) return null
         val key = networkKey()
         if (tokens.needsRefresh(key, now())) refreshToken(key)
         val record = AttemptRecord(
             serverId = ref?.serverId.orEmpty(),
             product = ref?.product.orEmpty(),
-            outcome = verdict.outcome,
-            failedStep = verdict.failedStep,
-            detail = verdict.detail,
+            outcome = outcome,
+            failedStep = "",
+            detail = "",
             elapsedMs = elapsedMs.coerceIn(0, ClientReportContract.MAX_ELAPSED_MS),
             attemptedAtMillis = attemptedAtMillis,
             networkToken = tokens.current(key, now()),
             foreign = foreign,
             details = details,
-            reportId = ClientReportContract.newReportId(),
+            reportId = reportId.ifEmpty { ClientReportContract.newReportId() },
             via = ref?.via.orEmpty(),
+            carrier = carrier.takeIf { it in ReportChecks.CARRIERS } ?: "tcp",
+            coreCode = ReportChecks.coreCodeOf(coreCode),
+            checks = ReportChecks.ordered(checks),
+            complete = complete,
         )
         queue.add(record)
+        val part = when (complete) { false -> ", первая копия"; true -> ", дополнение"; null -> "" }
         log(
-            "client-report: ${ref?.let { "${it.product}/${it.serverId}" } ?: "чужой ${foreign?.protocol}"} ${verdict.outcome.code}" +
-                (if (verdict.failedStep.isNotEmpty()) " на шаге ${verdict.failedStep} (${verdict.detail})" else "") +
-                ", в очереди ${queue.size()}",
+            "client-report: ${ref?.let { "${it.product}/${it.serverId}" } ?: "чужой ${foreign?.protocol}"} ${outcome.code}" +
+                (if (record.coreCode.isNotEmpty()) " ${record.coreCode}" else "") +
+                ", проб ${record.checks.size}$part, в очереди ${queue.size()}",
         )
         if (flushNow) {
             stoppedUntilNextAttempt = false
@@ -417,7 +483,7 @@ internal class ClientReporter(
         for ((via, open) in listOf(ClientReportContract.SENT_DIRECT to directConnection, ClientReportContract.SENT_TUNNEL to tunnelConnection)) {
             val body = ClientReportJson.batch(installId, app, batch, via).toByteArray(Charsets.UTF_8)
             for (host in hostOrder().take(IngestHosts.TRIES_PER_PATH)) {
-                val status = post(open, host, body) ?: run {
+                val (status, reply) = post(open, host, body) ?: run {
                     noteFailed(host)
                     null
                 } ?: continue
@@ -427,10 +493,25 @@ internal class ClientReporter(
                     continue
                 }
                 log("client-report: пакет ${batch.size}, ${body.size} Б ($via, ${IngestHosts.domainOf(host)}) → HTTP $status")
+                if (action == SendAction.Remove) noteVerdicts(batch, ClientReportJson.parseReply(reply, batch.size))
                 return action
             }
         }
         return null
+    }
+
+    /** Вердикты vpnbot по report_id; вердикт отказа на экране — сразу. */
+    private fun noteVerdicts(batch: List<AttemptRecord>, found: List<ServerVerdict?>) {
+        synchronized(verdicts) {
+            batch.zip(found).forEach { (record, verdict) ->
+                if (verdict != null && record.reportId.isNotEmpty()) verdicts[record.reportId] = verdict
+            }
+        }
+        val pending = failure ?: return
+        val verdict = pending.record?.let { record -> synchronized(verdicts) { verdicts[record.reportId] } } ?: return
+        log("client-report: вердикт ${verdict.detail} (${verdict.level}, ${verdict.confidence})")
+        pending.status = statusOf(pending)
+        publish(pending)
     }
 
     private fun hostOrder(): List<String> {
@@ -446,8 +527,8 @@ internal class ClientReporter(
         synchronized(failedHosts) { failedHosts[host] = now() }
     }
 
-    /** Одно короткое соединение на запрос: без повторного использования, тело фиксированной длины. */
-    private fun post(open: (URL) -> HttpURLConnection?, host: String, body: ByteArray): Int? = runCatching {
+    /** Одно короткое соединение на запрос: без повторного использования, тело фиксированной длины. Код и ответ (вердикты). */
+    private fun post(open: (URL) -> HttpURLConnection?, host: String, body: ByteArray): Pair<Int, String?>? = runCatching {
         val connection = open(URL("https://$host/v1/reports")) ?: return null
         try {
             connection.requestMethod = "POST"
@@ -459,7 +540,13 @@ internal class ClientReporter(
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Connection", "close")
             connection.outputStream.use { it.write(body) }
-            connection.responseCode
+            val status = connection.responseCode
+            val reply = if (status == 202 || status == 200) {
+                runCatching { connection.inputStream.use { it.readNBytesCompat(MAX_REPLY_BYTES).toString(Charsets.UTF_8) } }.getOrNull()
+            } else {
+                null
+            }
+            status to reply
         } finally {
             connection.disconnect()
         }
@@ -545,6 +632,23 @@ internal class ClientReporter(
         const val PLATFORM = "android"
         private const val TIMEOUT_MILLIS = 15_000
         private const val MAX_ANSWER_BYTES = 4096
+
+        /** 50 вердиктов с текстами. */
+        private const val MAX_REPLY_BYTES = 64 * 1024
+
+        /**
+         * Проверка пути редкая (владелец 19.11.2026: «check as rarely as possible and only if it's really necessary»):
+         * раз в сутки на сервер (имя и адрес), раз в 10 минут на установку — перебор серверов проверяет не больше
+         * одного. vpnbot складывает отчёты всех установок, поэтому редкая проверка теряет мало.
+         */
+        const val PATH_CHECK_PER_SERVER_MILLIS = 24L * 60 * 60 * 1000
+        const val PATH_CHECK_PER_INSTALL_MILLIS = 10L * 60 * 1000
+
+        /** Поток меряется внутри туннеля (на проводе ничего нового), но не на каждом подключении. */
+        const val FLOW_CHECK_PER_SERVER_MILLIS = 6L * 60 * 60 * 1000
+
+        /** Строка экрана, пока ответа vpnbot нет (своих правил и текстов вердиктов у приложения нет). */
+        const val WAITING_TEXT = "Разбор сбоя появится, когда отчёт дойдёт до сервиса."
     }
 }
 
@@ -555,8 +659,9 @@ data class FailureReport(
     val generation: Long,
     /** Идёт проверка пути. */
     val checking: Boolean,
-    /** Что нашла проверка; null — не проверяли (недавно проверен или проверка ещё идёт). */
+    /** Текст вердикта vpnbot для этого отчёта (как есть) или [ClientReporter.WAITING_TEXT]; null — показывать нечего. */
     val diagnosisText: String?,
+    /** Код этого вердикта vpnbot. */
     val detail: String?,
     val status: SendStatus,
 )
@@ -570,11 +675,16 @@ private class PendingFailure(
     val elapsedMs: Long,
     val attemptedAt: Long,
     val target: ProbeTarget?,
+    val outboundType: String? = null,
+    /** Туннель той же попытки ещё обслуживает этот сервер (для проб «нет данных»). */
+    val stillServing: (() -> Boolean)? = null,
+    /** Предпроверка TCP запуска (уже сделанная, не новая проба). */
+    val preflight: ReportCheck? = null,
 ) {
     @Volatile var checking = false
     @Volatile var checked = false
-    @Volatile var diagnosis: Diagnosis? = null
-    @Volatile var diagnosisFacts: DiagnosisFacts? = null
+    val checks: MutableMap<String, ReportCheck> = java.util.concurrent.ConcurrentHashMap()
+    @Volatile var probedAddress: String? = null
     @Volatile var record: AttemptRecord? = null
     @Volatile var status: SendStatus = if (ref == null && target == null) SendStatus.NotOurs else SendStatus.Available
 }

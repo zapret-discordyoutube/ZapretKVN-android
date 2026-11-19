@@ -241,34 +241,88 @@ class ClientReportsTest {
     }
 
     @Test
-    fun classifierMapsCoreCodesOntoTheLadder() {
-        fun step(facts: AttemptFacts) = AttemptClassifier.classify(facts)?.let { it.failedStep to it.detail }
-        assertEquals("auth" to "auth_rejected", step(AttemptFacts(coreCode = "TARGET_AUTH_REJECTED")))
-        assertEquals("handshake" to "tls_failed", step(AttemptFacts(coreCode = "TARGET_PIN_MISMATCH")))
-        assertEquals("connect" to "connection_refused", step(AttemptFacts(coreCode = "TARGET_CONNECTION_REFUSED")))
-        assertEquals(
-            "handshake" to "udp_no_answer",
-            step(AttemptFacts(coreCode = "TARGET_NETWORK_TIMEOUT", udpTransport = true, tcpPreflightFailed = true)),
-        )
-        assertEquals(
-            "connect" to "tcp_timeout",
-            step(AttemptFacts(coreCode = "TARGET_NETWORK_TIMEOUT", tcpPreflightFailed = true)),
-        )
-        // The owner's case 18–19.11: TCP connects, the TLS handshake gets no answer.
-        assertEquals("handshake" to "handshake_timeout", step(AttemptFacts(coreCode = "TARGET_NETWORK_TIMEOUT")))
-        assertEquals("handshake" to "connection_closed", step(AttemptFacts(coreCode = "TARGET_CONNECTION_CLOSED")))
-        assertEquals("request" to "no_response", step(AttemptFacts(trafficFailed = true)))
-        assertEquals("connect" to "tcp_timeout", step(AttemptFacts(trafficFailed = true, tcpPreflightFailed = true)))
+    fun theAttemptIsAFactNotAVerdict() {
+        // Schema 3: no app verdict; a lost network is a code the server knows, others only in the contract's shape.
+        assertEquals(ReportOutcome.Failed, AttemptOutcome.of(AttemptFacts(coreCode = "TARGET_AUTH_REJECTED")))
+        assertEquals(ReportOutcome.Cancelled, AttemptOutcome.of(AttemptFacts(cancelled = true)))
+        assertEquals(ReportOutcome.Connected, AttemptOutcome.of(AttemptFacts(succeeded = true)))
+        assertEquals("NETWORK_LOST", AttemptOutcome.coreCode(AttemptFacts(networkLost = true, coreCode = "TARGET_X")))
+        assertEquals("LOCAL_BIND_COLLISION", AttemptOutcome.coreCode(AttemptFacts(coreCode = "LOCAL_BIND_COLLISION")))
+        assertEquals("", AttemptOutcome.coreCode(AttemptFacts(coreCode = "CORE_UNCLASSIFIED")))
     }
 
     @Test
-    fun failuresThatAreNotAboutTheServerAreNotReported() {
-        assertNull(AttemptClassifier.classify(AttemptFacts(coreCode = "LOCAL_BIND_COLLISION", trafficFailed = true)))
-        assertNull(AttemptClassifier.classify(AttemptFacts(networkLost = true, trafficFailed = true)))
-        // DNS through the tunnel failed with no core evidence: may be the DNS mode, not the server.
-        assertNull(AttemptClassifier.classify(AttemptFacts()))
-        assertEquals(ReportOutcome.Connected, AttemptClassifier.classify(AttemptFacts(succeeded = true))?.outcome)
-        assertEquals(ReportOutcome.Cancelled, AttemptClassifier.classify(AttemptFacts(cancelled = true))?.outcome)
+    fun schema3ReportCarriesFactsAndNoAppVerdict() {
+        val checks = mapOf("tcp_target" to ReportCheck("refused", 12), "control_front" to ReportCheck("answered", 41))
+        val record3 = AttemptRecord(
+            "hiphopgen", "hysteria2", ReportOutcome.Failed, "", "", 4200, now - 1000, "",
+            reportId = "ab".repeat(16), carrier = "udp", coreCode = "TARGET_NETWORK_TIMEOUT", checks = checks,
+        )
+        val report = reports(ClientReportJson.batch(installId, app, listOf(record3), "direct")).single()
+        assertEquals("3", report["schema"]!!.jsonPrimitive.content)
+        assertFalse("failed_step" in report)
+        assertFalse("detail" in report)
+        assertEquals("udp", report["carrier"]!!.jsonPrimitive.content)
+        assertEquals("TARGET_NETWORK_TIMEOUT", report["core_code"]!!.jsonPrimitive.content)
+        val sent = report["checks"] as JsonObject
+        assertEquals(listOf("control_front", "tcp_target"), sent.keys.toList())
+        assertEquals("refused", (sent["tcp_target"] as JsonObject)["r"]!!.jsonPrimitive.content)
+        // A schema 2 line still in the queue goes as schema 2.
+        assertEquals("2", reports(ClientReportJson.batch(installId, app, listOf(record()), "direct")).single()["schema"]!!.jsonPrimitive.content)
+        // Schema 3 never carries an app verdict; schema 2 never carries facts; complete needs a report_id.
+        assertFalse(ClientReportContract.isValid(record3.copy(failedStep = "handshake", detail = "x")))
+        assertFalse(ClientReportContract.isValid(record().copy(coreCode = "TARGET_NETWORK_TIMEOUT")))
+        assertFalse(ClientReportContract.isValid(record3.copy(reportId = "", complete = true)))
+        assertFalse(ClientReportContract.isValid(record3.copy(checks = mapOf("tls_real" to ReportCheck("answered", 10, bytes = 5)))))
+    }
+
+    @Test
+    fun checkRulesFollowTheContract() {
+        assertEquals(17, ReportChecks.PROBES.size)
+        assertTrue(ReportChecks.isValid("dns_doh", ReportCheck("nxdomain", 300)))
+        assertFalse(ReportChecks.isValid("tcp_target", ReportCheck("nxdomain", 300)))
+        assertFalse(ReportChecks.isValid("tcp_target", ReportCheck("answered", 60_001)))
+        assertTrue(ReportChecks.isValid("flow", ReportCheck("timeout", 5000, bytes = 16_000)))
+        assertTrue(ReportChecks.isValid("dns_system", ReportCheck("answered", 30, same = false)))
+        assertFalse(ReportChecks.isValid("dns_doh", ReportCheck("answered", 30, same = true)))
+        assertEquals("udp", ReportChecks.carrierOf("hysteria2"))
+        assertEquals("udp", ReportChecks.carrierOf("vless", "xhttp", listOf("h3")))
+        assertEquals("tcp", ReportChecks.carrierOf("vless", "xhttp", listOf("h2", "http/1.1")))
+        assertEquals("udp", ReportChecks.carrierOf("vless", "kcp"))
+        assertEquals("tcp", ReportChecks.carrierOf("trojan", "grpc"))
+        assertFalse(ReportChecks.needsPathCheck("TARGET_AUTH_REJECTED"))
+        assertFalse(ReportChecks.needsPathCheck("LOCAL_BIND_COLLISION"))
+        assertFalse(ReportChecks.needsPathCheck("NETWORK_LOST"))
+        assertTrue(ReportChecks.needsPathCheck("TARGET_NETWORK_TIMEOUT"))
+        assertTrue(ReportChecks.needsPathCheck(""))
+    }
+
+    @Test
+    fun anUnsentFirstCopyGivesWayToItsCompletion() {
+        val dir = Files.createTempDirectory("queue3").toFile()
+        val queue = ReportQueue(File(dir, "queue.jsonl"))
+        val first = AttemptRecord(
+            "hiphopgen", "hysteria2", ReportOutcome.Failed, "", "", 900, now - 1000, "",
+            reportId = "cd".repeat(16), carrier = "udp", complete = false,
+        )
+        val whole = first.copy(complete = true, checks = mapOf("control_front" to ReportCheck("answered", 40)))
+        queue.add(first)
+        queue.add(whole)
+        assertEquals(listOf(whole), ReportQueue(File(dir, "queue.jsonl")).pending(now))
+        val report = reports(ClientReportJson.batch(installId, app, listOf(whole), "direct")).single()
+        assertEquals("true", report["complete"]!!.jsonPrimitive.content)
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun replyVerdictsInBatchOrderAndAnythingOddIsNull() {
+        val good = """{"detail":"ip_blocked","level":"ip","confidence":"proven","text":"Адрес закрыт.\u0007"}"""
+        val got = ClientReportJson.parseReply("""{"ok":true,"verdicts":[$good,null,{"detail":5}]}""", 3)
+        assertEquals(ServerVerdict("ip_blocked", "ip", "proven", "Адрес закрыт."), got[0])
+        assertEquals(listOf(null, null), got.drop(1))
+        assertEquals(listOf(null, null), ClientReportJson.parseReply("""{"ok":true}""", 2))
+        assertEquals(listOf<ServerVerdict?>(null), ClientReportJson.parseReply("not json", 1))
+        assertEquals(listOf<ServerVerdict?>(null), ClientReportJson.parseReply("""{"verdicts":[$good,$good]}""", 1))
     }
 
     @Test

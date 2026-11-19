@@ -8,10 +8,15 @@ import java.io.File
  * уходят самые старые. Потокобезопасна; вызывать с фонового потока.
  */
 class ReportQueue(private val file: File, private val capacity: Int = DEFAULT_CAPACITY) {
+    /**
+     * A record with the report_id of one still waiting replaces it (an unsent first copy gives way to its completion:
+     * one record per attempt).
+     */
     @Synchronized
     fun add(record: AttemptRecord) {
         if (!ClientReportContract.isValid(record)) return
-        write((read() + record).takeLast(capacity))
+        val kept = read().filterNot { record.reportId.isNotEmpty() && it.reportId == record.reportId }
+        write((kept + record).takeLast(capacity))
     }
 
     /** Отчёты, которые ещё можно отправить, старые первыми; просроченные и испорченные удаляются. */

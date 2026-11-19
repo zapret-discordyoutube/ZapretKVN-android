@@ -16,6 +16,8 @@ class ProbeTargetsTest {
           {"type":"vless","tag":"plain","server":"203.0.113.7","server_port":80,"transport":{"type":"ws","path":"/"}},
           {"type":"hysteria2","tag":"hy","server":"hy.node.example","server_port":443,
            "tls":{"enabled":true,"server_name":"hy.node.example"}},
+          {"type":"vless","tag":"h3","server":"h3.node.example","server_port":443,
+           "tls":{"enabled":true,"server_name":"h3.node.example","alpn":["h3"]},"transport":{"type":"xhttp"}},
           {"type":"selector","tag":"proxy","outbounds":["nl","hy"]}
         ],
         "endpoints":[{"type":"wireguard","tag":"awg","peers":[{"address":"198.51.100.9","port":51820}]}]}
@@ -44,6 +46,15 @@ class ProbeTargetsTest {
             ProbeTarget("198.51.100.9", 51820, null, usesTls = false, udp = true, protocol = "wireguard", transport = "udp", security = "none"),
             ProbeTargets.of(config, "awg"),
         )
+    }
+
+    @Test
+    fun theCarrierIsWhatTheFirstHopRunsOver() {
+        assertEquals("tcp", ProbeTargets.of(config, "nl")?.carrier)
+        assertEquals("udp", ProbeTargets.of(config, "hy")?.carrier)
+        assertEquals("udp", ProbeTargets.of(config, "awg")?.carrier)
+        // XHTTP over HTTP/3 only: QUIC, so UDP (vpnbot «carrier», schema 3).
+        assertEquals("udp", ProbeTargets.of(config, "h3")?.carrier)
     }
 
     @Test

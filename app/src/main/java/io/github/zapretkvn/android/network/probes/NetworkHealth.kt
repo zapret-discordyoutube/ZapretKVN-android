@@ -1,5 +1,8 @@
 package io.github.zapretkvn.android.network.probes
 
+import io.github.zapretkvn.android.clientreports.ProbeErrors
+import io.github.zapretkvn.clientreports.ReportCheck
+import io.github.zapretkvn.clientreports.ReportChecks
 import android.net.Network
 import android.os.SystemClock
 import io.github.zapretkvn.android.config.BootstrapConfig
@@ -149,6 +152,11 @@ data class PreparedBootstrap(
      * связи после запуска (а при мёртвом сервере — резерв группы).
      */
     val tcpPreflightFailed: Boolean = false,
+    /**
+     * Schema 3 `tcp_preflight` of the client report: the first address's result and time. The check is part of the
+     * start anyway (no extra probe); a refusal must not read as silence (a RST proves the address is alive).
+     */
+    val tcpPreflight: ReportCheck? = null,
 )
 
 class ProxyBootstrapper(
@@ -181,8 +189,12 @@ class ProxyBootstrapper(
         if (!target.requiresDns) {
             val literal = numericAddresses(listOf(target.hostname))
             if (literal.isEmpty()) error("Некорректный IP-адрес VPN-сервера.")
-            val preflightFailed = target.tcpPreflightSupported && firstReachable(underlying, target, literal) == null
-            return PreparedBootstrap(target, literal, now, tcpPreflightFailed = preflightFailed)
+            val reach = if (target.tcpPreflightSupported) reach(underlying, target, literal) else null
+            return PreparedBootstrap(
+                target, literal, now,
+                tcpPreflightFailed = reach != null && reach.address == null,
+                tcpPreflight = reach?.first,
+            )
         }
         val lkg = cache.find(profileId, target.hostname, now)
         // Stale-while-revalidate: свежий (до 24 ч) адрес из кэша берём сразу, если сервер
@@ -221,8 +233,9 @@ class ProxyBootstrapper(
         }
         if (resolved.isSuccess) {
             val addresses = resolved.getOrThrow()
-            if (!target.tcpPreflightSupported || firstReachable(underlying, target, addresses) != null) {
-                return PreparedBootstrap(target, addresses, now, target.overlay(addresses))
+            val reach = if (target.tcpPreflightSupported) reach(underlying, target, addresses) else null
+            if (reach == null || reach.address != null) {
+                return PreparedBootstrap(target, addresses, now, target.overlay(addresses), tcpPreflight = reach?.first)
             }
             if (target.staleAddressAllowed && lkg?.isFreshAt(now) == true) {
                 val cached = numericAddresses(lkg.addresses)
@@ -240,6 +253,7 @@ class ProxyBootstrapper(
                 now,
                 target.overlay(addresses),
                 tcpPreflightFailed = true,
+                tcpPreflight = reach.first,
             )
         }
 
@@ -305,14 +319,31 @@ class ProxyBootstrapper(
         network: Network,
         target: ProxyBootstrapTarget,
         addresses: List<InetAddress>,
-    ): InetAddress? = withContext(Dispatchers.IO) {
-        addresses.take(MAX_SOCKET_CANDIDATES).firstOrNull { address ->
-            runCatching {
+    ): InetAddress? = reach(network, target, addresses).address
+
+    /** The first address that takes a TCP connection, and the first address's own result for the report. */
+    private class Reach(val address: InetAddress?, val first: ReportCheck?)
+
+    private suspend fun reach(
+        network: Network,
+        target: ProxyBootstrapTarget,
+        addresses: List<InetAddress>,
+    ): Reach = withContext(Dispatchers.IO) {
+        var first: ReportCheck? = null
+        val found = addresses.take(MAX_SOCKET_CANDIDATES).firstOrNull { address ->
+            val started = System.nanoTime()
+            val outcome = runCatching {
                 network.socketFactory.createSocket().use { socket ->
                     socket.connect(InetSocketAddress(address, target.port), SOCKET_TIMEOUT_MILLIS)
                 }
-            }.isSuccess
+            }
+            if (first == null) {
+                val result = outcome.exceptionOrNull()?.let { ProbeErrors.result(it, connected = false) } ?: ReportChecks.ANSWERED
+                first = ReportCheck(result, ReportChecks.clampMillis((System.nanoTime() - started) / 1_000_000))
+            }
+            outcome.isSuccess
         }
+        Reach(found, first)
     }
 
     private fun numericAddresses(values: List<String>): List<InetAddress> = values.mapNotNull { value ->

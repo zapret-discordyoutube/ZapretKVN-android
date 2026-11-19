@@ -118,6 +118,10 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
                 attemptedAtMillis = startedAt,
                 generation = session.generation,
                 target = ProbeTargets.of(config, tag),
+                // Пробы «нет данных» идут через туннель: только пока он тот же и обслуживает этот же сервер.
+                stillServing = {
+                    session.generation == container.vpnController.currentGeneration() && selected(session, config)?.first == tag
+                },
             )
         }
     }

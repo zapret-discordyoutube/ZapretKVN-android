@@ -1167,8 +1167,7 @@ private fun VpnErrorDetails(
 }
 
 /**
- * Где закрыт путь до сервера и отчёт об отказе: строка проверки и кнопка «Отправить отчёт», пока отчёт
- * не ушёл. Отчёт без адресов: сервер, шаг и вид блокировки.
+ * Разбор отказа и отчёт: строка вердикта vpnbot и кнопка «Отправить отчёт», пока отчёт не ушёл.
  */
 @Composable
 private fun FailureReportBlock(report: FailureReportUi, onSendReport: () -> Unit) {
@@ -1176,8 +1175,9 @@ private fun FailureReportBlock(report: FailureReportUi, onSendReport: () -> Unit
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     when {
         report.checking -> Text("Проверяем, где закрыт путь до сервера…", style = note, color = muted)
+        // Текст вердикта vpnbot как есть (своих текстов вердиктов у приложения нет) или строка ожидания.
         report.diagnosis != null -> Text(
-            "Проверка пути: ${report.diagnosis}",
+            report.diagnosis,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.testTag("vpn-error-diagnosis"),
         )

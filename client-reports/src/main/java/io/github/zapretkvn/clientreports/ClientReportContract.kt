@@ -22,7 +22,12 @@ import kotlinx.serialization.json.put
  * Любое поле вне контракта отклоняет весь пакет, поэтому всё проверяется здесь.
  */
 object ClientReportContract {
-    const val SCHEMA = 2
+    /**
+     * Schema 3 since 2026-11-19 (vpnbot «schema 3 live» 21:37 UTC): raw probe facts, the server judges. A queue line
+     * written before (with failed_step/detail) still goes as [LEGACY_SCHEMA], which vpnbot keeps admitting.
+     */
+    const val SCHEMA = 3
+    const val LEGACY_SCHEMA = 2
     const val MAX_BATCH = 50
     const val MAX_ELAPSED_MS = 600_000L
     const val MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
@@ -88,6 +93,13 @@ object ClientReportContract {
         if (record.networkToken.isNotEmpty() && !isNetworkToken(record.networkToken)) return false
         if (record.reportId.isNotEmpty() && !REPORT_ID.matches(record.reportId)) return false
         if (record.via.isNotEmpty() && (record.foreign != null || !RELAY_KEY.matches(record.via))) return false
+        if (record.carrier.isNotEmpty()) {
+            // Schema 3: no app verdict, only facts.
+            return record.carrier in ReportChecks.CARRIERS && record.failedStep.isEmpty() && record.detail.isEmpty() &&
+                record.coreCode == ReportChecks.coreCodeOf(record.coreCode) && ReportChecks.areValid(record.checks) &&
+                (record.complete == null || record.reportId.isNotEmpty())
+        }
+        if (record.coreCode.isNotEmpty() || record.checks.isNotEmpty() || record.complete != null) return false
         return when (record.outcome) {
             ReportOutcome.Failed -> record.failedStep in STEPS
             ReportOutcome.Connected, ReportOutcome.Cancelled -> record.failedStep.isEmpty()
@@ -245,7 +257,20 @@ data class AttemptRecord(
     val reportId: String = "",
     /** The relay key of a «… через Россию» line ([ServerRef.via]); only with [serverId], never with [foreign]. */
     val via: String = "",
-)
+    /** Schema 3: what the core's first hop ran over ("tcp"/"udp"); empty only on a schema 2 line from the queue. */
+    val carrier: String = "",
+    /** Schema 3: the core's own code ([ReportChecks.coreCodeOf]) or "". */
+    val coreCode: String = "",
+    /** Schema 3: the probes that ran. */
+    val checks: Map<String, ReportCheck> = emptyMap(),
+    /**
+     * Schema 3 completion (vpnbot «completion live» 2026-11-19 22:16 UTC): false — the first copy, sent at once while
+     * the path check runs; true — the same report_id whole, after the check; null — a report final at once.
+     */
+    val complete: Boolean? = null,
+) {
+    val schema: Int get() = if (carrier.isNotEmpty()) ClientReportContract.SCHEMA else ClientReportContract.LEGACY_SCHEMA
+}
 
 object ClientReportJson {
     /** Тело `POST /v1/reports`: ровно поля контракта, ничего сверх. */
@@ -269,7 +294,7 @@ object ClientReportJson {
 
     private fun report(installId: String, app: AppIdentity, record: AttemptRecord, sentVia: String): JsonObject =
         buildJsonObject {
-            put("schema", ClientReportContract.SCHEMA)
+            put("schema", record.schema)
             put("install_id", installId)
             put(
                 "app",
@@ -295,8 +320,15 @@ object ClientReportJson {
                 )
             }
             put("outcome", record.outcome.code)
-            if (record.outcome == ReportOutcome.Failed) put("failed_step", record.failedStep)
-            if (record.detail.isNotEmpty()) put("detail", record.detail)
+            if (record.carrier.isNotEmpty()) {
+                put("carrier", record.carrier)
+                if (record.coreCode.isNotEmpty()) put("core_code", record.coreCode)
+                if (record.checks.isNotEmpty()) put("checks", checks(record.checks))
+                record.complete?.let { put("complete", it) }
+            } else {
+                if (record.outcome == ReportOutcome.Failed) put("failed_step", record.failedStep)
+                if (record.detail.isNotEmpty()) put("detail", record.detail)
+            }
             put("elapsed_ms", record.elapsedMs)
             put("attempted_at", isoUtc(record.attemptedAtMillis))
             put("sent_via", sentVia)
@@ -304,6 +336,10 @@ object ClientReportJson {
             if (record.reportId.isNotEmpty()) put("report_id", record.reportId)
             details(record.details).forEach { (key, value) -> put(key, value) }
         }
+
+    private fun checks(checks: Map<String, ReportCheck>): JsonObject = buildJsonObject {
+        ReportChecks.ordered(checks).forEach { (probe, check) -> put(probe, ReportChecks.json(check)) }
+    }
 
     /** Необязательные поля schema 2: только известные значения. */
     private fun details(details: AttemptDetails): JsonObject = buildJsonObject {
@@ -349,12 +385,18 @@ object ClientReportJson {
             put("g", buildJsonObject { put("h", foreign.host); put("p", foreign.protocol); put("m", foreign.name) })
         }
         details(record.details).takeIf { it.isNotEmpty() }?.let { put("x", it) }
+        if (record.carrier.isNotEmpty()) {
+            put("c", record.carrier)
+            if (record.coreCode.isNotEmpty()) put("k", record.coreCode)
+            if (record.checks.isNotEmpty()) put("q", buildJsonObject { record.checks.forEach { (probe, check) -> put(probe, ReportChecks.json(check)) } })
+            record.complete?.let { put("z", it) }
+        }
     }.toString()
 
     fun parseQueueLine(line: String): AttemptRecord? = runCatching {
         val json = Json.parseToJsonElement(line) as JsonObject
         // Версия 1 — строки schema 1 до 19.11.2026: читаются как отчёты без подробностей.
-        if (json["v"]?.jsonPrimitive?.intOrNull !in setOf(1, QUEUE_VERSION)) return null
+        if (json["v"]?.jsonPrimitive?.intOrNull !in setOf(1, 2, QUEUE_VERSION)) return null
         fun text(key: String): String = (json[key] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
         val foreign = (json["g"] as? JsonObject)?.let { g ->
             fun field(key: String) = (g[key] as? JsonPrimitive)?.takeIf { it.isString }?.content.orEmpty()
@@ -373,6 +415,13 @@ object ClientReportJson {
             details = (json["x"] as? JsonObject)?.let(::parseDetails) ?: AttemptDetails(),
             reportId = text("r"),
             via = text("w"),
+            carrier = text("c"),
+            coreCode = text("k"),
+            // A line edited by hand with a bad probe is invalid as a whole (isValid), not silently trimmed.
+            checks = (json["q"] as? JsonObject)?.mapValues { (_, value) ->
+                (value as? JsonObject)?.let(ReportChecks::parse) ?: return null
+            }.orEmpty(),
+            complete = (json["z"] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toBooleanStrictOrNull(),
         ).takeIf(ClientReportContract::isValid)
     }.getOrNull()
 
@@ -396,5 +445,33 @@ object ClientReportJson {
         ).cleaned()
     }
 
-    private const val QUEUE_VERSION = 2
+    private const val QUEUE_VERSION = 3
+
+    /**
+     * `{"verdicts": [...]}` of a 202, in batch order; anything malformed is null (the notice falls back to its neutral
+     * line), never an error.
+     */
+    fun parseReply(body: String?, count: Int): List<ServerVerdict?> {
+        val empty = List<ServerVerdict?>(count) { null }
+        val root = runCatching { Json.parseToJsonElement(body.orEmpty()) as? JsonObject }.getOrNull() ?: return empty
+        val items = root["verdicts"] as? kotlinx.serialization.json.JsonArray ?: return empty
+        if (items.size != count) return empty
+        return items.map { item ->
+            val obj = item as? JsonObject ?: return@map null
+            fun text(key: String) = (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            val detail = text("detail") ?: return@map null
+            val level = text("level") ?: return@map null
+            val confidence = text("confidence") ?: return@map null
+            val raw = text("text") ?: return@map null
+            val kept = raw.codePoints().filter { !ClientReportContract.isControlOrFormat(it) }.toArray()
+            val clean = String(kept, 0, kept.size).trim().take(MAX_VERDICT_TEXT)
+            if (clean.isEmpty() || !Regex("^[a-z][a-z0-9_]{0,47}$").matches(detail)) null
+            else ServerVerdict(detail, level.take(24), confidence.take(24), clean)
+        }
+    }
+
+    const val MAX_VERDICT_TEXT = 300
 }
+
+/** What vpnbot concluded about one report; [text] is shown to the person as is (the app has no texts). */
+data class ServerVerdict(val detail: String, val level: String, val confidence: String, val text: String)

@@ -427,7 +427,7 @@ internal class SessionStarter(
             )
         }
         preparedBootstrap.target?.let { target ->
-            container.clientReporter.notePreflight(token, target.outboundTag, preparedBootstrap.tcpPreflightFailed)
+            container.clientReporter.notePreflight(token, target.outboundTag, preparedBootstrap.tcpPreflight)
             container.clientReporter.noteAddress(target.hostname, preparedBootstrap.addresses.firstOrNull()?.hostAddress)
         }
         preparedBootstrap.target?.let { target ->
