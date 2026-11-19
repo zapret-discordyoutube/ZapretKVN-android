@@ -6,6 +6,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.zapretkvn.android.BuildConfig
+import io.github.zapretkvn.android.clientreports.FailureReport
+import io.github.zapretkvn.android.clientreports.SendStatus
 import io.github.zapretkvn.android.network.probes.services.ServiceCatalog
 import io.github.zapretkvn.android.ui.AppDependencies
 import io.github.zapretkvn.android.ui.AppNavigation
@@ -28,6 +30,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     val sessionStats = deps.vpn.sessionStats.collectAsStateWithLifecycle()
     val sessionServices = deps.vpn.serviceAvailability.collectAsStateWithLifecycle()
     val directServices = deps.directServices.collectAsStateWithLifecycle()
+    val failureReport by deps.failureReport.collectAsStateWithLifecycle()
 
     val activeProfile = state.profiles.firstOrNull { it.id == state.settings.activeProfileId }
     val summary = activeProfile?.let { state.serverSummaries[it.id] }
@@ -78,6 +81,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         pathStatus = pathStatus,
         slots = slotCards(slotStates, server, hide),
         slowServerSwitch = state.settings.slowServerSwitch,
+        failureReport = failureReport?.toUi(),
     )
     val callbacks = remember(deps, nav) {
         HomeCallbacks(
@@ -105,6 +109,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
             onRequestExternalIp = deps.vpn::requestExternalIp,
             onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
             onOpenServices = { nav.switchTab(AppTab.Services) },
+            onSendReport = deps.sendFailureReport,
         )
     }
     HomeScreen(
@@ -115,3 +120,16 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         contentPadding = padding,
     )
 }
+
+/** Отчёт об отказе для экрана: чужой сервер — без кнопки (отправка чужих ждёт схему 2 приёмника). */
+internal fun FailureReport.toUi(): FailureReportUi = FailureReportUi(
+    checking = checking,
+    diagnosis = diagnosisText,
+    button = when (status) {
+        SendStatus.Available -> ReportButtonState.Available
+        SendStatus.Sending -> ReportButtonState.Sending
+        SendStatus.Sent -> ReportButtonState.Sent
+        SendStatus.Queued -> ReportButtonState.Queued
+        SendStatus.NotOurs -> ReportButtonState.Hidden
+    },
+)

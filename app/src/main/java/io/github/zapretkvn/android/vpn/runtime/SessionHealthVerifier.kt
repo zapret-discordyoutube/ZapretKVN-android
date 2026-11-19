@@ -10,6 +10,7 @@ import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.network.probes.VpnHealthTimeoutException
+import io.github.zapretkvn.android.clientreports.ProbeTargets
 import io.github.zapretkvn.clientreports.AttemptFacts
 import io.github.zapretkvn.networkbootstrap.CodedFailure
 import kotlinx.coroutines.CancellationException
@@ -32,7 +33,14 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
         val result = try {
             runPipeline(session, config, dnsServer, reportStages)
         } catch (cancelled: CancellationException) {
-            reportAttempt(session, config, startedAt, startedElapsed, AttemptFacts(cancelled = true))
+            // Бюджет запуска кончился на проверке: сервер не дал рабочего трафика за отведённое время.
+            // Это отказ, а не отмена; отмена — переключение или остановка.
+            val facts = if (cancelled is StartupBudgetExhausted) {
+                failureFacts(session, config, cancelled).copy(trafficFailed = true)
+            } else {
+                AttemptFacts(cancelled = true)
+            }
+            reportAttempt(session, config, startedAt, startedElapsed, facts)
             throw cancelled
         } catch (error: Throwable) {
             reportAttempt(session, config, startedAt, startedElapsed, failureFacts(session, config, error))
@@ -97,7 +105,7 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
     ) {
         runCatching {
             val (tag, type) = selected(session, config) ?: return
-            val udp = type.lowercase() in UDP_TYPES
+            val udp = type.lowercase() in ProbeTargets.UDP_TYPES
             val withPreflight = facts.copy(
                 udpTransport = udp,
                 tcpPreflightFailed = container.clientReporter.preflightFailed(session.generation, tag),
@@ -108,6 +116,8 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
                 facts = withPreflight,
                 elapsedMs = android.os.SystemClock.elapsedRealtime() - startedElapsed,
                 attemptedAtMillis = startedAt,
+                generation = session.generation,
+                target = ProbeTargets.of(config, tag),
             )
         }
     }
@@ -130,6 +140,5 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
 
     private companion object {
         const val TRAFFIC_PROBE_CODE = "VPN-200"
-        val UDP_TYPES = setOf("hysteria2", "hysteria", "tuic", "wireguard", "awg", "amneziawg")
     }
 }

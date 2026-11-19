@@ -1,6 +1,9 @@
 package io.github.zapretkvn.android.vpn.runtime
 
 import io.github.zapretkvn.android.AppContainer
+import io.github.zapretkvn.android.clientreports.ProbeTargets
+import io.github.zapretkvn.android.config.ParsedConfig
+import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
@@ -672,6 +675,18 @@ internal class VpnRuntime(
         val stored = runCatching { container.profileStore.read(profileId) }.getOrNull()
         val plan = stored?.let { FailoverPlanner.plan(it.json, emptyMap(), primaryGroupTag = null) }
         val currentIsHysteria = plan?.currentType == PathSupervisor.HYSTERIA_TYPE
+        // Отказ до проверки сервера (адрес, ядро, настройки): отчёт, проверка пути и кнопка на экране.
+        if (plan != null) {
+            container.clientReporter.onStartFailure(
+                generation = token,
+                tag = plan.currentId,
+                outboundType = plan.currentType,
+                code = baseFailure.code,
+                networkLost = baseFailure.code.startsWith("NET-") ||
+                    generateSequence(error) { it.cause }.take(8).any { it is VpnNetworkLostException },
+                target = stored?.json?.let { json -> runCatching { ProbeTargets.of(ParsedConfig.parse(json), plan.currentId) }.getOrNull() },
+            )
+        }
 
         val failedReplacement = startupReplacement?.takeIf { it.profileId == profileId }
         if (failedReplacement != null) {

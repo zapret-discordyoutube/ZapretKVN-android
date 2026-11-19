@@ -261,6 +261,13 @@ class AppContainer(
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
         networkKey = { nonVpnNetwork(appContext)?.networkHandle?.toString() },
         log = { line -> io.github.zapretkvn.android.diagnostics.RuntimeLog.app(4, line) },
+        // Проверка пути после отказа: мимо VPN; контроль и «имя на рабочем адресе» — наш фронт пула.
+        probe = io.github.zapretkvn.android.clientreports.BlockProbe(
+            physical = { nonVpnNetwork(appContext) },
+            frontHosts = { io.github.zapretkvn.clientreports.IngestHosts.SEED.filterNot { it.endsWith(".zapret.moe") } },
+            random = java.security.SecureRandom().let { secure -> kotlin.random.Random(secure.nextLong()) },
+        ),
+        vpnNetwork = { vpnNetwork(appContext) },
     ).also { it.flush() }
 
     val serverLatencyStore = ServerLatencyStore(

@@ -68,14 +68,59 @@ per connection, and a TLS handshake plus 8 KB and the answer stay near 15 packet
 several small requests. The log line names the domain and the size:
 `пакет 3, 1180 Б (direct, osjcpjzipyb.click) → HTTP 202`.
 
+## Path check after a failure (owner 2026-11-19)
+
+After a failed attempt the app checks where the path to the server is closed and swaps one thing at each
+step (pure decision `client-reports/.../BlockDiagnosis.kt`, network `app/.../clientreports/BlockProbe.kt (sockets of the non-VPN network)`, the same steps and codes on both platforms):
+
+1. Control: TCP to our pool front (the ingest names, a Russian AS). No answer means the device's own network
+   is down (captive portal, no internet): no verdict at all.
+2. DNS: the system resolver against our DoH for the server name. `dns_nxdomain` (every DoH says the name does
+   not exist), `dns_no_answer`, `dns_poisoned` (no common address). Named only when nothing below is closed:
+   the app connects by the DoH address, so a poisoned system DNS alone does not stop it.
+3. TCP to IP:port, then the same IP on 443: `port_blocked` (443 answers, even with a reset), `ip_blocked`
+   (both silent), `tcp_reset` (a reset proves the address is alive), `tcp_timeout` (443 not tried).
+4. TLS: one ClientHello (`TlsProbe.clientHello`, byte-identical on both platforms, only the first answer byte is read)
+   with the real name on the server IP, then a neutral name (ya.ru, vk.com or www.gosuslugi.ru, open even
+   under white lists) on the same IP, then the real name on our front: `sni_blocked`,
+   `sni_blocked_everywhere`, `tls_blocked`. Any TLS record is an answer (a server that dislikes the name
+   sends an alert, Reality forwards it to its sample site). On the swapped probes only silence is a filter:
+   our front and many servers close the connection without an answer for a name that is not theirs
+   (seen 2026-11-19), so a reset there proves nothing.
+5. UDP servers (Hysteria 2, WireGuard/AWG): only whether the IP is alive, by TCP 443 (silence →
+   `ip_blocked`); the protocol verdict stays with the core's own code.
+6. Freeze: after a successful check, at most once per server per 10 minutes, the app reads up to 64 KB of the
+   speed-test file (`fra.download.datapacket.com`, not Russian, so "Russia directly" routing cannot take it
+   past the server) through the session. A stall between 1 000 and 24 000 bytes (the TSPU freezes a TCP
+   connection after ~25 packets, ~16 KB) turns the report into `failed` at `request` with `freeze_16k`:
+   such a server passes the small check but sites do not open.
+
+The check runs only after a failure, at most once per server per 10 minutes, in the background (one pass
+takes 1–40 s). The verdict refines the report (`AttemptClassifier.classify(facts, diagnosis)`), and makes a
+report out of a failure that had no core code (Xray, no evidence) when it proves a block; a failure that is
+not about the server (`LOCAL_*`, lost network) never becomes a server failure. The screen shows one Russian
+line («Проверка пути: …», `describe`) for any server, ours or not; it contains no address.
+
+## «Отправить отчёт» (owner 2026-11-19)
+
+Next to the connection error there is a button «Отправить отчёт» while the report of that failure has not
+gone out. Pressing it writes the report if none was written yet (a failure that is not about the server goes
+as `failed` at `connect` with `detail` `local_<code>`, `local_network` or `local_unknown`; vpnbot keeps
+`local_*` out of the server ranking) and sends the queue at once. The note under it then says «Отчёт
+отправлен» or «Отчёт в очереди, отправим при первой связи» (the button stays). Servers outside the service's
+subscriptions get the path check but no button: their reports need the receiver's schema 2 (`foreign`).
+
 ## Seeing it act
 
 The runtime log (layer `app`) has a `client-report:` line per queued report and per sent batch
-(`пакет N (direct) → HTTP 202`). The files are in `noBackupFilesDir/client-reports/`
+(`пакет N (direct) → HTTP 202`), one per path check (`проверка пути → handshake/sni_blocked (control=…
+tcp=… tls=… neutral=…)`, no addresses), per freeze measure and per button press. The files are in `noBackupFilesDir/client-reports/`
 (`queue.jsonl`, `install-id`, `network-token`) and `subscriptions/server-ids.json`.
 
 ## Known limits
 
-- An attempt that fails before the core starts (the server name does not resolve in bootstrap) is not
-  reported yet: the `resolve` step is never sent by this version.
+- An attempt that fails before the server check (bootstrap, core start) goes through
+  `ClientReporter.onStartFailure` from `VpnRuntime.handleStartFailure`: it is reported when the core code
+  or the path check names the server (for example `resolve`/`dns_nxdomain`), otherwise only by the button.
+- A check cut by the start budget (`StartupBudgetExhausted`) is a failure with no traffic, not `cancelled`.
 - Service slots (YouTube, Telegram, AI) switch servers without a check, so they produce no reports.

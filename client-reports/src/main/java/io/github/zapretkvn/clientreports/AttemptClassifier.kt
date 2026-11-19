@@ -30,13 +30,22 @@ data class AttemptVerdict(val outcome: ReportOutcome, val failedStep: String, va
  * ядра), отчётом не становится: такой отчёт окрасил бы рабочий сервер.
  */
 object AttemptClassifier {
-    fun classify(facts: AttemptFacts): AttemptVerdict? {
+    /**
+     * [diagnosis] — вывод [BlockDiagnosis] после неудачи: точнее кода ядра (называет ступень и вид
+     * блокировки), поэтому идёт первым, но только для отказа, который не про телефон.
+     */
+    fun classify(facts: AttemptFacts, diagnosis: Diagnosis? = null): AttemptVerdict? {
         if (facts.cancelled) return AttemptVerdict(ReportOutcome.Cancelled, "", "cancelled")
-        if (facts.succeeded) return AttemptVerdict(ReportOutcome.Connected, "", "")
+        if (facts.succeeded) {
+            // Проверка прошла, но большой ответ через туннель замер: сайты у пользователя не откроются.
+            return diagnosis?.takeIf { it.detail == "freeze_16k" }?.let { failed(it.failedStep, it.detail) }
+                ?: AttemptVerdict(ReportOutcome.Connected, "", "")
+        }
         if (facts.networkLost) return null
         val code = facts.coreCode
+        if (code != null && code.startsWith("LOCAL_")) return null
+        if (diagnosis != null) return failed(diagnosis.failedStep, diagnosis.detail)
         if (code != null) {
-            if (code.startsWith("LOCAL_")) return null
             byCoreCode(code, facts)?.let { return it }
         }
         if (!facts.trafficFailed) return null
@@ -59,6 +68,29 @@ object AttemptClassifier {
         }
         "TARGET_DESTINATION_UNREACHABLE" -> failed("request", "destination_unreachable")
         else -> null
+    }
+
+    /**
+     * Для кнопки «Отправить отчёт» (решение владельца 19.11.2026): отказ, который [classify] отчётом не
+     * делает (не про сервер), всё равно уходит, но с кодом `local_*`, который vpnbot не засчитывает
+     * серверу. null только для удачи без отказа.
+     */
+    fun classifyForced(facts: AttemptFacts, diagnosis: Diagnosis? = null): AttemptVerdict? {
+        classify(facts, diagnosis)?.let { return it }
+        if (facts.succeeded) return null
+        val local = when {
+            facts.networkLost -> "local_network"
+            facts.coreCode?.startsWith("LOCAL_") == true -> localCode(facts.coreCode)
+            facts.coreCode != null -> localCode(facts.coreCode)
+            else -> "local_unknown"
+        }
+        return failed("connect", local)
+    }
+
+    /** LOCAL_BIND_COLLISION → local_bind_collision; код приводится к виду контракта. */
+    fun localCode(coreCode: String): String {
+        val body = coreCode.removePrefix("LOCAL_").lowercase().replace(Regex("[^a-z0-9_]"), "_")
+        return ("local_" + body).take(48).trimEnd('_').ifEmpty { "local_unknown" }
     }
 
     private fun failed(step: String, detail: String) = AttemptVerdict(ReportOutcome.Failed, step, detail)

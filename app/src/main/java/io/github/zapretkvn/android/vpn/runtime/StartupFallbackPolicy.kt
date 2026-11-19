@@ -131,7 +131,7 @@ internal class StartupBudget(private val now: () -> Long, baseMillis: Long) {
         while (true) {
             val remaining = remainingMillis()
             if (remaining <= 0) {
-                job.cancel(CancellationException("Бюджет запуска исчерпан."))
+                job.cancel(StartupBudgetExhausted())
                 return@coroutineScope null
             }
             // Срок двигается в обе стороны, поэтому ожидание идёт короткими отрезками.
@@ -144,3 +144,6 @@ internal class StartupBudget(private val now: () -> Long, baseMillis: Long) {
         const val WATCH_SLICE_MILLIS = 1_000L
     }
 }
+
+/** Отмена по сроку запуска: проверка сервера, попавшая под неё, — отказ сервера, а не отмена. */
+internal class StartupBudgetExhausted : CancellationException("Бюджет запуска исчерпан.")

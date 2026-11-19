@@ -277,6 +277,7 @@ internal class SessionStarter(
         val token = request.token
         val profileId = request.profileId
         val updaterRouting = request.updaterRouting
+        container.clientReporter.beginAttempt(token)
         require(profileId.isNotBlank()) { "Профиль не выбран." }
         val systemPolicy = VpnSystemPolicyDetector.detect(service)
         controller.publishVpnSystemPolicy(token, systemPolicy)

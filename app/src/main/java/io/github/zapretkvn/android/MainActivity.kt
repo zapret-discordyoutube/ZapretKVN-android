@@ -124,6 +124,8 @@ class MainActivity : ComponentActivity() {
             checkServicesDirect = container.directServiceChecker::check,
             masking = container.maskingActions,
             maskingTuner = container.maskingTuner,
+            failureReport = container.clientReporter.failureReport,
+            sendFailureReport = container.clientReporter::forceReport,
         )
         observeUpdates()
         syncExternalControlComponent(container)

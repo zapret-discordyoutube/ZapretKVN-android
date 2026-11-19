@@ -129,6 +129,18 @@ data class HomeServerUi(
     val switchable: Boolean,
 )
 
+/** Состояние кнопки «Отправить отчёт» у ошибки подключения. */
+enum class ReportButtonState { Available, Sending, Sent, Queued, Hidden }
+
+/** Проверка пути до сервера после отказа и отчёт о нём (решения владельца 19.11.2026). */
+data class FailureReportUi(
+    /** Идёт проверка пути. */
+    val checking: Boolean,
+    /** Что нашла проверка; null — не проверяли. */
+    val diagnosis: String?,
+    val button: ReportButtonState,
+)
+
 data class HomeUi(
     val vpnState: VpnConnectionState,
     val stage: HomeStage,
@@ -149,6 +161,8 @@ data class HomeUi(
     val slots: List<HomeSlotUi> = emptyList(),
     /** «Переключать при низкой скорости»: тот же выбор, что в настройках. */
     val slowServerSwitch: Boolean = true,
+    /** Проверка пути и отчёт о последнем отказе; null — показывать нечего. */
+    val failureReport: FailureReportUi? = null,
 )
 
 class HomeCallbacks(
@@ -163,6 +177,8 @@ class HomeCallbacks(
     val onSlowServerSwitchChange: (Boolean) -> Unit = {},
     /** Открыть вкладку «Сервисы»: там выбирают сервер для каждого сервиса. */
     val onOpenServices: () -> Unit = {},
+    /** «Отправить отчёт» об отказе подключения. */
+    val onSendReport: () -> Unit = {},
 )
 
 /**
@@ -349,6 +365,8 @@ private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
                 error = state,
                 context = ui.errorContext,
                 onCreateDiagnosticShare = callbacks.createDiagnosticShare,
+                report = ui.failureReport,
+                onSendReport = callbacks.onSendReport,
             )
             is VpnConnectionState.Reconnecting -> if (state.code.isNotBlank()) {
                 val reason = VpnErrorExplainer.explain(state.code, context = ui.errorContext)
@@ -1086,6 +1104,8 @@ private fun VpnErrorDetails(
     error: VpnConnectionState.Error,
     context: VpnErrorContext,
     onCreateDiagnosticShare: suspend () -> Intent,
+    report: FailureReportUi?,
+    onSendReport: () -> Unit,
 ) {
     val code = error.code.ifBlank { "VPN-000" }
     val explanation = remember(code, error.technicalDetail, context) {
@@ -1136,11 +1156,51 @@ private fun VpnErrorDetails(
                 )
             }
         }
+        report?.let { FailureReportBlock(it, onSendReport) }
         DiagnosticShareButton(
             label = "Отправить диагностику",
             onCreateDiagnosticShare = onCreateDiagnosticShare,
             modifier = Modifier.fillMaxWidth(),
             testTag = "vpn-error-share-diagnostics",
         )
+    }
+}
+
+/**
+ * Где закрыт путь до сервера и отчёт об отказе: строка проверки и кнопка «Отправить отчёт», пока отчёт
+ * не ушёл. Отчёт без адресов: сервер, шаг и вид блокировки.
+ */
+@Composable
+private fun FailureReportBlock(report: FailureReportUi, onSendReport: () -> Unit) {
+    val note = MaterialTheme.typography.bodySmall
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    when {
+        report.checking -> Text("Проверяем, где закрыт путь до сервера…", style = note, color = muted)
+        report.diagnosis != null -> Text(
+            "Проверка пути: ${report.diagnosis}",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag("vpn-error-diagnosis"),
+        )
+    }
+    when (report.button) {
+        ReportButtonState.Hidden -> Unit
+        ReportButtonState.Sent -> Text("Отчёт отправлен", style = note, color = muted, modifier = Modifier.testTag("vpn-error-report-status"))
+        ReportButtonState.Available, ReportButtonState.Sending, ReportButtonState.Queued -> {
+            if (report.button == ReportButtonState.Queued) {
+                Text(
+                    "Отчёт в очереди, отправим при первой связи",
+                    style = note,
+                    color = muted,
+                    modifier = Modifier.testTag("vpn-error-report-status"),
+                )
+            }
+            OutlinedButton(
+                onClick = onSendReport,
+                enabled = report.button != ReportButtonState.Sending && !report.checking,
+                modifier = Modifier.fillMaxWidth().testTag("vpn-error-send-report"),
+            ) {
+                Text(if (report.button == ReportButtonState.Sending) "Отправляем…" else "Отправить отчёт")
+            }
+        }
     }
 }

@@ -90,6 +90,9 @@ class AppDependencies(
     /** «Маскировка»: общие настройки и выбор для отдельного сервера. */
     val masking: MaskingActions,
     val maskingTuner: MaskingTuner,
+    /** Проверка пути и отчёт о последнем отказе; кнопка «Отправить отчёт». */
+    val failureReport: StateFlow<io.github.zapretkvn.android.clientreports.FailureReport?>,
+    val sendFailureReport: () -> Unit,
 )
 
 /** Действия навигации, общие для экранов. */
