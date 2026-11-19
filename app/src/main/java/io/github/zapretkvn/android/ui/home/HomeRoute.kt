@@ -121,7 +121,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
     )
 }
 
-/** Отчёт об отказе для экрана: чужой сервер — без кнопки (отправка чужих ждёт схему 2 приёмника). */
+/** Отчёт об отказе для экрана: без кнопки, только если отправлять нечего (сервер без адреса в профиле). */
 internal fun FailureReport.toUi(): FailureReportUi = FailureReportUi(
     checking = checking,
     diagnosis = diagnosisText,

@@ -268,6 +268,8 @@ class AppContainer(
             random = java.security.SecureRandom().let { secure -> kotlin.random.Random(secure.nextLong()) },
         ),
         vpnNetwork = { vpnNetwork(appContext) },
+        // Schema 2: то, что одинаково для всех попыток сейчас (тип сети, настройки, версии).
+        context = { reportContext(appContext, uiSettingsStore.settings.first(), maskingSettingsStore.settings.first().enabled) },
     ).also { it.flush() }
 
     val serverLatencyStore = ServerLatencyStore(
@@ -539,3 +541,39 @@ private fun canInstallUpdateUnattended(
 
 private fun archiveVersionCode(context: Context, file: File): Long? =
     context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)?.let(PackageInfoCompat::getLongVersionCode)
+
+/** Подробности отчёта, общие для попыток (schema 2, docs/CLIENT_REPORTS.md): ни адресов, ни имён сетей. */
+private fun reportContext(
+    context: Context,
+    settings: io.github.zapretkvn.android.ui.UiSettings,
+    masking: Boolean,
+): io.github.zapretkvn.clientreports.AttemptDetails {
+    val capabilities = nonVpnNetwork(context)?.let { network ->
+        context.getSystemService(android.net.ConnectivityManager::class.java)?.getNetworkCapabilities(network)
+    }
+    val networkType = when {
+        capabilities == null -> null
+        capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+        capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+        capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+        else -> "other"
+    }
+    val short = io.github.zapretkvn.clientreports.ReportVersions::short
+    return io.github.zapretkvn.clientreports.AttemptDetails(
+        networkType = networkType,
+        settings = io.github.zapretkvn.clientreports.ReportSettings(
+            mode = "tun",
+            dns = settings.dnsMode.name.lowercase(),
+            masking = if (masking) "on" else "off",
+            quicBlocked = settings.blockQuic,
+            ipv6 = !settings.proxyIpv4Only,
+        ),
+        versions = listOfNotNull(
+            short(android.os.Build.VERSION.RELEASE)?.let { "os" to it },
+            short(BuildConfig.XRAY_CORE_MODULE)?.let { "xray" to it },
+            short(BuildConfig.HYSTERIA_CORE_TAG)?.let { "hysteria" to it },
+            short(BuildConfig.CORE_TAG)?.let { "singbox" to it },
+            short(BuildConfig.AMNEZIA_CORE_MODULE)?.let { "amnezia" to it },
+        ).toMap(),
+    ).cleaned()
+}

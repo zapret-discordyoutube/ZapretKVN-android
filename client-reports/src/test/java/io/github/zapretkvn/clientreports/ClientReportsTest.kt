@@ -52,10 +52,90 @@ class ClientReportsTest {
             report.keys,
         )
         assertEquals(setOf("name", "version", "platform"), (report["app"] as JsonObject).keys)
-        assertEquals("1", report["schema"]!!.jsonPrimitive.content)
+        assertEquals("2", report["schema"]!!.jsonPrimitive.content)
         assertEquals("handshake", report["failed_step"]!!.jsonPrimitive.content)
         assertEquals("tunnel", report["sent_via"]!!.jsonPrimitive.content)
         assertTrue(report["attempted_at"]!!.jsonPrimitive.content.matches(Regex("""\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ""")))
+    }
+
+    private val details = AttemptDetails(
+        serverIp = "185.1.2.3",
+        port = 443,
+        transport = "tcp",
+        security = "reality",
+        networkType = "cellular",
+        settings = ReportSettings(mode = "tun", dns = "fromjson", masking = "off", quicBlocked = true, ipv6 = false),
+        versions = mapOf("os" to "16", "xray" to "1.260327.1-676eaf66f8f0", "hysteria" to "2.14.0"),
+    )
+
+    @Test
+    fun schemaTwoCarriesTheDetailsOfTheAttempt() {
+        val body = ClientReportJson.batch(installId, app, listOf(record().copy(details = details)), "direct")
+        val report = reports(body).single()
+        assertEquals("185.1.2.3", report["server_ip"]!!.jsonPrimitive.content)
+        assertEquals("443", report["port"]!!.jsonPrimitive.content)
+        assertEquals("reality", report["security"]!!.jsonPrimitive.content)
+        assertEquals("cellular", report["network_type"]!!.jsonPrimitive.content)
+        assertEquals(setOf("mode", "dns", "masking", "quic_blocked", "ipv6"), (report["settings"] as JsonObject).keys)
+        assertEquals("true", (report["settings"] as JsonObject)["quic_blocked"]!!.jsonPrimitive.content)
+        assertEquals(setOf("os", "xray", "hysteria"), (report["versions"] as JsonObject).keys)
+        // Неизвестное не пишется вовсе: приёмник принимает отсутствие, а не пустые значения.
+        val bare = reports(ClientReportJson.batch(installId, app, listOf(record()), "direct")).single()
+        assertFalse("settings" in bare.keys || "versions" in bare.keys || "server_ip" in bare.keys)
+    }
+
+    @Test
+    fun aForeignServerReplacesTheCatalogueIdAndCleansItsName() {
+        val foreign = ForeignServer.of("NL.Example.COM", "vless", "Мой\u200B сервер\u0007 🇳🇱")!!
+        assertEquals("nl.example.com", foreign.host)
+        assertEquals("Мой сервер 🇳🇱", foreign.name)
+        val record = AttemptRecord("", "", ReportOutcome.Failed, "handshake", "sni_blocked", 900, now - 1_000, "", foreign, details)
+        assertTrue(ClientReportContract.isValid(record))
+        val report = reports(ClientReportJson.batch(installId, app, listOf(record), "direct")).single()
+        assertFalse("server_id" in report.keys || "product" in report.keys)
+        assertEquals(setOf("host", "protocol", "name"), (report["foreign"] as JsonObject).keys)
+        // Оба сразу или ни одного — приёмник отклонит: не ставится в очередь.
+        assertFalse(ClientReportContract.isValid(record.copy(serverId = "hipnl", product = "vless")))
+        assertFalse(ClientReportContract.isValid(record.copy(foreign = null)))
+        assertNull(ForeignServer.of("fe80::1%eth0", "vless", "x"))
+        assertNull(ForeignServer.of("bad host", "vless", "x"))
+        assertEquals("2001:db8::7", ForeignServer.of("[2001:db8::7]", "hysteria2", "")?.host)
+        assertEquals(64, ForeignServer.of("a.example", "vless", "x".repeat(100))!!.name.length)
+        // 64 кодовые точки, а не 64 половинки UTF-16: флаги не рвутся.
+        val flags = ForeignServer.of("a.example", "vless", "🇳🇱".repeat(40))!!.name
+        assertEquals(64, flags.codePointCount(0, flags.length))
+    }
+
+    @Test
+    fun badDetailValuesDropOutInsteadOfLosingTheReport() {
+        val dirty = AttemptDetails(
+            serverIp = "fe80::1%wlan0", port = 70_000, transport = "Web Socket", security = "TLS",
+            networkType = "satellite", settings = ReportSettings(mode = "vpn", dns = "Свой"),
+            versions = mapOf("os" to "16", "kernel" to "6.1", "xray" to "x".repeat(40)),
+        ).cleaned()
+        assertEquals(AttemptDetails(security = "tls", versions = mapOf("os" to "16")), dirty)
+        assertEquals("1.260327.1-676eaf66f8f0", ReportVersions.short("github.com/xtls/xray-core@v1.260327.1-0.20261109052709-676eaf66f8f0"))
+        assertEquals("2.14.0", ReportVersions.short("app/v2.14.0"))
+        assertEquals("3.1.20261116", ReportVersions.short("github.com/amnezia-vpn/amneziawg-go/v3@v3.1.20261116"))
+        assertEquals("1.14.3-extended-2.7.3", ReportVersions.short("v1.14.3-extended-2.7.3"))
+    }
+
+    @Test
+    fun queueKeepsSchemaTwoAndReadsOldLines() {
+        val dir = Files.createTempDirectory("queue2").toFile()
+        val file = File(dir, "queue.jsonl")
+        // Строка очереди версии 1 (до 19.11.2026) остаётся отчётом, теперь schema 2 без подробностей.
+        file.writeText("""{"v":1,"s":"hipnl","p":"vless","o":"connected","f":"","d":"","e":900,"t":${now - 5_000},"n":""}""" + "\n")
+        val queue = ReportQueue(file)
+        val foreign = AttemptRecord("", "", ReportOutcome.Failed, "connect", "ip_blocked", 900, now - 1_000, "", ForeignServer.of("x.example", "vless", "Сервер")!!, details)
+        queue.add(record().copy(details = details))
+        queue.add(foreign)
+        val pending = ReportQueue(file).pending(now)
+        assertEquals(3, pending.size)
+        assertEquals("hipnl", pending[0].serverId)
+        assertEquals(details, pending[1].details)
+        assertEquals(foreign, pending[2])
+        dir.deleteRecursively()
     }
 
     @Test

@@ -10,7 +10,7 @@ on at least 2 networks (ASNs) reported the same within 24 hours.
 
 One report per check of one server of the service's own subscriptions (the reply carries
 `zapret-vpn-service`), to `POST https://reports.zapret.moe/v1/reports`, contract
-`client_reports/contract.py` of vpnbot, schema 1:
+`client_reports/contract.py` of vpnbot, schema 2:
 
 - `server_id` and `product` — the catalogue id from the `zapret-server-ids` header of the subscription
   reply: unpadded base64url of zlib-compressed (RFC 1950) JSON `{"<link fragment>": {"server_id",
@@ -18,14 +18,35 @@ One report per check of one server of the service's own subscriptions (the reply
   at most 512 KB). VLESS product subscriptions name VLESS/Trojan/Shadowsocks lines as product `vless`;
   Hysteria 2 subscriptions `hysteria2`. Relay rows «… через Россию» are not in the header (a report
   would not be about the foreign server). A repeated name (tag «name · 2») uses the entry of its name.
-  A server without an entry is never reported, and the id is never guessed from the name.
+  A server without an entry is never reported by itself (only as `foreign`, by the button), and the id
+  is never guessed from the name.
 - `outcome` `connected` / `failed` / `cancelled`, the failed step of the vpnbot ladder
   (resolve → connect → handshake → auth → tunnel → request), a short code (`udp_no_answer`,
   `tls_failed`, `auth_rejected`, `handshake_timeout`, `no_response`, …), elapsed ms, attempt time.
 - app name, version and platform; a random 32-hex `install_id` made on the device (not tied to the
   account); `sent_via` `direct` or `tunnel`; the `network_token` described below.
 
-Nothing else: no account, key, address, domain or Wi-Fi name. Other providers' servers are never reported.
+No account, key, domain or Wi-Fi name.
+
+Schema 2 (owner decisions 2026-11-19, live at the receiver since 16:07 UTC) adds, all optional and
+written only when known (a bad value drops out instead of losing the report, `AttemptDetails.cleaned`):
+
+- `server_ip` (the address the start connected to, or the one the path check probed) and `port`;
+  `transport` (`tcp`, `ws`, `grpc`, `xhttp`, `quic`, `udp`, …) and `security` (`reality`, `tls`, `none`);
+- `network_type` (`wifi`, `cellular`, `ethernet`, `other`) of the non-VPN network;
+- `settings`: `mode` (always `tun`), `dns` (`automatic`, `android`, `secure`, `fromjson`), `masking` (`on`/`off` by the master switch), `quic_blocked`, `ipv6` (`proxyIpv4Only` off);
+- `versions`: `os` (Android release), `xray`, `hysteria`, `singbox`, `amnezia` from `core.properties`, shortened by `ReportVersions.short` to the contract's 32 characters.
+
+The receiver stores the sender's IP and its /24 (IPv4) or /48 (IPv6) for `sent_via: direct` reports
+only; tunnel reports store neither. Everything is kept 90 days.
+
+Foreign servers (not from the service's subscriptions) get the path check on screen, and their report is
+sent only when the user presses «Отправить отчёт»: then `foreign` {`host`, `protocol`, `name`} replaces
+`server_id`/`product` (exactly one of the two, or the receiver refuses), with the server's `server_ip` and
+`port`. The name loses Unicode control/format characters and is cut to 64 code points (flags survive);
+the host is lower-cased, an IPv6 zone is never sent. The receiver keeps them in its own table, never in
+our servers' verdict or ranking. No `report_id` yet: the receiver refuses unknown fields; it comes only
+after vpnbot announces it.
 
 ## Where the decision lives
 
@@ -107,8 +128,8 @@ Next to the connection error there is a button «Отправить отчёт»
 gone out. Pressing it writes the report if none was written yet (a failure that is not about the server goes
 as `failed` at `connect` with `detail` `local_<code>`, `local_network` or `local_unknown`; vpnbot keeps
 `local_*` out of the server ranking) and sends the queue at once. The note under it then says «Отчёт
-отправлен» or «Отчёт в очереди, отправим при первой связи» (the button stays). Servers outside the service's
-subscriptions get the path check but no button: their reports need the receiver's schema 2 (`foreign`).
+отправлен» or «Отчёт в очереди, отправим при первой связи» (the button stays). Foreign servers get the button too (when the profile names their address): their report goes with
+`foreign` and only by the button (see «What is sent»).
 
 ## Seeing it act
 

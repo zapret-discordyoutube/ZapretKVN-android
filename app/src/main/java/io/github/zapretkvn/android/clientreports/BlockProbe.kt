@@ -33,6 +33,10 @@ internal data class ProbeTarget(
     val serverName: String?,
     val usesTls: Boolean,
     val udp: Boolean,
+    /** Для отчёта (schema 2): тип outbound, транспорт и защита, как в профиле. */
+    val protocol: String = "",
+    val transport: String? = null,
+    val security: String? = null,
 )
 
 /**
@@ -88,6 +92,7 @@ internal class BlockProbe(
             udpTransport = target.udp,
         )
         if (address == null) return@withContext facts
+        facts = facts.copy(probedAddress = address.hostAddress)
         if (target.udp) {
             // Порт UDP по TCP не проверить: жив ли сам адрес, говорит 443.
             return@withContext facts.copy(tcpOtherPort = tcp(network, address, 443))

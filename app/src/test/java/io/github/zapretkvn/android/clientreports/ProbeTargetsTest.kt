@@ -13,7 +13,7 @@ class ProbeTargetsTest {
         {"outbounds":[
           {"type":"vless","tag":"nl","server":"nl.node.example","server_port":8443,
            "tls":{"enabled":true,"server_name":"www.microsoft.com","reality":{"enabled":true}}},
-          {"type":"vless","tag":"plain","server":"203.0.113.7","server_port":80},
+          {"type":"vless","tag":"plain","server":"203.0.113.7","server_port":80,"transport":{"type":"ws","path":"/"}},
           {"type":"hysteria2","tag":"hy","server":"hy.node.example","server_port":443,
            "tls":{"enabled":true,"server_name":"hy.node.example"}},
           {"type":"selector","tag":"proxy","outbounds":["nl","hy"]}
@@ -24,14 +24,26 @@ class ProbeTargetsTest {
 
     @Test
     fun aRealityServerIsProbedWithItsTlsName() {
-        assertEquals(ProbeTarget("nl.node.example", 8443, "www.microsoft.com", usesTls = true, udp = false), ProbeTargets.of(config, "nl"))
-        assertEquals(ProbeTarget("203.0.113.7", 80, null, usesTls = false, udp = false), ProbeTargets.of(config, "plain"))
+        assertEquals(
+            ProbeTarget("nl.node.example", 8443, "www.microsoft.com", usesTls = true, udp = false, protocol = "vless", transport = "tcp", security = "reality"),
+            ProbeTargets.of(config, "nl"),
+        )
+        assertEquals(
+            ProbeTarget("203.0.113.7", 80, null, usesTls = false, udp = false, protocol = "vless", transport = "ws", security = "none"),
+            ProbeTargets.of(config, "plain"),
+        )
     }
 
     @Test
     fun udpServersHaveNoTcpTlsStep() {
-        assertEquals(ProbeTarget("hy.node.example", 443, "hy.node.example", usesTls = false, udp = true), ProbeTargets.of(config, "hy"))
-        assertEquals(ProbeTarget("198.51.100.9", 51820, null, usesTls = false, udp = true), ProbeTargets.of(config, "awg"))
+        assertEquals(
+            ProbeTarget("hy.node.example", 443, "hy.node.example", usesTls = false, udp = true, protocol = "hysteria2", transport = "quic", security = "tls"),
+            ProbeTargets.of(config, "hy"),
+        )
+        assertEquals(
+            ProbeTarget("198.51.100.9", 51820, null, usesTls = false, udp = true, protocol = "wireguard", transport = "udp", security = "none"),
+            ProbeTargets.of(config, "awg"),
+        )
     }
 
     @Test

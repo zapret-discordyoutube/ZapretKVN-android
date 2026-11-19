@@ -3,7 +3,9 @@ package io.github.zapretkvn.android.clientreports
 import io.github.zapretkvn.clientreports.AppIdentity
 import io.github.zapretkvn.clientreports.AttemptClassifier
 import io.github.zapretkvn.clientreports.AttemptFacts
+import io.github.zapretkvn.clientreports.AttemptDetails
 import io.github.zapretkvn.clientreports.AttemptRecord
+import io.github.zapretkvn.clientreports.ForeignServer
 import io.github.zapretkvn.clientreports.BlockDiagnosis
 import io.github.zapretkvn.clientreports.Diagnosis
 import io.github.zapretkvn.clientreports.DiagnosisFacts
@@ -65,6 +67,8 @@ internal class ClientReporter(
     private val probe: BlockProbe? = null,
     /** Сеть поднятого туннеля для замера заморозки. */
     private val vpnNetwork: () -> Network? = { null },
+    /** Подробности, общие для попыток (schema 2): тип сети, настройки, версии ОС и ядер. */
+    private val context: suspend () -> AttemptDetails = { AttemptDetails() },
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val app = AppIdentity(APP_NAME, safeVersion(appVersion), PLATFORM)
@@ -92,6 +96,11 @@ internal class ClientReporter(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Boolean>?) = size > 16
     }
 
+    /** Имя сервера → адрес, к которому подключался запуск (bootstrap): `server_ip` отчёта. */
+    private val addresses = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 64
+    }
+
     private val failureState = MutableStateFlow<FailureReport?>(null)
     private var failure: PendingFailure? = null
     private val failureLock = Mutex()
@@ -106,6 +115,12 @@ internal class ClientReporter(
 
     fun preflightFailed(generation: Long, tag: String): Boolean =
         synchronized(preflight) { preflight["$generation|$tag"] == true }
+
+    /** Адрес сервера [host], выбранный запуском (DoH, система или кэш). */
+    fun noteAddress(host: String, address: String?) {
+        if (address.isNullOrBlank()) return
+        synchronized(addresses) { addresses[host.lowercase()] = address }
+    }
 
     /** Новая попытка подключения: прошлый отказ с экрана снимается. */
     fun beginAttempt(generation: Long) {
@@ -144,10 +159,10 @@ internal class ClientReporter(
                     // Заморозка меряется только у серверов сервиса: о чужом отчёта нет, а 64 КБ тратятся.
                     val diagnosis = if (facts.succeeded && ref != null) checkFreeze(target) else null
                     if (facts.succeeded) clearFailure()
-                    if (ref != null) record(ref, AttemptClassifier.classify(facts, diagnosis), elapsedMs, attemptedAtMillis)
+                    if (ref != null) record(ref, null, AttemptClassifier.classify(facts, diagnosis), elapsedMs, attemptedAtMillis, details(target, null))
                     return@runCatching
                 }
-                onFailure(PendingFailure(generation, ref, facts, elapsedMs, attemptedAtMillis, target))
+                onFailure(PendingFailure(generation, tag, ref, facts, elapsedMs, attemptedAtMillis, target))
             }.onFailure { log("client-report: запись не удалась: ${it.javaClass.simpleName}") }
         }
     }
@@ -166,7 +181,7 @@ internal class ClientReporter(
                     networkLost = networkLost,
                     udpTransport = target?.udp == true,
                 )
-                onFailure(PendingFailure(generation, serverIds.lookup(tag, outboundType), facts, 0, startedAt, target))
+                onFailure(PendingFailure(generation, tag, serverIds.lookup(tag, outboundType), facts, 0, startedAt, target))
             }.onFailure { log("client-report: отказ запуска не записан: ${it.javaClass.simpleName}") }
         }
     }
@@ -194,7 +209,10 @@ internal class ClientReporter(
         }
         val ref = pending.ref
         if (ref != null) {
-            pending.record = record(ref, AttemptClassifier.classify(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt)
+            pending.record = record(
+                ref, null, AttemptClassifier.classify(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt,
+                details(pending.target, pending.diagnosisFacts),
+            )
         }
         pending.status = statusOf(pending)
         publish(pending)
@@ -208,11 +226,15 @@ internal class ClientReporter(
         scope.launch {
             runCatching {
                 val pending = failure ?: return@runCatching
-                val ref = pending.ref ?: return@runCatching
+                // Чужой сервер — полностью (адрес, порт, протокол, имя), но только по этой кнопке.
+                val foreign = if (pending.ref == null) foreignOf(pending) ?: return@runCatching else null
                 pending.status = SendStatus.Sending
                 publish(pending)
                 if (pending.record == null) {
-                    pending.record = record(ref, AttemptClassifier.classifyForced(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt, flushNow = false)
+                    pending.record = record(
+                        pending.ref, foreign, AttemptClassifier.classifyForced(pending.facts, pending.diagnosis),
+                        pending.elapsedMs, pending.attemptedAt, details(pending.target, pending.diagnosisFacts), flushNow = false,
+                    )
                 }
                 stoppedUntilNextAttempt = false
                 flushLocked(wait = true)
@@ -223,8 +245,27 @@ internal class ClientReporter(
         }
     }
 
+    private fun foreignOf(pending: PendingFailure): ForeignServer? {
+        val target = pending.target ?: return null
+        return ForeignServer.of(target.host, target.protocol, pending.tag)
+    }
+
+    /** Подробности отчёта: общие из [context] и про этот сервер (адрес, порт, транспорт, защита). */
+    private suspend fun details(target: ProbeTarget?, facts: DiagnosisFacts?): AttemptDetails {
+        val base = runCatching { context() }.getOrDefault(AttemptDetails())
+        if (target == null) return base.cleaned()
+        val literal = BlockProbe.literalAddress(target.host)?.hostAddress
+        val noted = synchronized(addresses) { addresses[target.host.lowercase()] }
+        return base.copy(
+            serverIp = literal ?: noted ?: facts?.probedAddress,
+            port = target.port,
+            transport = target.transport,
+            security = target.security,
+        ).cleaned()
+    }
+
     private fun statusOf(pending: PendingFailure): SendStatus {
-        val record = pending.record ?: return if (pending.ref == null) SendStatus.NotOurs else SendStatus.Available
+        val record = pending.record ?: return if (pending.ref == null && foreignOf(pending) == null) SendStatus.NotOurs else SendStatus.Available
         return if (queue.pending(now()).contains(record)) SendStatus.Queued else SendStatus.Sent
     }
 
@@ -276,28 +317,33 @@ internal class ClientReporter(
     } ?: "проба не удалась"
 
     private suspend fun record(
-        ref: ServerRef,
+        ref: ServerRef?,
+        foreign: ForeignServer?,
         verdict: io.github.zapretkvn.clientreports.AttemptVerdict?,
         elapsedMs: Long,
         attemptedAtMillis: Long,
+        details: AttemptDetails,
         flushNow: Boolean = true,
     ): AttemptRecord? {
         verdict ?: return null
+        if (ref == null && foreign == null) return null
         val key = networkKey()
         if (tokens.needsRefresh(key, now())) refreshToken(key)
         val record = AttemptRecord(
-            serverId = ref.serverId,
-            product = ref.product,
+            serverId = ref?.serverId.orEmpty(),
+            product = ref?.product.orEmpty(),
             outcome = verdict.outcome,
             failedStep = verdict.failedStep,
             detail = verdict.detail,
             elapsedMs = elapsedMs.coerceIn(0, ClientReportContract.MAX_ELAPSED_MS),
             attemptedAtMillis = attemptedAtMillis,
             networkToken = tokens.current(key, now()),
+            foreign = foreign,
+            details = details,
         )
         queue.add(record)
         log(
-            "client-report: ${ref.product}/${ref.serverId} ${verdict.outcome.code}" +
+            "client-report: ${ref?.let { "${it.product}/${it.serverId}" } ?: "чужой ${foreign?.protocol}"} ${verdict.outcome.code}" +
                 (if (verdict.failedStep.isNotEmpty()) " на шаге ${verdict.failedStep} (${verdict.detail})" else "") +
                 ", в очереди ${queue.size()}",
         )
@@ -486,7 +532,7 @@ internal class ClientReporter(
     }
 }
 
-/** Состояние отчёта о последнем отказе для экрана. */
+/** Состояние отчёта о последнем отказе для экрана; [NotOurs] — отправлять нечего (нет адреса сервера). */
 enum class SendStatus { Available, Sending, Sent, Queued, NotOurs }
 
 data class FailureReport(
@@ -501,6 +547,8 @@ data class FailureReport(
 
 private class PendingFailure(
     val generation: Long,
+    /** Тег сервера в профиле (его имя): имя чужого сервера в отчёте. */
+    val tag: String,
     val ref: ServerRef?,
     val facts: AttemptFacts,
     val elapsedMs: Long,
@@ -512,7 +560,7 @@ private class PendingFailure(
     @Volatile var diagnosis: Diagnosis? = null
     @Volatile var diagnosisFacts: DiagnosisFacts? = null
     @Volatile var record: AttemptRecord? = null
-    @Volatile var status: SendStatus = if (ref == null) SendStatus.NotOurs else SendStatus.Available
+    @Volatile var status: SendStatus = if (ref == null && target == null) SendStatus.NotOurs else SendStatus.Available
 }
 
 /** Не больше [limit] байт из потока (InputStream.readNBytes есть только с API 33). */

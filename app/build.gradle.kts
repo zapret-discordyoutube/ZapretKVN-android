@@ -16,6 +16,8 @@ val corePatchFile = coreProperties.getProperty("CORE_PATCH_FILE")
 val corePatchSha256 = coreProperties.getProperty("CORE_PATCH_SHA256")
 val hysteriaCoreTag = coreProperties.getProperty("HYSTERIA_CORE_TAG")
 val hysteriaCoreCommit = coreProperties.getProperty("HYSTERIA_CORE_COMMIT")
+val xrayCoreModule = coreProperties.getProperty("XRAY_CORE_MODULE")
+val amneziaCoreModule = coreProperties.getProperty("ANDROID_AMNEZIAWG_GO")
 val libboxAar = layout.projectDirectory.file("libs/libbox.aar").asFile
 val appVersionCode = providers.gradleProperty("zapretVersionCode")
     .orElse(providers.environmentVariable("ZAPRET_VERSION_CODE"))
@@ -98,6 +100,9 @@ android {
         buildConfigField("String", "CORE_UDP_PATCH_SHA256", "\"${coreProperties.getProperty("CORE_UDP_PATCH_SHA256")}\"")
         buildConfigField("String", "HYSTERIA_CORE_TAG", "\"$hysteriaCoreTag\"")
         buildConfigField("String", "HYSTERIA_CORE_COMMIT", "\"$hysteriaCoreCommit\"")
+        // Версии ядер для отчётов о подключениях (schema 2).
+        buildConfigField("String", "XRAY_CORE_MODULE", "\"$xrayCoreModule\"")
+        buildConfigField("String", "AMNEZIA_CORE_MODULE", "\"$amneziaCoreModule\"")
     }
 
     signingConfigs {

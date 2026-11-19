@@ -55,6 +55,8 @@ data class DiagnosisFacts(
      * мерили или пришёл целиком.
      */
     val stalledAfterBytes: Long? = null,
+    /** Адрес, который проверяли (для `server_ip` отчёта, если запуск не назвал свой). */
+    val probedAddress: String? = null,
 )
 
 data class Diagnosis(val failedStep: String, val detail: String)
