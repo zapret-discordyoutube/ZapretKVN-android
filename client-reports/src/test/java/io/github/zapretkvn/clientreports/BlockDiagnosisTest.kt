@@ -150,6 +150,9 @@ class BlockDiagnosisTest {
         assertEquals("local_bind_collision", AttemptClassifier.classifyForced(AttemptFacts(coreCode = "LOCAL_BIND_COLLISION"))?.detail)
         assertEquals("local_network", AttemptClassifier.classifyForced(AttemptFacts(networkLost = true))?.detail)
         assertEquals("local_unknown", AttemptClassifier.classifyForced(AttemptFacts())?.detail)
+        // Every failure is reported by itself since 2026-11-19 (owner): a start failure carries the app's own code,
+        // which becomes local_*, never «no report».
+        assertEquals("local_core_101", AttemptClassifier.classifyForced(AttemptFacts(coreCode = "CORE-101"))?.detail)
         assertEquals("connect", AttemptClassifier.classifyForced(AttemptFacts())?.failedStep)
         assertNull(AttemptClassifier.classifyForced(AttemptFacts(succeeded = true))?.takeIf { it.outcome == ReportOutcome.Failed })
         val long = AttemptClassifier.localCode("LOCAL_" + "X".repeat(80))

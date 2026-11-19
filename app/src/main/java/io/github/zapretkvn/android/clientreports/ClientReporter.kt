@@ -210,9 +210,14 @@ internal class ClientReporter(
             log("client-report: проверка пути → ${diagnosis?.let { "${it.failedStep}/${it.detail}" } ?: "без вывода"} (${summary(facts)})")
         }
         val ref = pending.ref
-        if (ref != null) {
+        // Everything that can be sent goes by itself (owner 2026-11-19: «send everything we possibly can automatically,
+        // even without the button»; the button is for a user who wants to send it himself). A failure not about the
+        // server goes as local_*, which vpnbot never counts against it; a server of the user's own goes in full
+        // (address, port, protocol, name: owner's explicit choice the same day).
+        val foreign = if (ref == null) foreignOf(pending) else null
+        if (ref != null || foreign != null) {
             pending.record = record(
-                ref, null, AttemptClassifier.classify(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt,
+                ref, foreign, AttemptClassifier.classifyForced(pending.facts, pending.diagnosis), pending.elapsedMs, pending.attemptedAt,
                 details(pending.target, pending.diagnosisFacts),
             )
         }
@@ -228,7 +233,7 @@ internal class ClientReporter(
         scope.launch {
             runCatching {
                 val pending = failure ?: return@runCatching
-                // Чужой сервер — полностью (адрес, порт, протокол, имя), но только по этой кнопке.
+                // Чужой сервер — полностью (адрес, порт, протокол, имя); обычно уже записан сам, кнопка лишь отправляет сразу.
                 val foreign = if (pending.ref == null) foreignOf(pending) ?: return@runCatching else null
                 pending.status = SendStatus.Sending
                 publish(pending)

@@ -18,8 +18,7 @@ One report per check of one server of the service's own subscriptions (the reply
   at most 512 KB). VLESS product subscriptions name VLESS/Trojan/Shadowsocks lines as product `vless`;
   Hysteria 2 subscriptions `hysteria2`. Relay rows «… через Россию» are not in the header (a report
   would not be about the foreign server). A repeated name (tag «name · 2») uses the entry of its name.
-  A server without an entry is never reported by itself (only as `foreign`, by the button), and the id
-  is never guessed from the name.
+  A server without an entry is reported as `foreign` (see below), and the id is never guessed from the name.
 - `outcome` `connected` / `failed` / `cancelled`, the failed step of the vpnbot ladder
   (resolve → connect → handshake → auth → tunnel → request), a short code (`udp_no_answer`,
   `tls_failed`, `auth_rejected`, `handshake_timeout`, `no_response`, …), elapsed ms, attempt time.
@@ -40,8 +39,9 @@ written only when known (a bad value drops out instead of losing the report, `At
 The receiver stores the sender's IP and its /24 (IPv4) or /48 (IPv6) for `sent_via: direct` reports
 only; tunnel reports store neither. Everything is kept 90 days.
 
-Foreign servers (not from the service's subscriptions) get the path check on screen, and their report is
-sent only when the user presses «Отправить отчёт»: then `foreign` {`host`, `protocol`, `name`} replaces
+Foreign servers (not from the service's subscriptions) get the path check on screen, and their failure is
+reported by itself (owner 2026-11-19: «send everything we possibly can automatically, even without the
+button», own servers in full, address included): `foreign` {`host`, `protocol`, `name`} replaces
 `server_id`/`product` (exactly one of the two, or the receiver refuses), with the server's `server_ip` and
 `port`. The name loses Unicode control/format characters and is cut to 64 code points (flags survive);
 the host is lower-cased, an IPv6 zone is never sent. The receiver keeps them in its own table, never in
@@ -145,14 +145,17 @@ report out of a failure that had no core code (Xray, no evidence) when it proves
 not about the server (`LOCAL_*`, lost network) never becomes a server failure. The screen shows one Russian
 line («Проверка пути: …», `describe`) for any server, ours or not; it contains no address.
 
-## «Отправить отчёт» (owner 2026-11-19)
+## Every failure is sent by itself; «Отправить отчёт» (owner 2026-11-19)
 
-Next to the connection error there is a button «Отправить отчёт» while the report of that failure has not
-gone out. Pressing it writes the report if none was written yet (a failure that is not about the server goes
-as `failed` at `connect` with `detail` `local_<code>`, `local_network` or `local_unknown`; vpnbot keeps
-`local_*` out of the server ranking) and sends the queue at once. The note under it then says «Отчёт
-отправлен» or «Отчёт в очереди, отправим при первой связи» (the button stays). Foreign servers get the button too (when the profile names their address): their report goes with
-`foreign` and only by the button (see «What is sent»).
+Every failed attempt is written and sent without asking (owner 2026-11-19, after a failure on his screen never
+reached the panel): a failure that is not about the server goes as `failed` at `connect` with `detail`
+`local_<code>` (the core's `LOCAL_*` or the app's own start code such as `CORE-…`), `local_network` or
+`local_unknown`; vpnbot keeps `local_*` out of the server verdict and ranking. Servers of the user's own go
+as `foreign` (see «What is sent»).
+
+The button «Отправить отчёт» next to the error stays for a user who wants to send it himself: it sends the queue
+at once (the report is normally already written; it never writes a second one). The note under it says «Отчёт
+отправлен» or «Отчёт в очереди, отправим при первой связи».
 
 ## Seeing it act
 
@@ -164,7 +167,7 @@ tcp=… tls=… neutral=…)`, no addresses), per freeze measure and per button 
 ## Known limits
 
 - An attempt that fails before the server check (bootstrap, core start) goes through
-  `ClientReporter.onStartFailure` from `VpnRuntime.handleStartFailure`: it is reported when the core code
-  or the path check names the server (for example `resolve`/`dns_nxdomain`), otherwise only by the button.
+  `ClientReporter.onStartFailure` from `VpnRuntime.handleStartFailure`: it is always reported, with the
+  path check's verdict when it names the server (for example `resolve`/`dns_nxdomain`), otherwise as `local_*`.
 - A check cut by the start budget (`StartupBudgetExhausted`) is a failure with no traffic, not `cancelled`.
 - Service slots (YouTube, Telegram, AI) switch servers without a check, so they produce no reports.
