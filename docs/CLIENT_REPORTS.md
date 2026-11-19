@@ -164,6 +164,16 @@ The runtime log (layer `app`) has a `client-report:` line per queued report and 
 tcp=… tls=… neutral=…)`, no addresses), per freeze measure and per button press. The files are in `noBackupFilesDir/client-reports/`
 (`queue.jsonl`, `install-id`, `network-token`) and `subscriptions/server-ids.json`.
 
+## Test runs send nothing (2026-11-19)
+
+Device tests connect to local test servers, and every failure, even on a server that is not ours, is reported by
+itself, so a test run would fill the production store with test rows (Windows 0.8.97 gate did: «A-works»,
+«B-udp-lost»). The test runner `ZapretTestRunner` (androidTest) sets the JVM property
+`zapret.kvn.client_reports=off` in its `onCreate`, before `Application.onCreate` and the lazy `AppContainer`;
+`ClientReporter` then writes nothing to the queue, asks no token and sends nothing, while the notice and the path
+check still work. The runtime log says `client-report: выключены (zapret.kvn.client_reports=off)`. Rule:
+`ClientReportSwitch`, test `ClientReportSwitchTest`.
+
 ## Known limits
 
 - An attempt that fails before the server check (bootstrap, core start) goes through

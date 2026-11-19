@@ -70,7 +70,13 @@ internal class ClientReporter(
     /** Подробности, общие для попыток (schema 2): тип сети, настройки, версии ОС и ядер. */
     private val context: suspend () -> AttemptDetails = { AttemptDetails() },
     private val now: () -> Long = System::currentTimeMillis,
+    /** false — прогон тестов ([ClientReportSwitch]): ничего не пишется и не отправляется; экран и проверка пути работают. */
+    private val enabled: Boolean = ClientReportSwitch.enabled(),
 ) {
+    init {
+        if (!enabled) log("client-report: выключены (${ClientReportSwitch.PROPERTY}=off), ничего не пишется и не отправляется")
+    }
+
     private val app = AppIdentity(APP_NAME, safeVersion(appVersion), PLATFORM)
     private val queue = ReportQueue(File(root, "queue.jsonl"))
     // «-2»: vpnbot's v2 (2026-11-19 19:37 UTC) no longer places a v1 value in any network, so one kept by an
@@ -333,7 +339,7 @@ internal class ClientReporter(
         flushNow: Boolean = true,
     ): AttemptRecord? {
         verdict ?: return null
-        if (ref == null && foreign == null) return null
+        if (ref == null && foreign == null || !enabled) return null
         val key = networkKey()
         if (tokens.needsRefresh(key, now())) refreshToken(key)
         val record = AttemptRecord(
@@ -365,11 +371,12 @@ internal class ClientReporter(
 
     /** Повод отправить очередь (подключение, запуск приложения). */
     fun flush() {
-        if (stoppedUntilNextAttempt) return
+        if (stoppedUntilNextAttempt || !enabled) return
         scope.launch { runCatching { flushLocked() } }
     }
 
     private suspend fun flushLocked(wait: Boolean = false) {
+        if (!enabled) return
         if (wait) flushing.lock() else if (!flushing.tryLock()) return
         try {
             while (true) {

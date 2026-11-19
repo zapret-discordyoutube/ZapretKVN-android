@@ -80,7 +80,7 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "io.github.zapretkvn.android.ZapretTestRunner"
 
         requestedApkAbi?.let { abi ->
             ndk {
