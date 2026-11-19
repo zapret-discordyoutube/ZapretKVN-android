@@ -173,6 +173,7 @@ class AppContainer(
             if (present) subscriptionFetchJournal.add("subscription: ответ сервиса Zapret VPN — адреса скрыты, страна по флагу имени")
             runCatching { subscriptionSourceStore.markService(url, present) }
         },
+        onServerIds = { url, serviceReply, value -> runCatching { clientReporter.serverIds.update(url, serviceReply, value) } },
     )
     init {
         // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
@@ -244,6 +245,23 @@ class AppContainer(
         // Уведомление VPN может появиться раньше экрана профилей: отметки сервиса читаются сразу.
         backgroundScope.launch { runCatching { subscriptionSourceStore.refreshServiceProfileIds() } }
     }
+
+    /**
+     * Отчёты о подключениях к серверам сервиса для status.zapret.moe (docs/CLIENT_REPORTS.md):
+     * сами, без настройки; напрямую мимо VPN, без ответа — через туннель.
+     */
+    internal val clientReporter = io.github.zapretkvn.android.clientreports.ClientReporter(
+        root = File(appContext.noBackupFilesDir, "client-reports"),
+        appVersion = BuildConfig.VERSION_NAME,
+        scope = backgroundScope,
+        serverIds = io.github.zapretkvn.android.clientreports.ServerIdStore(
+            File(appContext.noBackupFilesDir, "subscriptions/server-ids.json"),
+        ),
+        directConnection = { url -> nonVpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
+        tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
+        networkKey = { nonVpnNetwork(appContext)?.networkHandle?.toString() },
+        log = { line -> io.github.zapretkvn.android.diagnostics.RuntimeLog.app(4, line) },
+    ).also { it.flush() }
 
     val serverLatencyStore = ServerLatencyStore(
         File(appContext.noBackupFilesDir, "server-latency.json"),
@@ -442,6 +460,7 @@ private fun browserSubscriptionReply(url: String, headers: Map<String, String>):
         headerNames = response.headers.mapTo(mutableSetOf()) { it.first },
         location = response.redirectLocation ?: response.header("location"),
         body = response.body.takeIf { !response.truncated && it.size <= limit },
+        serverIds = response.header(HttpSubscriptionFetcher.SERVER_IDS_HEADER),
     )
 }
 

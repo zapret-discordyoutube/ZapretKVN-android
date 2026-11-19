@@ -426,6 +426,9 @@ internal class SessionStarter(
             )
         }
         preparedBootstrap.target?.let { target ->
+            container.clientReporter.notePreflight(token, target.outboundTag, preparedBootstrap.tcpPreflightFailed)
+        }
+        preparedBootstrap.target?.let { target ->
             ServerAddressRedactor.registerAliases(
                 target.hostname,
                 preparedBootstrap.addresses.mapNotNull { it.hostAddress },

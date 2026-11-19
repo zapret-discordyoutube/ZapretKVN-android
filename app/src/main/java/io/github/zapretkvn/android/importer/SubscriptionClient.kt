@@ -58,6 +58,8 @@ class HttpSubscriptionFetcher(
     private val log: (String) -> Unit = {},
     // Ответ подписки получен: url источника и есть ли в ответе заголовок [SERVICE_HEADER].
     private val onServiceMarker: (url: String, present: Boolean) -> Unit = { _, _ -> },
+    // Ответ подписки получен: заголовок id серверов каталога ([SERVER_IDS_HEADER]) для отчётов о подключениях.
+    private val onServerIds: (url: String, serviceReply: Boolean, value: String?) -> Unit = { _, _, _ -> },
 ) : SubscriptionFetcher {
     override fun fetch(source: SubscriptionSource): String {
         val url = validatedUrl(source.url)
@@ -150,7 +152,9 @@ class HttpSubscriptionFetcher(
             SubscriptionIdentity.describeHwidRefusal(reply.status, reply.headerNames)
                 ?.let { throw ImportException(FetchJudge.answeredMessage(reply.status, it)) }
             val body = reply.body ?: throw ImportException("Подписка больше 4 МБ.")
-            onServiceMarker(source.url, isServiceReply(reply.headerNames))
+            val serviceReply = isServiceReply(reply.headerNames)
+            onServiceMarker(source.url, serviceReply)
+            onServerIds(source.url, serviceReply, reply.serverIds)
             return body.toString(Charsets.UTF_8)
         }
         throw ImportException("Не удалось получить подписку.")
@@ -162,6 +166,8 @@ class HttpSubscriptionFetcher(
         val headerNames: Set<String>,
         val location: String?,
         val body: ByteArray?,
+        /** Значение заголовка [SERVER_IDS_HEADER] (id серверов каталога сервиса) или null. */
+        val serverIds: String? = null,
     )
 
     /**
@@ -195,7 +201,7 @@ class HttpSubscriptionFetcher(
                     if (total > MAX_IMPORT_BYTES) return Reply(status, names, null, null)
                     output.write(buffer, 0, count)
                 }
-                return Reply(status, names, null, output.toByteArray())
+                return Reply(status, names, null, output.toByteArray(), connection.getHeaderField(SERVER_IDS_HEADER))
             }
         } finally {
             connection.disconnect()
@@ -235,6 +241,9 @@ class HttpSubscriptionFetcher(
          * в приложение не зашивается (домен сменяется и не должен попасть в открытый код).
          */
         const val SERVICE_HEADER = "zapret-vpn-service"
+
+        /** Id серверов каталога сервиса для отчётов о подключениях (`client-reports`, решение владельца 19.11.2026). */
+        const val SERVER_IDS_HEADER = io.github.zapretkvn.clientreports.ServerIdHeader.NAME
 
         fun isServiceReply(headerNames: Collection<String>): Boolean =
             headerNames.any { it.equals(SERVICE_HEADER, ignoreCase = true) }

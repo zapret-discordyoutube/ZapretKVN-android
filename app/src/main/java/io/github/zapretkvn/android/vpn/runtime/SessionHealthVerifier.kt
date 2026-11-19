@@ -6,6 +6,13 @@ import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
 import io.github.zapretkvn.android.network.probes.HealthCheckResult
 import io.github.zapretkvn.android.network.probes.VpnHealthStageOutcome
+import io.github.zapretkvn.android.diagnostics.RuntimeErrors
+import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
+import io.github.zapretkvn.android.network.VpnNetworkLostException
+import io.github.zapretkvn.android.network.probes.VpnHealthTimeoutException
+import io.github.zapretkvn.clientreports.AttemptFacts
+import io.github.zapretkvn.networkbootstrap.CodedFailure
+import kotlinx.coroutines.CancellationException
 
 /**
  * Единственный вызов DNS/HTTPS-проверки работающей сессии: запуск и переключение
@@ -15,6 +22,27 @@ import io.github.zapretkvn.android.network.probes.VpnHealthStageOutcome
  */
 internal class SessionHealthVerifier(private val container: AppContainer) {
     suspend fun verify(
+        session: CoreSession,
+        config: ParsedConfig,
+        dnsServer: String,
+        reportStages: Boolean,
+    ): HealthCheckResult {
+        val startedAt = System.currentTimeMillis()
+        val startedElapsed = android.os.SystemClock.elapsedRealtime()
+        val result = try {
+            runPipeline(session, config, dnsServer, reportStages)
+        } catch (cancelled: CancellationException) {
+            reportAttempt(session, config, startedAt, startedElapsed, AttemptFacts(cancelled = true))
+            throw cancelled
+        } catch (error: Throwable) {
+            reportAttempt(session, config, startedAt, startedElapsed, failureFacts(session, config, error))
+            throw error
+        }
+        reportAttempt(session, config, startedAt, startedElapsed, AttemptFacts(succeeded = true))
+        return result
+    }
+
+    private suspend fun runPipeline(
         session: CoreSession,
         config: ParsedConfig,
         dnsServer: String,
@@ -50,5 +78,58 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
                 }
             },
         )
+    }
+
+    /** Выбранный в проверке сервер: тег и тип outbound; null — профиль без группы серверов. */
+    private fun selected(session: CoreSession, config: ParsedConfig): Pair<String, String>? =
+        runCatching {
+            FailoverPlanner.plan(config, session.runtimeSelections(), session.primaryGroupTag)
+                ?.let { it.currentId to it.currentType }
+        }.getOrNull()
+
+    /** Отчёт о попытке для status.zapret.moe ([io.github.zapretkvn.android.clientreports.ClientReporter]). */
+    private fun reportAttempt(
+        session: CoreSession,
+        config: ParsedConfig,
+        startedAt: Long,
+        startedElapsed: Long,
+        facts: AttemptFacts,
+    ) {
+        runCatching {
+            val (tag, type) = selected(session, config) ?: return
+            val udp = type.lowercase() in UDP_TYPES
+            val withPreflight = facts.copy(
+                udpTransport = udp,
+                tcpPreflightFailed = container.clientReporter.preflightFailed(session.generation, tag),
+            )
+            container.clientReporter.onAttempt(
+                tag = tag,
+                outboundType = type,
+                facts = withPreflight,
+                elapsedMs = android.os.SystemClock.elapsedRealtime() - startedElapsed,
+                attemptedAtMillis = startedAt,
+            )
+        }
+    }
+
+    /** Факты отказа: свидетельство ядра именно об этом сервере, потеря сети, провал трафика. */
+    private fun failureFacts(session: CoreSession, config: ParsedConfig, error: Throwable): AttemptFacts {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        val tag = selected(session, config)?.first
+        val targets = listOfNotNull(tag, tag?.let(ServerAddressRedactor::redact))
+        val evidence = RuntimeErrors.bestEvidence(container.vpnController.runtimeErrors.forGeneration(session.generation))
+            ?.takeIf { it.targetId.isNotBlank() && it.targetId in targets }
+        return AttemptFacts(
+            coreCode = evidence?.code,
+            networkLost = chain.any { it is VpnNetworkLostException },
+            trafficFailed = chain.any {
+                it is VpnHealthTimeoutException || (it as? CodedFailure)?.failureCode == TRAFFIC_PROBE_CODE
+            },
+        )
+    }
+
+    private companion object {
+        const val TRAFFIC_PROBE_CODE = "VPN-200"
+        val UDP_TYPES = setOf("hysteria2", "hysteria", "tuic", "wireguard", "awg", "amneziawg")
     }
 }

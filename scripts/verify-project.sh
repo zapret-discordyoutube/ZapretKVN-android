@@ -138,7 +138,7 @@ mapfile -t ANDROID_MODULES < <(
         | sed "s|$PROJECT_ROOT/||" \
         | sort
 )
-EXPECTED_ANDROID_MODULES=(app app-updater masking network-bootstrap runtime-log wireguard-import)
+EXPECTED_ANDROID_MODULES=(app app-updater client-reports masking network-bootstrap runtime-log wireguard-import)
 if [[ "${ANDROID_MODULES[*]}" != "${EXPECTED_ANDROID_MODULES[*]}" ]]; then
     echo "Unexpected Android module set: ${ANDROID_MODULES[*]:-none}" >&2
     exit 1
@@ -155,7 +155,7 @@ if grep -Eq 'WAKE_LOCK|REQUEST_IGNORE_BATTERY_OPTIMIZATIONS|android:process=' "$
 fi
 
 # Every production Kotlin source root: :app, :app-updater, the :core:* libraries and :feature:* modules.
-SCAN_ROOTS=("$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" "$PROJECT_ROOT/runtime-log/src/main/java"
+SCAN_ROOTS=("$PROJECT_ROOT/app/src/main/java" "$PROJECT_ROOT/app-updater/src/main/java" "$PROJECT_ROOT/runtime-log/src/main/java" "$PROJECT_ROOT/client-reports/src/main/java"
     "$PROJECT_ROOT/masking/src/main/java")
 for module_dir in "$PROJECT_ROOT"/core/*/ "$PROJECT_ROOT"/feature/*/; do
     [[ -d "${module_dir}src/main/java" ]] && SCAN_ROOTS+=("${module_dir}src/main/java")
@@ -164,7 +164,7 @@ done
 # Module boundary: :feature:* hold screens and presenters only. They may use :core:* and androidx,
 # never :app, the VPN runtime, ViewModels or the dependency containers (Route files in :app bind them).
 for build_file in "$PROJECT_ROOT"/feature/*/build.gradle.kts "$PROJECT_ROOT"/core/*/build.gradle.kts; do
-    if grep -Eq 'project\(":(app|app-updater|network-bootstrap|runtime-log|wireguard-import|feature:[a-z]+)"\)' "$build_file"; then
+    if grep -Eq 'project\(":(app|app-updater|client-reports|network-bootstrap|runtime-log|wireguard-import|feature:[a-z]+)"\)' "$build_file"; then
         echo "$build_file: :core:* and :feature:* modules must not depend on :app or on each other's features" >&2
         exit 1
     fi
