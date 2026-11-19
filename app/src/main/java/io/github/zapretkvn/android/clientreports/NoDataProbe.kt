@@ -39,25 +39,28 @@ internal class NoDataProbe(
             (runCatching { trusted.resolve(network, name) }.getOrNull() as? TrustedDnsOutcome.Addresses)
                 ?.value?.firstOrNull { it is Inet4Address }
         }
-        val plan = mutableListOf<Pair<String, () -> Unit>>("tunnel_b" to { https(tunnel, null, name, path) })
-        if (address != null) plan += "tunnel_a" to { https(tunnel, address, name, path) }
+        val plan = mutableListOf<Pair<String, (Progress) -> Unit>>("tunnel_b" to { https(tunnel, null, name, path, it) })
+        if (address != null) plan += "tunnel_a" to { https(tunnel, address, name, path, it) }
         plan.shuffle(random)
         if (direct != null) {
-            val straight = mutableListOf<Pair<String, () -> Unit>>("direct_b" to { https(direct, null, name, path) })
-            if (address != null) straight += "direct_a" to { https(direct, address, name, path) }
+            val straight = mutableListOf<Pair<String, (Progress) -> Unit>>("direct_b" to { https(direct, null, name, path, it) })
+            if (address != null) straight += "direct_a" to { https(direct, address, name, path, it) }
             straight.shuffle(random)
             plan += straight
         }
         val found = LinkedHashMap<String, ReportCheck>()
         plan.forEach { (probe, work) ->
             val started = SystemClock.elapsedRealtime()
+            val progress = Progress()
             val result = try {
-                work()
+                work(progress)
                 ReportChecks.ANSWERED
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: IOException) {
-                ProbeErrors.result(error, connected = false)
+                val millis = SystemClock.elapsedRealtime() - started
+                lookupResult(progress.stage, millis)
+                    ?: ProbeErrors.result(error, connected = connectedFor(progress.stage, tunnel = probe.startsWith("tunnel_")))
             } catch (_: Exception) {
                 ReportChecks.UNKNOWN
             }
@@ -66,11 +69,18 @@ internal class NoDataProbe(
         found
     }
 
+    /** How far one probe got: the name lookup, the TCP connect, or the exchange over an open connection. */
+    internal enum class Stage { LOOKUP, CONNECT, EXCHANGE }
+
+    internal class Progress(var stage: Stage = Stage.LOOKUP)
+
     /** HEAD по HTTPS через [network]: к литеральному [address] (без DNS) или по имени (DNS этой сети). */
-    private fun https(network: Network, address: InetAddress?, name: String, path: String) {
+    private fun https(network: Network, address: InetAddress?, name: String, path: String, progress: Progress) {
         val target = address ?: network.getAllByName(name).first()
+        progress.stage = Stage.CONNECT
         network.socketFactory.createSocket().use { raw ->
             raw.connect(InetSocketAddress(target, 443), TIMEOUT_MILLIS)
+            progress.stage = Stage.EXCHANGE
             raw.soTimeout = TIMEOUT_MILLIS
             val tls = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(raw, name, 443, true) as SSLSocket
             tls.use { socket ->
@@ -94,6 +104,26 @@ internal class NoDataProbe(
 
     companion object {
         const val TIMEOUT_MILLIS = 8_000
+
+        /** A failed name lookup that took this long got no answer (Android reports a resolver timeout as EAI_NODATA too). */
+        const val LOOKUP_SILENT_MILLIS = 5_000L
+
+        /**
+         * A failed name lookup: no answer in [LOOKUP_SILENT_MILLIS] is `timeout`, a quick failure proves nothing
+         * (`unknown`). `null` when the probe got past the lookup (vpnbot 2026-11-19: tunnel_b «unknown» after 20.9 s).
+         */
+        internal fun lookupResult(stage: Stage, millis: Long): String? = when {
+            stage != Stage.LOOKUP -> null
+            millis >= LOOKUP_SILENT_MILLIS -> ReportChecks.TIMEOUT
+            else -> ReportChecks.UNKNOWN
+        }
+
+        /**
+         * Whether a RST or EOF came over an open connection (`reset`) rather than to the SYN (`refused`). Through the
+         * tunnel the TUN served by sing-box completes the connect itself, before the core dials anything: a drop there
+         * is the core's flow dropped, never a refusal (vpnbot 2026-11-19: tunnel_a «refused» after 2 s).
+         */
+        internal fun connectedFor(stage: Stage, tunnel: Boolean): Boolean = tunnel || stage == Stage.EXCHANGE
 
         /** Проверка связи, как у пробы сервера: узлы отвергают публичный DoH и сервисы «мой IP», эти — нет. */
         val ENDPOINTS = listOf(
