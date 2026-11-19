@@ -77,4 +77,31 @@ class ServerIdStoreTest {
         )
         assertNull(store.lookup("Velnor (a)", "vless"))
     }
+
+    @Test
+    fun serviceSubscriptionWithoutIdsIsFetchedOnceForTheHeader() {
+        // The owner's archive 2026-11-19: subscriptions fetched before the header existed kept no ids, so no report
+        // could name a server; one fetch (body dropped) teaches the store, a second run does nothing.
+        val store = ServerIdStore(file)
+        val known = "https://sub.example/vless/token"
+        val missing = "https://sub.example/hy2/token"
+        store.update(known, serviceReply = true, headerValue = header("""{"Velnor": {"server_id": "hipnl", "product": "vless"}}"""))
+        org.junit.Assert.assertTrue(store.knows(known))
+        org.junit.Assert.assertFalse(store.knows(missing))
+        val fetched = mutableListOf<String>()
+        val backfill = ServerIdBackfill(
+            serviceSources = { listOf(io.github.zapretkvn.android.importer.SubscriptionSource(known), io.github.zapretkvn.android.importer.SubscriptionSource(missing)) },
+            knows = store::knows,
+            fetch = { source ->
+                fetched += source.url
+                store.update(source.url, serviceReply = true, headerValue = header("""{"Velnor": {"server_id": "hipnl", "product": "hysteria2"}}"""))
+            },
+        )
+        kotlinx.coroutines.runBlocking { backfill.runOnce(); backfill.runOnce() }
+        assertEquals(listOf(missing), fetched)
+        org.junit.Assert.assertTrue(store.knows(missing))
+        // A failed fetch never breaks the start of the app.
+        val failing = ServerIdBackfill({ listOf(io.github.zapretkvn.android.importer.SubscriptionSource("https://x.example/s")) }, { false }, { error("offline") })
+        kotlinx.coroutines.runBlocking { failing.runOnce() }
+    }
 }

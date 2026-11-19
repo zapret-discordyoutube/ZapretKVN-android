@@ -302,7 +302,23 @@ class AppContainer(
         definitions = { ServiceCatalog.resolve(vpnController.enabledServices.value) },
     )
 
+    /** Service subscriptions fetched before the server-ids header existed learn the ids once (ServerIdBackfill). */
+    private val serverIdBackfill = io.github.zapretkvn.android.clientreports.ServerIdBackfill(
+        serviceSources = {
+            subscriptionSourceStore.refreshServiceProfileIds()
+            subscriptionSourceStore.serviceProfileIds.value.mapNotNull { subscriptionSourceStore.get(it) }
+        },
+        knows = clientReporter.serverIds::knows,
+        fetch = { source -> subscriptionFetcher.fetch(source) },
+        log = { line -> io.github.zapretkvn.android.diagnostics.RuntimeLog.app(4, line) },
+    )
+
     init {
+        // The first connection of the process (no timer): the network is up, and reports start to matter.
+        backgroundScope.launch {
+            vpnController.state.first { it is VpnConnectionState.Connected }
+            runCatching { serverIdBackfill.runOnce() }
+        }
         // Выбор сервисов для проверки и состояние VPN доходят до проб без обращения к хранилищу.
         backgroundScope.launch {
             uiSettingsStore.settings.map { it.serviceChecks }.distinctUntilChanged()

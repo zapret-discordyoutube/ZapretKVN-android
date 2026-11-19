@@ -340,6 +340,7 @@ internal class ClientReporter(
             networkToken = tokens.current(key, now()),
             foreign = foreign,
             details = details,
+            reportId = ClientReportContract.newReportId(),
         )
         queue.add(record)
         log(

@@ -139,6 +139,27 @@ class ClientReportsTest {
     }
 
     @Test
+    fun reportIdIsMadeOnceAndSurvivesTheQueue() {
+        // vpnbot «report_id live» 2026-11-19: one attempt, one id, the same in every re-send.
+        val first = ClientReportContract.newReportId()
+        assertTrue(Regex("^[0-9a-f]{32}$").matches(first))
+        assertFalse(first == ClientReportContract.newReportId())
+        val dir = Files.createTempDirectory("queue-rid").toFile()
+        val file = File(dir, "queue.jsonl")
+        ReportQueue(file).add(record().copy(reportId = first))
+        val again = ReportQueue(file).pending(now)
+        assertEquals(first, again.single().reportId)
+        val sent = reports(ClientReportJson.batch(installId, app, again, "direct")).single()
+        assertEquals(first, sent["report_id"]!!.jsonPrimitive.content)
+        dir.deleteRecursively()
+        // A line written before report_id goes out without one; a malformed id never reaches the queue.
+        assertFalse("report_id" in reports(ClientReportJson.batch(installId, app, listOf(record()), "direct")).single())
+        listOf("ABCDEF".repeat(6), "0".repeat(31), "g".repeat(32)).forEach {
+            assertFalse(ClientReportContract.isValid(record().copy(reportId = it)))
+        }
+    }
+
+    @Test
     fun connectedReportHasNoFailedStepNoTokenNoDetail() {
         val body = ClientReportJson.batch(
             installId,

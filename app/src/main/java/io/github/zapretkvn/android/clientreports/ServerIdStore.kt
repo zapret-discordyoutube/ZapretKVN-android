@@ -53,6 +53,9 @@ internal class ServerIdStore(private val file: File) {
 
     fun mappedServers(): Int = load().values.sumOf { it.size }
 
+    /** The subscription at [url] has a map of catalogue ids (its last service reply carried the header). */
+    fun knows(url: String): Boolean = urlHash(url) in load()
+
     @Synchronized
     private fun load(): Map<String, Map<String, ServerRef>> {
         byUrl?.let { return it }

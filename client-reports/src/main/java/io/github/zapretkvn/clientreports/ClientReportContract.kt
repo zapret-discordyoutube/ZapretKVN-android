@@ -38,6 +38,7 @@ object ClientReportContract {
 
     // Те же выражения, что у приёмника: отчёт, который он отклонил бы, не ставится в очередь.
     private val INSTALL_ID = Regex("^[0-9a-f]{32}$")
+    private val REPORT_ID = Regex("^[0-9a-f]{32}$")
     private val SERVER_ID = Regex("^[a-z0-9_-]{1,64}$")
     private val CODE = Regex("^[a-z][a-z0-9_]{0,47}$")
     private val VERSION = Regex("^[0-9A-Za-z.+-]{1,32}$")
@@ -62,6 +63,12 @@ object ClientReportContract {
     fun isForeignHost(value: String): Boolean = isIpLiteral(value) || HOST_NAME.matches(value) && value.any(Char::isLetter)
 
     fun isInstallId(value: String): Boolean = INSTALL_ID.matches(value)
+
+    /** 32 lowercase hex characters from [java.security.SecureRandom]. */
+    fun newReportId(): String {
+        val bytes = ByteArray(16).also(java.security.SecureRandom()::nextBytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
     fun isServerId(value: String): Boolean = SERVER_ID.matches(value)
     fun isNetworkToken(value: String): Boolean = NETWORK_TOKEN.matches(value)
     fun isAppIdentity(app: AppIdentity): Boolean =
@@ -77,6 +84,7 @@ object ClientReportContract {
         if (record.elapsedMs !in 0..MAX_ELAPSED_MS || record.attemptedAtMillis <= 0) return false
         if (record.detail.isNotEmpty() && !CODE.matches(record.detail)) return false
         if (record.networkToken.isNotEmpty() && !isNetworkToken(record.networkToken)) return false
+        if (record.reportId.isNotEmpty() && !REPORT_ID.matches(record.reportId)) return false
         return when (record.outcome) {
             ReportOutcome.Failed -> record.failedStep in STEPS
             ReportOutcome.Connected, ReportOutcome.Cancelled -> record.failedStep.isEmpty()
@@ -219,6 +227,11 @@ data class AttemptRecord(
     /** Чужой сервер вместо [serverId]/[product] (те тогда пустые). */
     val foreign: ForeignServer? = null,
     val details: AttemptDetails = AttemptDetails(),
+    /**
+     * One attempt, one id (vpnbot «report_id live» 2026-11-19): made once when the attempt is recorded and kept in
+     * the queue, so a re-send after a lost reply is stored once. Empty for queue lines written before it.
+     */
+    val reportId: String = "",
 )
 
 object ClientReportJson {
@@ -274,6 +287,7 @@ object ClientReportJson {
             put("attempted_at", isoUtc(record.attemptedAtMillis))
             put("sent_via", sentVia)
             if (record.networkToken.isNotEmpty()) put("network_token", record.networkToken)
+            if (record.reportId.isNotEmpty()) put("report_id", record.reportId)
             details(record.details).forEach { (key, value) -> put(key, value) }
         }
 
@@ -315,6 +329,7 @@ object ClientReportJson {
         put("e", record.elapsedMs)
         put("t", record.attemptedAtMillis)
         put("n", record.networkToken)
+        if (record.reportId.isNotEmpty()) put("r", record.reportId)
         record.foreign?.let { foreign ->
             put("g", buildJsonObject { put("h", foreign.host); put("p", foreign.protocol); put("m", foreign.name) })
         }
@@ -341,6 +356,7 @@ object ClientReportJson {
             networkToken = text("n"),
             foreign = foreign,
             details = (json["x"] as? JsonObject)?.let(::parseDetails) ?: AttemptDetails(),
+            reportId = text("r"),
         ).takeIf(ClientReportContract::isValid)
     }.getOrNull()
 
