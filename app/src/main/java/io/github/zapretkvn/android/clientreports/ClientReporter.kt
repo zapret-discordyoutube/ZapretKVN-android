@@ -5,6 +5,7 @@ import io.github.zapretkvn.clientreports.AttemptFacts
 import io.github.zapretkvn.clientreports.AttemptOutcome
 import io.github.zapretkvn.clientreports.AttemptDetails
 import io.github.zapretkvn.clientreports.AttemptRecord
+import io.github.zapretkvn.clientreports.BatchDelivery
 import io.github.zapretkvn.clientreports.ForeignServer
 import io.github.zapretkvn.clientreports.ClientReportContract
 import io.github.zapretkvn.clientreports.ClientReportJson
@@ -15,6 +16,7 @@ import io.github.zapretkvn.clientreports.NetworkTokenCache
 import io.github.zapretkvn.clientreports.ReportCheck
 import io.github.zapretkvn.clientreports.ReportChecks
 import io.github.zapretkvn.clientreports.ReportOutcome
+import io.github.zapretkvn.clientreports.ReportClock
 import io.github.zapretkvn.clientreports.ReportQueue
 import io.github.zapretkvn.clientreports.ReportSendPolicy
 import io.github.zapretkvn.clientreports.SendAction
@@ -92,6 +94,9 @@ internal class ClientReporter(
 
     /** Имя → когда оно не ответило; такое имя идёт последним [IngestHosts.FAILED_FOR_MILLIS]. */
     private val failedHosts = HashMap<String, Long>()
+
+    /** The ingest's clock from its replies: `attempted_at` goes in its time (vpnbot 2026-11-20). */
+    private val clock = ReportClock()
     private val flushing = Mutex()
     private val preflight = object : LinkedHashMap<String, ReportCheck>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReportCheck>?) = size > 32
@@ -454,14 +459,13 @@ internal class ClientReporter(
                     ClientReportJson.batch(installId, app, it, ClientReportContract.SENT_DIRECT).toByteArray(Charsets.UTF_8).size
                 }
                 if (batch.isEmpty()) return
-                val action = send(batch)
-                when (action) {
-                    SendAction.Remove, SendAction.Drop -> queue.remove(batch)
-                    SendAction.KeepAndStop, SendAction.TryOtherPath -> {
-                        stoppedUntilNextAttempt = action == SendAction.KeepAndStop
-                        return
-                    }
-                }
+                // A refused batch is split until the refused reports stand alone: the good ones are never lost with them.
+                val stopped = BatchDelivery.deliver(batch, ::sendCorrected, { part, action ->
+                    queue.remove(part)
+                    if (action == SendAction.Drop) log("client-report: приёмник отклонил ${part.size} отч., убраны")
+                }) ?: continue
+                stoppedUntilNextAttempt = stopped == SendAction.KeepAndStop
+                return
             }
         } finally {
             flushing.unlock()
@@ -473,6 +477,15 @@ internal class ClientReporter(
      * имён приёмника. Если не ответило ни одно имя, один раз спрашивается лента имён и попытка
      * повторяется. [SendAction.TryOtherPath] — не ответил никто.
      */
+    /** A refusal right after the ingest's clock was first learnt is sent once more in its time. */
+    private fun sendCorrected(batch: List<AttemptRecord>): SendAction {
+        val used = clock.applied()
+        val action = send(batch)
+        if (action != SendAction.Drop || clock.applied() == used) return action
+        log("client-report: часы устройства расходятся с приёмником на ${clock.applied() / 1000} с — повтор во времени приёмника")
+        return send(batch)
+    }
+
     private fun send(batch: List<AttemptRecord>): SendAction {
         if (ingest.feedDue(now(), nothingAnswered = false)) refreshFeed()
         sendOnce(batch)?.let { return it }
@@ -484,7 +497,7 @@ internal class ClientReporter(
     private fun sendOnce(batch: List<AttemptRecord>): SendAction? {
         val installId = installId()
         for ((via, open) in listOf(ClientReportContract.SENT_DIRECT to directConnection, ClientReportContract.SENT_TUNNEL to tunnelConnection)) {
-            val body = ClientReportJson.batch(installId, app, batch, via).toByteArray(Charsets.UTF_8)
+            val body = ClientReportJson.batch(installId, app, batch, via, clock.applied()).toByteArray(Charsets.UTF_8)
             for (host in hostOrder().take(IngestHosts.TRIES_PER_PATH)) {
                 val (status, reply) = post(open, host, body) ?: run {
                     noteFailed(host)
@@ -544,6 +557,7 @@ internal class ClientReporter(
             connection.setRequestProperty("Connection", "close")
             connection.outputStream.use { it.write(body) }
             val status = connection.responseCode
+            clock.learn(connection.getHeaderFieldDate("Date", 0), now())
             val reply = if (status == 202 || status == 200) {
                 runCatching { connection.inputStream.use { it.readNBytesCompat(MAX_REPLY_BYTES).toString(Charsets.UTF_8) } }.getOrNull()
             } else {

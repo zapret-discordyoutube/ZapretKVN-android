@@ -41,6 +41,16 @@ class ClientReportsTest {
         ((Json.parseToJsonElement(body) as JsonObject)["reports"] as JsonArray).map { it as JsonObject }
 
     @Test
+    fun attemptedAtGoesInTheIngestsTime() {
+        val at = 1_763_640_000_000L                                         // 2025-11-20T12:00:00Z
+        val ahead = record(at = at)
+        val plain = reports(ClientReportJson.batch(installId, app, listOf(ahead), "direct")).single()
+        val shifted = reports(ClientReportJson.batch(installId, app, listOf(ahead), "direct", clockOffsetMillis = -3 * 3_600_000L)).single()
+        assertEquals("2025-11-20T12:00:00Z", plain["attempted_at"]!!.jsonPrimitive.content)
+        assertEquals("2025-11-20T09:00:00Z", shifted["attempted_at"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun batchCarriesExactlyTheContractFields() {
         val body = ClientReportJson.batch(installId, app, listOf(record(token = "v1.abc.def")), "tunnel")
         val report = reports(body).single()

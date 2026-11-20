@@ -274,7 +274,11 @@ data class AttemptRecord(
 
 object ClientReportJson {
     /** Тело `POST /v1/reports`: ровно поля контракта, ничего сверх. */
-    fun batch(installId: String, app: AppIdentity, records: List<AttemptRecord>, sentVia: String): String {
+    /**
+     * [clockOffsetMillis]: the ingest's clock minus ours ([ReportClock.applied]); `attempted_at` goes in the ingest's time,
+     * so a device clock running ahead is not refused as «in the future» (vpnbot 2026-11-20).
+     */
+    fun batch(installId: String, app: AppIdentity, records: List<AttemptRecord>, sentVia: String, clockOffsetMillis: Long = 0): String {
         require(ClientReportContract.isInstallId(installId)) { "install_id" }
         require(ClientReportContract.isAppIdentity(app)) { "app" }
         require(sentVia == ClientReportContract.SENT_DIRECT || sentVia == ClientReportContract.SENT_TUNNEL)
@@ -285,14 +289,14 @@ object ClientReportJson {
                 buildJsonArray {
                     records.forEach { record ->
                         require(ClientReportContract.isValid(record)) { "record" }
-                        add(report(installId, app, record, sentVia))
+                        add(report(installId, app, record, sentVia, clockOffsetMillis))
                     }
                 },
             )
         }.toString()
     }
 
-    private fun report(installId: String, app: AppIdentity, record: AttemptRecord, sentVia: String): JsonObject =
+    private fun report(installId: String, app: AppIdentity, record: AttemptRecord, sentVia: String, clockOffsetMillis: Long): JsonObject =
         buildJsonObject {
             put("schema", record.schema)
             put("install_id", installId)
@@ -330,7 +334,7 @@ object ClientReportJson {
                 if (record.detail.isNotEmpty()) put("detail", record.detail)
             }
             put("elapsed_ms", record.elapsedMs)
-            put("attempted_at", isoUtc(record.attemptedAtMillis))
+            put("attempted_at", isoUtc(record.attemptedAtMillis + clockOffsetMillis))
             put("sent_via", sentVia)
             if (record.networkToken.isNotEmpty()) put("network_token", record.networkToken)
             if (record.reportId.isNotEmpty()) put("report_id", record.reportId)
