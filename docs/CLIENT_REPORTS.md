@@ -167,7 +167,7 @@ Inside the tunnel anything is invisible to DPI as a separate probe:
   outside the rarity limits (it moves no extra traffic). `r` is `timeout` when no answer came before the app gave up
   (the 20 s deadline, the startup budget, not one byte through the server), `reset` when the flow through the tunnel
   was dropped, `unknown` when the failure proves nothing about data (DNS inside the tunnel, an unexpected HTTP
-  status); `ms` is how long the check ran. Switch: `ReportChecks.HEALTH_LIVE`, off until vpnbot's «health live».
+  status); `ms` is how long the check ran. Switch: `ReportChecks.HEALTH_LIVE`, on since vpnbot «health live» 2026-11-20 09:26 UTC (rules version 2).
 
 ## Completion: the failure at once, the checks after (vpnbot «completion live» 2026-11-19 22:16 UTC)
 

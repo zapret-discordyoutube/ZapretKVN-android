@@ -28,7 +28,7 @@ object ReportChecks {
      * check got no data. Off until vpnbot's «health live»: before that a report with it is refused as an unknown probe.
      */
     const val HEALTH = "health"
-    const val HEALTH_LIVE = false
+    const val HEALTH_LIVE = true
 
     /** Every probe the contract admits, in its order. */
     val PROBES = listOf(
