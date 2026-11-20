@@ -231,6 +231,9 @@ internal class ClientReporter(
             pending.stillServing?.invoke() == true && probeSlot(target)
         val path = !noData && !pending.facts.trafficFailed && target != null && probe != null &&
             ReportChecks.needsPathCheck(coreCode) && probeSlot(target)
+        // The app's own health check is a fact it already has (vpnbot 2026-11-20): no traffic, no rarity limit; it goes
+        // with the first copy when the core gave no code.
+        if (coreCode.isEmpty()) pending.facts.health?.let { pending.checks[ReportChecks.HEALTH] = it }
         // Completion (vpnbot «completion live» 19.11.2026): часть ядра уходит сразу — панель видит отказ без ожидания,
         // и попытка встаёт в сеть, из которой сделана; целиком тот же отчёт — после проверки.
         pending.record = recordFailure(pending, complete = if (noData || path) false else null)

@@ -10,6 +10,7 @@ import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.ServerAddressRedactor
 import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.network.probes.VpnHealthTimeoutException
+import io.github.zapretkvn.android.clientreports.HealthCheckFact
 import io.github.zapretkvn.android.clientreports.ProbeTargets
 import io.github.zapretkvn.clientreports.AttemptFacts
 import io.github.zapretkvn.networkbootstrap.CodedFailure
@@ -36,14 +37,16 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
             // Бюджет запуска кончился на проверке: сервер не дал рабочего трафика за отведённое время.
             // Это отказ, а не отмена; отмена — переключение или остановка.
             val facts = if (cancelled is StartupBudgetExhausted) {
-                failureFacts(session, config, cancelled).copy(trafficFailed = true)
+                failureFacts(session, config, cancelled, startedElapsed).let {
+                    it.copy(trafficFailed = true, health = it.health ?: HealthCheckFact.of(cancelled, waitedSince(startedElapsed)))
+                }
             } else {
                 AttemptFacts(cancelled = true)
             }
             reportAttempt(session, config, startedAt, startedElapsed, facts)
             throw cancelled
         } catch (error: Throwable) {
-            reportAttempt(session, config, startedAt, startedElapsed, failureFacts(session, config, error))
+            reportAttempt(session, config, startedAt, startedElapsed, failureFacts(session, config, error, startedElapsed))
             throw error
         }
         reportAttempt(session, config, startedAt, startedElapsed, AttemptFacts(succeeded = true))
@@ -127,20 +130,24 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
     }
 
     /** Факты отказа: свидетельство ядра именно об этом сервере, потеря сети, провал трафика. */
-    private fun failureFacts(session: CoreSession, config: ParsedConfig, error: Throwable): AttemptFacts {
+    private fun failureFacts(session: CoreSession, config: ParsedConfig, error: Throwable, startedElapsed: Long): AttemptFacts {
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         val tag = selected(session, config)?.first
         val targets = listOfNotNull(tag, tag?.let(ServerAddressRedactor::redact))
         val evidence = RuntimeErrors.bestEvidence(container.vpnController.runtimeErrors.forGeneration(session.generation))
             ?.takeIf { it.targetId.isNotBlank() && it.targetId in targets }
+        val trafficFailed = chain.any {
+            it is VpnHealthTimeoutException || (it as? CodedFailure)?.failureCode == TRAFFIC_PROBE_CODE
+        }
         return AttemptFacts(
             coreCode = evidence?.code,
             networkLost = chain.any { it is VpnNetworkLostException },
-            trafficFailed = chain.any {
-                it is VpnHealthTimeoutException || (it as? CodedFailure)?.failureCode == TRAFFIC_PROBE_CODE
-            },
+            trafficFailed = trafficFailed,
+            health = if (trafficFailed) HealthCheckFact.of(error, waitedSince(startedElapsed)) else null,
         )
     }
+
+    private fun waitedSince(startedElapsed: Long): Long = android.os.SystemClock.elapsedRealtime() - startedElapsed
 
     private companion object {
         const val TRAFFIC_PROBE_CODE = "VPN-200"

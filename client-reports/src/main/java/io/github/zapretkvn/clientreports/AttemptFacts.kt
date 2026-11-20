@@ -19,6 +19,8 @@ data class AttemptFacts(
     val tcpPreflightFailed: Boolean = false,
     /** Протокол сервера идёт по UDP (Hysteria 2, WireGuard): TCP-предпроверка к нему ничего не значит. */
     val udpTransport: Boolean = false,
+    /** The app's own health check through the tunnel when it got no data (probe `health`, vpnbot 2026-11-20). */
+    val health: ReportCheck? = null,
 )
 
 /**

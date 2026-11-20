@@ -278,7 +278,7 @@ class ClientReportsTest {
 
     @Test
     fun checkRulesFollowTheContract() {
-        assertEquals(17, ReportChecks.PROBES.size)
+        assertEquals(if (ReportChecks.HEALTH_LIVE) 18 else 17, ReportChecks.PROBES.size)
         assertTrue(ReportChecks.isValid("dns_doh", ReportCheck("nxdomain", 300)))
         assertFalse(ReportChecks.isValid("tcp_target", ReportCheck("nxdomain", 300)))
         assertFalse(ReportChecks.isValid("tcp_target", ReportCheck("answered", 60_001)))

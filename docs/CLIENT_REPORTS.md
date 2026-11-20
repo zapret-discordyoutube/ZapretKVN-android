@@ -162,6 +162,12 @@ Inside the tunnel anything is invisible to DPI as a separate probe:
   EOF there is `reset` (the core dropped the flow: its link to the server or the server's own outbound), never
   `refused`; over the non-VPN network `refused` is only a RST to the SYN. A failed name lookup is `timeout` after
   5 s without an answer (Android reports a resolver timeout as EAI_NODATA too), `unknown` when quicker.
+- `health` (vpnbot 2026-11-20): the app's own health check through the TUN (`HealthCheckFact`, from
+  `SessionHealthVerifier`) as a probe, sent on every such failure without a core code, with the first copy and
+  outside the rarity limits (it moves no extra traffic). `r` is `timeout` when no answer came before the app gave up
+  (the 20 s deadline, the startup budget, not one byte through the server), `reset` when the flow through the tunnel
+  was dropped, `unknown` when the failure proves nothing about data (DNS inside the tunnel, an unexpected HTTP
+  status); `ms` is how long the check ran. Switch: `ReportChecks.HEALTH_LIVE`, off until vpnbot's «health live».
 
 ## Completion: the failure at once, the checks after (vpnbot «completion live» 2026-11-19 22:16 UTC)
 

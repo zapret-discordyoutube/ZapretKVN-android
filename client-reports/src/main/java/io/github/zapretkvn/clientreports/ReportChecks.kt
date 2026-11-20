@@ -23,12 +23,19 @@ data class ReportCheck(
 )
 
 object ReportChecks {
-    /** Every probe the contract admits, in its order (a report carries at most these 17). */
+    /**
+     * The app's own health check through the tunnel (vpnbot 2026-11-20): sent on a failure with no core code where the
+     * check got no data. Off until vpnbot's «health live»: before that a report with it is refused as an unknown probe.
+     */
+    const val HEALTH = "health"
+    const val HEALTH_LIVE = false
+
+    /** Every probe the contract admits, in its order. */
     val PROBES = listOf(
         "control_front", "control_neutral", "dns_system", "dns_doh", "tcp_preflight", "tcp_target", "tcp_443",
         "tls_real", "tls_neutral", "tls_front", "quic_neutral", "quic_target", "tunnel_a", "tunnel_b", "direct_a",
         "direct_b", "flow",
-    )
+    ) + listOfNotNull(HEALTH.takeIf { HEALTH_LIVE })
 
     /** Probes that move data: only they may carry bytes. */
     val FLOW_PROBES = setOf("tunnel_a", "tunnel_b", "direct_a", "direct_b", "flow")
