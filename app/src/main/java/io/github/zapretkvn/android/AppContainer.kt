@@ -153,6 +153,13 @@ class AppContainer(
         tunnelConnection = { url -> vpnNetwork(appContext)?.openConnection(url) as? HttpURLConnection },
         // Напрямую — стеком Chromium: провайдер видит обычный Chrome, а не Conscrypt.
         browserDirect = { url, headers -> browserSubscriptionReply(url, headers) },
+        // Подписка не получена: ошибка приложения с кодом и путём, без ссылки и адреса (vpnbot «app_error live»).
+        onFailure = { url, status, error, route ->
+            val ours = runCatching { subscriptionSourceStore.isService(url) }.getOrDefault(false)
+            io.github.zapretkvn.android.clientreports.AppErrorFacts.subscription(status, error, ours, route)
+                ?.let(clientReporter::onAppError)
+        },
+        vpnActive = { vpnNetwork(appContext) != null },
         // Ни один путь не ответил — один раз проверить по стадиям и назвать виновника.
         diagnose = { host, port ->
             FetchJudge.judge(
@@ -226,6 +233,8 @@ class AppContainer(
         ),
         notifier = AndroidUpdateNotifier(appContext),
         prefs = SharedUpdatePrefs(appContext),
+        // Обновление не удалось: ошибка приложения с кодом шага (vpnbot «app_error live» 2026-11-20).
+        onFailure = { code -> io.github.zapretkvn.android.clientreports.AppErrorFacts.update(code)?.let(clientReporter::onAppError) },
     )
     val bootstrapCache = BootstrapCache(File(appContext.noBackupFilesDir, "network"))
     val ruleSetAssetManager = RuleSetAssetManager(appContext)
@@ -279,7 +288,16 @@ class AppContainer(
         ),
         // Schema 2: то, что одинаково для всех попыток сейчас (тип сети, настройки, версии).
         context = { reportContext(appContext, uiSettingsStore.settings.first(), maskingSettingsStore.settings.first().enabled) },
-    ).also { it.flush() }
+    ).also { reporter ->
+        // A crash, native crash or ANR of an earlier run goes once as an app error (vpnbot «app_error live» 2026-11-20).
+        runCatching {
+            reporter.onPreviousRun(
+                io.github.zapretkvn.android.clientreports.AppErrorFacts.crash(appCrashStore.read()),
+                io.github.zapretkvn.android.clientreports.AppErrorFacts.exit(io.github.zapretkvn.android.diagnostics.AppProcessExitReader.read(appContext)),
+            )
+        }
+        reporter.flush()
+    }
 
     val serverLatencyStore = ServerLatencyStore(
         File(appContext.noBackupFilesDir, "server-latency.json"),

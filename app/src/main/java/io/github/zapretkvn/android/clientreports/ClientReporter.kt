@@ -1,5 +1,9 @@
 package io.github.zapretkvn.android.clientreports
 
+import io.github.zapretkvn.clientreports.AppError
+import io.github.zapretkvn.clientreports.AppErrorRecord
+import io.github.zapretkvn.clientreports.AppErrorStore
+import io.github.zapretkvn.clientreports.AppErrors
 import io.github.zapretkvn.clientreports.AppIdentity
 import io.github.zapretkvn.clientreports.AttemptFacts
 import io.github.zapretkvn.clientreports.AttemptOutcome
@@ -37,6 +41,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
 
 /**
  * Отчёты о подключениях к серверам сервиса для status.zapret.moe (этап S4 «честного покрытия»,
@@ -86,6 +93,9 @@ internal class ClientReporter(
 
     private val app = AppIdentity(APP_NAME, safeVersion(appVersion), PLATFORM)
     private val queue = ReportQueue(File(root, "queue.jsonl"))
+
+    /** App errors not about a server (vpnbot «app_error live» 2026-11-20): counted, one send per code a day. */
+    private val appErrors = AppErrorStore(File(root, "app-errors.json"), now)
     // «-2»: vpnbot's v2 (2026-11-19 19:37 UTC) no longer places a v1 value in any network, so one kept by an
     // older version is left behind and a fresh one is asked (the value itself stays opaque).
     private val tokens = NetworkTokenCache(File(root, "network-token-2"))
@@ -447,6 +457,34 @@ internal class ClientReporter(
     }
 
     /** Повод отправить очередь (подключение, запуск приложения). */
+    /**
+     * An app error not about any server (crash, start without a server, subscription, update, permission, storage):
+     * a code and, for a crash, frames — never a message, path, address or URL. Goes with the next send.
+     */
+    fun onAppError(error: AppError, atMillis: Long = now()) {
+        if (!enabled) return
+        scope.launch {
+            runCatching {
+                val key = networkKey()
+                if (tokens.needsRefresh(key, now())) refreshToken(key)
+                val details = runCatching { context() }.getOrDefault(AttemptDetails())
+                val record = appErrors.add(error, app.version, tokens.current(key, now()), details, atMillis) ?: return@runCatching
+                log("client-report: ошибка приложения ${error.code} (${error.step}), раз: ${record.count}")
+                stoppedUntilNextAttempt = false
+                flushLocked()
+            }.onFailure { log("client-report: ошибка приложения не записана: ${it.javaClass.simpleName}") }
+        }
+    }
+
+    /** Crashes and exits of an earlier run, turned into app errors once ([AppErrorStore.seenUntil]). */
+    fun onPreviousRun(crash: Pair<Long, AppError>?, exit: Pair<Long, AppError>?) {
+        val seen = appErrors.seenUntil()
+        listOfNotNull(crash, exit).filter { (at, _) -> at > seen }.sortedBy { it.first }.forEach { (at, error) ->
+            onAppError(error, at)
+        }
+        listOfNotNull(crash?.first, exit?.first).maxOrNull()?.let(appErrors::see)
+    }
+
     fun flush() {
         if (stoppedUntilNextAttempt || !enabled) return
         scope.launch { runCatching { flushLocked() } }
@@ -461,7 +499,10 @@ internal class ClientReporter(
                 val batch = IngestHosts.takeBatch(queue.pending(now()), ClientReportContract.MAX_BATCH, IngestHosts.MAX_BODY_BYTES) {
                     ClientReportJson.batch(installId, app, it, ClientReportContract.SENT_DIRECT).toByteArray(Charsets.UTF_8).size
                 }
-                if (batch.isEmpty()) return
+                if (batch.isEmpty()) {
+                    flushAppErrors()
+                    return
+                }
                 // A refused batch is split until the refused reports stand alone: the good ones are never lost with them.
                 val stopped = BatchDelivery.deliver(batch, ::sendCorrected, { part, action ->
                     queue.remove(part)
@@ -480,19 +521,59 @@ internal class ClientReporter(
      * имён приёмника. Если не ответило ни одно имя, один раз спрашивается лента имён и попытка
      * повторяется. [SendAction.TryOtherPath] — не ответил никто.
      */
-    /** A refusal right after the ingest's clock was first learnt is sent once more in its time. */
-    private fun sendCorrected(batch: List<AttemptRecord>): SendAction {
-        val used = clock.applied()
-        val action = send(batch)
-        if (action != SendAction.Drop || clock.applied() == used) return action
-        log("client-report: часы устройства расходятся с приёмником на ${clock.applied() / 1000} с — повтор во времени приёмника")
-        return send(batch)
+    /** App errors after the reports, through the same names, clock and split; a stop leaves them for the next send. */
+    private fun flushAppErrors() {
+        while (true) {
+            val due = appErrors.due(APP_ERRORS_PER_BATCH)
+            if (due.isEmpty()) return
+            val stopped = BatchDelivery.deliver(due, { part -> sendCorrected(part, ::sendAppErrorsOnce) }, { part, action ->
+                appErrors.sent(part)
+                if (action == SendAction.Drop) log("client-report: приёмник отклонил ${part.size} ош. приложения, убраны")
+            }) ?: continue
+            stoppedUntilNextAttempt = stopped == SendAction.KeepAndStop
+            return
+        }
     }
 
-    private fun send(batch: List<AttemptRecord>): SendAction {
+    private fun sendAppErrorsOnce(batch: List<AppErrorRecord>): SendAction? {
+        val installId = installId()
+        for ((via, open) in listOf(ClientReportContract.SENT_DIRECT to directConnection, ClientReportContract.SENT_TUNNEL to tunnelConnection)) {
+            val offset = clock.applied()
+            val body = buildJsonObject {
+                put("reports", buildJsonArray { batch.forEach { add(AppErrors.json(installId, APP_NAME, PLATFORM, it, via, offset)) } })
+            }.toString().toByteArray(Charsets.UTF_8)
+            for (host in hostOrder().take(IngestHosts.TRIES_PER_PATH)) {
+                val (status, _) = post(open, host, body) ?: run {
+                    noteFailed(host)
+                    null
+                } ?: continue
+                val action = ReportSendPolicy.afterResponse(status)
+                if (action == SendAction.TryOtherPath) {
+                    noteFailed(host)
+                    continue
+                }
+                log("client-report: ошибки приложения ${batch.size}, ${body.size} Б ($via, ${IngestHosts.domainOf(host)}) → HTTP $status")
+                return action
+            }
+        }
+        return null
+    }
+
+    /** A refusal right after the ingest's clock was first learnt is sent once more in its time. */
+    private fun sendCorrected(batch: List<AttemptRecord>): SendAction = sendCorrected(batch, ::sendOnce)
+
+    private fun <T> sendCorrected(batch: List<T>, once: (List<T>) -> SendAction?): SendAction {
+        val used = clock.applied()
+        val action = send(batch, once)
+        if (action != SendAction.Drop || clock.applied() == used) return action
+        log("client-report: часы устройства расходятся с приёмником на ${clock.applied() / 1000} с — повтор во времени приёмника")
+        return send(batch, once)
+    }
+
+    private fun <T> send(batch: List<T>, once: (List<T>) -> SendAction?): SendAction {
         if (ingest.feedDue(now(), nothingAnswered = false)) refreshFeed()
-        sendOnce(batch)?.let { return it }
-        if (ingest.feedDue(now(), nothingAnswered = true) && refreshFeed()) sendOnce(batch)?.let { return it }
+        once(batch)?.let { return it }
+        if (ingest.feedDue(now(), nothingAnswered = true) && refreshFeed()) once(batch)?.let { return it }
         log("client-report: пакет ${batch.size} не ушёл: приёмник не ответил ни по одному имени")
         return SendAction.TryOtherPath
     }
@@ -662,6 +743,9 @@ internal class ClientReporter(
     companion object {
         const val APP_NAME = "zapret-kvn"
         const val PLATFORM = "android"
+
+        /** App errors per batch: 16 frames each keep a batch far under the ingest's body ceiling. */
+        private const val APP_ERRORS_PER_BATCH = 20
         private const val TIMEOUT_MILLIS = 15_000
         private const val MAX_ANSWER_BYTES = 4096
 

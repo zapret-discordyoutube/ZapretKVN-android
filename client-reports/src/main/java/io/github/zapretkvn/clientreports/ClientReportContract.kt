@@ -69,6 +69,7 @@ object ClientReportContract {
     fun isForeignHost(value: String): Boolean = isIpLiteral(value) || HOST_NAME.matches(value) && value.any(Char::isLetter)
 
     fun isInstallId(value: String): Boolean = INSTALL_ID.matches(value)
+    fun isReportId(value: String): Boolean = REPORT_ID.matches(value)
     fun isRelayKey(value: String): Boolean = RELAY_KEY.matches(value)
 
     /** 32 lowercase hex characters from [java.security.SecureRandom]. */
@@ -377,6 +378,11 @@ object ClientReportJson {
             put("versions", buildJsonObject { details.versions.toSortedMap().forEach { (key, value) -> put(key, value) } })
         }
     }
+
+    /** What an app error carries of the details: network type, settings, versions. */
+    fun commonDetails(details: AttemptDetails): JsonObject = details(details.common())
+
+    fun parseCommonDetails(x: JsonObject): AttemptDetails = parseDetails(x).common()
 
     /** `2026-11-19T12:34:56Z`: приёмник читает ISO-8601 с поясом, секунд достаточно. */
     fun isoUtc(epochMillis: Long): String = Instant.ofEpochMilli(epochMillis).truncatedTo(ChronoUnit.SECONDS).toString()

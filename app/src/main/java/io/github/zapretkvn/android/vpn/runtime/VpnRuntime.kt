@@ -686,6 +686,9 @@ internal class VpnRuntime(
                     generateSequence(error) { it.cause }.take(8).any { it is VpnNetworkLostException },
                 target = stored?.json?.let { json -> runCatching { ProbeTargets.of(ParsedConfig.parse(json), plan.currentId) }.getOrNull() },
             )
+        } else if (!baseFailure.code.startsWith("NET-")) {
+            // No server was chosen: not a server report but an app error (vpnbot «app_error live» 2026-11-20).
+            io.github.zapretkvn.android.clientreports.AppErrorFacts.start(baseFailure.code)?.let(container.clientReporter::onAppError)
         }
 
         val failedReplacement = startupReplacement?.takeIf { it.profileId == profileId }

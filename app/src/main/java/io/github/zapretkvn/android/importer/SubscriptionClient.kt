@@ -60,8 +60,37 @@ class HttpSubscriptionFetcher(
     private val onServiceMarker: (url: String, present: Boolean) -> Unit = { _, _ -> },
     // Ответ подписки получен: заголовок id серверов каталога ([SERVER_IDS_HEADER]) для отчётов о подключениях.
     private val onServerIds: (url: String, serviceReply: Boolean, value: String?) -> Unit = { _, _, _ -> },
+    // Подписка не получена после попытки по сети: HTTP-статус ответа (null — ответа не было), ошибка и путь
+    // последней попытки (direct | tunnel) — для отчёта об ошибке приложения (ни адреса, ни ссылки).
+    private val onFailure: (url: String, status: Int?, error: Throwable, route: String) -> Unit = { _, _, _, _ -> },
+    // VPN поднят: «сеть по умолчанию» — туннель.
+    private val vpnActive: () -> Boolean = { false },
 ) : SubscriptionFetcher {
+    /** Путь и статус последней попытки одной загрузки (для [onFailure]). */
+    private class Track {
+        var path: Path? = null
+        var status: Int? = null
+    }
+
     override fun fetch(source: SubscriptionSource): String {
+        val track = Track()
+        return try {
+            fetchTracked(source, track)
+        } catch (error: Exception) {
+            val path = track.path
+            if (path != null && error !is kotlinx.coroutines.CancellationException) {
+                val route = when (path) {
+                    Path.Direct -> "direct"
+                    Path.Tunnel -> "tunnel"
+                    Path.Default -> if (runCatching(vpnActive).getOrDefault(false)) "tunnel" else "direct"
+                }
+                runCatching { onFailure(source.url, track.status, error, route) }
+            }
+            throw error
+        }
+    }
+
+    private fun fetchTracked(source: SubscriptionSource, track: Track): String {
         val url = validatedUrl(source.url)
         val parsed = URI(url)
         val host = parsed.host.orEmpty()
@@ -73,13 +102,13 @@ class HttpSubscriptionFetcher(
         // прочитал бы целиком. Такая ссылка идёт только через туннель, напрямую — никогда.
         if (exposesCleartext(url)) {
             log("subscription $tag: http:// — только через туннель")
-            return fetchVia(source, Path.Tunnel)
+            return fetchVia(source, Path.Tunnel, track)
         }
         val direct = directAvailable()
         log("subscription $tag: загрузка начата, прямой путь=${if (direct) "есть" else "нет"}")
         if (direct) {
             try {
-                return fetchVia(source, Path.Direct).also { log("subscription $tag: ответ получен напрямую за ${elapsed()} с") }
+                return fetchVia(source, Path.Direct, track).also { log("subscription $tag: ответ получен напрямую за ${elapsed()} с") }
             } catch (transport: IOException) {
                 // No response reached us on the direct (non-VPN) path — only
                 // this "no answer" case is retried through the default network,
@@ -93,7 +122,7 @@ class HttpSubscriptionFetcher(
             }
         }
         try {
-            return fetchVia(source, Path.Default).also { log("subscription $tag: ответ получен через сеть по умолчанию за ${elapsed()} с") }
+            return fetchVia(source, Path.Default, track).also { log("subscription $tag: ответ получен через сеть по умолчанию за ${elapsed()} с") }
         } catch (transport: IOException) {
             log(
                 "subscription $tag: ответа нет и по умолчанию за ${elapsed()} с: " +
@@ -114,7 +143,9 @@ class HttpSubscriptionFetcher(
         Path.Tunnel -> tunnelConnection(url) ?: throw ImportException(CLEARTEXT_NEEDS_TUNNEL)
     }
 
-    private fun fetchVia(source: SubscriptionSource, path: Path): String {
+    private fun fetchVia(source: SubscriptionSource, path: Path, track: Track): String {
+        track.path = path
+        track.status = null
         var current = validatedUrl(source.url)
         val origin = URI(current).host.orEmpty()
         repeat(MAX_REDIRECTS + 1) { redirectIndex ->
@@ -142,6 +173,7 @@ class HttpSubscriptionFetcher(
                 return@repeat
             }
             if (reply.status !in 200..299) {
+                track.status = reply.status
                 throw ImportException(
                     FetchJudge.answeredMessage(
                         reply.status,
@@ -288,6 +320,11 @@ class SubscriptionSourceStore(
      * сам URL: токен ссылки не копируется во второй файл. Вызывается из загрузчика подписки
      * (поток IO, блокирующий вызов).
      */
+    /** Did this link answer with our service's header before (the mark of [markService])? */
+    fun isService(url: String): Boolean = runBlocking {
+        mutex.withLock { urlHash(url)?.let { it in readMarks() } ?: false }
+    }
+
     fun markService(url: String, present: Boolean) = runBlocking {
         mutex.withLock {
             val hash = urlHash(url) ?: return@withLock

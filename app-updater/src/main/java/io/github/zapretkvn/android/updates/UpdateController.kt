@@ -43,6 +43,8 @@ class UpdateController(
     private val downloader: ApkDownloader = ApkDownloader(environment.installedApk),
     hedgeMillis: Long = UpdateRouter.DEFAULT_HEDGE_MILLIS,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** An update step failed: `check_net`, `download`, `verify`, `install_blocked` … (an app error report, no text). */
+    private val onFailure: (code: String) -> Unit = {},
 ) {
     private val router = UpdateRouter(clientFactory, vpnFallback, environment.vpnActive, prefs, hedgeMillis)
     private val mutableState = MutableStateFlow<UpdateState>(UpdateState.Idle)
@@ -218,6 +220,7 @@ class UpdateController(
                 // Отказ самого пользователя — не поломка версии: службе о нём не сообщаем.
                 val why = installFailureCode(result.detail)
                 if (name != null && why != WHY_ABORTED) noteFailure(name, why) else clearAttempt()
+                if (why != WHY_ABORTED) runCatching { onFailure("install_$why") }
                 prefs.installingVersionCode = 0
                 resetInstallRequest()
                 lastTechnicalDetail = result.detail
@@ -279,6 +282,7 @@ class UpdateController(
             throw cancelled
         } catch (error: Throwable) {
             lastTechnicalDetail = technicalDetail(error)
+            runCatching { onFailure(failureCode("check", error)) }
             // Недоступный сервер не отменяет уже скачанное: готовое обновление остаётся готовым.
             val restore = previous.takeIf { it is UpdateState.Ready }
             mutableState.value = when {
@@ -326,6 +330,7 @@ class UpdateController(
         } catch (error: Throwable) {
             cleanupFiles()
             lastTechnicalDetail = technicalDetail(error)
+            runCatching { onFailure(failureCode("download", error)) }
             val routeProblem = error !is UpdateException || error.retryViaVpn
             mutableState.value = if (manual || !routeProblem) {
                 UpdateState.Failure(userMessage(error, DOWNLOAD_FAILED), candidate, lastTechnicalDetail)
@@ -481,6 +486,7 @@ class UpdateController(
             }
             prefs.installingVersionCode = 0
             lastTechnicalDetail = technicalDetail(error)
+            runCatching { onFailure(failureCode("install", error)) }
             mutableState.value = UpdateState.Failure(userMessage(error, INSTALL_FAILED), candidate, lastTechnicalDetail)
         }
     }
@@ -575,6 +581,16 @@ class UpdateController(
         const val VIA_DELTA = "parts"
         const val VIA_FULL = "setup"
         const val WHY_HANDOFF = "handoff"
+
+        /**
+         * A failed step as a short code: `<step>_net` when the route failed (network, block, 5xx), `verify` when the APK
+         * did not pass [ApkUpdateVerifier], else the step itself.
+         */
+        fun failureCode(step: String, error: Throwable): String = when {
+            error !is UpdateException || error.retryViaVpn -> "${step}_net"
+            error.stackTrace.any { it.className.endsWith("ApkUpdateVerifier") } -> "verify"
+            else -> step
+        }
         const val WHY_ABORTED = "abort"
 
         /** Код причины для службы по ответу установщика Android (`status=N: …`). */

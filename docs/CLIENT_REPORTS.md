@@ -191,6 +191,18 @@ The ingest validates a batch as a whole and names no index, so a refused batch (
 the refused report stands alone (`BatchDelivery`, at most 16 extra requests); only that report is dropped, never its
 neighbours.
 
+
+## App errors not about a server (vpnbot «app_error live» 2026-11-20)
+
+Errors that are not about any server go in the same batches as `"kind": "app_error"`, schema 1: a step (`start`,
+`subscription`, `update`, `permission`, `crash`, `storage`), a code `prefix:value`, how often it happened since the last
+send (`count`) and when the first was (`occurred_at`, in the ingest's time like `attempted_at`). A crash carries only its
+frames (`Class.method:line` / `module.function:line`, innermost first, at most 16): never the message, a path, an
+address or a URL; vpnbot groups crashes itself. A subscription failure says only whether the link is our service's
+(`ours`) and which way it was fetched (`route`). The same error while unsent adds to its count; one code is sent at most
+once a day per app version (`AppErrorStore`), so a broken install does not flood. Errors during an attempt on a chosen server
+(LOCAL_*, NETWORK_LOST) stay in the server's report. Sources: the last uncaught crash (`AppCrashStore`) and a native crash or ANR (`ApplicationExitInfo`) of the previous run, read once at start; a start that failed before a server was chosen (`VpnRuntime`, not NET-*), `port:bind` for a local port conflict; the VPN permission refused or revoked; a subscription fetch that failed (`sub:http_4xx|http_5xx|timeout|dns|tls|refused|reset|unreachable`); a failed update step (`update:check_net|download|verify|install_*`).
+
 ## The notice shows vpnbot's verdict
 
 The line under the error is vpnbot's `text` for this report, as is (the app keeps no rule and no verdict text): a

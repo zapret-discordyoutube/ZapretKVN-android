@@ -168,6 +168,7 @@ class ZapretVpnService : VpnService() {
     override fun onBind(intent: Intent): IBinder? = super.onBind(intent)
 
     override fun onRevoke() {
+        io.github.zapretkvn.android.clientreports.AppErrorFacts.permission("vpn_revoked")?.let(container.clientReporter::onAppError)
         runtime.stop(startId = 0, errorMessage = "Разрешение Android VPN отозвано.", trigger = "permission_revoked")
         super.onRevoke()
     }

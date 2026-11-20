@@ -67,6 +67,8 @@ class MainActivity : ComponentActivity() {
             vpnController.start(profileId)
         } else {
             vpnController.publishMessage("Android не выдал разрешение VPN.")
+            io.github.zapretkvn.android.clientreports.AppErrorFacts.permission("vpn_denied")
+                ?.let((application as ZapretApplication).container.clientReporter::onAppError)
         }
     }
     private val notificationPermissionLauncher = registerForActivityResult(
