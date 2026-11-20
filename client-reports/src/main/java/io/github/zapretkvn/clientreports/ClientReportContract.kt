@@ -276,9 +276,17 @@ object ClientReportJson {
     /** Тело `POST /v1/reports`: ровно поля контракта, ничего сверх. */
     /**
      * [clockOffsetMillis]: the ingest's clock minus ours ([ReportClock.applied]); `attempted_at` goes in the ingest's time,
-     * so a device clock running ahead is not refused as «in the future» (vpnbot 2026-11-20).
+     * so a device clock running ahead is not refused as «in the future» (vpnbot 2026-11-20). [sentOffsets]: the offset a
+     * report_id was already accepted with, so its completion copy carries the very same `attempted_at`.
      */
-    fun batch(installId: String, app: AppIdentity, records: List<AttemptRecord>, sentVia: String, clockOffsetMillis: Long = 0): String {
+    fun batch(
+        installId: String,
+        app: AppIdentity,
+        records: List<AttemptRecord>,
+        sentVia: String,
+        clockOffsetMillis: Long = 0,
+        sentOffsets: Map<String, Long> = emptyMap(),
+    ): String {
         require(ClientReportContract.isInstallId(installId)) { "install_id" }
         require(ClientReportContract.isAppIdentity(app)) { "app" }
         require(sentVia == ClientReportContract.SENT_DIRECT || sentVia == ClientReportContract.SENT_TUNNEL)
@@ -289,7 +297,8 @@ object ClientReportJson {
                 buildJsonArray {
                     records.forEach { record ->
                         require(ClientReportContract.isValid(record)) { "record" }
-                        add(report(installId, app, record, sentVia, clockOffsetMillis))
+                        val offset = record.reportId.takeIf { it.isNotEmpty() }?.let(sentOffsets::get) ?: clockOffsetMillis
+                        add(report(installId, app, record, sentVia, offset))
                     }
                 },
             )

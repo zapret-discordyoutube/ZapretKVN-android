@@ -48,6 +48,12 @@ class ClientReportsTest {
         val shifted = reports(ClientReportJson.batch(installId, app, listOf(ahead), "direct", clockOffsetMillis = -3 * 3_600_000L)).single()
         assertEquals("2025-11-20T12:00:00Z", plain["attempted_at"]!!.jsonPrimitive.content)
         assertEquals("2025-11-20T09:00:00Z", shifted["attempted_at"]!!.jsonPrimitive.content)
+        // The completion copy of a report accepted before the offset was learnt keeps the accepted time.
+        val first = record(at = at).copy(reportId = "abababababababababababababababab")
+        val completion = reports(
+            ClientReportJson.batch(installId, app, listOf(first), "direct", clockOffsetMillis = -3 * 3_600_000L, sentOffsets = mapOf(first.reportId to 0L)),
+        ).single()
+        assertEquals("2025-11-20T12:00:00Z", completion["attempted_at"]!!.jsonPrimitive.content)
     }
 
     @Test

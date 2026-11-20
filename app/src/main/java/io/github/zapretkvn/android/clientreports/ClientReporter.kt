@@ -97,6 +97,9 @@ internal class ClientReporter(
 
     /** The ingest's clock from its replies: `attempted_at` goes in its time (vpnbot 2026-11-20). */
     private val clock = ReportClock()
+
+    /** report_id → the offset it was accepted with: its completion copy keeps the same `attempted_at`. */
+    private val sentOffsets = LinkedHashMap<String, Long>()
     private val flushing = Mutex()
     private val preflight = object : LinkedHashMap<String, ReportCheck>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ReportCheck>?) = size > 32
@@ -497,7 +500,9 @@ internal class ClientReporter(
     private fun sendOnce(batch: List<AttemptRecord>): SendAction? {
         val installId = installId()
         for ((via, open) in listOf(ClientReportContract.SENT_DIRECT to directConnection, ClientReportContract.SENT_TUNNEL to tunnelConnection)) {
-            val body = ClientReportJson.batch(installId, app, batch, via, clock.applied()).toByteArray(Charsets.UTF_8)
+            val offset = clock.applied()
+            val sent = synchronized(sentOffsets) { HashMap(sentOffsets) }
+            val body = ClientReportJson.batch(installId, app, batch, via, offset, sent).toByteArray(Charsets.UTF_8)
             for (host in hostOrder().take(IngestHosts.TRIES_PER_PATH)) {
                 val (status, reply) = post(open, host, body) ?: run {
                     noteFailed(host)
@@ -509,11 +514,21 @@ internal class ClientReporter(
                     continue
                 }
                 log("client-report: пакет ${batch.size}, ${body.size} Б ($via, ${IngestHosts.domainOf(host)}) → HTTP $status")
-                if (action == SendAction.Remove) noteVerdicts(batch, ClientReportJson.parseReply(reply, batch.size))
+                if (action == SendAction.Remove) {
+                    noteSentOffsets(batch, offset, sent)
+                    noteVerdicts(batch, ClientReportJson.parseReply(reply, batch.size))
+                }
                 return action
             }
         }
         return null
+    }
+
+    private fun noteSentOffsets(batch: List<AttemptRecord>, offset: Long, sent: Map<String, Long>) {
+        synchronized(sentOffsets) {
+            batch.filter { it.reportId.isNotEmpty() }.forEach { sentOffsets[it.reportId] = sent[it.reportId] ?: offset }
+            while (sentOffsets.size > 256) sentOffsets.remove(sentOffsets.keys.first())
+        }
     }
 
     /** Вердикты vpnbot по report_id; вердикт отказа на экране — сразу. */
