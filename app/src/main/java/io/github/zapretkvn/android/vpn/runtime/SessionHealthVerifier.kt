@@ -91,11 +91,10 @@ internal class SessionHealthVerifier(private val container: AppContainer) {
         )
     }
 
-    /** Выбранный в проверке сервер: тег и тип outbound; null — профиль без группы серверов. */
+    /** Выбранный в проверке сервер: тег и тип outbound; null — профиль не говорит, какой сервер пробовался. */
     private fun selected(session: CoreSession, config: ParsedConfig): Pair<String, String>? =
         runCatching {
-            FailoverPlanner.plan(config, session.runtimeSelections(), session.primaryGroupTag)
-                ?.let { it.currentId to it.currentType }
+            FailoverPlanner.reportedServer(config, session.runtimeSelections(), session.primaryGroupTag)
         }.getOrNull()
 
     /** Отчёт о попытке для status.zapret.moe ([io.github.zapretkvn.android.clientreports.ClientReporter]). */

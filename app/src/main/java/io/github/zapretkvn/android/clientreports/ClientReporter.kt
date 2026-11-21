@@ -88,7 +88,7 @@ internal class ClientReporter(
     private val enabled: Boolean = ClientReportSwitch.enabled(),
 ) {
     init {
-        if (!enabled) log("client-report: выключены (${ClientReportSwitch.PROPERTY}=off), ничего не пишется и не отправляется")
+        if (!enabled) log("client-report: выключены (debug-сборка или ${ClientReportSwitch.PROPERTY}=off), ничего не пишется и не отправляется")
     }
 
     private val app = AppIdentity(APP_NAME, safeVersion(appVersion), PLATFORM)

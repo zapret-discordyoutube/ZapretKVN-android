@@ -201,7 +201,7 @@ frames (`Class.method:line` / `module.function:line`, innermost first, at most 1
 address or a URL; vpnbot groups crashes itself. A subscription failure says only whether the link is our service's
 (`ours`) and which way it was fetched (`route`). The same error while unsent adds to its count; one code is sent at most
 once a day per app version (`AppErrorStore`), so a broken install does not flood. Errors during an attempt on a chosen server
-(LOCAL_*, NETWORK_LOST) stay in the server's report. Sources: the last uncaught crash (`AppCrashStore`) and a native crash or ANR (`ApplicationExitInfo`) of the previous run, read once at start; a start that failed before a server was chosen (`VpnRuntime`, not NET-*), `port:bind` for a local port conflict; the VPN permission refused or revoked; a subscription fetch that failed (`sub:http_4xx|http_5xx|timeout|dns|tls|refused|reset|unreachable`); a failed update step (`update:check_net|download|verify|install_*`).
+(LOCAL_*, NETWORK_LOST) stay in the server's report. Sources: the last uncaught crash (`AppCrashStore`) and a native crash or ANR (`ApplicationExitInfo`) of the previous run, read once at start; a start that failed before a server was chosen (`VpnRuntime`, not NET-*; since 2026-11-21 only when the profile does not say which server was tried: `FailoverPlanner.reportedServer` names the plan's server, else the proxy a selector group is on, else the only proxy outbound, and that attempt goes as a connection report — the first day had 16 installs whose single-server traffic failures came only as `start:VPN-200`), `port:bind` for a local port conflict; the VPN permission refused or revoked; a subscription fetch that failed (`sub:http_4xx|http_5xx|timeout|dns|tls|refused|reset|unreachable`); a failed update step (`update:check_net|download|verify|install_*`). The release build keeps the names of exception classes (`-keepnames class * extends java.lang.Throwable` in `app/proguard-rules.pro`): the crash code is that name, and R8 had turned one into `crash:o82`. Frames of our own code stay R8-renamed; read them with the release's mapping file.
 
 ## The notice shows vpnbot's verdict
 
@@ -236,8 +236,12 @@ itself, so a test run would fill the production store with test rows (Windows 0.
 «B-udp-lost»). The test runner `ZapretTestRunner` (androidTest) sets the JVM property
 `zapret.kvn.client_reports=off` in its `onCreate`, before `Application.onCreate` and the lazy `AppContainer`;
 `ClientReporter` then writes nothing to the queue, asks no token and sends nothing, while the notice and the path
-check still work. The runtime log says `client-report: выключены (zapret.kvn.client_reports=off)`. Rule:
-`ClientReportSwitch`, test `ClientReportSwitchTest`.
+check still work. The runtime log says `client-report: выключены (debug-сборка или zapret.kvn.client_reports=off)`.
+Rule: `ClientReportSwitch`, test `ClientReportSwitchTest`.
+
+Since 2026-11-21 a debug build (`BuildConfig.DEBUG`: emulator and bench builds, `.debug` suffix) never sends, whatever
+the property says; release-type builds (stable and the test prereleases) still do. On 2026-11-20 Windows test
+processes had twice put app errors of a developer tree into production; Windows now sends only from the frozen exe.
 
 ## Known limits
 

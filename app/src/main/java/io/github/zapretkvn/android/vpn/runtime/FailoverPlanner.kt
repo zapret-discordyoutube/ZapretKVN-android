@@ -83,6 +83,34 @@ internal object FailoverPlanner {
         return FailoverPlan(group.tag, current, checkNotNull(typeOf(current)), targets)
     }
 
+    /**
+     * The server a connection report is about (docs/CLIENT_REPORTS.md): the plan's current server; without a plan,
+     * the proxy a selector group is on (a Hysteria line that is not failover-eligible has no plan but is still the
+     * server tried); a profile without any group, its only proxy outbound. Null when the profile does not say which
+     * server was tried (several proxies and no group). Field check 2026-11-21: such profiles' traffic failures went
+     * only as app errors `start:VPN-200` (16 installs a day).
+     */
+    fun reportedServer(config: ParsedConfig, runtimeSelections: Map<String, String>, primaryGroupTag: String?): Pair<String, String>? {
+        plan(config, runtimeSelections, primaryGroupTag)?.let { return it.currentId to it.currentType }
+        val root = config.root ?: return null
+        val types = (root["outbounds"] as? JsonArray).orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { outbound ->
+                val tag = outbound.text("tag") ?: return@mapNotNull null
+                val type = outbound.text("type")?.lowercase(Locale.ROOT) ?: return@mapNotNull null
+                tag to type
+            }
+            .toMap()
+        fun proxy(tag: String?): Pair<String, String>? =
+            tag?.let { types[it] }?.takeIf { it !in NON_PROXY_TYPES }?.let { tag to it }
+        val groups = ConfigAnalyzer.selectorGroups(config)
+        if (groups.isNotEmpty()) {
+            val ordered = groups.filter { it.tag == primaryGroupTag } + groups.filter { it.tag != primaryGroupTag }
+            return ordered.firstNotNullOfOrNull { group -> proxy(runtimeSelections[group.tag] ?: group.default) }
+        }
+        return types.entries.filter { it.value !in NON_PROXY_TYPES }.singleOrNull()?.let { it.key to it.value }
+    }
+
     private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 }
 

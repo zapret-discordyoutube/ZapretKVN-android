@@ -675,16 +675,20 @@ internal class VpnRuntime(
         val stored = runCatching { container.profileStore.read(profileId) }.getOrNull()
         val plan = stored?.let { FailoverPlanner.plan(it.json, emptyMap(), primaryGroupTag = null) }
         val currentIsHysteria = plan?.currentType == PathSupervisor.HYSTERIA_TYPE
-        // Отказ до проверки сервера (адрес, ядро, настройки): отчёт, проверка пути и кнопка на экране.
-        if (plan != null) {
+        // Отказ до проверки сервера (адрес, ядро, настройки): отчёт, проверка пути и кнопка на экране. Сервер отчёта —
+        // тот, что пробовался, и без плана замены (профиль из одного сервера, Hysteria без замены).
+        val reported = stored?.let { profile ->
+            runCatching { FailoverPlanner.reportedServer(ParsedConfig.parse(profile.json), emptyMap(), primaryGroupTag = null) }.getOrNull()
+        }
+        if (reported != null) {
             container.clientReporter.onStartFailure(
                 generation = token,
-                tag = plan.currentId,
-                outboundType = plan.currentType,
+                tag = reported.first,
+                outboundType = reported.second,
                 code = baseFailure.code,
                 networkLost = baseFailure.code.startsWith("NET-") ||
                     generateSequence(error) { it.cause }.take(8).any { it is VpnNetworkLostException },
-                target = stored?.json?.let { json -> runCatching { ProbeTargets.of(ParsedConfig.parse(json), plan.currentId) }.getOrNull() },
+                target = stored?.json?.let { json -> runCatching { ProbeTargets.of(ParsedConfig.parse(json), reported.first) }.getOrNull() },
             )
         } else if (!baseFailure.code.startsWith("NET-")) {
             // No server was chosen: not a server report but an app error (vpnbot «app_error live» 2026-11-20).
