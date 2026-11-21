@@ -33,9 +33,32 @@ class SupportLinksTest {
     }
 
     @Test
+    fun `the light links file is asked first and the old mirror list is not needed`() {
+        val host = "git3.zapret.moe"
+        val http = FakeHttp(
+            mapOf("https://$host/_sites/links.json" to """{"schema":1,"families":{"git":{"hosts":["$host"]}}}"""),
+        )
+        assertEquals(
+            "https://$host/zapretkvn/ZapretKVN-android/issues/new",
+            SupportLinks.resolve(http, deadlineMillis = 2_000),
+        )
+        assertFalse(http.asked.contains("https://$host/_sites/mirrors.json"))
+    }
+
+    @Test
+    fun `a name without links file still counts when the old mirror list answers`() {
+        val http = FakeHttp(mapOf(mirrors("git3.zapret.moe")))
+        SupportLinks.resolve(http, deadlineMillis = 2_000)
+        assertTrue(http.asked.any { it.endsWith("/_sites/links.json") })
+        assertTrue(http.asked.any { it.endsWith("/_sites/mirrors.json") })
+    }
+
+    @Test
     fun `a captive portal answer that is not a mirror list is not trusted`() {
         val http = FakeHttp(
-            ForgejoHosts.all().associate { "https://$it/_sites/mirrors.json" to "<html>login</html>" },
+            ForgejoHosts.all().flatMap {
+                listOf("https://$it/_sites/links.json", "https://$it/_sites/mirrors.json")
+            }.associateWith { "<html>login</html>" },
         )
         assertEquals(SupportLinks.entryPageUrl(), SupportLinks.resolve(http, deadlineMillis = 1_500))
     }
@@ -64,6 +87,7 @@ class SupportLinksTest {
         assertTrue(url, url.endsWith("?s=git&p=zapretkvn/ZapretKVN-android/issues/new"))
         assertFalse(url, url.contains("format=json"))
         assertFalse(url, url.contains("github.com"))
+        assertTrue(http.asked.any { it.contains("/_sites/links.json") })
         assertTrue(http.asked.any { it.contains("/_sites/mirrors.json") })
     }
 

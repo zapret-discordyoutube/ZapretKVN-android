@@ -15,8 +15,9 @@ import kotlinx.serialization.json.jsonObject
  * в браузере и сама предлагает зеркало, которое там открывается. На GitHub обращений нет (там
  * только копии выпусков), поэтому он запасным путём не служит.
  *
- * Имя проверяется запросом `/_sites/mirrors.json`: он есть на каждом имени нашего сайта,
- * и верный ответ доказывает, что имя открывается с этого телефона.
+ * Имя проверяется запросом лёгкого `/_sites/links.json` (около 14 КБ), а если его нет — прежнего
+ * `/_sites/mirrors.json` (около 90 КБ): один из них есть на каждом имени нашего сайта, и верный
+ * ответ доказывает, что имя открывается с этого телефона.
  */
 object SupportLinks {
     const val SUPPORT_PATH = "/zapretkvn/ZapretKVN-android/issues/new"
@@ -35,6 +36,7 @@ object SupportLinks {
         return "${entry.scheme}://${entry.rawAuthority}${entry.rawPath}?s=git&p=${path.trim('/')}"
     }
 
+    private const val LINKS_PATH = "/_sites/links.json"
     private const val MIRRORS_PATH = "/_sites/mirrors.json"
     private const val RACE_DEADLINE_MILLIS = 4_000L
     private const val MAX_RACERS = 8
@@ -70,11 +72,7 @@ object SupportLinks {
             racers.forEach { host ->
                 completion.submit(
                     Callable {
-                        try {
-                            host.takeIf { looksLikeMirrorList(http.readText("https://$host$MIRRORS_PATH", MAX_LIST_BYTES)) }
-                        } catch (_: Exception) {
-                            null
-                        }
+                        host.takeIf { answersWithList(http, host) }
                     },
                 )
             }
@@ -89,6 +87,18 @@ object SupportLinks {
         } finally {
             pool.shutdownNow()
         }
+    }
+
+    /** Сначала лёгкий `links.json`; прежний `mirrors.json` — только если первого на имени нет. */
+    private fun answersWithList(http: UpdateHttpClient, host: String): Boolean {
+        for (path in listOf(LINKS_PATH, MIRRORS_PATH)) {
+            try {
+                if (looksLikeMirrorList(http.readText("https://$host$path", MAX_LIST_BYTES))) return true
+            } catch (_: Exception) {
+                // имя не ответило этим файлом — пробуем следующий
+            }
+        }
+        return false
     }
 
     internal fun looksLikeMirrorList(text: String): Boolean = try {
