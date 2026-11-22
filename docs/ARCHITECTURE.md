@@ -532,6 +532,17 @@ FakeIP выключен. Системные настройки Android прил�
 
 При strict Private DNS Auto не падает, а сужает цепочку кандидатов до «DNS Android» с предупреждением в логе — системный DoT уважается, пользователь ничего не настраивает. Secure при strict не запускается (`DNS-110`): он явно обещает собственный резолвер, а системный DoT обошёл бы port-53 hijack и reverse mapping. Явные режимы не получают скрытого fallback. Полная политика, bootstrap cache и fail-close описаны в DNS ADR.
 
+### IPv6 to the VPN server first (owner decision 2026-11-22)
+
+A server's IPv4 address is often blocked by address while its IPv6 address still works (owner's measurement 2026-11-21: IPv4 of the node silent, IPv6 answering ping). With the setting «IPv6 к серверу первым» (Дополнительно, on by default) and a native global IPv6 address plus an IPv6 default route on the underlying network (`LinkProperties`, no network probe), `RuntimeConfigBuilder` gives every outbound that dials its own server a `domain_resolver` with `strategy: prefer_ipv6` (`config/ServerIpv6First.kt`). The native cores then do the rest behind the sing-box gasket:
+
+- TCP (Xray VLESS/VMess/Trojan through the protected dialer, sing-box Shadowsocks and others): sing-box `DialParallel` starts IPv6, IPv4 follows after 300 ms or at once when IPv6 fails. Core patch `0020-ipv6-first-family-memory` adds `common/familymemory`: per server name, the family that last worked starts first, so a dead IPv6 path does not cost the delay on every connection; the memory is cleared on a network change (`NetworkManager.ResetNetwork`) and after 30 minutes.
+- Hysteria2: the official client reconnects by itself; the wrapper reports each connect (connected = success, a new connect without one = failure), so the next connect opens on the other family.
+- Other UDP (TUIC, Shadowsocks UDP relay, Xray UDP transports): one socket with no way back, so IPv4 stays first until IPv6 has worked for that name.
+- WireGuard/AWG endpoints are unchanged (one address without fallback; handshake watchdog is a follow-up).
+
+The session log line «настройки сессии» shows `serverIpv6First` with the setting and the network's IPv6. The app can only use IPv6 when the link names a host with an AAAA record (or an IPv6 literal) and the server listens on IPv6.
+
 ## Проверка простоты и скорости
 
 | Возможная «оптимизация» | Результат аудита |

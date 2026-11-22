@@ -71,6 +71,10 @@ class ProfileSettingsActions internal constructor(
     fun setBlockQuic(enabled: Boolean) =
         apply("Смена блокировки QUIC") { settingsStore.setBlockQuic(enabled) }
 
+    /** Меняет резолвер адреса сервера в конфиге ядра, поэтому подключённый VPN перезапускается. */
+    fun setServerIpv6First(enabled: Boolean) =
+        apply("Смена «IPv6 к серверу первым»") { settingsStore.setServerIpv6First(enabled) }
+
     fun setDnsOverrideEnabled(enabled: Boolean) =
         apply("Смена DNS-переопределения") { settingsStore.setDnsOverrideEnabled(enabled) }
 

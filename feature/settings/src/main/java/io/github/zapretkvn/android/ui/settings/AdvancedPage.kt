@@ -12,12 +12,14 @@ fun AdvancedScreen(
     contentPadding: PaddingValues,
     hidingSummary: String,
     rawEditorLineWrap: Boolean,
+    serverIpv6First: Boolean,
     blockQuic: Boolean,
     resetStalledFlows: Boolean,
     youtubeSwitch: Boolean,
     serviceSlots: Boolean,
     onOpenPage: (SettingsPage) -> Unit,
     onRawEditorLineWrapChange: (Boolean) -> Unit,
+    onServerIpv6FirstChange: (Boolean) -> Unit,
     onBlockQuicChange: (Boolean) -> Unit,
     onResetStalledFlowsChange: (Boolean) -> Unit,
     onYoutubeSwitchChange: (Boolean) -> Unit,
@@ -38,6 +40,19 @@ fun AdvancedScreen(
                     subtitle = "Состояние VPN, этапы подключения, версии и логи",
                     icon = ZapretIcons.Bug,
                     onClick = { onOpenPage(SettingsPage.Diagnostics) },
+                )
+            }
+        }
+        item(key = "server-ipv6", contentType = "rows") {
+            RowsCard {
+                SwitchRow(
+                    title = "IPv6 к серверу первым",
+                    subtitle = "Если у сети есть IPv6, подключение к серверу начинается по нему, а IPv4 подхватывает его за доли " +
+                        "секунды. Помогает, когда IPv4-адрес сервера заблокирован. Переключение перезапускает VPN.",
+                    icon = ZapretIcons.Shield,
+                    checked = serverIpv6First,
+                    onCheckedChange = onServerIpv6FirstChange,
+                    switchDescription = "IPv6 к серверу первым",
                 )
             }
         }

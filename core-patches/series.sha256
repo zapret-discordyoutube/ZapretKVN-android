@@ -17,3 +17,4 @@ fcda75afcd38f0b2caeb8bc3b6566c4749af86baed587b5a8fd9ef2970991c4e  core-patches/0
 3d878aa2e01223bd20ae7b495acac8ed4d3a4f5599e999aa12b45fa7641e79eb  core-patches/0017-kvn-desync-dialer.patch
 c597e35529307ed39eca510a919721cc53bcd2bb6184280e0859632554c73b63  core-patches/0018-xraycore-vmess-trojan.patch
 d9505610b88b9f1df2a26f4b0cb69bd2ebdad3390912927d30451364ff3e439d  core-patches/0019-xraycore-xhttp-mode.patch
+31fe8f4633d3690a4920cfec51335c014bb2c2edf66d3e09b67086bd494f2a69  core-patches/0020-ipv6-first-family-memory.patch

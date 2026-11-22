@@ -66,6 +66,8 @@ data class RuntimeConfigOptions(
      * ставится после служебных правил и перед пользовательскими, в любом режиме DNS.
      */
     val blockQuic: Boolean = false,
+    /** IPv6 к серверу первым ([ServerIpv6First]): уже с учётом IPv6 у основной сети. */
+    val serverIpv6First: Boolean = false,
     val dnsOverride: DnsOverride = DnsOverride(),
     val bootstrapHost: BootstrapHostOverlay? = null,
     val vpnHiding: VpnHidingOptions = VpnHidingOptions(),
@@ -312,6 +314,10 @@ object RuntimeConfigBuilder {
         val maskedOutbounds = runtimeOutbounds?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
         val maskedEndpoints = runtimeEndpoints?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
         maskedOutbounds?.let { runtimeOutbounds = it.entries }
+        if (options.serverIpv6First) {
+            val defaultResolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
+            runtimeOutbounds = runtimeOutbounds?.let { ServerIpv6First.apply(it, defaultResolver) }
+        }
         maskedEndpoints?.let { runtimeEndpoints = it.entries }
         val maskingReport = MaskingReport(
             changed = (maskedOutbounds?.changed ?: 0) + (maskedEndpoints?.changed ?: 0),

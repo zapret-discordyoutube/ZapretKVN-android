@@ -25,6 +25,7 @@ internal object RestartTriggers {
         "Смена режима DNS" to "dns_mode_change",
         "Смена IP-стратегии DNS" to "dns_strategy_change",
         "Смена блокировки QUIC" to "quic_block_change",
+        "Смена «IPv6 к серверу первым»" to "server_ipv6_first_change",
         "Смена раздельных серверов" to "service_slots_change",
         "Смена DNS-переопределения" to "dns_override_change",
         "Смена защиты от localhost-чекеров" to "endpoint_policy_change",

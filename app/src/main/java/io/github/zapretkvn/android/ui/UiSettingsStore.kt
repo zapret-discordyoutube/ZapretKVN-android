@@ -58,6 +58,7 @@ class UiSettingsStore(
                     ?.let { stored -> DnsMode.entries.firstOrNull { it.name == stored } }
                     ?: DnsMode.FromJson,
                 proxyIpv4Only = preferences[PROXY_IPV4_ONLY] ?: true,
+                serverIpv6First = preferences[SERVER_IPV6_FIRST] ?: true,
                 blockQuic = preferences[BLOCK_QUIC] ?: true,
                 resetStalledFlows = preferences[RESET_STALLED_FLOWS] ?: true,
                 youtubeSwitch = preferences[YOUTUBE_SWITCH] ?: false,
@@ -165,6 +166,10 @@ class UiSettingsStore(
 
     suspend fun setProxyIpv4Only(enabled: Boolean) {
         dataStore.edit { it[PROXY_IPV4_ONLY] = enabled }
+    }
+
+    suspend fun setServerIpv6First(enabled: Boolean) {
+        dataStore.edit { it[SERVER_IPV6_FIRST] = enabled }
     }
 
     suspend fun setBlockQuic(enabled: Boolean) {
@@ -323,6 +328,7 @@ class UiSettingsStore(
         val HIDE_SERVER_ADDRESSES = booleanPreferencesKey("hide_server_addresses")
         val DNS_MODE = stringPreferencesKey("dns_mode")
         val PROXY_IPV4_ONLY = booleanPreferencesKey("proxy_ipv4_only")
+        val SERVER_IPV6_FIRST = booleanPreferencesKey("server_ipv6_first")
         val BLOCK_QUIC = booleanPreferencesKey("block_quic")
         val RESET_STALLED_FLOWS = booleanPreferencesKey("reset_stalled_flows")
         val YOUTUBE_SWITCH = booleanPreferencesKey("youtube_switch")

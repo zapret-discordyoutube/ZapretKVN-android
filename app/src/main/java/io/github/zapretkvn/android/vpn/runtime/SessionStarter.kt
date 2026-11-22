@@ -20,6 +20,7 @@ import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
 import io.github.zapretkvn.android.config.RuntimeConfigOptions
 import io.github.zapretkvn.android.config.RuntimeConfigResult
+import io.github.zapretkvn.android.config.ServerIpv6First
 import io.github.zapretkvn.android.slots.SlotRoutes
 import io.github.zapretkvn.android.diagnostics.DiagnosticRuntimeMap
 import io.github.zapretkvn.android.diagnostics.DiagnosticStageStatus
@@ -439,10 +440,13 @@ internal class SessionStarter(
 
         controller.startConnectionDiagnosticStage(token, "runtime_config", "Runtime overlay")
         RuntimeLog.configure(uiSettings.resetStalledFlows)
+        val uplinkIpv6 = uplinkHasIpv6(underlying.network)
+        val serverIpv6First = ServerIpv6First.enabled(uiSettings.serverIpv6First, uplinkIpv6)
         RuntimeLog.app(
             4,
             "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic} " +
-                "resetStalledFlows=${uiSettings.resetStalledFlows}",
+                "resetStalledFlows=${uiSettings.resetStalledFlows} serverIpv6First=$serverIpv6First " +
+                "(настройка=${uiSettings.serverIpv6First}, IPv6 у сети=$uplinkIpv6)",
         )
         RuntimeLog.app(
             4,
@@ -505,6 +509,7 @@ internal class SessionStarter(
                     dnsMode = dnsMode,
                     proxyIpv4Only = uiSettings.proxyIpv4Only,
                     blockQuic = uiSettings.blockQuic,
+                    serverIpv6First = serverIpv6First,
                     dnsOverride = uiSettings.dnsOverride,
                     bootstrapHost = preparedBootstrap.overlay,
                     vpnHiding = vpnHiding,
@@ -905,6 +910,21 @@ internal class SessionStarter(
                 )
             }
         }
+    }
+
+    /** Собственный глобальный IPv6 у основной сети (LinkProperties, без зондов); любая ошибка — «нет». */
+    private fun uplinkHasIpv6(network: android.net.Network?): Boolean {
+        network ?: return false
+        return runCatching {
+            val properties = service.getSystemService(android.net.ConnectivityManager::class.java)
+                ?.getLinkProperties(network) ?: return@runCatching false
+            ServerIpv6First.uplinkHasIpv6(
+                addresses = properties.linkAddresses.map { it.address },
+                hasDefaultIpv6Route = properties.routes.any { route ->
+                    route.isDefaultRoute && route.destination.address is java.net.Inet6Address
+                },
+            )
+        }.getOrDefault(false)
     }
 
     internal companion object {

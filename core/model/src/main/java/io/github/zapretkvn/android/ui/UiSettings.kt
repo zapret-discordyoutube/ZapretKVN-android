@@ -23,6 +23,12 @@ data class UiSettings(
     val dnsMode: DnsMode = DnsMode.FromJson,
     val proxyIpv4Only: Boolean = true,
     /**
+     * IPv6 к VPN-серверу первым (владелец 2026-11-22): если у сети телефона есть IPv6, соединение с сервером
+     * начинается по IPv6, IPv4 подхватывает его быстро. IPv4 сервера часто блокируют по адресу, IPv6 того же сервера
+     * проходит. Гонку делают ядра (sing-box, Hysteria), см. docs/ARCHITECTURE.md. Включено по умолчанию.
+     */
+    val serverIpv6First: Boolean = true,
+    /**
      * Отвечать отказом на UDP 443 (QUIC/HTTP3): приложения мгновенно уходят на TCP. QUIC внутри
      * датаграмм Hysteria2 это QUIC внутри QUIC: видео YouTube стартует и идёт заметно хуже, чем по
      * TCP (владелец 2026-11-08: включено по умолчанию).
