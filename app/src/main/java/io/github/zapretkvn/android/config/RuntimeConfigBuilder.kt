@@ -319,6 +319,10 @@ object RuntimeConfigBuilder {
             runtimeOutbounds = runtimeOutbounds?.let { ServerIpv6First.apply(it, defaultResolver) }
         }
         maskedEndpoints?.let { runtimeEndpoints = it.entries }
+        if (options.serverIpv6First) {
+            val defaultResolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
+            runtimeEndpoints = runtimeEndpoints?.let { ServerIpv6First.applyEndpoints(it, defaultResolver) }
+        }
         val maskingReport = MaskingReport(
             changed = (maskedOutbounds?.changed ?: 0) + (maskedEndpoints?.changed ?: 0),
             notes = maskedOutbounds?.notes.orEmpty() + maskedEndpoints?.notes.orEmpty(),

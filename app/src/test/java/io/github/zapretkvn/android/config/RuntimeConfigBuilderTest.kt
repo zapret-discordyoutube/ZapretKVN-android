@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.config
 import io.github.zapretkvn.android.hardening.TunMtuMode
 import io.github.zapretkvn.android.hardening.VpnHidingOptions
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -1260,7 +1261,7 @@ class RuntimeConfigBuilderTest {
     }
 
     @Test
-    fun `IPv6 first gives the selected server a prefer_ipv6 resolver and leaves WireGuard alone`() {
+    fun `IPv6 first gives the selected server and a one-peer WireGuard endpoint a prefer_ipv6 resolver`() {
         val stored = validConfig(rootExtra = """,
           "endpoints":[
             {"type":"wireguard","tag":"wg-a","address":["10.0.0.2/32"],"peers":[{"address":"wg.example","port":51820}]}
@@ -1275,6 +1276,7 @@ class RuntimeConfigBuilderTest {
                 options = RuntimeConfigOptions(
                     bootstrapHost = BootstrapHostOverlay("server-a", "vpn.example", listOf("203.0.113.10", "2001:db8::10")),
                     serverIpv6First = ipv6First,
+                    dnsMode = DnsMode.Android,
                 ),
             ) as RuntimeConfigResult.Ready
             return JsonConfig.parse(result.json) as JsonObject
@@ -1285,9 +1287,13 @@ class RuntimeConfigBuilderTest {
         val resolver = serverOf(on)["domain_resolver"] as JsonObject
         assertEquals("zapret-bootstrap-lkg", resolver.string("server"))
         assertEquals("prefer_ipv6", resolver.string("strategy"))
-        val wg = (on["endpoints"] as JsonArray).map { it as JsonObject }.first { it.string("tag") == "wg-a" }
-        assertFalse("WireGuard takes one address without fallback", "domain_resolver" in wg)
-        assertEquals("zapret-bootstrap-lkg", serverOf(build(false)).string("domain_resolver"))
+        fun wgOf(root: JsonObject) = (root["endpoints"] as JsonArray).map { it as JsonObject }.first { it.string("tag") == "wg-a" }
+        fun strategyOf(resolver: JsonElement?) = (resolver as? JsonObject)?.string("strategy")
+        val wgResolver = wgOf(on)["domain_resolver"] as JsonObject
+        assertEquals("the core races IPv6 and IPv4 for its one peer", "prefer_ipv6", wgResolver.string("strategy"))
+        val off = build(false)
+        assertEquals("zapret-bootstrap-lkg", serverOf(off).string("domain_resolver"))
+        assertFalse("switch off: no race", strategyOf(wgOf(off)["domain_resolver"]) == "prefer_ipv6")
     }
 
     @Test

@@ -84,4 +84,38 @@ class ServerIpv6FirstTest {
             result.byTag("b")["domain_resolver"],
         )
     }
+
+    @Test
+    fun oneDomainPeerWireGuardEndpointsGetPreferIpv6Resolver() {
+        val result = ServerIpv6First.applyEndpoints(
+            outbounds(
+                """
+                [
+                  {"type":"wireguard","tag":"awg","peers":[{"address":"wg.example","port":51820}]},
+                  {"type":"wireguard","tag":"lkg","domain_resolver":"zapret-bootstrap-lkg",
+                   "peers":[{"address":"wg.example","port":51820}]},
+                  {"type":"wireguard","tag":"own","domain_resolver":{"server":"x","strategy":"ipv4_only"},
+                   "peers":[{"address":"wg.example","port":51820}]},
+                  {"type":"wireguard","tag":"literal","peers":[{"address":"194.87.115.138","port":51820}]},
+                  {"type":"wireguard","tag":"two","peers":[{"address":"a.example","port":1},{"address":"b.example","port":2}]},
+                  {"type":"wireguard","tag":"chained","detour":"ss","peers":[{"address":"wg.example","port":51820}]},
+                  {"type":"tailscale","tag":"ts"}
+                ]
+                """,
+            ),
+            defaultResolver = "zapret-android-dns",
+        )
+        assertEquals(
+            Json.parseToJsonElement("""{"server":"zapret-android-dns","strategy":"prefer_ipv6"}"""),
+            result.byTag("awg")["domain_resolver"],
+        )
+        assertEquals(
+            Json.parseToJsonElement("""{"server":"zapret-bootstrap-lkg","strategy":"prefer_ipv6"}"""),
+            result.byTag("lkg")["domain_resolver"],
+        )
+        assertEquals("user strategy kept", "ipv4_only", result.byTag("own")["domain_resolver"]!!.jsonObject["strategy"]!!.jsonPrimitive.content)
+        for (tag in listOf("literal", "two", "chained", "ts")) {
+            assertFalse(tag, "domain_resolver" in result.byTag(tag))
+        }
+    }
 }

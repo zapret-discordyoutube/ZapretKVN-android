@@ -18,7 +18,9 @@ import kotlinx.serialization.json.JsonPrimitive
  *   семействе, если рукопожатие на первом не состоялось (тот же патч).
  * - Прочий UDP (TUIC, UDP Shadowsocks, UDP-транспорты Xray): один сокет без отката, поэтому ядро оставляет
  *   IPv4 первым, пока IPv6 не сработал для этого имени.
- * - WireGuard/AWG (endpoints) не трогаются: endpoint берёт один адрес без отката.
+ * - WireGuard/AWG (endpoint с одним пиром по имени, [applyEndpoints]): первое рукопожатие уходит на IPv6 и IPv4
+ *   сразу, сервер отвечает на одну копию (вторая для него повтор), и сессия остаётся на семействе, которое
+ *   ответило; повторы рукопожатия чередуют семейства (патч ядра 0021, `transport/wireguard/family_race.go`).
  *
  * Решение «включать ли» — [enabled]: настройка и собственный IPv6 у основной сети телефона.
  */
@@ -64,6 +66,27 @@ object ServerIpv6First {
             JsonObject(outbound.toMutableMap().apply { this["domain_resolver"] = resolver })
         },
     )
+
+    /**
+     * То же для WireGuard/AWG: `prefer_ipv6` у резолвера endpoint-а включает в ядре гонку семейств для его
+     * единственного пира. Несколько пиров, пир по IP и endpoint с `detour` не трогаются.
+     */
+    fun applyEndpoints(endpoints: JsonArray, defaultResolver: String?): JsonArray = JsonArray(
+        endpoints.map { element ->
+            val endpoint = element as? JsonObject ?: return@map element
+            if (!racesPeer(endpoint)) return@map element
+            val resolver = withStrategy(endpoint["domain_resolver"], defaultResolver) ?: return@map element
+            JsonObject(endpoint.toMutableMap().apply { this["domain_resolver"] = resolver })
+        },
+    )
+
+    private fun racesPeer(endpoint: JsonObject): Boolean {
+        if (endpoint.string("type") != "wireguard" || endpoint.containsKey("detour")) return false
+        val peers = endpoint["peers"] as? JsonArray ?: return false
+        val peer = peers.singleOrNull() as? JsonObject ?: return false
+        val address = peer.string("address") ?: return false
+        return address.isNotBlank() && !isIpLiteral(address)
+    }
 
     private fun dialsServer(outbound: JsonObject): Boolean {
         val type = outbound.string("type") ?: return false

@@ -1,0 +1,636 @@
+diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
+index cae06d91..83169aa9 100644
+--- a/protocol/wireguard/endpoint.go
++++ b/protocol/wireguard/endpoint.go
+@@ -142,6 +142,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 		Address:    options.Address,
+ 		PrivateKey: options.PrivateKey,
+ 		ListenPort: options.ListenPort,
++		PreferIPv6: options.DomainResolver != nil &&
++			C.DomainStrategy(options.DomainResolver.Strategy) == C.DomainStrategyPreferIPv6,
+ 		ResolvePeer: func(domain string) ([]netip.Addr, error) {
+ 			return ep.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
+ 		},
+diff --git a/transport/wireguard/android_client_bind.go b/transport/wireguard/android_client_bind.go
+index 3289289a..de39083f 100644
+--- a/transport/wireguard/android_client_bind.go
++++ b/transport/wireguard/android_client_bind.go
+@@ -36,6 +36,16 @@ type AndroidClientBind struct {
+ 	isConnect   bool
+ 	connectAddr netip.AddrPort
+ 	listenPort  uint16
++	race        *familyRace
++}
++
++// useFamilyRace sends the first handshake to both address families of the
++// server and keeps the one that answers (see familyRace). The race needs one
++// dual-stack socket that can reach both families, so the bind no longer
++// connects to a single address.
++func (b *AndroidClientBind) useFamilyRace(race *familyRace) {
++	b.race = race
++	b.isConnect = false
+ }
+ 
+ func NewAndroidClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, peers []peerConfig) *AndroidClientBind {
+@@ -51,6 +61,9 @@ func (b *AndroidClientBind) Open(port uint16) ([]awgConn.ReceiveFunc, uint16, er
+ 	b.closed.Store(false)
+ 	b.bindCtx, b.bindDone = context.WithCancel(b.ctx)
+ 	b.listenPort = port
++	if b.race != nil {
++		b.race.restart()
++	}
+ 	if port != 0 {
+ 		// Reuse sing-box's protected socket Control hook. A detour cannot
+ 		// promise a local port and is rejected, never silently changed to :0.
+@@ -95,7 +108,13 @@ func (b *AndroidClientBind) connect() (net.PacketConn, error) {
+ 		}
+ 		b.conn = bufio.NewUnbindPacketConn(conn)
+ 	} else {
+-		conn, err := b.dialer.ListenPacket(b.bindCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
++		// "::" asks sing-box for a dual-stack socket: the family race sends to
++		// IPv6 and IPv4 from the same protected socket.
++		unspecified := netip.IPv4Unspecified()
++		if b.race != nil {
++			unspecified = netip.IPv6Unspecified()
++		}
++		conn, err := b.dialer.ListenPacket(b.bindCtx, M.Socksaddr{Addr: unspecified})
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -132,7 +151,11 @@ func (b *AndroidClientBind) receiveCore(packets [][]byte, sizes []int, setEndpoi
+ 		return 0, nil
+ 	}
+ 	sizes[0] = n
+-	setEndpoint(0, androidEndpoint(M.SocksaddrFromNet(address).Unwrap().AddrPort()))
++	source := M.SocksaddrFromNet(address).Unwrap().AddrPort()
++	if b.race != nil {
++		b.race.received(source)
++	}
++	setEndpoint(0, androidEndpoint(source))
+ 	return 1, nil
+ }
+ 
+@@ -168,8 +191,22 @@ func (b *AndroidClientBind) sendCore(buffers [][]byte, destination netip.AddrPor
+ 	if err != nil {
+ 		return err
+ 	}
++	targets := []netip.AddrPort{destination}
++	if b.race != nil {
++		targets = b.race.targets()
++	}
+ 	for _, buffer := range buffers {
+-		if _, err = conn.WriteTo(buffer, net.UDPAddrFromAddrPort(destination)); err != nil {
++		// One unreachable family (for example no IPv6 route right now) must
++		// not fail the send while the other family still delivers.
++		delivered := false
++		for _, target := range targets {
++			if _, writeErr := conn.WriteTo(buffer, net.UDPAddrFromAddrPort(target)); writeErr != nil {
++				err = writeErr
++			} else {
++				delivered = true
++			}
++		}
++		if !delivered {
+ 			b.dropConn(conn)
+ 			return err
+ 		}
+diff --git a/transport/wireguard/endpoint.go b/transport/wireguard/endpoint.go
+index 4b2a7aba..f0e3e9ae 100644
+--- a/transport/wireguard/endpoint.go
++++ b/transport/wireguard/endpoint.go
+@@ -13,6 +13,7 @@ import (
+ 	"strings"
+ 
+ 	"github.com/sagernet/sing-box/common/dialer"
++	"github.com/sagernet/sing-box/common/familymemory"
+ 	"github.com/sagernet/sing-tun"
+ 	"github.com/sagernet/sing/common"
+ 	E "github.com/sagernet/sing/common/exceptions"
+@@ -39,6 +40,7 @@ type Endpoint struct {
+ 	allowedIPs     *device.AllowedIPs
+ 	egressPool     *tun.UDPEgressPool
+ 	androidEngine  bool
++	race           *familyRace
+ 	pause          pause.Manager
+ 	pauseCallback  *list.Element[pause.Callback]
+ }
+@@ -172,6 +174,9 @@ func (e *Endpoint) Start(postStart bool) error {
+ 			return err
+ 		}
+ 		androidBind := NewAndroidClientBind(e.options.Context, e.options.Logger, e.options.Dialer, e.peers)
++		if e.race != nil {
++			androidBind.useFamilyRace(e.race)
++		}
+ 		wgDevice = NewAndroidWireGuardEngine(e.tunDevice, androidBind, logger)
+ 		e.options.Logger.Info("wireguard engine: android split data-plane")
+ 	} else {
+@@ -334,11 +339,50 @@ func (e *Endpoint) resolveAndroidPeers() error {
+ 		if len(addresses) == 0 {
+ 			return E.New("resolve endpoint domain for peer[", peerIndex, "]: ", peer.destination, ": no addresses")
+ 		}
++		if race := e.newFamilyRace(peer.destination, addresses); race != nil {
++			preferred, _ := race.order()
++			e.race = race
++			e.peers[peerIndex].endpoint = preferred
++			continue
++		}
+ 		e.peers[peerIndex].endpoint = netip.AddrPortFrom(addresses[0], peer.destination.Port)
+ 	}
+ 	return nil
+ }
+ 
++// newFamilyRace returns a handshake race over IPv6 and IPv4 for the only peer
++// of the endpoint, or nil when IPv6 first is off, there are several peers or
++// the name has one family only. The family that last answered for this name
++// (common/familymemory, reset on network change) leads the race.
++func (e *Endpoint) newFamilyRace(destination M.Socksaddr, addresses []netip.Addr) *familyRace {
++	if !e.options.PreferIPv6 || len(e.peers) != 1 || e.options.ListenPort != 0 {
++		return nil
++	}
++	ipv6, ipv4, ok := raceAddresses(addresses)
++	if !ok {
++		return nil
++	}
++	name := destination.Fqdn
++	port := destination.Port
++	logger := e.options.Logger
++	order := func() (netip.AddrPort, netip.AddrPort) {
++		if familymemory.Default.PreferIPv6(name, true) {
++			return netip.AddrPortFrom(ipv6, port), netip.AddrPortFrom(ipv4, port)
++		}
++		return netip.AddrPortFrom(ipv4, port), netip.AddrPortFrom(ipv6, port)
++	}
++	onLock := func(address netip.AddrPort) {
++		familymemory.Default.Succeeded(name, address.Addr())
++		family := "IPv4"
++		if address.Addr().Is6() {
++			family = "IPv6"
++		}
++		logger.Info("wireguard: server answered over ", family, ", keeping it for this session")
++	}
++	logger.Info("wireguard: first handshake goes to the server over IPv6 and IPv4, the first answer wins")
++	return newFamilyRace(order, onLock, nil)
++}
++
+ // SupportsFlow reports whether TUN packets may be written straight into the
+ // engine. Only the sagernet engine implements InputPackets; the Android
+ // official engine keeps the stack data plane.
+diff --git a/transport/wireguard/endpoint_options.go b/transport/wireguard/endpoint_options.go
+index a266a602..f75c1816 100644
+--- a/transport/wireguard/endpoint_options.go
++++ b/transport/wireguard/endpoint_options.go
+@@ -24,17 +24,21 @@ type EndpointOptions struct {
+ 	UDPFiltering tun.NATFiltering
+ 	UDPNATMax    uint32
+ 
+-	InterfaceFinder            control.InterfaceFinder
+-	EgressPoolOptions          tun.UDPEgressPoolOptions
+-	Dialer                     N.Dialer
+-	CreateDialer               func(interfaceName string) N.Dialer
+-	Tag                        string
+-	Name                       string
+-	MTU                        uint32
+-	Address                    []netip.Prefix
+-	PrivateKey                 string
+-	ListenPort                 uint16
+-	ResolvePeer                func(domain string) ([]netip.Addr, error)
++	InterfaceFinder   control.InterfaceFinder
++	EgressPoolOptions tun.UDPEgressPoolOptions
++	Dialer            N.Dialer
++	CreateDialer      func(interfaceName string) N.Dialer
++	Tag               string
++	Name              string
++	MTU               uint32
++	Address           []netip.Prefix
++	PrivateKey        string
++	ListenPort        uint16
++	ResolvePeer       func(domain string) ([]netip.Addr, error)
++	// PreferIPv6 is set when the endpoint's domain resolver uses prefer_ipv6
++	// (the app's "IPv6 to the server first"). A single domain peer with both
++	// families then races its first handshake over IPv6 and IPv4.
++	PreferIPv6                 bool
+ 	Peers                      []PeerOptions
+ 	Workers                    int
+ 	PreallocatedBuffersPerPool uint32
+diff --git a/transport/wireguard/family_race.go b/transport/wireguard/family_race.go
+new file mode 100644
+index 00000000..029f89d1
+--- /dev/null
++++ b/transport/wireguard/family_race.go
+@@ -0,0 +1,136 @@
++package wireguard
++
++import (
++	"net/netip"
++	"sync"
++	"sync/atomic"
++	"time"
++)
++
++// familyRaceBurstGap separates handshake attempts. WireGuard retries an
++// unanswered initiation after REKEY_TIMEOUT (5 s); the junk packets and the
++// initiation of one attempt are sent back to back, well inside this gap.
++const familyRaceBurstGap = time.Second
++
++// familyRace is the WireGuard counterpart of happy eyeballs for a server name
++// with both an IPv6 and an IPv4 address.
++//
++// The first handshake attempt goes to both addresses. The server drops the
++// second copy as a replay (same TAI64N timestamp), so exactly one copy is
++// answered, and the family it came back on is kept for the session. Later
++// attempts, if the first is not answered, alternate families starting with
++// the preferred one: when one family loses only the replies (one-way
++// filtering), a duplicate could keep reaching the server on that family
++// first, and alternating still lets the other family answer.
++//
++// The engine keeps sending to the address it was configured with (roaming is
++// off on mobile semantics), so the bind sends to targets() instead of the
++// engine's destination. Only the socket destination changes; the WireGuard
++// protocol itself is untouched.
++type familyRace struct {
++	access    sync.Mutex
++	order     func() (preferred, other netip.AddrPort)
++	onLock    func(netip.AddrPort)
++	now       func() time.Time
++	preferred netip.AddrPort
++	other     netip.AddrPort
++	locked    netip.AddrPort
++	attempt   int
++	lastSend  time.Time
++	// decided holds the one-element target list once the race is locked:
++	// every later packet costs one atomic load, no lock and no allocation.
++	decided atomic.Pointer[[]netip.AddrPort]
++}
++
++func newFamilyRace(order func() (netip.AddrPort, netip.AddrPort), onLock func(netip.AddrPort), now func() time.Time) *familyRace {
++	if now == nil {
++		now = time.Now
++	}
++	race := &familyRace{order: order, onLock: onLock, now: now}
++	race.restart()
++	return race
++}
++
++// restart begins a new race, for example when the bind is reopened after a
++// network change. The order is asked again, so a remembered family leads.
++func (r *familyRace) restart() {
++	preferred, other := r.order()
++	r.access.Lock()
++	defer r.access.Unlock()
++	r.preferred, r.other = unmapAddrPort(preferred), unmapAddrPort(other)
++	r.locked = netip.AddrPort{}
++	r.attempt = 0
++	r.lastSend = time.Time{}
++	r.decided.Store(nil)
++}
++
++// settled reports whether a family has been kept.
++func (r *familyRace) settled() bool {
++	return r.decided.Load() != nil
++}
++
++// targets returns the addresses the packets of one send go to.
++func (r *familyRace) targets() []netip.AddrPort {
++	if decided := r.decided.Load(); decided != nil {
++		return *decided
++	}
++	r.access.Lock()
++	defer r.access.Unlock()
++	if r.locked.IsValid() {
++		return []netip.AddrPort{r.locked}
++	}
++	now := r.now()
++	if !r.lastSend.IsZero() && now.Sub(r.lastSend) > familyRaceBurstGap {
++		r.attempt++
++	}
++	r.lastSend = now
++	switch {
++	case r.attempt == 0:
++		return []netip.AddrPort{r.preferred, r.other}
++	case r.attempt%2 == 1:
++		return []netip.AddrPort{r.preferred}
++	default:
++		return []netip.AddrPort{r.other}
++	}
++}
++
++// received notes a packet from source. The first packet from either server
++// address locks its family; it reports whether this call locked the race.
++func (r *familyRace) received(source netip.AddrPort) bool {
++	if r.settled() {
++		return false
++	}
++	source = unmapAddrPort(source)
++	r.access.Lock()
++	if r.locked.IsValid() || (source != r.preferred && source != r.other) {
++		r.access.Unlock()
++		return false
++	}
++	r.locked = source
++	r.decided.Store(&[]netip.AddrPort{source})
++	onLock := r.onLock
++	r.access.Unlock()
++	if onLock != nil {
++		onLock(source)
++	}
++	return true
++}
++
++func unmapAddrPort(address netip.AddrPort) netip.AddrPort {
++	return netip.AddrPortFrom(address.Addr().Unmap(), address.Port())
++}
++
++// raceAddresses picks the first IPv6 and the first IPv4 address. It reports
++// false unless both families are present.
++func raceAddresses(addresses []netip.Addr) (ipv6, ipv4 netip.Addr, ok bool) {
++	for _, address := range addresses {
++		address = address.Unmap()
++		switch {
++		case address.Is6() && !ipv6.IsValid():
++			ipv6 = address
++		case address.Is4() && !ipv4.IsValid():
++			ipv4 = address
++		}
++	}
++	return ipv6, ipv4, ipv6.IsValid() && ipv4.IsValid()
++}
+diff --git a/transport/wireguard/family_race_bind_test.go b/transport/wireguard/family_race_bind_test.go
+new file mode 100644
+index 00000000..019d0465
+--- /dev/null
++++ b/transport/wireguard/family_race_bind_test.go
+@@ -0,0 +1,111 @@
++package wireguard
++
++import (
++	"context"
++	"net"
++	"net/netip"
++	"testing"
++	"time"
++
++	metaConn "github.com/amnezia-vpn/amneziawg-go/v3/conn"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++
++	"github.com/stretchr/testify/require"
++)
++
++// dualStackDialer hands out a real unconnected UDP socket, as sing-box's
++// protected dialer does for an unspecified destination.
++type dualStackDialer struct{ requested chan M.Socksaddr }
++
++func (d dualStackDialer) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	return nil, net.ErrClosed
++}
++
++func (d dualStackDialer) ListenPacket(_ context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	d.requested <- destination
++	network := "udp4"
++	if destination.Addr.Is6() {
++		network = "udp"
++	}
++	return net.ListenPacket(network, net.JoinHostPort(destination.Addr.String(), "0"))
++}
++
++func listenLoopback(t *testing.T, network, address string) (*net.UDPConn, netip.AddrPort) {
++	t.Helper()
++	conn, err := net.ListenPacket(network, address)
++	if err != nil {
++		t.Skipf("%s loopback unavailable: %v", network, err)
++	}
++	t.Cleanup(func() { conn.Close() })
++	return conn.(*net.UDPConn), conn.LocalAddr().(*net.UDPAddr).AddrPort()
++}
++
++func readWithin(conn *net.UDPConn, wait time.Duration) ([]byte, netip.AddrPort, bool) {
++	buffer := make([]byte, 128)
++	_ = conn.SetReadDeadline(time.Now().Add(wait))
++	n, from, err := conn.ReadFromUDPAddrPort(buffer)
++	if err != nil {
++		return nil, netip.AddrPort{}, false
++	}
++	return buffer[:n], from, true
++}
++
++func TestAndroidClientBindRacesBothFamiliesAndKeepsTheOneThatAnswers(t *testing.T) {
++	server6, address6 := listenLoopback(t, "udp6", "[::1]:0")
++	server4, address4 := listenLoopback(t, "udp4", "127.0.0.1:0")
++	var locked []netip.AddrPort
++	race := newFamilyRace(func() (netip.AddrPort, netip.AddrPort) { return address6, address4 },
++		func(address netip.AddrPort) { locked = append(locked, address) }, nil)
++	dialer := dualStackDialer{requested: make(chan M.Socksaddr, 4)}
++	bind := NewAndroidClientBind(context.Background(), logger.NOP(), dialer,
++		[]peerConfig{{endpoint: address6}})
++	bind.useFamilyRace(race)
++	defer bind.Close()
++	receivers, _, err := bind.Open(0)
++	require.NoError(t, err)
++	require.Len(t, receivers, 1)
++
++	// The engine addresses the configured (IPv6) endpoint; the race also sends
++	// the first attempt over IPv4.
++	endpoint, err := bind.ParseEndpoint(address6.String())
++	require.NoError(t, err)
++	require.NoError(t, bind.Send([][]byte{[]byte("initiation")}, endpoint))
++	require.True(t, (<-dialer.requested).Addr.Is6(), "the race needs a dual-stack socket")
++	got6, client6, ok := readWithin(server6, time.Second)
++	require.True(t, ok)
++	require.Equal(t, "initiation", string(got6))
++	got4, client4, ok := readWithin(server4, time.Second)
++	require.True(t, ok)
++	require.Equal(t, "initiation", string(got4))
++	require.Equal(t, client6.Port(), client4.Port(), "one socket for both families")
++
++	// Only the IPv4 copy is answered (as if IPv6 replies were lost).
++	_, err = server4.WriteToUDPAddrPort([]byte("response"), client4)
++	require.NoError(t, err)
++	packets := [][]byte{make([]byte, 64)}
++	sizes := make([]int, 1)
++	endpoints := make([]metaConn.Endpoint, 1)
++	count, err := receivers[0](packets, sizes, endpoints)
++	require.NoError(t, err)
++	require.Equal(t, 1, count)
++	require.Equal(t, "response", string(packets[0][:sizes[0]]))
++	require.Equal(t, address4.String(), endpoints[0].DstToString())
++	require.Equal(t, []netip.AddrPort{address4}, locked)
++
++	// The engine still names the IPv6 endpoint; data now goes over IPv4 only.
++	require.NoError(t, bind.Send([][]byte{[]byte("data")}, endpoint))
++	got4, _, ok = readWithin(server4, time.Second)
++	require.True(t, ok)
++	require.Equal(t, "data", string(got4))
++	_, _, ok = readWithin(server6, 200*time.Millisecond)
++	require.False(t, ok, "the losing family gets nothing after the lock")
++}
++
++func TestAndroidClientBindWithoutRaceKeepsTheConnectedSocket(t *testing.T) {
++	connection := newTestPacketConnection()
++	bind := NewAndroidClientBind(context.Background(), logger.NOP(), testDialer{connection: connection},
++		[]peerConfig{{endpoint: netip.MustParseAddrPort("192.0.2.1:51820")}})
++	require.True(t, bind.isConnect)
++	require.Nil(t, bind.race)
++}
+diff --git a/transport/wireguard/family_race_test.go b/transport/wireguard/family_race_test.go
+new file mode 100644
+index 00000000..7cc457f0
+--- /dev/null
++++ b/transport/wireguard/family_race_test.go
+@@ -0,0 +1,157 @@
++package wireguard
++
++import (
++	"net/netip"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/common/familymemory"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++
++	"github.com/stretchr/testify/require"
++)
++
++var (
++	raceIPv6 = netip.MustParseAddrPort("[2001:db8::1]:51820")
++	raceIPv4 = netip.MustParseAddrPort("192.0.2.1:51820")
++)
++
++type raceClock struct{ at time.Time }
++
++func (c *raceClock) now() time.Time             { return c.at }
++func (c *raceClock) advance(step time.Duration) { c.at = c.at.Add(step) }
++
++func newTestRace(clock *raceClock, locked *[]netip.AddrPort) *familyRace {
++	return newFamilyRace(
++		func() (netip.AddrPort, netip.AddrPort) { return raceIPv6, raceIPv4 },
++		func(address netip.AddrPort) { *locked = append(*locked, address) },
++		clock.now,
++	)
++}
++
++func TestFamilyRaceFirstAttemptGoesToBothFamilies(t *testing.T) {
++	clock := &raceClock{at: time.Unix(1000, 0)}
++	var locked []netip.AddrPort
++	race := newTestRace(clock, &locked)
++	// AWG junk packets and the initiation of one attempt: all to both.
++	for range 3 {
++		require.Equal(t, []netip.AddrPort{raceIPv6, raceIPv4}, race.targets())
++		clock.advance(10 * time.Millisecond)
++	}
++	require.Empty(t, locked)
++}
++
++func TestFamilyRaceLocksTheFamilyThatAnswers(t *testing.T) {
++	clock := &raceClock{at: time.Unix(1000, 0)}
++	var locked []netip.AddrPort
++	race := newTestRace(clock, &locked)
++	race.targets()
++	// A dual-stack socket reports IPv4 sources as IPv4-mapped IPv6.
++	mapped := netip.AddrPortFrom(netip.AddrFrom16(raceIPv4.Addr().As16()), raceIPv4.Port())
++	require.True(t, race.received(mapped))
++	require.False(t, race.received(raceIPv6), "the race is decided once")
++	require.Equal(t, []netip.AddrPort{raceIPv4}, locked)
++	clock.advance(2 * time.Minute)
++	require.Equal(t, []netip.AddrPort{raceIPv4}, race.targets(), "rekeys stay on the winner")
++}
++
++func TestFamilyRaceIgnoresOtherSources(t *testing.T) {
++	clock := &raceClock{at: time.Unix(1000, 0)}
++	var locked []netip.AddrPort
++	race := newTestRace(clock, &locked)
++	require.False(t, race.received(netip.MustParseAddrPort("198.51.100.7:51820")))
++	require.False(t, race.received(netip.MustParseAddrPort("192.0.2.1:9999")))
++	require.Empty(t, locked)
++	require.Len(t, race.targets(), 2)
++}
++
++func TestFamilyRaceAlternatesWhenTheFirstAttemptIsNotAnswered(t *testing.T) {
++	clock := &raceClock{at: time.Unix(1000, 0)}
++	var locked []netip.AddrPort
++	race := newTestRace(clock, &locked)
++	require.Len(t, race.targets(), 2)
++	clock.advance(5 * time.Second)
++	require.Equal(t, []netip.AddrPort{raceIPv6}, race.targets())
++	clock.advance(100 * time.Millisecond)
++	require.Equal(t, []netip.AddrPort{raceIPv6}, race.targets(), "same attempt")
++	clock.advance(5 * time.Second)
++	require.Equal(t, []netip.AddrPort{raceIPv4}, race.targets())
++	clock.advance(5 * time.Second)
++	require.Equal(t, []netip.AddrPort{raceIPv6}, race.targets())
++	require.True(t, race.received(raceIPv6))
++	require.Equal(t, []netip.AddrPort{raceIPv6}, locked)
++}
++
++func TestFamilyRaceRestartAsksTheOrderAgain(t *testing.T) {
++	clock := &raceClock{at: time.Unix(1000, 0)}
++	preferIPv4 := false
++	var locked []netip.AddrPort
++	race := newFamilyRace(func() (netip.AddrPort, netip.AddrPort) {
++		if preferIPv4 {
++			return raceIPv4, raceIPv6
++		}
++		return raceIPv6, raceIPv4
++	}, func(address netip.AddrPort) { locked = append(locked, address) }, clock.now)
++	race.targets()
++	require.True(t, race.received(raceIPv4))
++	preferIPv4 = true
++	race.restart()
++	require.Equal(t, []netip.AddrPort{raceIPv4, raceIPv6}, race.targets())
++	clock.advance(5 * time.Second)
++	require.Equal(t, []netip.AddrPort{raceIPv4}, race.targets())
++}
++
++func TestRaceAddressesNeedsBothFamilies(t *testing.T) {
++	ipv6, ipv4, ok := raceAddresses([]netip.Addr{
++		netip.MustParseAddr("192.0.2.1"),
++		netip.MustParseAddr("2001:db8::1"),
++		netip.MustParseAddr("2001:db8::2"),
++		netip.MustParseAddr("192.0.2.2"),
++	})
++	require.True(t, ok)
++	require.Equal(t, "2001:db8::1", ipv6.String())
++	require.Equal(t, "192.0.2.1", ipv4.String())
++	_, _, ok = raceAddresses([]netip.Addr{netip.MustParseAddr("192.0.2.1")})
++	require.False(t, ok)
++	_, _, ok = raceAddresses([]netip.Addr{netip.MustParseAddr("2001:db8::1")})
++	require.False(t, ok)
++}
++
++func raceEndpoint(preferIPv6 bool, peers int) *Endpoint {
++	return &Endpoint{
++		options: EndpointOptions{PreferIPv6: preferIPv6, Logger: logger.NOP()},
++		peers:   make([]peerConfig, peers),
++	}
++}
++
++var bothFamilies = []netip.Addr{netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("2001:db8::1")}
++
++func TestEndpointRacesOnlyWhenIPv6FirstIsOnForOneDomainPeer(t *testing.T) {
++	familymemory.Default.Reset()
++	t.Cleanup(familymemory.Default.Reset)
++	server := M.ParseSocksaddrHostPort("vpn.example", 51820)
++	require.Nil(t, raceEndpoint(false, 1).newFamilyRace(server, bothFamilies), "switch off")
++	require.Nil(t, raceEndpoint(true, 2).newFamilyRace(server, bothFamilies), "several peers")
++	require.Nil(t, raceEndpoint(true, 1).newFamilyRace(server, bothFamilies[:1]), "IPv4 only")
++	race := raceEndpoint(true, 1).newFamilyRace(server, bothFamilies)
++	require.NotNil(t, race)
++	preferred, other := race.order()
++	require.Equal(t, "[2001:db8::1]:51820", preferred.String())
++	require.Equal(t, "192.0.2.1:51820", other.String())
++}
++
++func TestEndpointRaceRemembersTheWinnerForTheNextStart(t *testing.T) {
++	familymemory.Default.Reset()
++	t.Cleanup(familymemory.Default.Reset)
++	server := M.ParseSocksaddrHostPort("vpn.example", 51820)
++	race := raceEndpoint(true, 1).newFamilyRace(server, bothFamilies)
++	race.targets()
++	require.True(t, race.received(netip.MustParseAddrPort("192.0.2.1:51820")))
++	next := raceEndpoint(true, 1).newFamilyRace(server, bothFamilies)
++	preferred, _ := next.order()
++	require.Equal(t, "192.0.2.1:51820", preferred.String(), "IPv4 answered last time, it leads now")
++	familymemory.Default.Reset() // network change
++	preferred, _ = next.order()
++	require.Equal(t, "[2001:db8::1]:51820", preferred.String())
++}
