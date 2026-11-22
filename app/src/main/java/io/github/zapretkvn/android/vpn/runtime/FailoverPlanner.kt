@@ -24,6 +24,7 @@ import kotlinx.serialization.json.contentOrNull
  */
 internal object FailoverPlanner {
     private val NON_PROXY_TYPES = setOf("direct", "block", "dns", "selector", "urltest")
+    private val GROUP_TYPES = setOf("selector", "urltest")
     private val MAINTENANCE_MARKERS = setOf("maintenance", "техработы", "обслуживание")
 
     /**
@@ -84,31 +85,51 @@ internal object FailoverPlanner {
     }
 
     /**
-     * The server a connection report is about (docs/CLIENT_REPORTS.md): the plan's current server; without a plan,
-     * the proxy a selector group is on (a Hysteria line that is not failover-eligible has no plan but is still the
-     * server tried); a profile without any group, its only proxy outbound. Null when the profile does not say which
-     * server was tried (several proxies and no group). Field check 2026-11-21: such profiles' traffic failures went
-     * only as app errors `start:VPN-200` (16 installs a day).
+     * The server a connection report is about (docs/CLIENT_REPORTS.md), read the way sing-box routes default traffic:
+     * 1. the failover plan's current server;
+     * 2. the primary group, followed down to a server;
+     * 3. the profile's default exit — `route.final`, or the first outbound when it is not set — followed down;
+     * 4. the first group (top-level groups first) that leads to a server;
+     * 5. a profile without any group: its only server.
+     * Following a group means: the core's runtime selection, else a selector's `default`, else its first member (what
+     * sing-box itself uses; a urltest is a selector at runtime, QuietOutbounds), through nested groups. Servers are
+     * proxy outbounds and `endpoints` (WireGuard/AWG). Null when the chain ends on direct/block/dns or loops.
+     * Field check #2 2026-11-22: with only selectors-with-default and outbounds, 0.6.47 still sent `start:VPN-200`
+     * app errors from 23 installs, and Android sent no WireGuard/AWG report at all.
      */
     fun reportedServer(config: ParsedConfig, runtimeSelections: Map<String, String>, primaryGroupTag: String?): Pair<String, String>? {
         plan(config, runtimeSelections, primaryGroupTag)?.let { return it.currentId to it.currentType }
         val root = config.root ?: return null
-        val types = (root["outbounds"] as? JsonArray).orEmpty()
-            .mapNotNull { it as? JsonObject }
-            .mapNotNull { outbound ->
-                val tag = outbound.text("tag") ?: return@mapNotNull null
-                val type = outbound.text("type")?.lowercase(Locale.ROOT) ?: return@mapNotNull null
-                tag to type
+        val outbounds = (root["outbounds"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val endpoints = (root["endpoints"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+        val byTag = LinkedHashMap<String, JsonObject>()
+        (outbounds + endpoints).forEach { item -> item.text("tag")?.let { tag -> byTag.putIfAbsent(tag, item) } }
+        fun typeOf(tag: String): String? = byTag[tag]?.text("type")?.lowercase(Locale.ROOT)
+        fun membersOf(tag: String): List<String> =
+            (byTag[tag]?.get("outbounds") as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+        fun isGroup(tag: String) = typeOf(tag) in GROUP_TYPES
+
+        fun resolve(start: String?): Pair<String, String>? {
+            var tag = start ?: return null
+            val seen = HashSet<String>()
+            while (seen.add(tag)) {
+                val type = typeOf(tag) ?: return null
+                if (type !in GROUP_TYPES) return if (type in NON_PROXY_TYPES) null else tag to type
+                val default = if (type == "selector") byTag[tag]?.text("default") else null
+                tag = runtimeSelections[tag] ?: default ?: membersOf(tag).firstOrNull() ?: return null
             }
-            .toMap()
-        fun proxy(tag: String?): Pair<String, String>? =
-            tag?.let { types[it] }?.takeIf { it !in NON_PROXY_TYPES }?.let { tag to it }
-        val groups = ConfigAnalyzer.selectorGroups(config)
-        if (groups.isNotEmpty()) {
-            val ordered = groups.filter { it.tag == primaryGroupTag } + groups.filter { it.tag != primaryGroupTag }
-            return ordered.firstNotNullOfOrNull { group -> proxy(runtimeSelections[group.tag] ?: group.default) }
+            return null
         }
-        return types.entries.filter { it.value !in NON_PROXY_TYPES }.singleOrNull()?.let { it.key to it.value }
+
+        primaryGroupTag?.let(::resolve)?.let { return it }
+        val final = (root["route"] as? JsonObject)?.text("final") ?: outbounds.firstNotNullOfOrNull { it.text("tag") }
+        resolve(final)?.let { return it }
+        val groups = byTag.keys.filter(::isGroup)
+        if (groups.isNotEmpty()) {
+            val nested = groups.flatMap(::membersOf).toSet()
+            return (groups.filter { it !in nested } + groups.filter { it in nested }).firstNotNullOfOrNull(::resolve)
+        }
+        return byTag.keys.mapNotNull { tag -> typeOf(tag)?.takeIf { it !in NON_PROXY_TYPES }?.let { tag to it } }.singleOrNull()
     }
 
     private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

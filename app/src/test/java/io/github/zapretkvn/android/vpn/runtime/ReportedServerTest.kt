@@ -28,11 +28,58 @@ class ReportedServerTest {
     }
 
     @Test
-    fun severalServersWithoutAGroupSayNothing() {
-        val json = """{"outbounds":[
+    fun severalServersWithoutAGroupNameTheDefaultExit() {
+        // sing-box sends default traffic to route.final, or to the first outbound when it is not set.
+        val outbounds = """[
             {"type":"vless","tag":"a","server":"a.example","server_port":443},
             {"type":"trojan","tag":"b","server":"b.example","server_port":443},
+            {"type":"direct","tag":"direct"}]"""
+        assertEquals("a" to "vless", server("""{"outbounds":$outbounds}"""))
+        assertEquals("b" to "trojan", server("""{"outbounds":$outbounds,"route":{"final":"b"}}"""))
+    }
+
+    @Test
+    fun aSelectorWithoutDefaultIsOnItsFirstMember() {
+        val json = """{"outbounds":[
+            {"type":"direct","tag":"direct"},
+            {"type":"selector","tag":"proxy","outbounds":["b","a"]},
+            {"type":"vless","tag":"a","server":"a.example","server_port":443},
+            {"type":"vless","tag":"b","server":"b.example","server_port":443}],
+            "route":{"final":"proxy"}}"""
+        assertEquals("b" to "vless", server(json))
+    }
+
+    @Test
+    fun nestedGroupsAreFollowedDownToAServer() {
+        // The usual panel subscription: proxy → auto (urltest) → servers.
+        val json = """{"outbounds":[
+            {"type":"selector","tag":"proxy","outbounds":["auto","a","b"],"default":"auto"},
+            {"type":"urltest","tag":"auto","outbounds":["b","a"]},
+            {"type":"vless","tag":"a","server":"a.example","server_port":443},
+            {"type":"vless","tag":"b","server":"b.example","server_port":443},
             {"type":"direct","tag":"direct"}]}"""
+        assertEquals("b" to "vless", server(json))
+        val picked = FailoverPlanner.reportedServer(ParsedConfig.parse(json), mapOf("proxy" to "a"), null)
+        assertEquals("a" to "vless", picked)
+    }
+
+    @Test
+    fun aWireGuardEndpointIsAServer() {
+        val json = """{"outbounds":[{"type":"direct","tag":"direct"}],
+            "endpoints":[{"type":"wireguard","tag":"wg","peers":[{"address":"w.example","port":51820}]}],
+            "route":{"final":"wg"}}"""
+        assertEquals("wg" to "wireguard", server(json))
+        val alone = """{"outbounds":[{"type":"direct","tag":"direct"}],
+            "endpoints":[{"type":"wireguard","tag":"wg","peers":[{"address":"w.example","port":51820}]}],
+            "route":{"final":"direct","rules":[{"action":"route","outbound":"wg","ip_cidr":["0.0.0.0/0"]}]}}"""
+        assertEquals("wg" to "wireguard", server(alone))
+    }
+
+    @Test
+    fun aLoopOfGroupsSaysNothing() {
+        val json = """{"outbounds":[
+            {"type":"selector","tag":"x","outbounds":["y"]},
+            {"type":"selector","tag":"y","outbounds":["x"]}]}"""
         assertNull(server(json))
     }
 
