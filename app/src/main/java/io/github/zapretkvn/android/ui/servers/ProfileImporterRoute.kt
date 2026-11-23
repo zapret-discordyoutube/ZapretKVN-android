@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android.ui.servers
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,6 +42,7 @@ internal fun rememberProfileImporter(
     var urlDialogOpen by rememberSaveable { mutableStateOf(false) }
     var qrSourceDialogOpen by rememberSaveable { mutableStateOf(false) }
     var cameraDenied by rememberSaveable { mutableStateOf(false) }
+    var pickerMissing by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
 
     val fileLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -48,6 +50,15 @@ internal fun rememberProfileImporter(
     }
     val qrImageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importQrImage)
+    }
+    // The system document picker is another app: some TV boxes and stripped firmware have none, and launch() then
+    // throws (field check #3 2026-11-23: crash:ActivityNotFoundException from a Compose click on 0.6.49).
+    val openDocument = { launch: () -> Unit ->
+        try {
+            launch()
+        } catch (_: ActivityNotFoundException) {
+            pickerMissing = true
+        }
     }
     val qrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.takeIf(String::isNotBlank)?.let(viewModel::importQr)
@@ -104,7 +115,7 @@ internal fun rememberProfileImporter(
                 TextButton(
                     onClick = {
                         qrSourceDialogOpen = false
-                        qrImageLauncher.launch(arrayOf("image/*"))
+                        openDocument { qrImageLauncher.launch(arrayOf("image/*")) }
                     },
                 ) { Text("Галерея") }
             },
@@ -121,9 +132,20 @@ internal fun rememberProfileImporter(
         )
     }
 
+    if (pickerMissing) {
+        AlertDialog(
+            onDismissRequest = { pickerMissing = false },
+            title = { Text("Не открылся выбор файла") },
+            text = { Text("На устройстве нет приложения для выбора файлов. Добавьте сервер по ссылке, из буфера обмена или камерой.") },
+            confirmButton = {
+                TextButton(onClick = { pickerMissing = false }) { Text("Понятно") }
+            },
+        )
+    }
+
     return remember(viewModel, fileLauncher) {
         ProfileImporter(
-            pickFile = { fileLauncher.launch(IMPORT_MIME_TYPES) },
+            pickFile = { openDocument { fileLauncher.launch(IMPORT_MIME_TYPES) } },
             pasteClipboard = viewModel::importClipboard,
             askUrl = { urlDialogOpen = true },
             askQr = { qrSourceDialogOpen = true },

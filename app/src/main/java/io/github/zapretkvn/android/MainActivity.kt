@@ -287,7 +287,15 @@ class MainActivity : ComponentActivity() {
             pendingProfileId = null
             vpnController.start(profileId)
         } else {
-            vpnPermissionLauncher.launch(permissionIntent)
+            try {
+                vpnPermissionLauncher.launch(permissionIntent)
+            } catch (_: ActivityNotFoundException) {
+                // Firmware without the system VPN consent dialog (some TV boxes): Android cannot grant VPN at all.
+                pendingProfileId = null
+                vpnController.publishMessage("Android не открыл запрос разрешения VPN: на устройстве нет системного окна VPN.")
+                io.github.zapretkvn.android.clientreports.AppErrorFacts.permission("vpn_no_dialog")
+                    ?.let((application as ZapretApplication).container.clientReporter::onAppError)
+            }
         }
     }
 

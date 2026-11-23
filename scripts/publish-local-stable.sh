@@ -294,6 +294,25 @@ if [[ -e "$OUTPUT_DIR" && ! -d "$OUTPUT_DIR" ]]; then
     echo "Local release output path is not a directory: $OUTPUT_DIR" >&2
     exit 1
 fi
+# R8 renames our classes in the frames of field crash reports (docs/CLIENT_REPORTS.md); only this build's mapping
+# reads them back, so it is kept privately per tag, outside the published bundle. Field check #3 (2026-11-23) found no
+# mapping for v0.6.47 or v0.6.49. Never fails the release.
+R8_MAPPING_ARCHIVE="${ZAPRET_R8_MAPPING_ARCHIVE:-$HOME/releases/zapret-kvn/android-r8-mappings}"
+archive_r8_mapping() {
+    local mapping="$PROJECT_ROOT/app/build/outputs/mapping/release/mapping.txt"
+    local target="$R8_MAPPING_ARCHIVE/$TAG-mapping.txt.gz"
+    if [[ ! -s "$mapping" ]]; then
+        echo "Warning: no R8 mapping to archive for $TAG" >&2
+        return 0
+    fi
+    if mkdir -p "$R8_MAPPING_ARCHIVE" && gzip -9 -c "$mapping" > "$target.tmp" && mv "$target.tmp" "$target"; then
+        echo "Archived the R8 mapping: $target"
+    else
+        rm -f "$target.tmp"
+        echo "Warning: the R8 mapping of $TAG was not archived" >&2
+    fi
+}
+
 if [[ -d "$OUTPUT_DIR" ]]; then
     echo "Reusing existing local release bundle after full verification: $OUTPUT_DIR"
     "$PROJECT_ROOT/scripts/verify-release-bundle.sh" "$TAG" "$OUTPUT_DIR"
@@ -303,6 +322,7 @@ else
         exit 1
     fi
     "$PROJECT_ROOT/scripts/ci-build.sh"
+    archive_r8_mapping
     "$PROJECT_ROOT/scripts/create-release-bundle.sh" \
         "$TAG" \
         "$RELEASE_MATRIX_DIR" \
