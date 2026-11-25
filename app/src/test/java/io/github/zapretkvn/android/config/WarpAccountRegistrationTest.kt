@@ -71,4 +71,27 @@ class WarpAccountRegistrationTest {
         val raw = WarpAccountRegistration.exchange(null, body, true, 8000)
         assertTrue(String(raw).contains("\"config\""))
     }
+
+    @Test
+    fun registrationEndingsUseTheReportContractVocabulary() {
+        // the real detail texts: the owner's provider reset (Windows wording), and this module's own failures
+        fun result(ok: Boolean, detail: String) =
+            WarpHopFacts.resultOf(WarpAccountRegistration.Outcome(ok, "api", detail, 5))
+        assertEquals("answered", result(true, "registered"))
+        assertEquals("reset", result(false, "SocketException: Connection reset"))
+        assertEquals("reset", result(false, "EOFException: closed by the remote host"))
+        assertEquals("timeout", result(false, "SocketTimeoutException: no answer in time"))
+        assertEquals("refused", result(false, "ConnectException: Connection refused"))
+        assertEquals("unknown", result(false, "IllegalArgumentException: API answered 429"))
+    }
+
+    @Test
+    fun theFactsOmitTheRegistrationProbeWhenTheAccountFileWasThere() {
+        WarpHopFacts.record(true, WarpAccountRegistration.Outcome(true, "cached", "account file is there", 0))
+        assertEquals(null, WarpHopFacts.current().register)
+        WarpHopFacts.record(true, WarpAccountRegistration.Outcome(true, "api", "registered", 1900))
+        assertEquals(WarpHopFacts.Probe("answered", 1900), WarpHopFacts.current().register)
+        WarpHopFacts.record(false, null)
+        assertEquals(false, WarpHopFacts.current().enabled)
+    }
 }

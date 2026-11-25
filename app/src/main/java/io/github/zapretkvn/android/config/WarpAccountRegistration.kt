@@ -50,7 +50,7 @@ object WarpAccountRegistration {
         "Content-Type" to "application/json; charset=UTF-8",
     )
 
-    data class Outcome(val ok: Boolean, val route: String, val detail: String)
+    data class Outcome(val ok: Boolean, val route: String, val detail: String, val elapsedMs: Long = 0)
 
     fun accountFileReady(file: File): Boolean = runCatching {
         val root = Json.parseToJsonElement(file.readText()).jsonObject
@@ -62,21 +62,23 @@ object WarpAccountRegistration {
     /** Файл аккаунта есть; если нет, он регистрируется по путям выше. */
     fun ensureAccount(file: File, addresses: () -> List<String> = { emptyList() }, timeoutMs: Int = 8000): Outcome {
         if (accountFileReady(file)) return Outcome(true, "cached", "account file is there")
+        val started = System.nanoTime()
+        fun took() = (System.nanoTime() - started) / 1_000_000
         val keys = newKey()
         val body = registrationBody(keys.second)
         val found = runCatching(addresses).getOrDefault(emptyList())
         val targets = ArrayList<String?>().apply { add(null) }
         for (address in found + KNOWN_ADDRESSES) if (address !in targets) targets.add(address)
-        var last = Outcome(false, "none", "no route tried")
+        var last = Outcome(false, "none", "no route tried", 0)
         for ((index, target) in targets.withIndex()) {
             for (fragmented in listOf(false, true)) {
                 val name = (if (index == 0) "api" else "api-$index") + if (fragmented) "-fragmented" else ""
                 last = try {
                     val raw = exchange(target, body, fragmented, timeoutMs)
                     writeAccount(file, keys.first, raw)
-                    return Outcome(true, name, "registered")
+                    return Outcome(true, name, "registered", took())
                 } catch (error: Exception) {
-                    Outcome(false, name, "${error.javaClass.simpleName}: ${error.message}".take(160))
+                    Outcome(false, name, "${error.javaClass.simpleName}: ${error.message}".take(160), took())
                 }
             }
         }
