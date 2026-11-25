@@ -1,7 +1,7 @@
 # Обновление встроенных модулей ядра (Hysteria и другие Go-зависимости патчей)
 
 sing-box-extended на Android собирается из исходников с серией патчей
-`core-patches/0001…0005`. Часть зависимостей живёт не в `core.properties`, а в
+`core-patches/0001…0024`. Часть зависимостей живёт не в `core.properties`, а в
 `go.mod`/`go.sum`, которые эти патчи добавляют. Так устроена официальная
 Hysteria: `github.com/apernet/hysteria/{core,extras}/v2` вшиты в libbox патчем
 `0003-official-hysteria2-core.patch`, а `0005` снова трогает соседние строки
