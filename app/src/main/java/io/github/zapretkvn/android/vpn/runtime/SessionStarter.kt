@@ -16,6 +16,7 @@ import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.EntryHopOptions
+import io.github.zapretkvn.android.config.WarpAccountRegistration
 import io.github.zapretkvn.android.config.WarpEntryHop
 import io.github.zapretkvn.android.config.ForcedProxyDomains
 import io.github.zapretkvn.android.config.ParsedConfig
@@ -501,6 +502,17 @@ internal class SessionStarter(
                         (if (slotPlan.pinnedSkipped == 0) "" else "; закреплённый сервер плохой, выбран лучший: ${slotPlan.pinnedSkipped}") +
                         "; остальные приложения идут через основной сервер"
                 },
+            )
+        }
+        if (uiSettings.warpEntryHop) {
+            // The account is registered by the app, over several routes, before the core needs it: a provider may reset the
+            // core's own request to the Cloudflare API (field report on Windows, 2026-11-25). Only the route is logged.
+            val accountFile = java.io.File(service.filesDir, "warp-entry-profile.json")
+            val registration = withContext(Dispatchers.IO) { WarpAccountRegistration.ensureAccount(accountFile) }
+            RuntimeLog.app(
+                4,
+                if (registration.ok) "вход через WARP: аккаунт готов (${registration.route})"
+                else "вход через WARP: аккаунт не зарегистрирован (${registration.route}: ${registration.detail})",
             )
         }
         val runtimeReady = when (

@@ -1,0 +1,74 @@
+package io.github.zapretkvn.android.config
+
+import java.io.File
+import java.util.Base64
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Test
+
+/**
+ * Регистрация аккаунта WARP (владелец 2026-11-25). Без выдуманных данных: X25519 сверяется с векторами RFC 7748,
+ * точка разреза берётся из настоящего ClientHello стека TLS, а обмен с API идёт по настоящей сети (по запросу,
+ * `KVN_REAL_NETWORK=1`: API ограничивает частоту регистраций с одного адреса, в обычном прогоне это тест-флейки).
+ */
+class WarpAccountRegistrationTest {
+    private fun hex(text: String): ByteArray = ByteArray(text.length / 2) { text.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+    @Test
+    fun x25519MatchesTheRfc7748Vectors() {
+        // RFC 7748 section 5.2, first vector
+        val scalar = hex("a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4")
+        val point = hex("e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c")
+        val expected = hex("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552")
+        assertEquals(expected.toList(), WarpAccountRegistration.X25519.scalarMult(scalar, point).toList())
+        // RFC 7748 section 6.1: Alice's public key from her private key
+        val alicePrivate = hex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+        val alicePublic = hex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+        assertEquals(alicePublic.toList(), WarpAccountRegistration.X25519.publicKey(alicePrivate).toList())
+    }
+
+    @Test
+    fun theSplitPointIsInsideTheServerNameOfARealClientHello() {
+        val engine = javax.net.ssl.SSLContext.getDefault().createSSLEngine(WarpAccountRegistration.API_HOST, 443)
+        engine.useClientMode = true
+        engine.sslParameters = engine.sslParameters.apply { serverNames = listOf(javax.net.ssl.SNIHostName(WarpAccountRegistration.API_HOST)) }
+        engine.beginHandshake()
+        val hello = java.nio.ByteBuffer.allocate(engine.session.packetBufferSize * 2)
+        engine.wrap(java.nio.ByteBuffer.allocate(0), hello)
+        hello.flip()
+        val bytes = ByteArray(hello.remaining()).also(hello::get)
+        val name = WarpAccountRegistration.API_HOST.toByteArray()
+        val at = (0..bytes.size - name.size).first { start -> name.indices.all { bytes[start + it] == name[it] } }
+        val cut = WarpAccountRegistration.nameOffset(bytes)
+        assertTrue(cut > at && cut < at + name.size)
+    }
+
+    @Test
+    fun aRegistrationKeyPairIsAWireGuardKeyPair() {
+        val (private, public) = WarpAccountRegistration.newKey()
+        assertEquals(32, Base64.getDecoder().decode(private).size)
+        assertEquals(32, Base64.getDecoder().decode(public).size)
+    }
+
+    @Test
+    fun theRealApiRegistersAnAccountOverBothRoutes() {
+        assumeTrue(System.getenv("KVN_REAL_NETWORK") == "1")
+        val file = File.createTempFile("warp-account", ".json").also { it.delete() }
+        try {
+            val outcome = WarpAccountRegistration.ensureAccount(file)
+            assertTrue(outcome.toString(), outcome.ok)
+            assertTrue(WarpAccountRegistration.accountFileReady(file))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun theRealApiAnswersToAClientHelloCutInsideTheName() {
+        assumeTrue(System.getenv("KVN_REAL_NETWORK") == "1")
+        val body = WarpAccountRegistration.registrationBody(WarpAccountRegistration.newKey().second)
+        val raw = WarpAccountRegistration.exchange(null, body, true, 8000)
+        assertTrue(String(raw).contains("\"config\""))
+    }
+}
