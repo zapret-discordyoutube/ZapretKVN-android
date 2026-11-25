@@ -221,6 +221,17 @@ The button «Отправить отчёт» next to the error stays for a user 
 at once (the report is normally already written; it never writes a second one). The note under it says «Отчёт
 отправлен» or «Отчёт в очереди, отправим при первой связи».
 
+## The WARP entry hop (prepared 2026-11-25, off until vpnbot admits it)
+
+Owner: «make more logs and put them in the database» for «Вход через Cloudflare WARP»; same shape as Windows
+(`windows/docs/CLIENT_REPORTS.md`). `settings.warp_entry` (bool), two probes after `health`: `warp_register` (the app's own
+account registration, `{r, ms}`; absent when the account file already existed) and `warp_tunnel`, and the details integer
+`warp_retries`. The facts come from `WarpHopFacts.current()` (`config/WarpHopFacts.kt`, written by `SessionStarter`),
+read by `ClientReporter` when the attempt ends. On Android only the registration is measured: `tunnel` and `retries`
+stay empty (the core logs handshake retries at WARN, there is no counter), so no probe and no integer are invented.
+`ReportChecks.warpLive` is false: vpnbot refuses a whole report with an unknown probe, so nothing of this is written or sent
+until its «live» message; then the default turns true in code and a release carries it. Tests: `WarpReportFactsTest`.
+
 ## Seeing it act
 
 The runtime log (layer `app`) has a `client-report:` line per queued report and per sent batch

@@ -59,6 +59,7 @@ object ClientReportContract {
 
     val NETWORK_TYPES = setOf("wifi", "cellular", "ethernet", "other")
     val MODES = setOf("tun", "proxy")
+    const val MAX_WARP_RETRIES = 100
     val VERSION_KEYS = setOf("os", "xray", "hysteria", "singbox", "amnezia")
     const val MAX_FOREIGN_NAME = 64
 
@@ -187,6 +188,8 @@ data class ReportSettings(
     val masking: String? = null,
     val quicBlocked: Boolean? = null,
     val ipv6: Boolean? = null,
+    /** The «Вход через Cloudflare WARP» hop was on at this connect (kept out until vpnbot admits it: [ReportChecks.warpLive]). */
+    val warpEntry: Boolean? = null,
 ) {
     fun cleaned(): ReportSettings? = ReportSettings(
         mode = mode?.takeIf { it in ClientReportContract.MODES },
@@ -194,6 +197,7 @@ data class ReportSettings(
         masking = masking?.takeIf(ClientReportContract::isSetting),
         quicBlocked = quicBlocked,
         ipv6 = ipv6,
+        warpEntry = warpEntry.takeIf { ReportChecks.warpLive },
     ).takeIf { it != ReportSettings() }
 }
 
@@ -210,6 +214,8 @@ data class AttemptDetails(
     val networkType: String? = null,
     val settings: ReportSettings? = null,
     val versions: Map<String, String> = emptyMap(),
+    /** WARP hop: handshake retries on other addresses since the connect (null: not measured; gated by [ReportChecks.warpLive]). */
+    val warpRetries: Int? = null,
 ) {
     fun cleaned(): AttemptDetails = AttemptDetails(
         serverIp = serverIp?.trim()?.removePrefix("[")?.removeSuffix("]")?.takeIf(ClientReportContract::isIpLiteral),
@@ -219,6 +225,7 @@ data class AttemptDetails(
         networkType = networkType?.takeIf { it in ClientReportContract.NETWORK_TYPES },
         settings = settings?.cleaned(),
         versions = versions.filter { (key, value) -> key in ClientReportContract.VERSION_KEYS && ClientReportContract.isVersionValue(value) },
+        warpRetries = warpRetries?.takeIf { ReportChecks.warpLive && it in 0..ClientReportContract.MAX_WARP_RETRIES },
     )
 }
 
@@ -362,6 +369,7 @@ object ClientReportJson {
         details.transport?.let { put("transport", it) }
         details.security?.let { put("security", it) }
         details.networkType?.let { put("network_type", it) }
+        details.warpRetries?.let { put("warp_retries", it) }
         details.settings?.let { settings ->
             put(
                 "settings",
@@ -371,6 +379,7 @@ object ClientReportJson {
                     settings.masking?.let { put("masking", it) }
                     settings.quicBlocked?.let { put("quic_blocked", it) }
                     settings.ipv6?.let { put("ipv6", it) }
+                    settings.warpEntry?.let { put("warp_entry", it) }
                 },
             )
         }
@@ -448,7 +457,7 @@ object ClientReportJson {
         fun text(obj: JsonObject, key: String) = (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
         fun flag(obj: JsonObject, key: String) = (obj[key] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toBooleanStrictOrNull()
         val settings = (x["settings"] as? JsonObject)?.let {
-            ReportSettings(text(it, "mode"), text(it, "dns"), text(it, "masking"), flag(it, "quic_blocked"), flag(it, "ipv6"))
+            ReportSettings(text(it, "mode"), text(it, "dns"), text(it, "masking"), flag(it, "quic_blocked"), flag(it, "ipv6"), flag(it, "warp_entry"))
         }
         val versions = (x["versions"] as? JsonObject)?.mapNotNull { (key, value) ->
             (value as? JsonPrimitive)?.takeIf { it.isString }?.content?.let { key to it }
@@ -461,6 +470,7 @@ object ClientReportJson {
             networkType = text(x, "network_type"),
             settings = settings,
             versions = versions,
+            warpRetries = (x["warp_retries"] as? JsonPrimitive)?.intOrNull,
         ).cleaned()
     }
 

@@ -23,9 +23,11 @@ import io.github.zapretkvn.clientreports.ReportOutcome
 import io.github.zapretkvn.clientreports.ReportClock
 import io.github.zapretkvn.clientreports.ReportQueue
 import io.github.zapretkvn.clientreports.ReportSendPolicy
+import io.github.zapretkvn.clientreports.ReportSettings
 import io.github.zapretkvn.clientreports.SendAction
 import io.github.zapretkvn.clientreports.ServerRef
 import io.github.zapretkvn.clientreports.ServerVerdict
+import io.github.zapretkvn.android.config.WarpHopFacts
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -191,6 +193,8 @@ internal class ClientReporter(
         target: ProbeTarget? = null,
         /** Туннель той же попытки ещё обслуживает этот сервер: только тогда пробы «нет данных» что-то значат. */
         stillServing: (() -> Boolean)? = null,
+        /** Факты входа через WARP на момент конца подключения (читаются здесь, до фонового запуска). */
+        warp: WarpHopFacts = WarpHopFacts.current(),
     ) {
         if (!facts.succeeded && !facts.cancelled) synchronized(attemptedGenerations) { attemptedGenerations[generation] = true }
         scope.launch {
@@ -200,16 +204,17 @@ internal class ClientReporter(
                     // Поток меряется только у серверов сервиса: о чужом удачном отчёта нет, а 64 КБ тратятся.
                     val found = LinkedHashMap<String, ReportCheck>()
                     if (facts.succeeded && ref != null) checkFlow(target)?.let { found["flow"] = it }
+                    if (facts.succeeded) found.putAll(warpChecks(warp))
                     if (facts.succeeded) clearFailure()
                     if (ref != null) {
                         record(
-                            ref, null, AttemptOutcome.of(facts), elapsedMs, attemptedAtMillis, details(target, null),
+                            ref, null, AttemptOutcome.of(facts), elapsedMs, attemptedAtMillis, details(target, null, warp),
                             carrier = carrierOf(target, outboundType), coreCode = "", checks = found,
                         )
                     }
                     return@runCatching
                 }
-                onFailure(PendingFailure(generation, tag, ref, facts, elapsedMs, attemptedAtMillis, target, outboundType, stillServing, preflightOf(generation, tag)))
+                onFailure(PendingFailure(generation, tag, ref, facts, elapsedMs, attemptedAtMillis, target, outboundType, stillServing, preflightOf(generation, tag), warp = warp))
             }.onFailure { log("client-report: запись не удалась: ${it.javaClass.simpleName}") }
         }
     }
@@ -249,6 +254,8 @@ internal class ClientReporter(
             pending.stillServing?.invoke() == true && probeSlot(target)
         val path = !noData && !pending.facts.trafficFailed && target != null && probe != null &&
             ReportChecks.needsPathCheck(coreCode) && probeSlot(target)
+        // The WARP hop's start is a fact the app already has too (no traffic): it goes with the first copy.
+        pending.checks.putAll(warpChecks(pending.warp))
         // The app's own health check is a fact it already has (vpnbot 2026-11-20): no traffic, no rarity limit; it goes
         // with the first copy when the core gave no code.
         if (coreCode.isEmpty()) pending.facts.health?.let { pending.checks[ReportChecks.HEALTH] = it }
@@ -289,7 +296,7 @@ internal class ClientReporter(
         val ref = pending.ref
         val foreign = if (ref == null) foreignOf(pending) ?: return null else null
         return record(
-            ref, foreign, ReportOutcome.Failed, pending.elapsedMs, pending.attemptedAt, details(pending.target, pending.probedAddress),
+            ref, foreign, ReportOutcome.Failed, pending.elapsedMs, pending.attemptedAt, details(pending.target, pending.probedAddress, pending.warp),
             carrier = carrierOf(pending.target, pending.outboundType), coreCode = AttemptOutcome.coreCode(pending.facts),
             checks = pending.checks, complete = complete, reportId = reportId, flushNow = flushNow,
         )
@@ -343,8 +350,13 @@ internal class ClientReporter(
     }
 
     /** Подробности отчёта: общие из [context] и про этот сервер (адрес, порт, транспорт, защита). */
-    private suspend fun details(target: ProbeTarget?, probedAddress: String?): AttemptDetails {
-        val base = runCatching { context() }.getOrDefault(AttemptDetails())
+    private suspend fun details(target: ProbeTarget?, probedAddress: String?, warp: WarpHopFacts? = null): AttemptDetails {
+        var base = runCatching { context() }.getOrDefault(AttemptDetails())
+        // WARP hop: on/off and handshake retries of this connect (dropped by cleaned() until vpnbot admits them).
+        if (warp != null) base = base.copy(
+            settings = (base.settings ?: ReportSettings()).copy(warpEntry = warp.enabled),
+            warpRetries = warp.retries.takeIf { warp.enabled },
+        )
         if (target == null) return base.cleaned()
         val literal = BlockProbe.literalAddress(target.host)?.hostAddress
         val noted = synchronized(addresses) { addresses[target.host.lowercase()] }
@@ -355,6 +367,15 @@ internal class ClientReporter(
             security = target.security,
         ).cleaned()
     }
+
+    /** The hop's probes from [WarpHopFacts]; the contract module owns the rules ([ReportChecks.warpChecks]). */
+    private fun warpChecks(warp: WarpHopFacts?): Map<String, ReportCheck> = warp?.let {
+        ReportChecks.warpChecks(
+            it.enabled,
+            it.register?.let { probe -> ReportCheck(probe.result, probe.ms.coerceIn(0, ReportChecks.MAX_CHECK_MS)) },
+            it.tunnel?.let { probe -> ReportCheck(probe.result, probe.ms.coerceIn(0, ReportChecks.MAX_CHECK_MS)) },
+        )
+    }.orEmpty()
 
     private fun statusOf(pending: PendingFailure): SendStatus {
         val record = pending.record ?: return if (pending.ref == null && foreignOf(pending) == null) SendStatus.NotOurs else SendStatus.Available
@@ -796,6 +817,8 @@ private class PendingFailure(
     val stillServing: (() -> Boolean)? = null,
     /** Предпроверка TCP запуска (уже сделанная, не новая проба). */
     val preflight: ReportCheck? = null,
+    /** Факты входа через WARP на конец подключения. */
+    val warp: WarpHopFacts? = null,
 ) {
     @Volatile var checking = false
     @Volatile var checked = false

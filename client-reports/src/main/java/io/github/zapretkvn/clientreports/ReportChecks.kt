@@ -30,12 +30,29 @@ object ReportChecks {
     const val HEALTH = "health"
     const val HEALTH_LIVE = true
 
+    /**
+     * The WARP entry hop's start (owner 2026-11-25: «make more logs and put them in the database»): the app's own
+     * account registration and whether the hop's tunnel came up. Agreed with the WARP chat; vpnbot must admit the two
+     * names (and settings.warp_entry, details warp_retries) first: until its «live» message everything WARP stays out
+     * of the report, because a report with an unknown probe is refused whole. Same names and flag as Windows
+     * `client_reports/checks.py`.
+     */
+    const val WARP_REGISTER = "warp_register"
+    const val WARP_TUNNEL = "warp_tunnel"
+    val WARP_PROBES = listOf(WARP_REGISTER, WARP_TUNNEL)
+    /** False until vpnbot's «live» (then the default becomes true in code, with a release); a test flips it and restores it. */
+    @Volatile
+    var warpLive = false
+
     /** Every probe the contract admits, in its order. */
-    val PROBES = listOf(
+    val PROBES: List<String>
+        get() = BASE_PROBES + listOfNotNull(HEALTH.takeIf { HEALTH_LIVE }) + (if (warpLive) WARP_PROBES else emptyList())
+
+    private val BASE_PROBES = listOf(
         "control_front", "control_neutral", "dns_system", "dns_doh", "tcp_preflight", "tcp_target", "tcp_443",
         "tls_real", "tls_neutral", "tls_front", "quic_neutral", "quic_target", "tunnel_a", "tunnel_b", "direct_a",
         "direct_b", "flow",
-    ) + listOfNotNull(HEALTH.takeIf { HEALTH_LIVE })
+    )
 
     /** Probes that move data: only they may carry bytes. */
     val FLOW_PROBES = setOf("tunnel_a", "tunnel_b", "direct_a", "direct_b", "flow")
@@ -71,6 +88,18 @@ object ReportChecks {
         if (check.bytes != null && (probe !in FLOW_PROBES || check.bytes !in 0..MAX_CHECK_BYTES)) return false
         if (check.same != null && (probe != "dns_system" || check.result != ANSWERED)) return false
         return true
+    }
+
+    /**
+     * The WARP hop's probes from the app's own facts. Empty until vpnbot admits them ([warpLive]), when the hop was
+     * off, and for a step that did not run (null: the account already existed, nothing was asked).
+     */
+    fun warpChecks(enabled: Boolean, register: ReportCheck?, tunnel: ReportCheck?): Map<String, ReportCheck> {
+        if (!warpLive || !enabled) return emptyMap()
+        return listOfNotNull(
+            register?.let { WARP_REGISTER to it },
+            tunnel?.let { WARP_TUNNEL to it },
+        ).filter { (probe, check) -> isValid(probe, check) }.toMap()
     }
 
     fun areValid(checks: Map<String, ReportCheck>): Boolean = checks.all { (probe, check) -> isValid(probe, check) }
