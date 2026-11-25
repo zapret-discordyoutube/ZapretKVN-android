@@ -44,9 +44,11 @@ fun SettingsPageList(
     contentPadding: PaddingValues,
     tag: String,
     modifier: Modifier = Modifier,
+    state: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     content: LazyListScope.() -> Unit,
 ) {
     LazyColumn(
+        state = state,
         modifier = modifier
             .fillMaxSize()
             .testTag(tag),

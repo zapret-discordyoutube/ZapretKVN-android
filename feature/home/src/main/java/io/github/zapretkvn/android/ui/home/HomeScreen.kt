@@ -163,6 +163,8 @@ data class HomeUi(
     val slowServerSwitch: Boolean = true,
     /** Проверка пути и отчёт о последнем отказе; null — показывать нечего. */
     val failureReport: FailureReportUi? = null,
+    /** Вход через WARP выключен: карточка ошибки предлагает его включить (владелец 2026-11-26). */
+    val warpOffer: Boolean = false,
 )
 
 class HomeCallbacks(
@@ -179,6 +181,8 @@ class HomeCallbacks(
     val onOpenServices: () -> Unit = {},
     /** «Отправить отчёт» об отказе подключения. */
     val onSendReport: () -> Unit = {},
+    /** «Включить вход через WARP»: страница «Дополнительно» с подсвеченным переключателем. */
+    val onOpenWarpSetting: () -> Unit = {},
 )
 
 /**
@@ -367,6 +371,8 @@ private fun Hero(ui: HomeUi, callbacks: HomeCallbacks) {
                 onCreateDiagnosticShare = callbacks.createDiagnosticShare,
                 report = ui.failureReport,
                 onSendReport = callbacks.onSendReport,
+                warpOffer = ui.warpOffer,
+                onOpenWarpSetting = callbacks.onOpenWarpSetting,
             )
             is VpnConnectionState.Reconnecting -> if (state.code.isNotBlank()) {
                 val reason = VpnErrorExplainer.explain(state.code, context = ui.errorContext)
@@ -1106,6 +1112,8 @@ private fun VpnErrorDetails(
     onCreateDiagnosticShare: suspend () -> Intent,
     report: FailureReportUi?,
     onSendReport: () -> Unit,
+    warpOffer: Boolean = false,
+    onOpenWarpSetting: () -> Unit = {},
 ) {
     val code = error.code.ifBlank { "VPN-000" }
     val explanation = remember(code, error.technicalDetail, context) {
@@ -1129,6 +1137,21 @@ private fun VpnErrorDetails(
             fontWeight = FontWeight.SemiBold,
         )
         Text(explanation.hint, style = MaterialTheme.typography.bodyMedium)
+        if (warpOffer) {
+            // Сервер не открывается, а входа через WARP нет: предложить его и привести к переключателю.
+            Text(
+                "Сервер не открывается? Попробуйте вход через WARP: соединение сначала идёт к Cloudflare, а уже оттуда " +
+                    "к серверу, поэтому провайдер не видит адрес сервера.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("vpn-error-warp-hint"),
+            )
+            androidx.compose.material3.Button(
+                onClick = onOpenWarpSetting,
+                modifier = Modifier.fillMaxWidth().testTag("vpn-error-warp"),
+            ) {
+                Text("Включить вход через WARP")
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "Код: $code",

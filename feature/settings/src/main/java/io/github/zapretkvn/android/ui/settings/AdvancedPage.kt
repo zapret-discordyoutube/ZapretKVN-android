@@ -1,7 +1,23 @@
 package io.github.zapretkvn.android.ui.settings
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import io.github.zapretkvn.core.designsystem.SettingsRow
 import io.github.zapretkvn.core.designsystem.SwitchRow
 import io.github.zapretkvn.core.designsystem.ZapretIcons
@@ -26,8 +42,24 @@ fun AdvancedScreen(
     onResetStalledFlowsChange: (Boolean) -> Unit,
     onYoutubeSwitchChange: (Boolean) -> Unit,
     onServiceSlotsChange: (Boolean) -> Unit,
+    /** Подсказка с карточки ошибки подключения: прокрутить к строке WARP и подсветить её (владелец 2026-11-26). */
+    highlightWarp: Boolean = false,
+    onWarpHighlightHandled: () -> Unit = {},
 ) {
-    SettingsPageList(contentPadding, tag = "settings-page-advanced") {
+    val listState = rememberLazyListState()
+    val spotlight = highlightWarp && !warpEntryHop
+    LaunchedEffect(spotlight) {
+        if (spotlight) {
+            listState.animateScrollToItem(WARP_ITEM_INDEX)
+            delay(WARP_SPOTLIGHT_MS)
+            onWarpHighlightHandled()
+        }
+    }
+    // Включили вход (или ушли с подсказки): подсветка своё отработала.
+    LaunchedEffect(warpEntryHop, highlightWarp) {
+        if (warpEntryHop && highlightWarp) onWarpHighlightHandled()
+    }
+    SettingsPageList(contentPadding, tag = "settings-page-advanced", state = listState) {
         item(key = "pages", contentType = "rows") {
             RowsCard {
                 SettingsRow(
@@ -59,7 +91,21 @@ fun AdvancedScreen(
             }
         }
         item(key = "warp-entry", contentType = "rows") {
-            RowsCard {
+            val pulse by rememberInfiniteTransition(label = "warp-spotlight").animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+                label = "warp-spotlight-alpha",
+            )
+            RowsCard(
+                modifier = if (spotlight) {
+                    Modifier
+                        .testTag("warp-entry-spotlight")
+                        .border(3.dp, MaterialTheme.colorScheme.primary.copy(alpha = pulse), MaterialTheme.shapes.medium)
+                } else {
+                    Modifier
+                },
+            ) {
                 SwitchRow(
                     title = "Вход через Cloudflare WARP",
                     subtitle = "Сначала соединение идёт к Cloudflare WARP, а уже оттуда к вашему серверу: провайдер видит " +
@@ -69,6 +115,14 @@ fun AdvancedScreen(
                     checked = warpEntryHop,
                     onCheckedChange = onWarpEntryHopChange,
                     switchDescription = "Вход через Cloudflare WARP",
+                )
+            }
+            if (spotlight) {
+                Text(
+                    "Нажмите на переключатель, чтобы включить вход через WARP, и подключитесь снова.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.testTag("warp-entry-spotlight-hint").padding(top = 8.dp),
                 )
             }
         }
@@ -130,3 +184,9 @@ fun AdvancedScreen(
         }
     }
 }
+
+/** Позиция строки WARP в списке «Дополнительно» (страницы, IPv6, WARP): к ней прокручивает подсказка. */
+internal const val WARP_ITEM_INDEX = 2
+
+/** Сколько подсветка держится, если переключатель так и не нажали. */
+private const val WARP_SPOTLIGHT_MS = 12_000L

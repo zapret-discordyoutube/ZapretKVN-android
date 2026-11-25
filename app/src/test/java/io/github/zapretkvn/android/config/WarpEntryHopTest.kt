@@ -122,4 +122,12 @@ class WarpEntryHopTest {
             violations("""{$hop,"route":{"detour":"${WarpEntryHop.TAG}"}}""").isNotEmpty())
         assertFalse(violations("""{$hop,"outbounds":[{"type":"vless","tag":"v","server":"1.2.3.4","detour":"${WarpEntryHop.TAG}"}]}""").isNotEmpty())
     }
+
+    @Test
+    fun hopEndpointCarriesClientSideNoiseBuiltByTheMaskingModule() {
+        // The same chain the app's WireGuard masking builds for the preset domain; only client-side Amnezia options.
+        val noise = WarpEntryHop.NOISE
+        assertEquals(io.github.zapretkvn.masking.wireguard.DnsSignature.chain("yandex.ru"), noise["i1"]?.jsonPrimitive?.content)
+        assertEquals(setOf("jc", "jmin", "jmax", "i1"), noise.keys)
+    }
 }

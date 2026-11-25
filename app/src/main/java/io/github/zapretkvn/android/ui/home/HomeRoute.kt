@@ -82,6 +82,7 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
         slots = slotCards(slotStates, server, hide),
         slowServerSwitch = state.settings.slowServerSwitch,
         failureReport = failureReport?.toUi(),
+        warpOffer = !state.settings.warpEntryHop,
     )
     val callbacks = remember(deps, nav) {
         HomeCallbacks(
@@ -110,6 +111,10 @@ fun HomeRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues)
             onSlowServerSwitchChange = deps.profiles.settings::setSlowServerSwitch,
             onOpenServices = { nav.switchTab(AppTab.Services) },
             onSendReport = deps.sendFailureReport,
+            onOpenWarpSetting = {
+                WarpOfferSpotlight.request()
+                nav.openSettingsPage(io.github.zapretkvn.android.ui.settings.SettingsPage.Advanced.id)
+            },
         )
     }
     HomeScreen(

@@ -184,6 +184,7 @@ internal fun UpdatesRoute(deps: AppDependencies, padding: PaddingValues) {
 @Composable
 internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues) {
     val settings by rememberUiSettings(deps)
+    val warpSpotlight by io.github.zapretkvn.android.ui.home.WarpOfferSpotlight.requested.collectAsStateWithLifecycle()
     AdvancedScreen(
         contentPadding = padding,
         hidingSummary = vpnHidingSummary(settings.vpnHiding),
@@ -202,6 +203,8 @@ internal fun AdvancedRoute(deps: AppDependencies, nav: AppNavigation, padding: P
         onResetStalledFlowsChange = deps.profiles.settings::setResetStalledFlows,
         onYoutubeSwitchChange = deps.profiles.settings::setYoutubeSwitch,
         onServiceSlotsChange = deps.profiles.settings::setServiceSlots,
+        highlightWarp = warpSpotlight,
+        onWarpHighlightHandled = io.github.zapretkvn.android.ui.home.WarpOfferSpotlight::clear,
     )
 }
 

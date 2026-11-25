@@ -244,7 +244,7 @@ class HomeUiInstrumentedTest {
         assertEquals(groups, container.vpnController.selectorGroups.value)
     }
 
-    private companion object {
+    internal companion object {
         const val PROFILE = """
             {
               "inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true,"route_address":["0.0.0.0/0","::/0"]}],

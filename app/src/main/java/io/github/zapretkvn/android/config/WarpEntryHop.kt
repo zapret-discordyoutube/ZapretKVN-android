@@ -40,6 +40,23 @@ object WarpEntryHop {
      */
     const val MTU = 1330
 
+    /**
+     * Шум перед рукопожатием (владелец 2026-11-26: WARP должен работать там, где его блокируют, и «голого WireGuard» не
+     * должно быть): несколько мусорных датаграмм и первый пакет в форме DNS-запроса к российскому домену, та же цепочка,
+     * что строит маскировка WireGuard приложения (`dns_chain("yandex.ru")`). Шлёт только инициатор, поэтому обычный
+     * WireGuard-сервер Cloudflare их игнорирует и отвечает на рукопожатие (проверено на настоящем WARP 2026-11-26: без шума,
+     * с мусором и с мусором плюс этим I1 ответил везде). Только клиентские параметры Amnezia: H1-H4 и S1-S4 должны
+     * совпадать с сервером, а у Cloudflare он обычный.
+     */
+    internal val NOISE = JsonObject(
+        mapOf(
+            "jc" to JsonPrimitive(3),
+            "jmin" to JsonPrimitive(10),
+            "jmax" to JsonPrimitive(30),
+            "i1" to JsonPrimitive("<r 2><b 0x010000010000000000000679616e6465780272750000010001>"),
+        ),
+    )
+
     /** Типы без своего сервера: у них нечего вести через вход. `warp` это сам вход. */
     private val LOCAL_TYPES = setOf("direct", "block", "dns", "selector", "urltest", "warp")
 
@@ -101,6 +118,7 @@ object WarpEntryHop {
                 "type" to JsonPrimitive("warp"),
                 "tag" to JsonPrimitive(TAG),
                 "mtu" to JsonPrimitive(MTU),
+                "amnezia" to NOISE,
                 "profile" to JsonObject(
                     mapOf("cache_path" to JsonPrimitive(profilePath), "detour" to JsonPrimitive(API_TAG)),
                 ),
