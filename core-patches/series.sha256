@@ -19,6 +19,6 @@ c597e35529307ed39eca510a919721cc53bcd2bb6184280e0859632554c73b63  core-patches/0
 d9505610b88b9f1df2a26f4b0cb69bd2ebdad3390912927d30451364ff3e439d  core-patches/0019-xraycore-xhttp-mode.patch
 31fe8f4633d3690a4920cfec51335c014bb2c2edf66d3e09b67086bd494f2a69  core-patches/0020-ipv6-first-family-memory.patch
 49a3ef6c5e1e635f0f7f55cc02bbc69ca9ec815dba62a1d26536f58c501a02d1  core-patches/0021-wireguard-family-race.patch
-15e3096cec5bc110911e0160aae875d761f42ceed6ca4f5bf65c7a45b581e858  core-patches/0022-warp-mtu-and-profile-cache.patch
+db08fdf68aa6b96f0f644e85d48910e554c8eeeef2ca85cb0415272dc977bc64  core-patches/0022-warp-mtu-and-profile-cache.patch
 a18b3df623fa362fe7753ba1897e96fdf4b8a842e016c28e696d523599135248  core-patches/0023-warp-start-recovery.patch
 3431aae5b6d642ad4e41a3c030901aa5b98f1f1e579c7f202e9a4aafa663f896  core-patches/0024-warp-forward-interface-update.patch
