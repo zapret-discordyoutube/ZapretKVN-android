@@ -42,6 +42,40 @@ class RuntimeConfigNativeInstrumentedTest {
         }
     }
 
+    /**
+     * The WARP entry hop (owner 2026-11-25): servers get `detour` to the hop, and the pinned libbox must accept the hop
+     * endpoint with its `mtu` and `profile.cache_path` (core patch 0022), a Hysteria2 server and an Xray-module server
+     * with a detour.  The hop may only be an entry: nothing but a server's detour names it.
+     */
+    @Test
+    fun entryHopConfigPassesPinnedLibbox() {
+        val raw = """
+            {
+              "inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30","fdfe:dcba:9876::1/126"],"auto_route":true}],
+              "outbounds":[
+                {"type":"hysteria2","tag":"hy","server":"hy.example.net","server_port":443,"password":"x","tls":{"enabled":true,"server_name":"hy.example.net"}},
+                {"type":"vless","tag":"xr","uri":"vless://11111111-1111-1111-1111-111111111111@xr.example.net:443?security=tls&sni=xr.example.net&type=tcp"},
+                {"type":"selector","tag":"zapret-proxy","outbounds":["hy","xr"],"default":"hy"},
+                {"type":"direct","tag":"direct"}
+              ],
+              "route":{"auto_detect_interface":true,"final":"zapret-proxy"}
+            }
+        """.trimIndent()
+        DnsMode.entries.forEach { mode ->
+            val runtime = RuntimeConfigBuilder.build(
+                raw,
+                options = RuntimeConfigOptions(
+                    dnsMode = mode,
+                    entryHop = io.github.zapretkvn.android.config.EntryHopOptions("/data/local/tmp/warp-entry-profile.json"),
+                ),
+            )
+            val ready = runtime as? RuntimeConfigResult.Ready
+                ?: error("entry hop config was refused for $mode: $runtime")
+            check(io.github.zapretkvn.android.config.WarpEntryHop.TAG in ready.json) { "hop missing for $mode" }
+            Libbox.checkConfig(ready.json)
+        }
+    }
+
     /** The slot selectors, slot route rules, slot DNS servers (parallel race through the slot selector) and DNS rules with `disable_cache` must be accepted by the pinned core. */
     @Test
     fun slotConfigPassesPinnedLibbox() {

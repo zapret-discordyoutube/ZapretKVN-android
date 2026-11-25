@@ -119,7 +119,15 @@ data class RuntimeConfigOptions(
      */
     val masking: MaskingSettings = MaskingSettings.OFF,
     val maskingServerKeys: Map<String, String> = emptyMap(),
+    /**
+     * Вход через Cloudflare WARP ([WarpEntryHop], владелец 2026-11-25): null выключает. Сохранённый профиль не меняется,
+     * правка только в runtime-копии; WARP только вход к серверу, не выход.
+     */
+    val entryHop: EntryHopOptions? = null,
 )
+
+/** [profilePath] закрытый файл аккаунта WARP в каталоге приложения: перезапуск берёт его, а не регистрирует устройство заново. */
+data class EntryHopOptions(val profilePath: String)
 
 /**
  * Резолвер strict Private DNS: имя из настроек Android и его адреса, полученные
@@ -323,6 +331,13 @@ object RuntimeConfigBuilder {
             val defaultResolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
             runtimeEndpoints = runtimeEndpoints?.let { ServerIpv6First.applyEndpoints(it, defaultResolver) }
         }
+        options.entryHop?.let { hop ->
+            // After masking and IPv6-first: those passes see the servers as they are, and the hop is only a detour on top.
+            val resolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
+            val chained = WarpEntryHop.apply(runtimeOutbounds, runtimeEndpoints, hop.profilePath, resolver)
+            runtimeOutbounds = chained.outbounds
+            runtimeEndpoints = chained.endpoints
+        }
         val maskingReport = MaskingReport(
             changed = (maskedOutbounds?.changed ?: 0) + (maskedEndpoints?.changed ?: 0),
             notes = maskedOutbounds?.notes.orEmpty() + maskedEndpoints?.notes.orEmpty(),
@@ -374,6 +389,13 @@ object RuntimeConfigBuilder {
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         val ready = dnsOverlay as RuntimeConfigResult.Ready
+        if (options.entryHop != null) {
+            // WARP is an entry only: it may be nothing but a server's detour. Never start a config that made it an exit.
+            val misuse = ready.config.root?.let(WarpEntryHop::violations).orEmpty()
+            if (misuse.isNotEmpty()) {
+                return invalid("WARP может быть только входом к серверу, найдено другое использование: ${misuse.first()}.")
+            }
+        }
         return if (maskingReport == MaskingReport.NONE) ready else ready.copy(masking = maskingReport).withConfig(ready.config)
     }
 

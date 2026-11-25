@@ -29,6 +29,11 @@ data class UiSettings(
      */
     val serverIpv6First: Boolean = true,
     /**
+     * Вход через Cloudflare WARP (владелец 2026-11-25): устройство -> WARP -> наш сервер. Провайдер видит только
+     * Cloudflare. WARP только вход, выходом остаётся сервер. Выключено по умолчанию. См. `WarpEntryHop`.
+     */
+    val warpEntryHop: Boolean = false,
+    /**
      * Отвечать отказом на UDP 443 (QUIC/HTTP3): приложения мгновенно уходят на TCP. QUIC внутри
      * датаграмм Hysteria2 это QUIC внутри QUIC: видео YouTube стартует и идёт заметно хуже, чем по
      * TCP (владелец 2026-11-08: включено по умолчанию).

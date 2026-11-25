@@ -59,6 +59,7 @@ class UiSettingsStore(
                     ?: DnsMode.FromJson,
                 proxyIpv4Only = preferences[PROXY_IPV4_ONLY] ?: true,
                 serverIpv6First = preferences[SERVER_IPV6_FIRST] ?: true,
+                warpEntryHop = preferences[WARP_ENTRY_HOP] ?: false,
                 blockQuic = preferences[BLOCK_QUIC] ?: true,
                 resetStalledFlows = preferences[RESET_STALLED_FLOWS] ?: true,
                 youtubeSwitch = preferences[YOUTUBE_SWITCH] ?: false,
@@ -170,6 +171,10 @@ class UiSettingsStore(
 
     suspend fun setServerIpv6First(enabled: Boolean) {
         dataStore.edit { it[SERVER_IPV6_FIRST] = enabled }
+    }
+
+    suspend fun setWarpEntryHop(enabled: Boolean) {
+        dataStore.edit { it[WARP_ENTRY_HOP] = enabled }
     }
 
     suspend fun setBlockQuic(enabled: Boolean) {
@@ -329,6 +334,7 @@ class UiSettingsStore(
         val DNS_MODE = stringPreferencesKey("dns_mode")
         val PROXY_IPV4_ONLY = booleanPreferencesKey("proxy_ipv4_only")
         val SERVER_IPV6_FIRST = booleanPreferencesKey("server_ipv6_first")
+        val WARP_ENTRY_HOP = booleanPreferencesKey("warp_entry_hop")
         val BLOCK_QUIC = booleanPreferencesKey("block_quic")
         val RESET_STALLED_FLOWS = booleanPreferencesKey("reset_stalled_flows")
         val YOUTUBE_SWITCH = booleanPreferencesKey("youtube_switch")

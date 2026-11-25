@@ -75,6 +75,10 @@ class ProfileSettingsActions internal constructor(
     fun setServerIpv6First(enabled: Boolean) =
         apply("Смена «IPv6 к серверу первым»") { settingsStore.setServerIpv6First(enabled) }
 
+    /** Меняет первый узел в цепочке к серверу в конфиге ядра, поэтому подключённый VPN перезапускается. */
+    fun setWarpEntryHop(enabled: Boolean) =
+        apply("Смена «Вход через WARP»") { settingsStore.setWarpEntryHop(enabled) }
+
     fun setDnsOverrideEnabled(enabled: Boolean) =
         apply("Смена DNS-переопределения") { settingsStore.setDnsOverrideEnabled(enabled) }
 

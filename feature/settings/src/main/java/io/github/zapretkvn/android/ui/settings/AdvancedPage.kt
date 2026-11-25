@@ -13,6 +13,7 @@ fun AdvancedScreen(
     hidingSummary: String,
     rawEditorLineWrap: Boolean,
     serverIpv6First: Boolean,
+    warpEntryHop: Boolean,
     blockQuic: Boolean,
     resetStalledFlows: Boolean,
     youtubeSwitch: Boolean,
@@ -20,6 +21,7 @@ fun AdvancedScreen(
     onOpenPage: (SettingsPage) -> Unit,
     onRawEditorLineWrapChange: (Boolean) -> Unit,
     onServerIpv6FirstChange: (Boolean) -> Unit,
+    onWarpEntryHopChange: (Boolean) -> Unit,
     onBlockQuicChange: (Boolean) -> Unit,
     onResetStalledFlowsChange: (Boolean) -> Unit,
     onYoutubeSwitchChange: (Boolean) -> Unit,
@@ -53,6 +55,20 @@ fun AdvancedScreen(
                     checked = serverIpv6First,
                     onCheckedChange = onServerIpv6FirstChange,
                     switchDescription = "IPv6 к серверу первым",
+                )
+            }
+        }
+        item(key = "warp-entry", contentType = "rows") {
+            RowsCard {
+                SwitchRow(
+                    title = "Вход через Cloudflare WARP",
+                    subtitle = "Сначала соединение идёт к Cloudflare WARP, а уже оттуда к вашему серверу: провайдер видит " +
+                        "только Cloudflare, а не адрес сервера. WARP служит только входом, выходом остаётся ваш сервер. " +
+                        "Переключение перезапускает VPN.",
+                    icon = ZapretIcons.Shield,
+                    checked = warpEntryHop,
+                    onCheckedChange = onWarpEntryHopChange,
+                    switchDescription = "Вход через Cloudflare WARP",
                 )
             }
         }

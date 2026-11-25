@@ -15,6 +15,8 @@ import io.github.zapretkvn.android.config.BootstrapConfig
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
+import io.github.zapretkvn.android.config.EntryHopOptions
+import io.github.zapretkvn.android.config.WarpEntryHop
 import io.github.zapretkvn.android.config.ForcedProxyDomains
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
@@ -446,7 +448,7 @@ internal class SessionStarter(
             4,
             "настройки сессии: dns=${dnsMode.name} ipv4Only=${uiSettings.proxyIpv4Only} blockQuic=${uiSettings.blockQuic} " +
                 "resetStalledFlows=${uiSettings.resetStalledFlows} serverIpv6First=$serverIpv6First " +
-                "(настройка=${uiSettings.serverIpv6First}, IPv6 у сети=$uplinkIpv6)",
+                "(настройка=${uiSettings.serverIpv6First}, IPv6 у сети=$uplinkIpv6) warpEntryHop=${uiSettings.warpEntryHop}",
         )
         RuntimeLog.app(
             4,
@@ -510,6 +512,8 @@ internal class SessionStarter(
                     proxyIpv4Only = uiSettings.proxyIpv4Only,
                     blockQuic = uiSettings.blockQuic,
                     serverIpv6First = serverIpv6First,
+                    entryHop = EntryHopOptions(java.io.File(service.filesDir, "warp-entry-profile.json").absolutePath)
+                        .takeIf { uiSettings.warpEntryHop },
                     dnsOverride = uiSettings.dnsOverride,
                     bootstrapHost = preparedBootstrap.overlay,
                     vpnHiding = vpnHiding,
@@ -537,6 +541,11 @@ internal class SessionStarter(
                 ?: error(runtime.message)
         }
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
+        if (uiSettings.warpEntryHop) {
+            // The line that shows the hop acted: how many servers dial through WARP (0 = no server to enter, hop not added).
+            val chained = Regex("\"detour\"\\s*:\\s*\"" + Regex.escape(WarpEntryHop.TAG) + "\"").findAll(runtimeReady.json).count()
+            RuntimeLog.app(4, "вход через WARP: серверов через вход=$chained")
+        }
         container.maskingTrial.logLine()?.let { RuntimeLog.app(4, it) }
         container.maskingTrial.publish(MaskingServerKeys.tunable(profileId, effectiveConfig.root, foreignServers))
         val runtimeJson = runtimeReady.json
