@@ -53,6 +53,7 @@ class WarpEntryHopInstrumentedTest {
             shell("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
         }
         accountFile.delete()
+        File(accountFile.path + ".edge").delete()
         shippedAccountFile.delete()
     }
 
@@ -65,6 +66,7 @@ class WarpEntryHopInstrumentedTest {
             profile?.let { container.profileStore.delete(it.id) }
         }
         accountFile.delete()
+        File(accountFile.path + ".edge").delete()
         shippedAccountFile.delete()
         shell("appops set ${context.packageName} ACTIVATE_VPN default")
     }
@@ -82,7 +84,11 @@ class WarpEntryHopInstrumentedTest {
         startVpn()
         withTimeout(60_000) { while (!shippedAccountFile.isFile || shippedAccountFile.length() == 0L) delay(250) }
         val account = JSONObject(shippedAccountFile.readText())
-        assertTrue("the account file must hold the key and the peers", account.has("private_key") && account.has("Peers"))
+        // The app registers the account itself (lowercase keys); the core's own saves use the Go field name (`Peers`).
+        assertTrue(
+            "the account file must hold the key and the peers",
+            account.has("private_key") && (account.has("peers") || account.has("Peers")),
+        )
     }
 
     /** WARP is the exit of a test profile: the shell user's egress address must change. */
@@ -133,9 +139,7 @@ class WarpEntryHopInstrumentedTest {
         startVpn()
         awaitAccountFile()
         stopVpn()
-        val account = JSONObject(accountFile.readText())
-        account.getJSONArray("Peers").getJSONObject(0).getJSONObject("endpoint").put("v4", "192.0.2.1:0")
-        accountFile.writeText(account.toString())
+        blockAssignedAddress()
         container.vpnController.setDiagnosticsVisible(true)
         startVpn()
         val through = awaitEgressChange(echo, direct)
@@ -144,6 +148,45 @@ class WarpEntryHopInstrumentedTest {
             "the unreachable candidates must have been abandoned${coreLog()}",
             coreMessages().any { "trying the next address" in it },
         )
+    }
+
+    /**
+     * Candidates and edge memory (core patch 0025): with the account's own address a black hole the tunnel comes up
+     * through another WARP edge, the edge that answered is kept next to the account file, and the next start tries it
+     * first and does not walk the list again.
+     */
+    @Test
+    fun recoveryRemembersTheEdgeThatAnsweredAndUsesItFirst() = runBlocking {
+        val echo = resolveEchoAddress()
+        val direct = egressIp(echo)
+        assertTrue("no direct internet to compare with", direct.isNotEmpty())
+        createProfile(exitProfile())
+        container.appSelectionStore.replaceAllowlist(setOf(SHELL_PACKAGE))
+        startVpn()
+        awaitAccountFile()
+        stopVpn()
+        blockAssignedAddress()
+        container.vpnController.setDiagnosticsVisible(true)
+        startVpn()
+        assertTrue("no tunnel through another edge: direct=$direct${coreLog()}", awaitEgressChange(echo, direct).isNotEmpty())
+        val edge = File(accountFile.path + ".edge")
+        withTimeout(30_000) { while (!edge.isFile || edge.length() == 0L) delay(250) }
+        stopVpn()
+        startVpn()
+        assertTrue("the restart did not carry traffic: direct=$direct${coreLog()}", awaitEgressChange(echo, direct).isNotEmpty())
+        assertTrue(
+            "the remembered edge must be tried first${coreLog()}",
+            coreMessages().any { "trying the edge that answered last time first" in it },
+        )
+    }
+
+    /** The account's assigned address becomes a TEST-NET black hole; a leftover remembered edge is forgotten first. */
+    private fun blockAssignedAddress() {
+        File(accountFile.path + ".edge").delete()
+        val account = JSONObject(accountFile.readText())
+        val key = if (account.has("Peers")) "Peers" else "peers"
+        account.getJSONArray(key).getJSONObject(0).getJSONObject("endpoint").put("v4", "192.0.2.1:0")
+        accountFile.writeText(account.toString())
     }
 
     private suspend fun createProfile(rawJson: String) {
