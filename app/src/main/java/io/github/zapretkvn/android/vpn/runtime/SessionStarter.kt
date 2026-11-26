@@ -17,6 +17,7 @@ import io.github.zapretkvn.android.config.CoreConfigCheck
 import io.github.zapretkvn.android.config.DnsMode
 import io.github.zapretkvn.android.config.EntryHopOptions
 import io.github.zapretkvn.android.config.WarpAccountRegistration
+import io.github.zapretkvn.android.config.WarpMasqueAccount
 import io.github.zapretkvn.android.config.WarpEntryHop
 import io.github.zapretkvn.android.config.WarpHopFacts
 import io.github.zapretkvn.android.config.ForcedProxyDomains
@@ -528,6 +529,20 @@ internal class SessionStarter(
                 if (registration.ok) "вход через WARP: аккаунт готов (${registration.route}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)"
                 else "вход через WARP: аккаунт не зарегистрирован (${registration.route}: ${registration.detail}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)",
             )
+            if (registration.ok) {
+                // The second account, for the MASQUE tunnel the core falls back to where WireGuard is cut: registered here over the
+                // same routes as the first, beside the connect (it only matters if the tunnel has to change), never waited for.
+                scope.launch(Dispatchers.IO) {
+                    val masque = WarpMasqueAccount.ensure(accountFile)
+                    if (masque.route != "cached") {
+                        RuntimeLog.app(
+                            4,
+                            if (masque.ok) "вход через WARP: аккаунт MASQUE готов (${masque.route}, ${masque.elapsedMs} мс)"
+                            else "вход через WARP: аккаунт MASQUE не зарегистрирован (${masque.route}: ${masque.detail}, ${masque.elapsedMs} мс)",
+                        )
+                    }
+                }
+            }
         }
         val keysStartedAt = SystemClock.elapsedRealtime()
         val maskingKeys = MaskingServerKeys.of(profileId, effectiveConfig.root, foreignServers)

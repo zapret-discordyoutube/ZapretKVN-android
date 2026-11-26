@@ -115,6 +115,21 @@ object WarpAccountRegistration {
         return last
     }
 
+    /** Один путь к API: [target] null это адрес из резолвера, [fragmented] разрезает ClientHello. */
+    data class Route(val name: String, val target: String?, val fragmented: Boolean)
+
+    /** Пути по очереди: обычный и с разрезом для каждого адреса (резолвер, затем замеченные в поле). */
+    internal fun routes(addresses: () -> List<String>): List<Route> {
+        val found = runCatching(addresses).getOrDefault(emptyList())
+        val targets = ArrayList<String?>().apply { add(null) }
+        for (address in found + KNOWN_ADDRESSES) if (address !in targets) targets.add(address)
+        return targets.withIndex().flatMap { (index, target) ->
+            listOf(false, true).map { fragmented ->
+                Route((if (index == 0) "api" else "api-$index") + if (fragmented) "-fragmented" else "", target, fragmented)
+            }
+        }
+    }
+
     /** Только для тестов: забыть недавнюю неудачу. */
     internal fun forgetFailure() {
         directFailedAt = 0L
@@ -168,7 +183,22 @@ object WarpAccountRegistration {
     }
 
     /** Один HTTPS POST к API; ClientHello при [fragmented] уходит двумя сегментами внутри имени сервера. */
-    internal fun exchange(address: String?, body: ByteArray, fragmented: Boolean, timeoutMs: Int): ByteArray {
+    internal fun exchange(address: String?, body: ByteArray, fragmented: Boolean, timeoutMs: Int): ByteArray =
+        request(address, "POST", API_PATH, null, body, fragmented, timeoutMs)
+
+    /**
+     * Один HTTPS-запрос к API по тому же пути с тем же разрезом ClientHello: регистрация устройства (POST) и запись ключа
+     * MASQUE (PATCH `/reg/<id>` с токеном устройства, [WarpMasqueAccount]). Тело ответа при коде 200.
+     */
+    internal fun request(
+        address: String?,
+        method: String,
+        path: String,
+        token: String?,
+        body: ByteArray,
+        fragmented: Boolean,
+        timeoutMs: Int,
+    ): ByteArray {
         val deadline = System.nanoTime() + timeoutMs * 2_000_000L
         Socket().use { socket ->
             socket.tcpNoDelay = true
@@ -245,8 +275,9 @@ object WarpAccountRegistration {
                 "certificate is not for the API host"
             }
 
-            val head = "POST $API_PATH HTTP/1.1\r\nHost: $API_HOST\r\n" +
+            val head = "$method $path HTTP/1.1\r\nHost: $API_HOST\r\n" +
                 HEADERS.entries.joinToString("") { "${it.key}: ${it.value}\r\n" } +
+                (if (token != null) "Authorization: Bearer $token\r\n" else "") +
                 "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n"
             engine.wrap(ByteBuffer.wrap(head.toByteArray() + body), outgoing)
             send(outgoing, split = false)
