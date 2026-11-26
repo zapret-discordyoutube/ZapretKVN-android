@@ -59,11 +59,34 @@ object WarpAccountRegistration {
             root["interface"]?.jsonObject?.get("addresses")?.jsonObject?.get("v4")?.jsonPrimitive?.content?.isNotEmpty() == true
     }.getOrDefault(false)
 
-    /** Файл аккаунта есть; если нет, он регистрируется по путям выше. */
-    fun ensureAccount(file: File, addresses: () -> List<String> = { emptyList() }, timeoutMs: Int = 8000): Outcome {
+    /** Время (nanoTime), когда прямые пути последний раз не сработали; 0, если не срабатывали. */
+    @Volatile
+    private var directFailedAt = 0L
+
+    /** После неудачи прямые пути пропускаются на столько: каждый упирается в свой таймаут, подключение их ждать не должно. */
+    private const val DIRECT_RETRY_MS = 600_000L
+
+    /**
+     * Файл аккаунта есть; если нет, он регистрируется по путям выше.
+     *
+     * [budgetMs] это всё время вызова, что бы ни делали пути (поле 2026-11-26, Windows 0.8.121: сеть блокировала API, пути
+     * один за другим упирались в таймауты, и подключение не укладывалось в свой срок): каждому пути достаётся не больше,
+     * чем осталось. После неудачи следующие подключения десять минут не ждут прямые пути.
+     */
+    fun ensureAccount(
+        file: File,
+        addresses: () -> List<String> = { emptyList() },
+        timeoutMs: Int = 8000,
+        budgetMs: Int = 30_000,
+        exchanger: (String?, ByteArray, Boolean, Int) -> ByteArray = ::exchange,
+    ): Outcome {
         if (accountFileReady(file)) return Outcome(true, "cached", "account file is there")
         val started = System.nanoTime()
         fun took() = (System.nanoTime() - started) / 1_000_000
+        val failedAt = directFailedAt
+        if (failedAt != 0L && started - failedAt < DIRECT_RETRY_MS * 1_000_000L) {
+            return Outcome(false, "skipped", "the direct routes failed a moment ago", 0)
+        }
         val keys = newKey()
         val body = registrationBody(keys.second)
         val found = runCatching(addresses).getOrDefault(emptyList())
@@ -73,8 +96,14 @@ object WarpAccountRegistration {
         for ((index, target) in targets.withIndex()) {
             for (fragmented in listOf(false, true)) {
                 val name = (if (index == 0) "api" else "api-$index") + if (fragmented) "-fragmented" else ""
+                val remaining = budgetMs - took()
+                if (remaining < 2_000) {
+                    directFailedAt = System.nanoTime()
+                    return Outcome(false, name, "time budget of ${budgetMs / 1000} s is used up", took())
+                }
                 last = try {
-                    val raw = exchange(target, body, fragmented, timeoutMs)
+                    // A route may need two timeouts (connect, then the whole exchange): never more than what is left.
+                    val raw = exchanger(target, body, fragmented, minOf(timeoutMs.toLong(), remaining / 2).toInt())
                     writeAccount(file, keys.first, raw)
                     return Outcome(true, name, "registered", took())
                 } catch (error: Exception) {
@@ -82,7 +111,13 @@ object WarpAccountRegistration {
                 }
             }
         }
+        directFailedAt = System.nanoTime()
         return last
+    }
+
+    /** Только для тестов: забыть недавнюю неудачу. */
+    internal fun forgetFailure() {
+        directFailedAt = 0L
     }
 
     /** Пара ключей WireGuard (X25519): закрытый и открытый, base64. */

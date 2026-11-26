@@ -3,6 +3,7 @@ package io.github.zapretkvn.android.config
 import java.io.File
 import java.util.Base64
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -93,5 +94,33 @@ class WarpAccountRegistrationTest {
         assertEquals(WarpHopFacts.Probe("answered", 1900), WarpHopFacts.current().register)
         WarpHopFacts.record(false, null)
         assertEquals(false, WarpHopFacts.current().enabled)
+    }
+
+    /**
+     * Field report 2026-11-26 (Windows 0.8.121, the same code path): a network that swallows every packet made every route run
+     * into its own timeout and the sum passed the time the connect has. A black hole is real network behaviour: 192.0.2.1
+     * (TEST-NET-1, reserved for documentation) never answers.
+     */
+    @Test
+    fun aBlackHoleCannotStallTheConnectAndTheNextConnectSkipsTheDirectRoutes() {
+        WarpAccountRegistration.forgetFailure()
+        val folder = java.nio.file.Files.createTempDirectory("warp-budget").toFile()
+        try {
+            val started = System.nanoTime()
+            val outcome = WarpAccountRegistration.ensureAccount(
+                File(folder, "account.json"),
+                timeoutMs = 8000,
+                budgetMs = 4_000,
+                exchanger = { _, body, fragmented, timeout -> WarpAccountRegistration.exchange("192.0.2.1", body, fragmented, timeout) },
+            )
+            val tookMs = (System.nanoTime() - started) / 1_000_000
+            assertFalse(outcome.ok)
+            assertTrue("the registration took $tookMs ms with a budget of 4000 ms", tookMs < 6_000)
+            val again = WarpAccountRegistration.ensureAccount(File(folder, "account.json"), exchanger = { _, _, _, _ -> error("must not be tried") })
+            assertEquals("skipped", again.route)
+        } finally {
+            WarpAccountRegistration.forgetFailure()
+            folder.deleteRecursively()
+        }
     }
 }

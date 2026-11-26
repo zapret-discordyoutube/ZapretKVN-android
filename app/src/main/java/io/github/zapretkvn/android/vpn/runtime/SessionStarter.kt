@@ -507,12 +507,22 @@ internal class SessionStarter(
         }
         WarpHopFacts.record(uiSettings.warpEntryHop, null)
         val hopStartedAt = SystemClock.elapsedRealtime()
+        // The entry is used by this launch only when the account is there; a provider that blocks the registration must not
+        // stop the connect (owner 2026-11-26, "fix both completely"): this launch goes on without it and says so.
+        var hopOn = uiSettings.warpEntryHop
         if (uiSettings.warpEntryHop) {
             // The account is registered by the app, over several routes, before the core needs it: a provider may reset the
             // core's own request to the Cloudflare API (field report on Windows, 2026-11-25). Only the route is logged.
             val accountFile = java.io.File(service.filesDir, "warp-entry-profile.json")
             val registration = withContext(Dispatchers.IO) { WarpAccountRegistration.ensureAccount(accountFile) }
             WarpHopFacts.record(true, registration)
+            if (!registration.ok) {
+                hopOn = false
+                controller.publishDiagnosticWarning(
+                    "Не удалось зарегистрировать аккаунт WARP: провайдер блокирует запрос. Это подключение идёт без входа " +
+                        "через WARP, адрес сервера на этот раз виден провайдеру. Новая попытка будет позже.",
+                )
+            }
             RuntimeLog.app(
                 4,
                 if (registration.ok) "вход через WARP: аккаунт готов (${registration.route}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)"
@@ -533,7 +543,7 @@ internal class SessionStarter(
                     blockQuic = uiSettings.blockQuic,
                     serverIpv6First = serverIpv6First,
                     entryHop = EntryHopOptions(java.io.File(service.filesDir, "warp-entry-profile.json").absolutePath)
-                        .takeIf { uiSettings.warpEntryHop },
+                        .takeIf { hopOn },
                     dnsOverride = uiSettings.dnsOverride,
                     bootstrapHost = preparedBootstrap.overlay,
                     vpnHiding = vpnHiding,
@@ -562,7 +572,7 @@ internal class SessionStarter(
         }
         val buildMillis = SystemClock.elapsedRealtime() - buildStartedAt
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
-        if (uiSettings.warpEntryHop) {
+        if (hopOn) {
             // The line that shows the hop acted: how many servers dial through WARP (0 = no server to enter, hop not added).
             val countStartedAt = SystemClock.elapsedRealtime()
             val chained = Regex("\"detour\"\\s*:\\s*\"" + Regex.escape(WarpEntryHop.TAG) + "\"").findAll(runtimeReady.json).count()
