@@ -366,6 +366,7 @@ class ProfileUiInstrumentedTest {
         composeRule.onNodeWithText("Zapret VPN bot").assertExists()
         composeRule.onNodeWithText("Zapret KVN").assertExists()
         composeRule.onNodeWithText("Zapret VPN").assertExists()
+        composeRule.onNodeWithText("VPN Discord YouTube").assertExists()
         composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Zastogram"))
         composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Вики"))
         composeRule.onNodeWithTag("about-us-screen").performScrollToNode(hasText("Ещё один резервный список"))

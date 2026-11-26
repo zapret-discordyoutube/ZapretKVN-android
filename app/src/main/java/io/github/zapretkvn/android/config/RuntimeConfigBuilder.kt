@@ -147,6 +147,15 @@ sealed interface RuntimeConfigResult {
             internal set
 
         /**
+         * Сколько серверов и endpoint-ов этой сборки идут через вход WARP (0 без входа). Счёт ведёт сам сборщик в момент,
+         * когда ставит `detour`: поиск по тексту готового конфига регулярным выражением стоил 2,5 с на эмуляторе и
+         * 5,4 с на телефоне при 1448 серверах (замер 2026-11-26), а сборка всего конфига занимает 0,2 с.
+         */
+        @Volatile
+        var hopChained: Int = 0
+            internal set
+
+        /**
          * Разобранный [json]. Сборщик уже держит это дерево и передаёт его сюда,
          * поэтому потребителям runtime JSON не нужен ещё один разбор; у `Ready`,
          * созданного вручную, дерево разбирается при первом обращении.
@@ -349,12 +358,14 @@ object RuntimeConfigBuilder {
             runtimeEndpoints = runtimeEndpoints?.let { ServerIpv6First.applyEndpoints(it, defaultResolver) }
         }
         phase("IPv6 к серверу")
+        var hopChained = 0
         options.entryHop?.let { hop ->
             // After masking and IPv6-first: those passes see the servers as they are, and the hop is only a detour on top.
             val resolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
             val chained = WarpEntryHop.apply(runtimeOutbounds, runtimeEndpoints, hop.profilePath, resolver)
             runtimeOutbounds = chained.outbounds
             runtimeEndpoints = chained.endpoints
+            hopChained = chained.chained
             phase("вход через WARP")
         }
         val maskingReport = MaskingReport(
@@ -419,6 +430,7 @@ object RuntimeConfigBuilder {
         if (options.entryHop != null) phase("проверка входа")
         val finished = if (maskingReport == MaskingReport.NONE) ready else ready.copy(masking = maskingReport).withConfig(ready.config)
         finished.phases = phaseLog.toString()
+        finished.hopChained = hopChained
         return finished
     }
 

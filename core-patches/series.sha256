@@ -23,3 +23,4 @@ db08fdf68aa6b96f0f644e85d48910e554c8eeeef2ca85cb0415272dc977bc64  core-patches/0
 a18b3df623fa362fe7753ba1897e96fdf4b8a842e016c28e696d523599135248  core-patches/0023-warp-start-recovery.patch
 3431aae5b6d642ad4e41a3c030901aa5b98f1f1e579c7f202e9a4aafa663f896  core-patches/0024-warp-forward-interface-update.patch
 b416fea3adc6dff72d8c654bf8dc35be51dca8a02b3420ee4687ff5e62243ab1  core-patches/0025-warp-candidates.patch
+2983935a0d3d911ea5d9be448c0533ea3d27404fe5a01dc193bc4a149ff25170  core-patches/0026-warp-masque-fallback.patch

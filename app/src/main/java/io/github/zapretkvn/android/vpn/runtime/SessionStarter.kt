@@ -574,12 +574,8 @@ internal class SessionStarter(
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
         if (hopOn) {
             // The line that shows the hop acted: how many servers dial through WARP (0 = no server to enter, hop not added).
-            val countStartedAt = SystemClock.elapsedRealtime()
-            val chained = Regex("\"detour\"\\s*:\\s*\"" + Regex.escape(WarpEntryHop.TAG) + "\"").findAll(runtimeReady.json).count()
-            RuntimeLog.app(
-                4,
-                "вход через WARP: серверов через вход=$chained, подсчёт ${SystemClock.elapsedRealtime() - countStartedAt} мс",
-            )
+            // The builder counts them as it chains them: scanning the finished text for the detours cost 5.4 s on a phone.
+            RuntimeLog.app(4, "вход через WARP: серверов через вход=${runtimeReady.hopChained}")
         }
         // Owner request 2026-11-26 ("taking too long"): where the time of the "runtime overlay" stage goes, on every start.
         RuntimeLog.app(
