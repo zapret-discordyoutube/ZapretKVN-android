@@ -702,7 +702,7 @@ metadata и release notes в Forgejo. APK с чужим ABI, отсутству�
 Ссылки находятся только в «Настройки → Сообщество»:
 
 - [Zapret KVN](https://t.me/bypassblock)
-- [VPN Discord YouTube](https://t.me/vpndiscordyooutube)
+- [Zapret VPN](https://t.me/vpndpi)
 - [Zapret VPN bot](https://t.me/zapretvpns_bot)
 
 ## План реализации

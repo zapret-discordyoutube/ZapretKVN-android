@@ -37,7 +37,7 @@ object AboutUsLinks {
 
     val channels: List<AboutUsLink> = listOf(
         AboutUsLink("Zapret KVN", "Telegram-канал", "https://t.me/bypassblock", AboutUsIcon.Telegram),
-        AboutUsLink("VPN Discord YouTube", "Telegram-сообщество", "https://t.me/vpndiscordyooutube", AboutUsIcon.Telegram),
+        AboutUsLink("Zapret VPN", "Telegram-канал: новости и обновления", "https://t.me/vpndpi", AboutUsIcon.Telegram),
         AboutUsLink("RuNet VPN YouTube Discord", "Telegram-канал", "https://t.me/runetvpnyoutubediscord", AboutUsIcon.Telegram),
         AboutUsLink("Zastogram", "Telegram-канал", "https://t.me/zastogram", AboutUsIcon.Telegram),
     )
