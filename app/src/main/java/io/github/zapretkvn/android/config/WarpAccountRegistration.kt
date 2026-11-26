@@ -77,7 +77,7 @@ object WarpAccountRegistration {
         file: File,
         addresses: () -> List<String> = { emptyList() },
         timeoutMs: Int = 8000,
-        budgetMs: Int = 30_000,
+        budgetMs: Int = 20_000,
         exchanger: (String?, ByteArray, Boolean, Int) -> ByteArray = ::exchange,
     ): Outcome {
         if (accountFileReady(file)) return Outcome(true, "cached", "account file is there")
