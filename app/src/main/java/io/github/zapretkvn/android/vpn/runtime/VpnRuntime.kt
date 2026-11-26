@@ -6,6 +6,8 @@ import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.network.VpnNetworkLostException
 import io.github.zapretkvn.android.config.ConfigAnalyzer
 import io.github.zapretkvn.android.config.CoreConfigCheck
+import io.github.zapretkvn.android.config.WarpHopFacts
+import io.github.zapretkvn.android.diagnostics.RuntimeLog
 import io.github.zapretkvn.android.diagnostics.RuntimeErrors
 import io.github.zapretkvn.android.diagnostics.SecretRedactor
 import io.github.zapretkvn.android.diagnostics.VpnFailureStates
@@ -943,6 +945,8 @@ internal class VpnRuntime(
             if (hints.isNotEmpty()) post(Message.CoreHints(generation, hints))
             CoreLogHints.dnsFailures(messages)?.let { post(Message.DnsFailures(generation, it)) }
             CoreLogHints.slotDnsFailures(messages).takeIf { it.isNotEmpty() }?.let { post(Message.SlotDnsFailures(generation, it)) }
+            WarpHopLog.lines(messages).forEach { RuntimeLog.app(4, it) }
+            WarpHopFacts.noteCoreLines(messages)
         }
 
         override fun onObserverUnavailable(generation: Long, message: String) =

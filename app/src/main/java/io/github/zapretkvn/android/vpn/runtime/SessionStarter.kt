@@ -506,6 +506,7 @@ internal class SessionStarter(
             )
         }
         WarpHopFacts.record(uiSettings.warpEntryHop, null)
+        val hopStartedAt = SystemClock.elapsedRealtime()
         if (uiSettings.warpEntryHop) {
             // The account is registered by the app, over several routes, before the core needs it: a provider may reset the
             // core's own request to the Cloudflare API (field report on Windows, 2026-11-25). Only the route is logged.
@@ -514,10 +515,14 @@ internal class SessionStarter(
             WarpHopFacts.record(true, registration)
             RuntimeLog.app(
                 4,
-                if (registration.ok) "вход через WARP: аккаунт готов (${registration.route})"
-                else "вход через WARP: аккаунт не зарегистрирован (${registration.route}: ${registration.detail})",
+                if (registration.ok) "вход через WARP: аккаунт готов (${registration.route}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)"
+                else "вход через WARP: аккаунт не зарегистрирован (${registration.route}: ${registration.detail}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)",
             )
         }
+        val keysStartedAt = SystemClock.elapsedRealtime()
+        val maskingKeys = MaskingServerKeys.of(profileId, effectiveConfig.root, foreignServers)
+        val keysMillis = SystemClock.elapsedRealtime() - keysStartedAt
+        val buildStartedAt = SystemClock.elapsedRealtime()
         val runtimeReady = when (
             val runtime = RuntimeConfigBuilder.build(
                 effectiveConfig,
@@ -546,7 +551,7 @@ internal class SessionStarter(
                     slotRoutes = slotPlan?.specs.orEmpty(),
                     extraOutbounds = foreignServers.map { it.outbound },
                     masking = masking,
-                    maskingServerKeys = MaskingServerKeys.of(profileId, effectiveConfig.root, foreignServers),
+                    maskingServerKeys = maskingKeys,
                 ),
             )
         ) {
@@ -555,17 +560,35 @@ internal class SessionStarter(
                 ?.let { code -> throw RuntimeConfigRejectedException(runtime.message, code) }
                 ?: error(runtime.message)
         }
+        val buildMillis = SystemClock.elapsedRealtime() - buildStartedAt
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
         if (uiSettings.warpEntryHop) {
             // The line that shows the hop acted: how many servers dial through WARP (0 = no server to enter, hop not added).
+            val countStartedAt = SystemClock.elapsedRealtime()
             val chained = Regex("\"detour\"\\s*:\\s*\"" + Regex.escape(WarpEntryHop.TAG) + "\"").findAll(runtimeReady.json).count()
-            RuntimeLog.app(4, "вход через WARP: серверов через вход=$chained")
+            RuntimeLog.app(
+                4,
+                "вход через WARP: серверов через вход=$chained, подсчёт ${SystemClock.elapsedRealtime() - countStartedAt} мс",
+            )
         }
+        // Owner request 2026-11-26 ("taking too long"): where the time of the "runtime overlay" stage goes, on every start.
+        RuntimeLog.app(
+            4,
+            "runtime overlay: сборка $buildMillis мс (${runtimeReady.phases}), ключи маскировки $keysMillis мс, " +
+                "конфиг ${runtimeReady.json.length / 1024} КБ",
+        )
         container.maskingTrial.logLine()?.let { RuntimeLog.app(4, it) }
         container.maskingTrial.publish(MaskingServerKeys.tunable(profileId, effectiveConfig.root, foreignServers))
         val runtimeJson = runtimeReady.json
+        val parseStartedAt = SystemClock.elapsedRealtime()
         val runtimeConfig = runtimeReady.config
+        val parseMillis = SystemClock.elapsedRealtime() - parseStartedAt
+        val summaryStartedAt = SystemClock.elapsedRealtime()
         controller.publishEffectiveOverlay(token, EffectiveOverlaySummary.create(runtimeConfig, dnsMode))
+        RuntimeLog.app(
+            4,
+            "runtime overlay: разбор готового конфига $parseMillis мс, сводка ${SystemClock.elapsedRealtime() - summaryStartedAt} мс",
+        )
         // Проверка ядром не зависит от adapter и command server и идёт рядом с ними;
         // результат нужен строго перед startOrReloadService (awaitConfigCheck).
         val configCheck = CoreConfigCheckRun.launch(

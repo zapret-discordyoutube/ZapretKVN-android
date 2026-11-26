@@ -141,6 +141,11 @@ sealed interface RuntimeConfigResult {
         @Volatile
         private var parsed: ParsedConfig? = null
 
+        /** Сколько заняла каждая часть сборки, одной строкой для журнала (не участвует в сравнении результатов). */
+        @Volatile
+        var phases: String = ""
+            internal set
+
         /**
          * Разобранный [json]. Сборщик уже держит это дерево и передаёт его сюда,
          * поэтому потребителям runtime JSON не нужен ещё один разбор; у `Ready`,
@@ -185,6 +190,14 @@ object RuntimeConfigBuilder {
         enableTrafficStats: Boolean = false,
         options: RuntimeConfigOptions = RuntimeConfigOptions(),
     ): RuntimeConfigResult {
+        val phaseLog = StringBuilder()
+        var phaseStart = System.nanoTime()
+        fun phase(name: String) {
+            val now = System.nanoTime()
+            if (phaseLog.isNotEmpty()) phaseLog.append(", ")
+            phaseLog.append(name).append(' ').append((now - phaseStart) / 1_000_000).append(" мс")
+            phaseStart = now
+        }
         val storedRoot = config.root
             ?: return invalid("Корень конфигурации должен быть JSON-объектом.")
         // Materialize Android endpoint defaults before hardening so the outer
@@ -205,6 +218,7 @@ object RuntimeConfigBuilder {
             return RuntimeConfigResult.Invalid(PlainTransportPolicy.RUNTIME_MESSAGE, PlainTransportPolicy.FAILURE_CODE)
         }
 
+        phase("политика")
         findForbiddenField(root)?.let { field ->
             return invalid("Поле '$field' несовместимо с Android VPN и запрещено в MVP.")
         }
@@ -301,6 +315,7 @@ object RuntimeConfigBuilder {
                 runtimeEndpoints = applyBootstrapResolver(checkNotNull(runtimeEndpoints), overlay)
             }
         }
+        phase("проверки и подготовка серверов")
         val slotRoutes = if (managed && selectedProxyTag != null && options.slotRoutes.isNotEmpty()) {
             val tags = runtimeOutbounds?.mapNotNull { (it as? JsonObject)?.string("tag") }?.toSet().orEmpty() +
                 options.extraOutbounds.mapNotNull { it.string("tag") }
@@ -318,10 +333,12 @@ object RuntimeConfigBuilder {
             val extras = options.extraOutbounds.filter { it.string("tag").let { tag -> tag in used && tag !in present } }
             runtimeOutbounds = JsonArray(withoutOld + extras + slotRoutes.map(SlotRoutes::selector))
         }
+        phase("слоты")
         val maskingKey = { tag: String -> options.maskingServerKeys[tag] }
         val maskedOutbounds = runtimeOutbounds?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
         val maskedEndpoints = runtimeEndpoints?.let { MaskingApplier.apply(it, options.masking, maskingKey) }
         maskedOutbounds?.let { runtimeOutbounds = it.entries }
+        phase("маскировка")
         if (options.serverIpv6First) {
             val defaultResolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
             runtimeOutbounds = runtimeOutbounds?.let { ServerIpv6First.apply(it, defaultResolver) }
@@ -331,12 +348,14 @@ object RuntimeConfigBuilder {
             val defaultResolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
             runtimeEndpoints = runtimeEndpoints?.let { ServerIpv6First.applyEndpoints(it, defaultResolver) }
         }
+        phase("IPv6 к серверу")
         options.entryHop?.let { hop ->
             // After masking and IPv6-first: those passes see the servers as they are, and the hop is only a detour on top.
             val resolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
             val chained = WarpEntryHop.apply(runtimeOutbounds, runtimeEndpoints, hop.profilePath, resolver)
             runtimeOutbounds = chained.outbounds
             runtimeEndpoints = chained.endpoints
+            phase("вход через WARP")
         }
         val maskingReport = MaskingReport(
             changed = (maskedOutbounds?.changed ?: 0) + (maskedEndpoints?.changed ?: 0),
@@ -389,6 +408,7 @@ object RuntimeConfigBuilder {
         )
         if (dnsOverlay is RuntimeConfigResult.Invalid) return dnsOverlay
         val ready = dnsOverlay as RuntimeConfigResult.Ready
+        phase("DNS и маршруты")
         if (options.entryHop != null) {
             // WARP is an entry only: it may be nothing but a server's detour. Never start a config that made it an exit.
             val misuse = ready.config.root?.let(WarpEntryHop::violations).orEmpty()
@@ -396,7 +416,10 @@ object RuntimeConfigBuilder {
                 return invalid("WARP может быть только входом к серверу, найдено другое использование: ${misuse.first()}.")
             }
         }
-        return if (maskingReport == MaskingReport.NONE) ready else ready.copy(masking = maskingReport).withConfig(ready.config)
+        if (options.entryHop != null) phase("проверка входа")
+        val finished = if (maskingReport == MaskingReport.NONE) ready else ready.copy(masking = maskingReport).withConfig(ready.config)
+        finished.phases = phaseLog.toString()
+        return finished
     }
 
     /**

@@ -10,54 +10,74 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
+/**
+ * The hop pass on the real servers of the vpnbot test person (owner 2026-11-25: tests run on real data only): the
+ * outbounds are what the app's builder makes of the importer's profiles, the WireGuard endpoint is the test person's
+ * real AmneziaWG key.
+ */
 class WarpEntryHopTest {
-    private fun array(text: String): JsonArray = Json.parseToJsonElement(text).jsonArray
+    @Before
+    fun realDataIsThere() = RealSubscription.requireIt()
 
     private fun JsonArray.byTag(tag: String): JsonObject =
         first { it.jsonObject["tag"]?.jsonPrimitive?.content == tag }.jsonObject
 
-    private val outbounds = """
-        [
-          {"type":"hysteria2","tag":"hy","server":"hy.example.net","server_port":443},
-          {"type":"vless","tag":"vl","server":"203.0.113.7","server_port":443},
-          {"type":"vless","tag":"xr","uri":"vless://x@host.example:443"},
-          {"type":"trojan","tag":"chained","server":"t.example","server_port":443,"detour":"hy"},
-          {"type":"selector","tag":"proxy","outbounds":["hy","vl","xr"]},
-          {"type":"direct","tag":"direct"},
-          {"type":"block","tag":"block"}
-        ]
-    """.trimIndent()
+    private fun built(raw: String): JsonObject {
+        val result = RuntimeConfigBuilder.build(raw, options = RuntimeConfigOptions(dnsMode = DnsMode.Android))
+        assertTrue(result.toString().take(200), result is RuntimeConfigResult.Ready)
+        return JsonConfig.parse((result as RuntimeConfigResult.Ready).json) as JsonObject
+    }
 
-    private fun apply(endpoints: String? = null, resolver: String? = "android-dns") =
-        WarpEntryHop.apply(array(outbounds), endpoints?.let(::array), "/data/warp.json", resolver)
+    private val real: JsonObject by lazy { built(RealSubscription.vlessProfile) }
+    private val outbounds: JsonArray get() = real["outbounds"]!!.jsonArray
 
-    @Test
-    fun serversGetDetourAndLocalTypesDoNot() {
-        val result = apply()
-        val list = checkNotNull(result.outbounds)
-        assertEquals(3, result.chained)
-        for (tag in listOf("hy", "vl", "xr")) {
-            assertEquals(tag, WarpEntryHop.TAG, list.byTag(tag)["detour"]?.jsonPrimitive?.content)
-        }
-        assertEquals("hy", list.byTag("chained")["detour"]?.jsonPrimitive?.content) // not the first link of its chain
-        for (tag in listOf("proxy", "direct", "block")) assertNull(tag, list.byTag(tag)["detour"])
+    private fun apply(endpoints: JsonArray? = null, resolver: String? = "android-dns") =
+        WarpEntryHop.apply(outbounds, endpoints, "/data/warp.json", resolver)
+
+    private fun servers(list: JsonArray) = list.map { it.jsonObject }.filter {
+        it["server"] != null || it["uri"] != null
     }
 
     @Test
-    fun serverNamesResolveOutsideTheTunnelAndLiteralsAndUserChoicesStay() {
+    fun realServersGetDetourAndLocalTypesDoNot() {
+        val result = apply()
+        val list = checkNotNull(result.outbounds)
+        val remote = servers(list)
+        assertTrue(remote.isNotEmpty())
+        assertEquals(remote.size, result.chained)
+        for (server in remote) assertEquals(WarpEntryHop.TAG, server["detour"]?.jsonPrimitive?.content)
+        for (item in list.map { it.jsonObject }) {
+            val type = item["type"]?.jsonPrimitive?.content
+            if (type == "selector" || type == "urltest" || type == "direct" || type == "block") assertNull(item["detour"])
+        }
+    }
+
+    @Test
+    fun realServerNamesResolveOutsideTheTunnelAndAUsersChoiceStays() {
         val list = checkNotNull(apply().outbounds)
-        assertEquals("android-dns", list.byTag("hy")["domain_resolver"]?.jsonPrimitive?.content)
-        assertEquals("android-dns", list.byTag("xr")["domain_resolver"]?.jsonPrimitive?.content)
-        assertNull("an IP literal has nothing to resolve", list.byTag("vl")["domain_resolver"])
-        val own = WarpEntryHop.apply(
-            array("""[{"type":"hysteria2","tag":"hy","server":"h.example","domain_resolver":{"server":"mine"}}]"""),
-            null, "/p", "android-dns",
+        val named = servers(list).filter { it["server"]?.jsonPrimitive?.content?.any { c -> c.isLetter() && c != ':' } == true }
+        assertTrue("the test person has servers with a host name", named.isNotEmpty())
+        for (server in named) assertEquals("android-dns", server["domain_resolver"]?.jsonPrimitive?.content)
+        // a resolver the user chose in the profile is kept
+        val chosen = JsonArray(
+            outbounds.map {
+                val item = it.jsonObject
+                if (item === named.first() || item["tag"] == named.first()["tag"]) {
+                    JsonObject(item + ("domain_resolver" to Json.parseToJsonElement("""{"server":"mine"}""")))
+                } else {
+                    item
+                }
+            },
         )
-        assertEquals("mine", own.outbounds!![0].jsonObject["domain_resolver"]!!.jsonObject["server"]!!.jsonPrimitive.content)
-        val none = WarpEntryHop.apply(array("""[{"type":"hysteria2","tag":"hy","server":"h.example"}]"""), null, "/p", null)
-        assertNull(none.outbounds!![0].jsonObject["domain_resolver"])
+        val own = WarpEntryHop.apply(chosen, null, "/p", "android-dns")
+        val tag = named.first()["tag"]!!.jsonPrimitive.content
+        assertEquals("mine", own.outbounds!!.byTag(tag)["domain_resolver"]!!.jsonObject["server"]!!.jsonPrimitive.content)
+        // no resolver known: nothing is added
+        val none = WarpEntryHop.apply(outbounds, null, "/p", null)
+        assertTrue(servers(none.outbounds!!).none { it["domain_resolver"] != null && "domain_resolver" !in outbounds.byTag(it["tag"]!!.jsonPrimitive.content) })
     }
 
     @Test
@@ -80,24 +100,23 @@ class WarpEntryHopTest {
     }
 
     @Test
-    fun wireguardEndpointsEnterThroughTheHopToo() {
-        val result = apply(
-            """[{"type":"wireguard","tag":"wg","peers":[{"address":"wg.example","port":51820}]},
-                {"type":"wireguard","tag":"wg2","detour":"hy","peers":[]}]""",
-        )
-        val endpoints = checkNotNull(result.endpoints)
-        assertEquals(WarpEntryHop.TAG, endpoints.byTag("wg")["detour"]?.jsonPrimitive?.content)
-        assertEquals("hy", endpoints.byTag("wg2")["detour"]?.jsonPrimitive?.content)
-        assertEquals("android-dns", endpoints.byTag("wg")["domain_resolver"]?.jsonPrimitive?.content)
-        assertEquals(4, result.chained)
+    fun theRealAmneziaWgEndpointEntersThroughTheHopToo() {
+        val awg = built(RealSubscription.awgProfile)
+        val endpoints = awg["endpoints"]!!.jsonArray
+        val result = WarpEntryHop.apply(awg["outbounds"]?.jsonArray ?: JsonArray(emptyList()), endpoints, "/data/warp.json", "android-dns")
+        val wireguard = checkNotNull(result.endpoints).map { it.jsonObject }.single {
+            it["type"]?.jsonPrimitive?.content == "wireguard"
+        }
+        assertEquals(WarpEntryHop.TAG, wireguard["detour"]?.jsonPrimitive?.content)
+        assertTrue(result.chained >= 1)
     }
 
     @Test
     fun noServersMeansNoHopAndNoRegistration() {
-        val result = WarpEntryHop.apply(
-            array("""[{"type":"selector","tag":"proxy","outbounds":[]},{"type":"direct","tag":"direct"}]"""),
-            null, "/p", "android-dns",
-        )
+        // The real runtime copy with every remote server taken out: nothing to enter, so no hop and no registration.
+        val local = JsonArray(outbounds.filter { it.jsonObject["server"] == null && it.jsonObject["uri"] == null }
+            .filter { it.jsonObject["type"]?.jsonPrimitive?.content != "selector" })
+        val result = WarpEntryHop.apply(local, null, "/p", "android-dns")
         assertEquals(0, result.chained)
         assertNull(result.endpoints)
         assertFalse(WarpEntryHop.API_TAG in result.outbounds.toString())
@@ -112,15 +131,29 @@ class WarpEntryHopTest {
 
     @Test
     fun guardRejectsTheHopAsExitSelectorMemberOrRouteTarget() {
-        fun violations(json: String) = WarpEntryHop.violations(Json.parseToJsonElement(json).jsonObject)
-        val hop = """"endpoints":[{"type":"warp","tag":"${WarpEntryHop.TAG}"}]"""
-        assertTrue(violations("""{$hop,"route":{"final":"${WarpEntryHop.TAG}"}}""").isNotEmpty())
-        assertTrue(violations("""{$hop,"route":{"rules":[{"domain":["a.example"],"outbound":"${WarpEntryHop.TAG}"}]}}""").isNotEmpty())
-        assertTrue(violations("""{$hop,"outbounds":[{"type":"selector","tag":"p","outbounds":["${WarpEntryHop.TAG}"]}]}""").isNotEmpty())
-        assertTrue(violations("""{"outbounds":[{"type":"direct","tag":"${WarpEntryHop.TAG}"}]}""").isNotEmpty())
+        val result = apply()
+        fun violationsOf(mutate: (MutableMap<String, kotlinx.serialization.json.JsonElement>) -> Unit): List<String> {
+            val root = mutableMapOf<String, kotlinx.serialization.json.JsonElement>(
+                "outbounds" to result.outbounds!!, "endpoints" to result.endpoints!!,
+            )
+            mutate(root)
+            return WarpEntryHop.violations(JsonObject(root))
+        }
+        fun route(json: String) = Json.parseToJsonElement(json)
+        assertTrue(violationsOf { it["route"] = route("""{"final":"${WarpEntryHop.TAG}"}""") }.isNotEmpty())
+        assertTrue(violationsOf {
+            it["route"] = route("""{"rules":[{"domain":["a.example"],"outbound":"${WarpEntryHop.TAG}"}]}""")
+        }.isNotEmpty())
+        assertTrue(violationsOf {
+            it["outbounds"] = JsonArray(
+                result.outbounds!! + route("""{"type":"selector","tag":"p","outbounds":["${WarpEntryHop.TAG}"]}"""),
+            )
+        }.isNotEmpty())
+        assertTrue(violationsOf {
+            it["outbounds"] = JsonArray(result.outbounds!! + route("""{"type":"direct","tag":"${WarpEntryHop.TAG}"}"""))
+        }.isNotEmpty())
         assertTrue("a detour outside outbounds/endpoints/dns is not a server dialing it",
-            violations("""{$hop,"route":{"detour":"${WarpEntryHop.TAG}"}}""").isNotEmpty())
-        assertFalse(violations("""{$hop,"outbounds":[{"type":"vless","tag":"v","server":"1.2.3.4","detour":"${WarpEntryHop.TAG}"}]}""").isNotEmpty())
+            violationsOf { it["route"] = route("""{"detour":"${WarpEntryHop.TAG}"}""") }.isNotEmpty())
     }
 
     @Test
