@@ -42,4 +42,17 @@ class AppErrorFactsTest {
         assertEquals("perm:vpn_denied", AppErrorFacts.permission("vpn_denied")!!.code)
         assertEquals("update:check_net", AppErrorFacts.update("check_net")!!.code)
     }
+
+    @Test
+    fun anAppCodeStartFailureIsAnAppErrorNotAServerReport() {
+        // Codes seen in the field (start:VPN-200, DNS-101, VPN-120) say nothing about the server.
+        for (code in listOf("VPN-200", "VPN-120", "DNS-101", "CFG-001", "SBX-001")) {
+            assertEquals(code, true, AppErrorFacts.startIsAppFailure(code, networkLost = false))
+        }
+        // A core code stays a server report, so does a lost network (NET- codes and the NETWORK_LOST marker).
+        assertEquals(false, AppErrorFacts.startIsAppFailure("TARGET_AUTH_REJECTED", networkLost = false))
+        assertEquals(false, AppErrorFacts.startIsAppFailure("LOCAL_BIND_COLLISION", networkLost = false))
+        assertEquals(false, AppErrorFacts.startIsAppFailure("NET-102", networkLost = true))
+        assertEquals(false, AppErrorFacts.startIsAppFailure("VPN-200", networkLost = true))
+    }
 }

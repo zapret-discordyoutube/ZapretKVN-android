@@ -680,18 +680,21 @@ internal class VpnRuntime(
         val reported = stored?.let { profile ->
             runCatching { FailoverPlanner.reportedServer(ParsedConfig.parse(profile.json), emptyMap(), primaryGroupTag = null) }.getOrNull()
         }
-        if (reported != null) {
+        val networkLost = baseFailure.code.startsWith("NET-") ||
+            generateSequence(error) { it.cause }.take(8).any { it is VpnNetworkLostException }
+        // The app's own code (VPN-/DNS-/CFG-…) says nothing about the server: an app error start:<code>, no server report.
+        val appFailure = io.github.zapretkvn.android.clientreports.AppErrorFacts.startIsAppFailure(baseFailure.code, networkLost)
+        if (reported != null && !appFailure) {
             container.clientReporter.onStartFailure(
                 generation = token,
                 tag = reported.first,
                 outboundType = reported.second,
                 code = baseFailure.code,
-                networkLost = baseFailure.code.startsWith("NET-") ||
-                    generateSequence(error) { it.cause }.take(8).any { it is VpnNetworkLostException },
+                networkLost = networkLost,
                 target = stored?.json?.let { json -> runCatching { ProbeTargets.of(ParsedConfig.parse(json), reported.first) }.getOrNull() },
             )
         } else if (!baseFailure.code.startsWith("NET-")) {
-            // No server was chosen: not a server report but an app error (vpnbot «app_error live» 2026-11-20).
+            // No server was chosen, or the code is the app's own: not a server report but an app error (vpnbot «app_error live» 2026-11-20).
             io.github.zapretkvn.android.clientreports.AppErrorFacts.start(baseFailure.code)?.let(container.clientReporter::onAppError)
         }
 

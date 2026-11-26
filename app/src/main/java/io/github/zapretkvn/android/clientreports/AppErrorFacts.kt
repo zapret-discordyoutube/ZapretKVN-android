@@ -4,6 +4,7 @@ import io.github.zapretkvn.android.diagnostics.AppCrashRecord
 import io.github.zapretkvn.android.diagnostics.AppProcessExitRecord
 import io.github.zapretkvn.clientreports.AppError
 import io.github.zapretkvn.clientreports.AppErrors
+import io.github.zapretkvn.clientreports.ReportChecks
 import io.github.zapretkvn.clientreports.SubscriptionFact
 import java.io.IOException
 import java.net.ConnectException
@@ -36,6 +37,15 @@ internal object AppErrorFacts {
     /** A start that failed before any server was chosen: the app's own failure code (`VPN-120`, `DNS-110` …). */
     fun start(code: String): AppError? = AppErrors.code(if (code == "LOCAL_BIND_COLLISION") "port" else "start", if (code == "LOCAL_BIND_COLLISION") "bind" else code)
         ?.let { AppError(AppErrors.STEP_START, it) }
+
+    /**
+     * A start failure that carries only the app's own code (`VPN-200`, `DNS-101`, `CFG-…`): it says nothing about the
+     * server, so it goes as an app error `start:<code>` and not as a server report (owner decision 2026-11-26, option b:
+     * the report used to lose the code and read as «request / no_response» at 0 ms). A core code (`TARGET_*`, `LOCAL_*`)
+     * or a lost network stays a server report.
+     */
+    fun startIsAppFailure(code: String, networkLost: Boolean): Boolean =
+        !networkLost && ReportChecks.coreCodeOf(code).isEmpty()
 
     /** The VPN permission: `vpn_denied` (the dialog was refused) or `vpn_revoked` (another VPN took it). */
     fun permission(value: String): AppError? = AppErrors.code("perm", value)?.let { AppError(AppErrors.STEP_PERMISSION, it) }
