@@ -12,12 +12,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import io.github.zapretkvn.core.designsystem.SettingsRow
 import io.github.zapretkvn.core.designsystem.SwitchRow
 import io.github.zapretkvn.core.designsystem.ZapretIcons
@@ -49,15 +49,15 @@ fun AdvancedScreen(
     val listState = rememberLazyListState()
     val spotlight = highlightWarp && !warpEntryHop
     LaunchedEffect(spotlight) {
-        if (spotlight) {
-            listState.animateScrollToItem(WARP_ITEM_INDEX)
-            delay(WARP_SPOTLIGHT_MS)
-            onWarpHighlightHandled()
-        }
+        if (spotlight) listState.animateScrollToItem(WARP_ITEM_INDEX)
     }
-    // Включили вход (или ушли с подсказки): подсветка своё отработала.
+    // Подсветка держится, пока переключатель не нажат или страница не закрыта: таймера нет (verify-project не допускает
+    // новых пауз в продакшене).
     LaunchedEffect(warpEntryHop, highlightWarp) {
         if (warpEntryHop && highlightWarp) onWarpHighlightHandled()
+    }
+    DisposableEffect(highlightWarp) {
+        onDispose { if (highlightWarp) onWarpHighlightHandled() }
     }
     SettingsPageList(contentPadding, tag = "settings-page-advanced", state = listState) {
         item(key = "pages", contentType = "rows") {
@@ -187,6 +187,3 @@ fun AdvancedScreen(
 
 /** Позиция строки WARP в списке «Дополнительно» (страницы, IPv6, WARP): к ней прокручивает подсказка. */
 internal const val WARP_ITEM_INDEX = 2
-
-/** Сколько подсветка держится, если переключатель так и не нажали. */
-private const val WARP_SPOTLIGHT_MS = 12_000L
