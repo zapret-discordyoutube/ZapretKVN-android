@@ -1,0 +1,75 @@
+diff --git a/protocol/naivecore/outbound.go b/protocol/naivecore/outbound.go
+index 57713d56..d79be6dc 100644
+--- a/protocol/naivecore/outbound.go
++++ b/protocol/naivecore/outbound.go
+@@ -269,6 +269,12 @@ const childProblemLines = 300
+ 
+ var childLevel = regexp.MustCompile(`^\[\d{4}/\d{6}\.\d+:([A-Z]+[0-9]*):`)
+ 
++// readinessProbeLine is what the client logs for the outbound's own readiness probe: waitListening opens a connection to the
++// client's port to see that it listens and closes it at once, and the client, which expects a SOCKS handshake, ends the
++// first connection ("Connection 0") with this error on every start. It is not a problem (core patch 0033 logged it as one:
++// seen in the live log of a real working session), so it stays at debug; the same error on any later connection is real.
++const readinessProbeLine = "Connection 0 closed: ERR_SOCKS_CONNECTION_FAILED"
++
+ // childLineIsProblem tells a line that reports a problem: the client's own WARNING, ERROR and FATAL lines, and the info line
+ // that says why a connection ended ("Connection 7 closed: ERR_CONNECTION_RESET").
+ func childLineIsProblem(line string) bool {
+@@ -298,6 +304,8 @@ func logChildOutput(reader io.Reader, secrets []string, info, warn, debug func(a
+ 			}
+ 		}
+ 		switch {
++		case strings.HasSuffix(line, readinessProbeLine):
++			// the outbound's own readiness probe, not a problem and not worth the startup budget
+ 		case childLineIsProblem(line):
+ 			if problems < childProblemLines {
+ 				problems++
+diff --git a/protocol/naivecore/output_test.go b/protocol/naivecore/output_test.go
+index 5b8cd785..42546653 100644
+--- a/protocol/naivecore/output_test.go
++++ b/protocol/naivecore/output_test.go
+@@ -116,6 +116,44 @@ func TestTheProblemLinesAreCappedPerProcess(t *testing.T) {
+ 	}
+ }
+ 
++// The lines of a REAL working session (captured from the app's runtime log on the emulator, a real key through the real
++// service, 2026-11-27; hostnames and addresses are masked): the readiness probe ends "Connection 0" with a SOCKS failure at
++// every start, the real connections end with OK.
++const realHealthySession = `[1127/171227.473113:INFO:net/tools/naive/naive_proxy_bin.cc:549] Listening on socks://127.0.0.1:35081
++[1127/171227.473240:INFO:net/tools/naive/naive_proxy_bin.cc:236] Proxying via HTTPS entry.example:443
++[1127/171227.490694:INFO:net/tools/naive/preamble_getter.cc:236] Preamble https://entry.example/
++[1127/171228.019769:INFO:net/tools/naive/naive_proxy.cc:288] Connection 0 closed: ERR_SOCKS_CONNECTION_FAILED
++[1127/171228.020610:INFO:net/tools/naive/naive_connection.cc:286] Connection 1 to 203.0.113.7:443 via HTTPS entry.example:443
++[1127/171228.327671:INFO:net/tools/naive/naive_connection.cc:286] Connection 2 to 203.0.113.7:443 via HTTPS entry.example:443
++[1127/171228.634690:INFO:net/tools/naive/naive_proxy.cc:288] Connection 2 closed: OK
++[1127/171228.635957:INFO:net/tools/naive/naive_proxy.cc:288] Connection 1 closed: OK
++`
++
++func TestTheReadinessProbeOfAHealthySessionIsNotAProblem(t *testing.T) {
++	got := run(realHealthySession, nil)
++	if len(got.warn) != 0 {
++		t.Fatalf("a healthy session must log no warning, got %v", got.warn)
++	}
++	if len(got.info) != 7 || len(got.debug) != 1 {
++		t.Fatalf("seven lines at info and the probe at debug; got info %d, debug %d", len(got.info), len(got.debug))
++	}
++	if !strings.Contains(got.debug[0], "Connection 0 closed: ERR_SOCKS_CONNECTION_FAILED") {
++		t.Fatalf("the demoted line is %q", got.debug[0])
++	}
++}
++
++func TestTheSameSocksFailureOnALaterConnectionIsStillAProblem(t *testing.T) {
++	line := "[1127/171300.000000:INFO:net/tools/naive/naive_proxy.cc:288] Connection 7 closed: ERR_SOCKS_CONNECTION_FAILED\n"
++	if got := run(line, nil); len(got.warn) != 1 {
++		t.Fatalf("a SOCKS failure of connection 7 is real, got warn %v", got.warn)
++	}
++	// the very first connection failing for a real reason (no readiness probe ran first) is still reported
++	real := "[1127/144200.451755:INFO:net/tools/naive/naive_proxy.cc:288] Connection 0 closed: ERR_PROXY_CONNECTION_FAILED\n"
++	if got := run(real, nil); len(got.warn) != 1 {
++		t.Fatalf("a proxy failure of connection 0 is real, got warn %v", got.warn)
++	}
++}
++
+ func TestLineLevels(t *testing.T) {
+ 	cases := map[string]bool{
+ 		"[1127/144200.451683:WARNING:a.cc:1] x":                             true,
