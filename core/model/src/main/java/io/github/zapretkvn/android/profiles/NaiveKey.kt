@@ -101,7 +101,7 @@ data class NaiveKey(
                 }
                 concurrency = parsed
             }
-            val name = runCatching { URLDecoder.decode(rawName.replace("+", "%2B"), Charsets.UTF_8) }.getOrDefault("")
+            val name = runCatching { URLDecoder.decode(rawName.replace("+", "%2B"), "UTF-8") }.getOrDefault("")
             if (name.isBlank() || name.length > 200 || name.any { it.code < 32 || it.code == 127 }) {
                 throw NaiveKeyException("В ключе NaiveProxy нет имени после #.")
             }
