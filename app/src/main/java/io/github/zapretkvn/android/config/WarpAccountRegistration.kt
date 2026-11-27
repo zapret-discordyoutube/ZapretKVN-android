@@ -42,7 +42,9 @@ object WarpAccountRegistration {
     private const val MAX_RESPONSE = 64 * 1024
 
     /** Адреса хоста API, замеченные в поле: пробуются после тех, что дал резолвер (цензор может закрыть один из них). */
-    val KNOWN_ADDRESSES = listOf("162.159.137.105", "162.159.138.105", "8.6.112.0", "8.47.69.0")
+    // Addresses of the API seen to answer (the service's host, 2026-11-27: the name then resolved only to 8.6.112.0 and 8.47.69.0 and both
+    // timed out there, while the API answered POST 200 on 104.19.192.1, 104.19.193.1 and 162.159.137.105): the ones that answered first.
+    val KNOWN_ADDRESSES = listOf("104.19.192.1", "162.159.137.105", "104.19.193.1", "162.159.138.105", "8.6.112.0", "8.47.69.0")
 
     private val HEADERS = linkedMapOf(
         "User-Agent" to "WARP for Android",
