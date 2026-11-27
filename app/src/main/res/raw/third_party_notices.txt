@@ -163,6 +163,20 @@ whose system emoji font has no flag glyphs.
 They are used only by the explicit QR import action. The Apache 2.0 license
 text is retained in the APK under `META-INF` together with the notices here.
 
+## Protocol logos on the «Добавить сервер» sheet
+
+The cards of the add-server sheet show the logo of the protocol's project. The files are converted to Android vector
+drawables (`core/designsystem/src/main/res/drawable/ic_proto_*.xml`) without redrawing.
+
+- Hysteria wordmark: <https://github.com/apernet/hysteria> (`logo.svg`), MIT License.
+- Xray logo, used for VLESS: <https://github.com/XTLS/Xray-docs-next> (`docs/public/logo-light.svg`), CC BY-SA 4.0.
+  Used unmodified; attribution is this notice.
+- WireGuard wordmark: <https://www.wireguard.com/img/wireguard.svg>. "WireGuard" and the WireGuard logo are registered
+  trademarks of Jason A. Donenfeld. The logo is shown only to name the protocol and implies no endorsement. No
+  license for the artwork was found; taken from the project's website by the owner's decision of 2026-11-27 and
+  removable at any time.
+- NaiveProxy, Trojan, TUIC, Shadowsocks, VMess and AmneziaWG have no logo in the app: their cards show a monogram.
+
 ## Gradle Wrapper
 
 - Source: <https://github.com/gradle/gradle>

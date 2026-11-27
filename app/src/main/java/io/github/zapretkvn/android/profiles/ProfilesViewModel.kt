@@ -53,6 +53,7 @@ class ProfilesViewModel internal constructor(
     // Импорт и обновление подписки
     fun importDocument(uri: Uri) = imports.importDocument(uri)
     fun importClipboard() = imports.importClipboard()
+    fun importLink(contents: String) = imports.importLink(contents)
     fun importQr(contents: String) = imports.importQr(contents)
     fun importQrImage(uri: Uri) = imports.importQrImage(uri)
     fun closeSubscriptionLinkPrompt() = imports.closeSubscriptionLinkPrompt()

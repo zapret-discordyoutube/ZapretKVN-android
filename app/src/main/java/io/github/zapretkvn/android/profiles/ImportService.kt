@@ -106,6 +106,14 @@ internal class ImportService(
         sourceDescription = sourceDescription,
     )
 
+    /** Ссылка или конфигурация, вставленная в карточке протокола на листе «Добавить сервер». */
+    fun linkRequest(contents: String) = ImportRequest(
+        raw = contents,
+        source = ProfileSource.Link,
+        suggestedName = "Профиль из ссылки",
+        sourceDescription = "Ссылка",
+    )
+
     suspend fun urlRequest(url: String, identity: SubscriptionIdentityInput): ImportRequest =
         requestFor(resolveSubscription(url, identity))
 

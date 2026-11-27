@@ -1,5 +1,9 @@
 package io.github.zapretkvn.android.ui.servers
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -10,6 +14,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -30,7 +35,6 @@ import io.github.zapretkvn.android.ui.SubscriptionAutoUpdate
 import io.github.zapretkvn.android.ui.nav.AppTab
 import io.github.zapretkvn.android.vpn.RuntimeSelectorGroup
 import io.github.zapretkvn.android.vpn.VpnConnectionState
-import io.github.zapretkvn.core.designsystem.SettingsRow
 import io.github.zapretkvn.core.designsystem.Spacing
 import io.github.zapretkvn.core.designsystem.ZapretIcons
 import io.github.zapretkvn.core.designsystem.ZapretTopBar
@@ -51,6 +55,7 @@ private fun <T> Flow<T>.throttleLatest(periodMillis: Long): Flow<T> =
 /** Выбор сервера, ждущий открытия «сервер-пикера» профиля (офлайн-выбор). */
 private data class PendingSelect(val profileId: String, val groupTag: String, val serverTag: String)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValues) {
     val profiles = deps.profiles
@@ -156,16 +161,46 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             onCompact = { enabled -> deps.profiles.settings.setCompactServerRows(enabled) },
         )
     }
-    ServersScreen(
-        ui = ui,
-        busy = state.busy,
-        importer = importer,
-        actions = actions,
-        contentPadding = padding,
-        scrollToTop = nav.navigator.reselections(AppTab.Servers),
-        savedSort = ServerSort.entries.firstOrNull { it.name == state.settings.serverSort } ?: ServerSort.Subscription,
-        compactRows = state.settings.compactServerRows,
-    )
+    var addSheetOpen by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
+        ServersScreen(
+            ui = ui,
+            busy = state.busy,
+            importer = importer,
+            actions = actions,
+            contentPadding = padding,
+            scrollToTop = nav.navigator.reselections(AppTab.Servers),
+            savedSort = ServerSort.entries.firstOrNull { it.name == state.settings.serverSort } ?: ServerSort.Subscription,
+            compactRows = state.settings.compactServerRows,
+        )
+        // Always on screen: with hundreds of servers the key or subscription used to be reachable only through
+        // «Профили» → «Добавить» (owner report 2026-11-27, "very hard to paste a regular key or subscription").
+        run {
+            ExtendedFloatingActionButton(
+                onClick = { addSheetOpen = true },
+                icon = { Icon(ZapretIcons.Add, contentDescription = null) },
+                text = { Text("Добавить") },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(padding)
+                    .padding(Spacing.l)
+                    .testTag("servers-add"),
+            )
+        }
+    }
+    if (addSheetOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { addSheetOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            AddServerSheet(
+                enabled = !state.busy,
+                importer = importer,
+                onLink = deps.profiles::importLink,
+                onChosen = { addSheetOpen = false },
+            )
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -235,10 +270,14 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
     }
 
     if (addSheetOpen) {
-        ModalBottomSheet(onDismissRequest = { addSheetOpen = false }) {
-            AddSourceSheet(
+        ModalBottomSheet(
+            onDismissRequest = { addSheetOpen = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            AddServerSheet(
                 enabled = !state.busy,
                 importer = importer,
+                onLink = deps.profiles::importLink,
                 onChosen = { addSheetOpen = false },
             )
         }
@@ -281,43 +320,3 @@ fun ProfilesRoute(deps: AppDependencies, nav: AppNavigation) {
     }
 }
 
-/** Шторка «Откуда добавить?»: четыре источника. */
-@Composable
-private fun AddSourceSheet(enabled: Boolean, importer: ProfileImporter, onChosen: () -> Unit) {
-    Column(modifier = Modifier.navigationBarsPadding().padding(bottom = Spacing.l)) {
-        Text(
-            "Откуда добавить?",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = Spacing.l, vertical = Spacing.s),
-        )
-        SourceRow("Файл", "JSON или WireGuard/AWG .conf", enabled, onChosen, importer.pickFile)
-        SourceRow(
-            "Буфер", "Ссылка, подписка или конфигурация из буфера обмена", enabled, onChosen,
-            importer.pasteClipboard,
-        )
-        SourceRow("Ссылка", "Адрес подписки по HTTPS", enabled, onChosen, importer.askUrl)
-        SourceRow("QR", "Камера или картинка из галереи", enabled, onChosen, importer.askQr)
-    }
-}
-
-@Composable
-private fun SourceRow(
-    title: String,
-    subtitle: String,
-    enabled: Boolean,
-    onChosen: () -> Unit,
-    action: () -> Unit,
-) {
-    SettingsRow(
-        title = title,
-        subtitle = subtitle,
-        onClick = if (enabled) {
-            {
-                onChosen()
-                action()
-            }
-        } else {
-            null
-        },
-    )
-}

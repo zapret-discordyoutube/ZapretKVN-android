@@ -40,6 +40,16 @@ internal class ImportController(
         }
     }
 
+    /** Текст из карточки протокола: подписка по ссылке всё так же идёт через форму, остальное — в предпросмотр. */
+    fun importLink(contents: String) = operations.run {
+        val value = contents.trim()
+        if (service.isSubscriptionLink(value)) {
+            promptSubscriptionLink(value, SubscriptionLinkOrigin.Clipboard)
+        } else {
+            preview(service.linkRequest(value))
+        }
+    }
+
     fun importQr(contents: String) = operations.run {
         handleQrContents(contents, "QR-код")
     }
