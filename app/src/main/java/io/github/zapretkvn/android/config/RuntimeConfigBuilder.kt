@@ -124,6 +124,12 @@ data class RuntimeConfigOptions(
      * правка только в runtime-копии; WARP только вход к серверу, не выход.
      */
     val entryHop: EntryHopOptions? = null,
+    /**
+     * Путь к родному клиенту NaiveProxy (`libnaive.so` из каталога нативных библиотек приложения). Только runtime-копия: в
+     * сохранённый профиль путь не попадает, чтобы профиль переживал переустановку и перенос. Null означает, что клиента
+     * нет; профиль с naive-сервером тогда не запускается с понятной причиной.
+     */
+    val naiveExecutablePath: String? = null,
 )
 
 /** [profilePath] закрытый файл аккаунта WARP в каталоге приложения: перезапуск берёт его, а не регистрирует устройство заново. */
@@ -323,6 +329,14 @@ object RuntimeConfigBuilder {
             } else {
                 runtimeEndpoints = applyBootstrapResolver(checkNotNull(runtimeEndpoints), overlay)
             }
+        }
+        if (runtimeOutbounds?.any { (it as? JsonObject)?.string("type") == NAIVE_TYPE } == true) {
+            val path = options.naiveExecutablePath
+                ?: return invalid(
+                    "В профиле есть сервер NaiveProxy, а встроенного клиента naive в этой сборке приложения нет. " +
+                        "Переустановите приложение.",
+                )
+            runtimeOutbounds = applyNaiveExecutable(checkNotNull(runtimeOutbounds), path)
         }
         phase("проверки и подготовка серверов")
         val slotRoutes = if (managed && selectedProxyTag != null && options.slotRoutes.isNotEmpty()) {
@@ -1267,6 +1281,15 @@ object RuntimeConfigBuilder {
      * блок utls (в том числе enabled=false) остаётся решением автора JSON. Список
      * типов закрытый: QUIC-протоколы и транспорт quic uTLS исполнить не могут.
      */
+    /** The stock naive client's path goes into the runtime copy only (see [RuntimeConfigOptions.naiveExecutablePath]). */
+    private fun applyNaiveExecutable(outbounds: JsonArray, path: String): JsonArray = JsonArray(
+        outbounds.map { element ->
+            val outbound = element as? JsonObject ?: return@map element
+            if (outbound.string("type") != NAIVE_TYPE) return@map element
+            JsonObject(outbound + ("executable_path" to JsonPrimitive(path)))
+        },
+    )
+
     private fun applyDefaultUtls(outbounds: JsonArray): JsonArray = JsonArray(
         outbounds.map { element ->
             val outbound = element as? JsonObject ?: return@map element
@@ -1326,6 +1349,8 @@ object RuntimeConfigBuilder {
     private fun isIpv4Prefix(value: String): Boolean = ':' !in value && '/' in value
     private fun isIpv6Prefix(value: String): Boolean = ':' in value && '/' in value
     private fun invalid(message: String) = RuntimeConfigResult.Invalid(message)
+
+    private const val NAIVE_TYPE = "naive"
 
     private val PACKAGE_FIELDS = setOf("include_package", "exclude_package")
     private val ANDROID_PACKAGE = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")

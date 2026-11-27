@@ -17,6 +17,7 @@ val corePatchSha256 = coreProperties.getProperty("CORE_PATCH_SHA256")
 val hysteriaCoreTag = coreProperties.getProperty("HYSTERIA_CORE_TAG")
 val hysteriaCoreCommit = coreProperties.getProperty("HYSTERIA_CORE_COMMIT")
 val xrayCoreModule = coreProperties.getProperty("XRAY_CORE_MODULE")
+val naiveTag = coreProperties.getProperty("NAIVE_TAG")
 val amneziaCoreModule = coreProperties.getProperty("ANDROID_AMNEZIAWG_GO")
 val libboxAar = layout.projectDirectory.file("libs/libbox.aar").asFile
 val appVersionCode = providers.gradleProperty("zapretVersionCode")
@@ -102,6 +103,7 @@ android {
         buildConfigField("String", "HYSTERIA_CORE_COMMIT", "\"$hysteriaCoreCommit\"")
         // Версии ядер для отчётов о подключениях (schema 2).
         buildConfigField("String", "XRAY_CORE_MODULE", "\"$xrayCoreModule\"")
+        buildConfigField("String", "NAIVE_TAG", "\"$naiveTag\"")
         buildConfigField("String", "AMNEZIA_CORE_MODULE", "\"$amneziaCoreModule\"")
     }
 
@@ -171,6 +173,20 @@ android {
         compose = true
     }
 
+    sourceSets {
+        // The stock NaiveProxy client (scripts/ensure-naive.sh): an ELF executable named libnaive.so per ABI.
+        getByName("main").jniLibs.srcDir(rootProject.layout.projectDirectory.dir("core-build/naive"))
+    }
+
+    packaging {
+        jniLibs {
+            // naive is EXECUTED, not loaded: Android 10+ only lets an app exec files from its native library directory, and
+            // that directory holds real files only when the libraries are extracted at install time. Owner decision 2026-11-27.
+            useLegacyPackaging = true
+            // Never let a strip step touch the pinned upstream binary.
+            keepDebugSymbols += "**/libnaive.so"
+        }
+    }
 }
 
 dependencies {
@@ -260,6 +276,40 @@ val ensurePinnedLibbox by tasks.registering(EnsurePinnedLibboxTask::class) {
     outputs.upToDateWhen { false }
 }
 
+abstract class EnsureNaiveTask : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @get:Internal
+    abstract val repositoryRoot: DirectoryProperty
+
+    @TaskAction
+    fun ensure() {
+        val root = repositoryRoot.get().asFile
+        val script = root.resolve("scripts/ensure-naive.sh")
+        check(script.isFile) { "Missing $script" }
+        val result = execOperations.exec {
+            workingDir(root)
+            commandLine("bash", script.absolutePath, root.absolutePath)
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            throw GradleException(
+                "The pinned stock NaiveProxy client (libnaive.so) could not be verified; see the messages above. " +
+                    "A build without it, or with an unverified copy, is refused.",
+            )
+        }
+    }
+}
+
+val ensureNaive by tasks.registering(EnsureNaiveTask::class) {
+    group = "verification"
+    description = "Downloads and verifies the pinned stock naive client for every ABI (signer and SHA-256 pins)."
+    repositoryRoot.set(rootProject.layout.projectDirectory)
+    outputs.upToDateWhen { false }
+}
+
 tasks.named("preBuild").configure {
     dependsOn(ensurePinnedLibbox)
+    dependsOn(ensureNaive)
 }

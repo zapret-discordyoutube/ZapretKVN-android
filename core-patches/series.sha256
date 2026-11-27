@@ -26,3 +26,4 @@ b416fea3adc6dff72d8c654bf8dc35be51dca8a02b3420ee4687ff5e62243ab1  core-patches/0
 2983935a0d3d911ea5d9be448c0533ea3d27404fe5a01dc193bc4a149ff25170  core-patches/0026-warp-masque-fallback.patch
 a2e5b495d09a0c1b26f2d3be4effc096423a688e442e66019bd54247e5495cd0  core-patches/0027-warp-masque-timing.patch
 30ae46bc1eff896d3297eb86234542b5e25804ecebe3c7bd2c0f3a4b8630894f  core-patches/0028-warp-masque-sni.patch
+dbce3a9d339568044ea4c93e2ccedd9b7896b5e2fad446bb35c7944d7bbe465b  core-patches/0029-naive-stock-client.patch

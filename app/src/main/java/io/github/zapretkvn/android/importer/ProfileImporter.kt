@@ -12,6 +12,8 @@ import com.google.zxing.multi.qrcode.QRCodeMultiReader
 import io.github.zapretkvn.android.config.JsonConfig
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ManagedServer
+import io.github.zapretkvn.android.profiles.NaiveKey
+import io.github.zapretkvn.android.profiles.NaiveKeyException
 import io.github.zapretkvn.android.profiles.ProfileSource
 import io.github.zapretkvn.android.profiles.ProtocolOutboundBuilders
 import io.github.zapretkvn.android.profiles.TlsSettings
@@ -343,7 +345,7 @@ object ImportParser {
         isWhitespace() || isISOControl() || this in LINK_BOUNDARIES
 
     private const val SUPPORTED_MESSAGE =
-        "Поддерживаются JSON, WireGuard/AWG .conf, VLESS, VMess, Trojan, Shadowsocks, Hysteria2 и TUIC."
+        "Поддерживаются JSON, WireGuard/AWG .conf, VLESS, VMess, Trojan, Shadowsocks, Hysteria2, TUIC и NaiveProxy."
     private val SUPPORTED_SCHEME_NAMES = setOf(
         "vless",
         "vmess",
@@ -352,6 +354,7 @@ object ImportParser {
         "hysteria2",
         "hy2",
         "tuic",
+        "naive+https",
     )
     private val NON_CONFIG_SCHEMES = setOf("http", "https", "tg")
     private val URI_SCHEME_PATTERN = Regex("(?i)\\b([a-z][a-z0-9+.-]*)://")
@@ -388,12 +391,26 @@ object ShareLinkParser {
             link.startsWith("hysteria2://", ignoreCase = true) ||
                 link.startsWith("hy2://", ignoreCase = true) -> parseHysteria2(link, index)
             link.startsWith("tuic://", ignoreCase = true) -> parseTuic(link, index)
+            link.startsWith("naive+https://", ignoreCase = true) -> parseNaive(link)
             else -> throw ImportException("Неподдерживаемый тип ссылки.")
         }
     } catch (error: ImportException) {
         throw error
     } catch (error: Exception) {
         throw ImportException("Не удалось разобрать ссылку №${index + 1}.", error)
+    }
+
+    /**
+     * Ключ NaiveProxy бота (владелец решения 2026-11-27: родной клиент naive, не sing-box). Секрет не попадает в текст ошибок.
+     * Предупреждение о числе соединений выше рекомендованного показывается в preview, ключ исполняется как выдан.
+     */
+    private fun parseNaive(link: String): ManagedServer {
+        val key = try {
+            NaiveKey.parse(link)
+        } catch (error: NaiveKeyException) {
+            throw ImportException(error.message ?: "Неверный ключ NaiveProxy.")
+        }
+        return ProtocolOutboundBuilders.naive(key).withWarnings(listOfNotNull(key.concurrencyWarning))
     }
 
     private fun parseVless(link: String, index: Int): ManagedServer {

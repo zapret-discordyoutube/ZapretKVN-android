@@ -567,6 +567,10 @@ internal class SessionStarter(
                     serverIpv6First = serverIpv6First,
                     entryHop = EntryHopOptions(java.io.File(service.filesDir, "warp-entry-profile.json").absolutePath)
                         .takeIf { hopOn },
+                    // The stock naive client ships as libnaive.so in the native library directory (the only place an app
+                    // may exec from); a build without it leaves null and a profile with a naive server is refused clearly.
+                    naiveExecutablePath = java.io.File(service.applicationInfo.nativeLibraryDir, "libnaive.so")
+                        .takeIf { it.isFile && it.canExecute() }?.absolutePath,
                     dnsOverride = uiSettings.dnsOverride,
                     bootstrapHost = preparedBootstrap.overlay,
                     vpnHiding = vpnHiding,

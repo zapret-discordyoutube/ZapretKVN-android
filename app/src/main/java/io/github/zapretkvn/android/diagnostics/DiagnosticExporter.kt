@@ -161,6 +161,7 @@ class DiagnosticExporter(
                             put("revision", BuildConfig.HYSTERIA_CORE_COMMIT)
                         },
                     )
+                    put("naive", BuildConfig.NAIVE_TAG)
                 },
             )
             put(

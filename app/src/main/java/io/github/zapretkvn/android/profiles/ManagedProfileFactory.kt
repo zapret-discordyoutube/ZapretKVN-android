@@ -181,6 +181,24 @@ object ProtocolOutboundBuilders {
         ).toSingBoxJson(),
     )
 
+    /**
+     * Ключ NaiveProxy ([NaiveKey]). Секрет остаётся только в outbound (профиль в защищённом хранилище приложения); в
+     * идентичности его нет, поэтому смена secret обновляет тот же сервер при обновлении подписки, а два клиента на одном
+     * сервере остаются разными серверами.
+     */
+    fun naive(key: NaiveKey): ManagedServer = ManagedServer(
+        displayName = key.name,
+        identityKey = identity("naive", key.host, key.port, null) + "|client:" + key.clientId,
+        refreshIdentityKey = identity("naive", key.host, key.port, null) + "|client:" + key.clientId,
+        outbound = OutboundSpec.Naive(
+            server = key.host,
+            serverPort = key.port,
+            username = key.clientId,
+            password = key.secret,
+            insecureConcurrency = key.concurrency,
+        ).toSingBoxJson(),
+    )
+
     private fun identity(
         type: String,
         server: String,

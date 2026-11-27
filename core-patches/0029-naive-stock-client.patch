@@ -1,0 +1,523 @@
+diff --git a/include/naive_outbound.go b/include/naive_outbound.go
+index d15d0450..4cdb328b 100644
+--- a/include/naive_outbound.go
++++ b/include/naive_outbound.go
+@@ -4,9 +4,11 @@ package include
+ 
+ import (
+ 	"github.com/sagernet/sing-box/adapter/outbound"
+-	"github.com/sagernet/sing-box/protocol/naive"
++	"github.com/sagernet/sing-box/protocol/naivecore"
+ )
+ 
++// The Android libbox is built with the cronet outbound tag, but a NaiveProxy server runs on the STOCK naive client as a
++// child process behind a loopback SOCKS5 port (owner decision 2026-11-27), never on sing-box's own cronet outbound.
+ func registerNaiveOutbound(registry *outbound.Registry) {
+-	naive.RegisterOutbound(registry)
++	naivecore.RegisterOutbound(registry)
+ }
+diff --git a/include/naive_outbound_stub.go b/include/naive_outbound_stub.go
+index cf892091..611d5bf4 100644
+--- a/include/naive_outbound_stub.go
++++ b/include/naive_outbound_stub.go
+@@ -3,18 +3,12 @@
+ package include
+ 
+ import (
+-	"context"
+-
+-	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/adapter/outbound"
+-	C "github.com/sagernet/sing-box/constant"
+-	"github.com/sagernet/sing-box/log"
+-	"github.com/sagernet/sing-box/option"
+-	E "github.com/sagernet/sing/common/exceptions"
++	"github.com/sagernet/sing-box/protocol/naivecore"
+ )
+ 
++// The cronet-based outbound is not part of this build. A NaiveProxy server runs on the STOCK naive client as a child
++// process behind a loopback SOCKS5 port (owner decision 2026-11-27), see protocol/naivecore.
+ func registerNaiveOutbound(registry *outbound.Registry) {
+-	outbound.Register[option.NaiveOutboundOptions](registry, C.TypeNaive, func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
+-		return nil, E.New(`naive outbound is not included in this build, rebuild with -tags with_naive_outbound`)
+-	})
++	naivecore.RegisterOutbound(registry)
+ }
+diff --git a/option/naive.go b/option/naive.go
+index eee3c959..1f9d90bb 100644
+--- a/option/naive.go
++++ b/option/naive.go
+@@ -17,6 +17,9 @@ type NaiveInboundOptions struct {
+ type NaiveOutboundOptions struct {
+ 	DialerOptions
+ 	ServerOptions
++	// ExecutablePath is the stock naive client (libnaive.so from the app's native library directory). The app fills it
++	// at runtime; it is never part of a stored profile.
++	ExecutablePath string `json:"executable_path,omitempty"`
+ 	Username                 string                   `json:"username,omitempty"`
+ 	Password                 string                   `json:"password,omitempty"`
+ 	InsecureConcurrency      int                      `json:"insecure_concurrency,omitempty"`
+diff --git a/protocol/naivecore/outbound.go b/protocol/naivecore/outbound.go
+new file mode 100644
+index 00000000..45f8e9d2
+--- /dev/null
++++ b/protocol/naivecore/outbound.go
+@@ -0,0 +1,322 @@
++// Package naivecore runs the STOCK NaiveProxy client (klzgrad/naiveproxy, the signed `naive` build shipped with the app
++// as libnaive.so) as a child process and dials through its loopback SOCKS5 listener (owner decision 2026-11-27: use the
++// stock core, not sing-box's own cronet outbound). sing-box keeps routing, DNS and the TUN; naive owns only the protocol:
++// TLS to the server, padding, HTTP/2 CONNECT tunnelling.
++//
++// The process is started on the first dial and lives as long as the outbound. A child process cannot call
++// VpnService.protect, so its sockets could re-enter the TUN (the app's own UID is routed through it during the health
++// check). Therefore naive never connects to the server itself: it connects to a loopback forwarder of this outbound
++// (`--host-resolver-rules "MAP <server> 127.0.0.1:<port>"`, TLS stays end to end between naive and the server), and the
++// forwarder dials the real server with sing-box's own dialer: protected sockets, the profile's detour (the WARP entry hop)
++// and sing-box's DNS all apply.
++package naivecore
++
++import (
++	"bufio"
++	"context"
++	"crypto/rand"
++	"encoding/hex"
++	"net"
++	"os"
++	"os/exec"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/common/dialer"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	singbufio "github.com/sagernet/sing/common/bufio"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/protocol/socks"
++)
++
++const readyTimeout = 15 * time.Second
++
++func RegisterOutbound(registry *outbound.Registry) {
++	outbound.Register[option.NaiveOutboundOptions](registry, C.TypeNaive, NewOutbound)
++}
++
++var _ adapter.Outbound = (*Outbound)(nil)
++
++type Outbound struct {
++	outbound.Adapter
++	ctx     context.Context
++	logger  log.ContextLogger
++	options option.NaiveOutboundOptions
++	dialer  N.Dialer
++
++	mu     sync.Mutex
++	proc   *process
++	closed bool
++}
++
++type process struct {
++	cmd       *exec.Cmd
++	client    *socks.Client
++	done      chan struct{}
++	forwarder net.Listener
++}
++
++func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions) (adapter.Outbound, error) {
++	if err := validate(options); err != nil {
++		return nil, err
++	}
++	serverDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
++	if err != nil {
++		return nil, err
++	}
++	return newOutbound(ctx, logger, tag, options, serverDialer), nil
++}
++
++func newOutbound(ctx context.Context, logger log.ContextLogger, tag string, options option.NaiveOutboundOptions, serverDialer N.Dialer) *Outbound {
++	return &Outbound{
++		// The stock client's SOCKS5 listener carries TCP only (CONNECT); UDP is not available through it.
++		Adapter: outbound.NewAdapterWithDialerOptions(C.TypeNaive, tag, []string{N.NetworkTCP}, options.DialerOptions),
++		ctx:     ctx,
++		logger:  logger,
++		options: options,
++		dialer:  serverDialer,
++	}
++}
++
++// validate refuses every option the stock client cannot honour, instead of dropping it silently.
++func validate(options option.NaiveOutboundOptions) error {
++	if options.Server == "" || options.ServerPort == 0 {
++		return E.New("naive: server and server_port are required")
++	}
++	if options.Username == "" || options.Password == "" {
++		return E.New("naive: username and password are required")
++	}
++	if options.InsecureConcurrency < 0 || options.InsecureConcurrency > 99 {
++		return E.New("naive: insecure_concurrency must be 1..99")
++	}
++	if options.QUIC {
++		return E.New("naive: quic is not supported by the stock client's https proxy mode")
++	}
++	if options.UDPOverTCP != nil && options.UDPOverTCP.Enabled {
++		return E.New("naive: udp_over_tcp is not supported by the stock client")
++	}
++	if options.TLS != nil {
++		return E.New("naive: tls options are owned by the stock client (Chromium) and cannot be set")
++	}
++	if len(options.ExtraHeaders) > 0 {
++		return E.New("naive: extra_headers are not supported")
++	}
++	return nil
++}
++
++func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	if stage == adapter.StartStateInitialize {
++		scope.Add(o.Close)
++	}
++	return nil
++}
++
++func (o *Outbound) Close() error {
++	o.mu.Lock()
++	defer o.mu.Unlock()
++	o.closed = true
++	if o.proc != nil {
++		o.proc.stop()
++		o.proc = nil
++	}
++	return nil
++}
++
++func (o *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	if N.NetworkName(network) != N.NetworkTCP {
++		return nil, E.New("naive carries TCP only, not ", network)
++	}
++	client, err := o.ensure(ctx)
++	if err != nil {
++		return nil, err
++	}
++	ctx, metadata := adapter.ExtendContext(ctx)
++	metadata.Outbound = o.Tag()
++	metadata.Destination = destination
++	o.logger.InfoContext(ctx, "outbound connection to ", destination)
++	return client.DialContext(ctx, N.NetworkTCP, destination)
++}
++
++func (o *Outbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	return nil, E.New("naive carries TCP only")
++}
++
++// ensure starts the child process when it is not running (first dial, or after it died) and returns the SOCKS5 client.
++func (o *Outbound) ensure(ctx context.Context) (*socks.Client, error) {
++	o.mu.Lock()
++	defer o.mu.Unlock()
++	if o.closed {
++		return nil, os.ErrClosed
++	}
++	if o.proc != nil {
++		select {
++		case <-o.proc.done:
++			o.logger.Warn("naive process exited, starting it again")
++			o.proc = nil
++		default:
++			return o.proc.client, nil
++		}
++	}
++	started, err := o.start(ctx)
++	if err != nil {
++		return nil, err
++	}
++	o.proc = started
++	return started.client, nil
++}
++
++func randomHex(n int) (string, error) {
++	buf := make([]byte, n)
++	if _, err := rand.Read(buf); err != nil {
++		return "", err
++	}
++	return hex.EncodeToString(buf), nil
++}
++
++func freeLoopbackPort() (int, error) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		return 0, err
++	}
++	defer listener.Close()
++	return listener.Addr().(*net.TCPAddr).Port, nil
++}
++
++func (o *Outbound) start(ctx context.Context) (*process, error) {
++	exe := o.options.ExecutablePath
++	if exe == "" {
++		return nil, E.New("naive: executable_path is not set (the app fills it from its native library directory)")
++	}
++	if _, err := os.Stat(exe); err != nil {
++		return nil, E.Cause(err, "naive: executable")
++	}
++	port, err := freeLoopbackPort()
++	if err != nil {
++		return nil, E.Cause(err, "naive: pick a local port")
++	}
++	user, err := randomHex(8)
++	if err != nil {
++		return nil, err
++	}
++	pass, err := randomHex(16)
++	if err != nil {
++		return nil, err
++	}
++	forwarder, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		return nil, E.Cause(err, "naive: server forwarder")
++	}
++	forwardPort := forwarder.Addr().(*net.TCPAddr).Port
++	proxy := "https://" + o.options.Username + ":" + o.options.Password + "@" +
++		net.JoinHostPort(o.options.Server, strconv.Itoa(int(o.options.ServerPort)))
++	args := []string{
++		"--listen=socks://" + user + ":" + pass + "@127.0.0.1:" + strconv.Itoa(port),
++		"--proxy=" + proxy,
++		// The name stays in the URL (SNI and the certificate check); only the address and port it connects to move.
++		"--host-resolver-rules=MAP " + o.options.Server + " 127.0.0.1:" + strconv.Itoa(forwardPort),
++		"--log=",
++	}
++	if o.options.InsecureConcurrency > 1 {
++		args = append(args, "--insecure-concurrency="+strconv.Itoa(o.options.InsecureConcurrency))
++	}
++	cmd := exec.Command(exe, args...)
++	stderr, err := cmd.StderrPipe()
++	if err != nil {
++		_ = forwarder.Close()
++		return nil, err
++	}
++	cmd.Stdout = cmd.Stderr
++	if err := cmd.Start(); err != nil {
++		_ = forwarder.Close()
++		return nil, E.Cause(err, "naive: start")
++	}
++	started := &process{cmd: cmd, done: make(chan struct{}), forwarder: forwarder}
++	go o.serveForwarder(forwarder)
++	secrets := []string{o.options.Username, o.options.Password, user, pass}
++	go func() {
++		scanner := bufio.NewScanner(stderr)
++		for scanner.Scan() {
++			line := scanner.Text()
++			for _, secret := range secrets {
++				if len(secret) >= 4 {
++					line = strings.ReplaceAll(line, secret, "<hidden>")
++				}
++			}
++			o.logger.Debug("naive: ", line)
++		}
++	}()
++	go func() {
++		_ = cmd.Wait()
++		close(started.done)
++	}()
++	if err := waitListening(ctx, port, started.done); err != nil {
++		started.stop()
++		return nil, err
++	}
++	started.client = socks.NewClient(N.SystemDialer, M.ParseSocksaddrHostPort("127.0.0.1", uint16(port)), socks.Version5, user, pass)
++	o.logger.Info("naive: stock client started on a loopback port")
++	return started, nil
++}
++
++// serveForwarder hands every connection naive opens to "the server" to sing-box's own dialer for the real server.
++func (o *Outbound) serveForwarder(listener net.Listener) {
++	destination := M.ParseSocksaddrHostPort(o.options.Server, o.options.ServerPort)
++	for {
++		local, err := listener.Accept()
++		if err != nil {
++			return
++		}
++		go func() {
++			defer local.Close()
++			upstream, err := o.dialer.DialContext(o.ctx, N.NetworkTCP, destination)
++			if err != nil {
++				o.logger.Warn("naive: cannot reach the server: ", err)
++				return
++			}
++			defer upstream.Close()
++			_ = singbufio.CopyConn(o.ctx, local, upstream)
++		}()
++	}
++}
++
++func waitListening(ctx context.Context, port int, done <-chan struct{}) error {
++	deadline := time.Now().Add(readyTimeout)
++	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
++	for time.Now().Before(deadline) {
++		select {
++		case <-done:
++			return E.New("naive: the process exited before it opened its local port")
++		case <-ctx.Done():
++			return ctx.Err()
++		default:
++		}
++		conn, err := net.DialTimeout("tcp", address, 150*time.Millisecond)
++		if err == nil {
++			_ = conn.Close()
++			return nil
++		}
++		time.Sleep(50 * time.Millisecond)
++	}
++	return E.New("naive: the local port did not open in time")
++}
++
++func (p *process) stop() {
++	if p.forwarder != nil {
++		_ = p.forwarder.Close()
++	}
++	if p.cmd.Process != nil {
++		_ = p.cmd.Process.Kill()
++	}
++	select {
++	case <-p.done:
++	case <-time.After(2 * time.Second):
++	}
++}
+diff --git a/protocol/naivecore/outbound_test.go b/protocol/naivecore/outbound_test.go
+new file mode 100644
+index 00000000..887b328a
+--- /dev/null
++++ b/protocol/naivecore/outbound_test.go
+@@ -0,0 +1,130 @@
++package naivecore
++
++import (
++	"context"
++	"crypto/tls"
++	"io"
++	"net/url"
++	"os"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++func realOptions(t *testing.T) option.NaiveOutboundOptions {
++	t.Helper()
++	exe := os.Getenv("NAIVE_EXECUTABLE")
++	keyFile := os.Getenv("NAIVE_TEST_KEY_FILE")
++	if exe == "" || keyFile == "" {
++		t.Skip("no stock naive executable or real test key here (NAIVE_EXECUTABLE, NAIVE_TEST_KEY_FILE)")
++	}
++	raw, err := os.ReadFile(keyFile)
++	if err != nil {
++		t.Skip("cannot read the real test key")
++	}
++	line := strings.TrimSpace(string(raw))
++	parsed, err := url.Parse(strings.Replace(line, "naive+https://", "https://", 1))
++	if err != nil {
++		t.Fatalf("test key is not a URL")
++	}
++	password, _ := parsed.User.Password()
++	port, _ := strconv.Atoi(parsed.Port())
++	if port == 0 {
++		port = 443
++	}
++	options := option.NaiveOutboundOptions{ExecutablePath: exe, Username: parsed.User.Username(), Password: password}
++	options.Server = parsed.Hostname()
++	options.ServerPort = uint16(port)
++	if v := parsed.Query().Get("insecure-concurrency"); v != "" {
++		options.InsecureConcurrency, _ = strconv.Atoi(v)
++	}
++	return options
++}
++
++func TestValidateRefusesWhatTheStockClientCannotHonour(t *testing.T) {
++	base := option.NaiveOutboundOptions{Username: "u", Password: "p"}
++	base.Server = "h.example.com"
++	base.ServerPort = 443
++	if err := validate(base); err != nil {
++		t.Fatalf("a plain key must be accepted: %v", err)
++	}
++	cases := map[string]func(*option.NaiveOutboundOptions){
++		"quic": func(o *option.NaiveOutboundOptions) { o.QUIC = true },
++		"tls": func(o *option.NaiveOutboundOptions) {
++			o.TLS = &option.OutboundTLSOptions{Enabled: true, Insecure: true}
++		},
++		"udp_over_tcp":   func(o *option.NaiveOutboundOptions) { o.UDPOverTCP = &option.UDPOverTCPOptions{Enabled: true} },
++		"no credentials": func(o *option.NaiveOutboundOptions) { o.Username = "" },
++		"concurrency":    func(o *option.NaiveOutboundOptions) { o.InsecureConcurrency = 100 },
++		"no server":      func(o *option.NaiveOutboundOptions) { o.Server = "" },
++	}
++	for name, mutate := range cases {
++		options := base
++		mutate(&options)
++		if err := validate(options); err == nil {
++			t.Errorf("%s: must be refused, not dropped silently", name)
++		}
++	}
++}
++
++func TestDialWithoutAnExecutableFailsClearly(t *testing.T) {
++	options := option.NaiveOutboundOptions{Username: "u", Password: "p"}
++	options.Server = "h.example.com"
++	options.ServerPort = 443
++	out := newOutbound(context.Background(), log.NewNOPFactory().Logger(), "naive", options, N.SystemDialer)
++	defer out.Close()
++	_, err := out.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("cp.cloudflare.com", 443))
++	if err == nil || !strings.Contains(err.Error(), "executable_path") {
++		t.Fatalf("want an executable_path error, got %v", err)
++	}
++}
++
++// The real thing: the stock client and a real key bring a real HTTPS answer through the outbound.
++func TestRealKeyCarriesRealHTTPS(t *testing.T) {
++	options := realOptions(t)
++	outbound := newOutbound(context.Background(), log.NewNOPFactory().Logger(), "naive", options, N.SystemDialer)
++	out := adapter.Outbound(outbound)
++	defer outbound.Close()
++	var last error
++	// A fresh key needs up to a minute before its node accepts it.
++	for deadline := time.Now().Add(90 * time.Second); time.Now().Before(deadline); time.Sleep(3 * time.Second) {
++		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
++		conn, err := out.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddrHostPort("cp.cloudflare.com", 443))
++		if err != nil {
++			cancel()
++			last = err
++			continue
++		}
++		secure := tls.Client(conn, &tls.Config{ServerName: "cp.cloudflare.com"})
++		_ = secure.SetDeadline(time.Now().Add(20 * time.Second))
++		_, err = io.WriteString(secure, "HEAD /generate_204 HTTP/1.1\r\nHost: cp.cloudflare.com\r\nConnection: close\r\n\r\n")
++		head := make([]byte, 12)
++		if err == nil {
++			_, err = io.ReadFull(secure, head)
++		}
++		_ = secure.Close()
++		cancel()
++		if err == nil && strings.HasPrefix(string(head), "HTTP/1.1 204") {
++			// The process must also stop with the outbound.
++			outbound.mu.Lock()
++			done := outbound.proc.done
++			outbound.mu.Unlock()
++			_ = outbound.Close()
++			select {
++			case <-done:
++			case <-time.After(5 * time.Second):
++				t.Fatal("the naive process outlived the outbound")
++			}
++			return
++		}
++		last = err
++	}
++	t.Fatalf("no real HTTPS answer through the stock client: %v", last)
++}

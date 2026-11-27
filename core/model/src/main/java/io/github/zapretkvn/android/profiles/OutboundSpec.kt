@@ -177,6 +177,30 @@ sealed interface OutboundSpec {
         }
     }
 
+    /**
+     * Ключ NaiveProxy. Исполняет его только родной клиент naive (дочерний процесс `libnaive.so`, ядро-обвязка
+     * `protocol/naivecore`, патч 0029): sing-box не транслирует протокол. [username] и [password] — client_id и secret ключа,
+     * [executablePath] подставляется только в runtime-копию и не хранится в профиле.
+     */
+    data class Naive(
+        val server: String,
+        val serverPort: Int,
+        val username: String,
+        val password: String,
+        val insecureConcurrency: Int = 1,
+    ) : OutboundSpec {
+        override val section get() = Section.Outbounds
+
+        override fun toSingBoxJson(): JsonObject = buildJsonObject {
+            put("type", "naive")
+            put("server", server)
+            put("server_port", serverPort)
+            put("username", username)
+            put("password", password)
+            if (insecureConcurrency > 1) put("insecure_concurrency", insecureConcurrency)
+        }
+    }
+
     data class Tuic(
         val server: String,
         val serverPort: Int,
