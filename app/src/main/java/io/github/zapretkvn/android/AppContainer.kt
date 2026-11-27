@@ -1,5 +1,6 @@
 package io.github.zapretkvn.android
 
+import io.github.zapretkvn.android.config.WarpAccountDelivery
 import io.github.zapretkvn.android.masking.MaskingActions
 import io.github.zapretkvn.android.masking.MaskingSettingsStore
 import io.github.zapretkvn.android.masking.MaskingTransferProbe
@@ -181,6 +182,18 @@ class AppContainer(
             runCatching { subscriptionSourceStore.markService(url, present) }
         },
         onServerIds = { url, serviceReply, value -> runCatching { clientReporter.serverIds.update(url, serviceReply, value) } },
+        // Аккаунт WARP из подписки сервиса: заполняется только недостающий, сбой не роняет загрузку подписки, в журнал
+        // идёт только итог.
+        onWarpAccount = { _, serviceReply, value ->
+            if (serviceReply) {
+                runCatching { WarpAccountDelivery.apply(value, appContext.filesDir) }.onSuccess { outcome ->
+                    when (outcome.status) {
+                        "written" -> subscriptionFetchJournal.add("warp: аккаунт WARP получен из подписки")
+                        "invalid" -> subscriptionFetchJournal.add("warp: аккаунт WARP из подписки не принят (${outcome.detail})")
+                    }
+                }
+            }
+        },
     )
     init {
         // Имена для браузерного транспорта разрешаются в основной сети, мимо туннеля.
@@ -513,6 +526,7 @@ private fun browserSubscriptionReply(url: String, headers: Map<String, String>):
         location = response.redirectLocation ?: response.header("location"),
         body = response.body.takeIf { !response.truncated && it.size <= limit },
         serverIds = response.header(HttpSubscriptionFetcher.SERVER_IDS_HEADER),
+        warpAccount = response.header(HttpSubscriptionFetcher.WARP_ACCOUNT_HEADER),
     )
 }
 
