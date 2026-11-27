@@ -50,13 +50,20 @@ class WarpHopStartSeriesInstrumentedTest {
     private var profile: ProfileMetadata? = null
     private var previousDnsMode: DnsMode? = null
 
+    private val eachServer: Boolean by lazy {
+        InstrumentationRegistry.getArguments().getString("kvnEachServer") == "1"
+    }
+
     private val perArm: Int by lazy {
         InstrumentationRegistry.getArguments().getString("kvnWarpSeries")?.toIntOrNull() ?: 0
     }
 
     @Before
     fun allowVpn() {
-        assumeTrue("the series is opt-in: pass -e kvnWarpSeries <starts per arm>", perArm > 0)
+        assumeTrue(
+            "opt-in: pass -e kvnWarpSeries <starts per arm> or -e kvnEachServer 1",
+            perArm > 0 || eachServer,
+        )
         assumeTrue("no real test subscription on the device (adb push to $SUBSCRIPTION)", subscription() != null)
         shell("appops set ${context.packageName} ACTIVATE_VPN allow")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -76,8 +83,71 @@ class WarpHopStartSeriesInstrumentedTest {
         shell("appops set ${context.packageName} ACTIVATE_VPN default")
     }
 
+    /**
+     * Every real VLESS and Hysteria2 server of the test person started once, hop OFF, with the real health check and the
+     * phone's DNS mode: which servers answer the UDP DNS probe at once and which need the 2.5 s timeout and the TCP
+     * fallback (a transport that cannot carry UDP costs every start that wait). One row per server: the transport label
+     * only (ws/grpc/tcp/h2, never an address), the stage durations and outcomes. `warp-hop-servers.jsonl`.
+     */
+    @Test
+    fun eachRealServerOnceAndItsDnsProbe() = runBlocking {
+        assumeTrue("opt-in: pass -e kvnEachServer 1", eachServer)
+        val vless = (ImportParser.parse(
+            fetch(JSONObject(subscription()!!).getString("vless_subscription_url")), ProfileSource.Url,
+        ) as ImportCandidate.Managed).servers
+        val hysteria = (ImportParser.parse(
+            fetch(JSONObject(subscription()!!).getString("hysteria2_subscription_url")), ProfileSource.Url,
+        ) as ImportCandidate.Managed).servers
+        container.appSelectionStore.replaceAllowlist(setOf(SHELL_PACKAGE))
+        container.profileStore.initialize()
+        container.vpnController.setDiagnosticsVisible(true)
+        previousDnsMode = container.uiSettingsStore.settings.first().dnsMode
+        container.uiSettingsStore.setDnsMode(DnsMode.Secure)
+        container.uiSettingsStore.setWarpEntryHop(false)
+        val out = File(context.getExternalFilesDir(null), "warp-hop-servers.jsonl")
+        out.writeText("")
+        for ((kind, list) in listOf("vless" to vless, "hysteria2" to hysteria)) {
+            list.forEachIndexed { index, server ->
+                val label = transportLabel(kind, server.outbound)
+                profile = container.profileStore.create(
+                    name = "per-server",
+                    rawJson = ManagedProfileFactory.subscription(listOf(server)),
+                    source = ProfileSource.RawJson,
+                )
+                val row = try {
+                    start(hop = false) ?: JSONObject().put("connected", false)
+                } catch (error: Throwable) {
+                    JSONObject().put("connected", false).put("error", error.javaClass.simpleName)
+                }
+                out.appendText(row.put("kind", kind).put("transport", label).put("n", index).toString() + "\n")
+                if (container.vpnController.state.value !is VpnConnectionState.Stopped) stopVpn()
+                container.profileStore.delete(checkNotNull(profile).id)
+                profile = null
+                delay(PAUSE_MILLIS / 2)
+            }
+        }
+        assertTrue("rows written", out.readLines().size == vless.size + hysteria.size)
+    }
+
+    /** Only a transport label, never an address or a name: for sing-box outbounds `transport.type` (ws, grpc, ...) and tls/reality. */
+    private fun transportLabel(kind: String, outbound: kotlinx.serialization.json.JsonObject): String {
+        if (kind == "hysteria2") return "hysteria2"
+        fun text(element: kotlinx.serialization.json.JsonElement?) =
+            (element as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val transport = (outbound["transport"] as? kotlinx.serialization.json.JsonObject)?.get("type")
+        val tls = outbound["tls"] as? kotlinx.serialization.json.JsonObject
+        val reality = (tls?.get("reality") as? kotlinx.serialization.json.JsonObject)?.get("enabled")
+        val security = when {
+            text(reality) == "true" -> "reality"
+            text(tls?.get("enabled")) == "true" -> "tls"
+            else -> "none"
+        }
+        return "${text(transport) ?: "tcp"}+$security"
+    }
+
     @Test
     fun theHopAgainstNoHopOnTheSameRealServer() = runBlocking {
+        assumeTrue("opt-in: pass -e kvnWarpSeries <starts per arm>", perArm > 0)
         val servers = (ImportParser.parse(
             fetch(JSONObject(subscription()!!).getString("vless_subscription_url")),
             ProfileSource.Url,
