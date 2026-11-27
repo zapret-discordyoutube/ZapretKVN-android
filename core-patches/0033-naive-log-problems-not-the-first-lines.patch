@@ -1,0 +1,262 @@
+diff --git a/protocol/naivecore/outbound.go b/protocol/naivecore/outbound.go
+index 5631bf6d..57713d56 100644
+--- a/protocol/naivecore/outbound.go
++++ b/protocol/naivecore/outbound.go
+@@ -20,6 +20,7 @@ import (
+ 	"net"
+ 	"os"
+ 	"os/exec"
++	"regexp"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -242,7 +243,7 @@ func (o *Outbound) start(ctx context.Context) (*process, error) {
+ 	started := &process{cmd: cmd, done: make(chan struct{}), forwarder: forwarder}
+ 	go o.serveForwarder(forwarder)
+ 	secrets := []string{o.options.Username, o.options.Password, user, pass}
+-	go logChildOutput(stderr, secrets, o.logger.Info, o.logger.Debug)
++	go logChildOutput(stderr, secrets, o.logger.Info, o.logger.Warn, o.logger.Debug)
+ 	go func() {
+ 		_ = cmd.Wait()
+ 		close(started.done)
+@@ -256,14 +257,35 @@ func (o *Outbound) start(ctx context.Context) (*process, error) {
+ 	return started, nil
+ }
+ 
+-// childInfoLines is how many lines of one naive process are logged at info level.
+-const childInfoLines = 200
++// childStartupLines is how many ordinary lines of one naive process are logged at info level: the start ("Listening on",
++// "Proxying via") and the first connections. The stock client writes about two lines per connection, so a healthy session
++// that is in use would use up any larger budget within minutes and hide the failure that comes later (core patch 0032 did
++// exactly that with "the first 200 lines"). Ordinary lines after the budget go to debug.
++const childStartupLines = 12
+ 
+-// logChildOutput logs the stock client's own messages (a refused proxy login, a certificate error, a failed resolve):
+-// they are the only evidence when a naive key does not connect, so the first lines of every process go to the info log
+-// and show in the app. The rest go to debug, so a noisy session cannot flood the log. The credentials are masked.
+-func logChildOutput(reader io.Reader, secrets []string, info, debug func(args ...any)) {
+-	shown := 0
++// childProblemLines caps the lines that report a problem; the first ones show why a key does not connect, a session with
++// more than this is plainly broken and the rest go to debug so that it cannot flood the log.
++const childProblemLines = 300
++
++var childLevel = regexp.MustCompile(`^\[\d{4}/\d{6}\.\d+:([A-Z]+[0-9]*):`)
++
++// childLineIsProblem tells a line that reports a problem: the client's own WARNING, ERROR and FATAL lines, and the info line
++// that says why a connection ended ("Connection 7 closed: ERR_CONNECTION_RESET").
++func childLineIsProblem(line string) bool {
++	if match := childLevel.FindStringSubmatch(line); match != nil {
++		switch match[1] {
++		case "WARNING", "ERROR", "FATAL":
++			return true
++		}
++	}
++	return strings.Contains(line, " closed: ERR_")
++}
++
++// logChildOutput logs the stock client's own messages (a refused proxy login, a certificate error, a failed resolve): they
++// are the only evidence when a naive key does not connect. Problems always reach the warn log (up to childProblemLines per
++// process), the start of the process the info log, everything else the debug log. The credentials are masked.
++func logChildOutput(reader io.Reader, secrets []string, info, warn, debug func(args ...any)) {
++	problems, startup := 0, 0
+ 	scanner := bufio.NewScanner(reader)
+ 	for scanner.Scan() {
+ 		line := strings.TrimSpace(scanner.Text())
+@@ -275,12 +297,19 @@ func logChildOutput(reader io.Reader, secrets []string, info, debug func(args ..
+ 				line = strings.ReplaceAll(line, secret, "<hidden>")
+ 			}
+ 		}
+-		if shown < childInfoLines {
+-			shown++
+-			info("naive: ", line)
+-			if shown == childInfoLines {
+-				info("naive: the next messages of this process are logged at debug level")
++		switch {
++		case childLineIsProblem(line):
++			if problems < childProblemLines {
++				problems++
++				warn("naive: ", line)
++				if problems == childProblemLines {
++					warn("naive: the next problem lines of this process are logged at debug level")
++				}
++				continue
+ 			}
++		case startup < childStartupLines:
++			startup++
++			info("naive: ", line)
+ 			continue
+ 		}
+ 		debug("naive: ", line)
+diff --git a/protocol/naivecore/output_test.go b/protocol/naivecore/output_test.go
+index 98881250..5b8cd785 100644
+--- a/protocol/naivecore/output_test.go
++++ b/protocol/naivecore/output_test.go
+@@ -6,61 +6,130 @@ import (
+ 	"testing"
+ )
+ 
+-// Lines of a real naive session (the shapes the stock client prints), with the credentials the outbound passes to it.
+-const sampleOutput = `[1127/101500.123:ERROR:ssl_client_socket_impl.cc(878)] handshake failed; returned -1, SSL error code 1, net_error -202
+-[1127/101500.456:WARNING:network_change_notifier_linux.cc(12)] no network interfaces
++// Real output of the stock client (naiveproxy v154.0.8037.49-5, linux-x64), captured with the flags the outbound uses
++// (--log= on stderr): a proxy that refuses the connection, and a proxy host that does not resolve. One request was sent
++// through its SOCKS port in each run.
++const realRefusedSession = `[1127/144157.474837:INFO:net/tools/naive/naive_proxy_bin.cc:549] Listening on socks://127.0.0.1:20150
++[1127/144157.475041:INFO:net/tools/naive/naive_proxy_bin.cc:236] Proxying via HTTPS 127.0.0.1:1
++[1127/144200.449684:INFO:net/tools/naive/preamble_getter.cc:236] Preamble https://127.0.0.1:1/
++[1127/144200.451683:WARNING:net/tools/naive/naive_proxy.cc:193] Preamble error: ERR_PROXY_CONNECTION_FAILED
++[1127/144200.451755:INFO:net/tools/naive/naive_connection.cc:286] Connection 0 to example.com:443 via HTTPS 127.0.0.1:1
++[1127/144200.451825:INFO:net/tools/naive/naive_proxy.cc:288] Connection 0 closed: ERR_PROXY_CONNECTION_FAILED
++`
+ 
+-[1127/101500.789:ERROR:proxy_client_socket.cc(77)] proxy login failed for user alice-secret with password hunter2-secret
++const realUnresolvedSession = `[1127/144202.471577:INFO:net/tools/naive/naive_proxy_bin.cc:549] Listening on socks://127.0.0.1:20517
++[1127/144202.471603:INFO:net/tools/naive/naive_proxy_bin.cc:236] Proxying via HTTPS no-such-host.invalid:443
++[1127/144205.466924:INFO:net/tools/naive/preamble_getter.cc:236] Preamble https://no-such-host.invalid/
++[1127/144205.477784:WARNING:net/tools/naive/naive_proxy.cc:193] Preamble error: ERR_PROXY_CONNECTION_FAILED
++[1127/144205.477851:INFO:net/tools/naive/naive_connection.cc:286] Connection 0 to example.com:443 via HTTPS no-such-host.invalid:443
++[1127/144205.490041:INFO:net/tools/naive/naive_proxy.cc:288] Connection 0 closed: ERR_PROXY_CONNECTION_FAILED
+ `
+ 
+-func TestLogChildOutputMasksCredentialsAndSkipsBlankLines(t *testing.T) {
+-	var info, debug []string
+-	logChildOutput(strings.NewReader(sampleOutput), []string{"alice-secret", "hunter2-secret", "ab"},
+-		func(args ...any) { info = append(info, fmt.Sprint(args...)) },
+-		func(args ...any) { debug = append(debug, fmt.Sprint(args...)) })
+-	if len(info) != 3 || len(debug) != 0 {
+-		t.Fatalf("want 3 info lines and no debug lines, got %d and %d: %v", len(info), len(debug), info)
++type captured struct{ info, warn, debug []string }
++
++func run(output string, secrets []string) captured {
++	var got captured
++	record := func(into *[]string) func(args ...any) {
++		return func(args ...any) { *into = append(*into, fmt.Sprint(args...)) }
+ 	}
+-	for _, line := range info {
+-		if strings.Contains(line, "alice-secret") || strings.Contains(line, "hunter2-secret") {
+-			t.Fatalf("a credential reached the log: %q", line)
++	logChildOutput(strings.NewReader(output), secrets, record(&got.info), record(&got.warn), record(&got.debug))
++	return got
++}
++
++func TestRealFailureSessionsShowTheReasonAtWarnLevel(t *testing.T) {
++	for name, output := range map[string]string{"refused": realRefusedSession, "unresolved": realUnresolvedSession} {
++		got := run(output, nil)
++		if len(got.warn) != 2 {
++			t.Fatalf("%s: want the preamble error and the closed connection as warnings, got %d: %v", name, len(got.warn), got.warn)
++		}
++		for _, line := range got.warn {
++			if !strings.Contains(line, "ERR_PROXY_CONNECTION_FAILED") {
++				t.Fatalf("%s: a warning without the reason: %q", name, line)
++			}
++		}
++		if len(got.info) != 4 || len(got.debug) != 0 {
++			t.Fatalf("%s: the start of the process goes to info, nothing to debug; got info %d debug %d", name, len(got.info), len(got.debug))
+ 		}
+-		if !strings.HasPrefix(line, "naive: ") {
+-			t.Fatalf("line without the naive prefix: %q", line)
++		if !strings.HasPrefix(got.info[0], "naive: ") || !strings.Contains(got.info[0], "Listening on socks://") {
++			t.Fatalf("%s: the first info line is %q", name, got.info[0])
+ 		}
+ 	}
+-	if !strings.Contains(info[2], "user <hidden> with password <hidden>") {
+-		t.Fatalf("credentials are not masked: %q", info[2])
++}
++
++// The flaw of core patch 0032: it logged "the first 200 lines" at info level, and the client writes about two lines per
++// connection, so a healthy session in use spent that budget in minutes and a failure that came later was invisible.
++func TestAFailureAfterALongHealthySessionIsStillSeen(t *testing.T) {
++	var text strings.Builder
++	text.WriteString("[1127/144157.474837:INFO:net/tools/naive/naive_proxy_bin.cc:549] Listening on socks://127.0.0.1:20150\n")
++	for i := 0; i < 2000; i++ {
++		fmt.Fprintf(&text, "[1127/144200.451683:INFO:net/tools/naive/naive_connection.cc:286] Connection %d to example.com:443 via HTTPS proxy.example:443\n", i)
++		fmt.Fprintf(&text, "[1127/144200.451825:INFO:net/tools/naive/naive_proxy.cc:288] Connection %d closed: OK\n", i)
++	}
++	text.WriteString("[1127/151012.000001:WARNING:net/tools/naive/naive_proxy.cc:193] Preamble error: ERR_PROXY_CONNECTION_FAILED\n")
++	text.WriteString("[1127/151012.000002:INFO:net/tools/naive/naive_proxy.cc:288] Connection 2001 closed: ERR_CONNECTION_RESET\n")
++	got := run(text.String(), nil)
++	if len(got.info) != childStartupLines {
++		t.Fatalf("ordinary lines must stop at the startup budget, got %d info lines", len(got.info))
++	}
++	if len(got.warn) != 2 || !strings.Contains(got.warn[0], "ERR_PROXY_CONNECTION_FAILED") || !strings.Contains(got.warn[1], "ERR_CONNECTION_RESET") {
++		t.Fatalf("the late failure must reach the warn log, got %v", got.warn)
++	}
++	if len(got.debug) != 4001-childStartupLines {
++		t.Fatalf("the healthy chatter after the budget goes to debug, got %d lines", len(got.debug))
++	}
++}
++
++func TestCredentialsAreMaskedEverywhere(t *testing.T) {
++	line := "[1127/144200.451683:WARNING:net/tools/naive/naive_proxy.cc:193] proxy login failed for user alice-secret with password hunter2-secret-pass\n"
++	got := run(line+"[1127/144200.000000:INFO:net/tools/naive/naive_proxy_bin.cc:236] Proxying via HTTPS alice-secret@host\n", []string{"alice-secret", "hunter2-secret-pass", "ab"})
++	for _, lines := range [][]string{got.info, got.warn, got.debug} {
++		for _, text := range lines {
++			if strings.Contains(text, "alice-secret") || strings.Contains(text, "hunter2-secret-pass") {
++				t.Fatalf("a credential reached the log: %q", text)
++			}
++		}
++	}
++	if len(got.warn) != 1 || !strings.Contains(got.warn[0], "user <hidden> with password <hidden>") {
++		t.Fatalf("credentials are not masked in the warning: %v", got.warn)
+ 	}
+ }
+ 
+-func TestLogChildOutputShortSecretsAreNotMasked(t *testing.T) {
+-	// a 2-character "secret" would eat ordinary words, so it is left alone (the outbound's own secrets are longer)
+-	var info []string
+-	logChildOutput(strings.NewReader("abc ab abc\n"), []string{"ab"},
+-		func(args ...any) { info = append(info, fmt.Sprint(args...)) }, func(args ...any) {})
+-	if len(info) != 1 || info[0] != "naive: abc ab abc" {
+-		t.Fatalf("got %v", info)
++func TestShortSecretsAreNotMaskedAndBlankLinesAreSkipped(t *testing.T) {
++	got := run("abc ab abc\n\n   \n", []string{"ab"})
++	if len(got.info) != 1 || got.info[0] != "naive: abc ab abc" {
++		t.Fatalf("got %v", got.info)
+ 	}
+ }
+ 
+-func TestLogChildOutputCapsTheInfoLinesPerProcess(t *testing.T) {
++func TestTheProblemLinesAreCappedPerProcess(t *testing.T) {
+ 	var text strings.Builder
+-	for i := 0; i < childInfoLines+50; i++ {
+-		fmt.Fprintf(&text, "message %d\n", i)
++	for i := 0; i < childProblemLines+50; i++ {
++		fmt.Fprintf(&text, "[1127/144200.451683:WARNING:net/tools/naive/naive_proxy.cc:193] Preamble error: ERR_PROXY_CONNECTION_FAILED %d\n", i)
+ 	}
+-	var info, debug []string
+-	logChildOutput(strings.NewReader(text.String()), nil,
+-		func(args ...any) { info = append(info, fmt.Sprint(args...)) },
+-		func(args ...any) { debug = append(debug, fmt.Sprint(args...)) })
++	got := run(text.String(), nil)
+ 	// the cap, plus the one notice that the rest goes to debug
+-	if len(info) != childInfoLines+1 || len(debug) != 50 {
+-		t.Fatalf("info %d, debug %d", len(info), len(debug))
++	if len(got.warn) != childProblemLines+1 || len(got.debug) != 50 {
++		t.Fatalf("warn %d, debug %d", len(got.warn), len(got.debug))
+ 	}
+-	if !strings.Contains(info[len(info)-1], "logged at debug level") {
+-		t.Fatalf("no notice after the cap: %q", info[len(info)-1])
++	if !strings.Contains(got.warn[len(got.warn)-1], "logged at debug level") {
++		t.Fatalf("no notice after the cap: %q", got.warn[len(got.warn)-1])
+ 	}
+-	if debug[0] != fmt.Sprintf("naive: message %d", childInfoLines) {
+-		t.Fatalf("the first debug line is %q", debug[0])
++}
++
++func TestLineLevels(t *testing.T) {
++	cases := map[string]bool{
++		"[1127/144200.451683:WARNING:a.cc:1] x":                             true,
++		"[1127/144200.451683:ERROR:a.cc:1] x":                               true,
++		"[1127/144200.451683:FATAL:a.cc:1] x":                               true,
++		"[1127/144200.451683:INFO:a.cc:1] Connection 3 closed: ERR_X":       true,
++		"[1127/144200.451683:INFO:a.cc:1] Connection 3 closed: OK":          false,
++		"[1127/144200.451683:INFO:a.cc:1] Listening on socks://127.0.0.1:1": false,
++		"[1127/144200.451683:VERBOSE1:a.cc:1] x":                            false,
++		"free text without the client's prefix":                             false,
++	}
++	for line, want := range cases {
++		if got := childLineIsProblem(line); got != want {
++			t.Fatalf("%q: got %v, want %v", line, got, want)
++		}
+ 	}
+ }

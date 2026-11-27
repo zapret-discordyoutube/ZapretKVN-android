@@ -30,3 +30,4 @@ dbce3a9d339568044ea4c93e2ccedd9b7896b5e2fad446bb35c7944d7bbe465b  core-patches/0
 d8974b91d2466d506e3e5face4a2ab768c2dc504b6d2436653688f0464bf0a36  core-patches/0030-warp-more-edges.patch
 101eeb98f18387c5e3379983bb133caf260d7c79ff7ee459f192ff89e20cdcf2  core-patches/0031-warp-extra-edges.patch
 062ce32bb78dbeed2b51b91983255808bf3906d267233f1030ebeb48a33e186d  core-patches/0032-naive-child-output-log.patch
+a00ead60423e10c2ebaebc2de7aa4a6989c3d095110b0830d8224df9ce8b11e8  core-patches/0033-naive-log-problems-not-the-first-lines.patch
