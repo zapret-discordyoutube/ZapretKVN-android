@@ -1084,7 +1084,7 @@ internal class SessionStarter(
         const val CONNECTION_START_TIMEOUT_MILLIS = 45_000L
 
         /** A start with the WARP entry that is not up by then falls back to a start without it. */
-        const val HOP_START_TIMEOUT_MILLIS = 35_000L
+        const val HOP_START_TIMEOUT_MILLIS = 50_000L
 
         /** The MASQUE account is waited for this long at most; a blocked API is told by the budget, the connect goes on without the entry. */
         private const val MASQUE_ACCOUNT_BUDGET_MS = 12_000
