@@ -12,6 +12,10 @@ import io.github.zapretkvn.android.ZapretApplication
 import io.github.zapretkvn.android.diagnostics.VpnTestHooks
 import io.github.zapretkvn.android.importer.ImportCandidate
 import io.github.zapretkvn.android.importer.ImportParser
+import io.github.zapretkvn.android.importer.SubscriptionSource
+import io.github.zapretkvn.android.config.WarpEdges
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import io.github.zapretkvn.android.profiles.ManagedProfileFactory
 import io.github.zapretkvn.android.profiles.ProfileMetadata
 import io.github.zapretkvn.android.profiles.ProfileSource
@@ -142,6 +146,59 @@ class WarpEntryRealServersInstrumentedTest {
             "accounts: wireguard=${shippedAccountFile.exists()} masque=${masque.exists()}; the connect did not restart through the hop${hopLog()}",
             viaHop,
         )
+    }
+
+    /**
+     * The delivery of 2026-11-27 on the real service (released 0.6.70/0.6.71): the test person's live subscription carries
+     * `zapret-warp-account` and `zapret-warp-edges`. The host drops the Cloudflare API (`android-delivery-e2e.sh`), the
+     * device has NO account, the app's own fetcher downloads the subscription exactly as the user's refresh does, and the
+     * files of the account and of the edge list must appear; then the connect must go through the hop with that
+     * delivered account (the API is unreachable, so nothing else could have made it). Only sizes are asserted.
+     */
+    @Test
+    fun theAccountAndTheEdgeListComeFromTheSubscriptionWhenTheApiIsBlocked() = runBlocking {
+        assumeTrue("the host must drop the API (run through android-delivery-e2e.sh)", shell("cat /data/local/tmp/kvn-api-blocked") == "1")
+        val url = JSONObject(subscription()!!).getString("vless_subscription_url")
+        val probe = File(context.cacheDir, "warp-probe-account.json").also { it.delete() }
+        val directly = WarpAccountRegistration.ensureAccount(probe, timeoutMs = 4_000, budgetMs = 10_000)
+        probe.delete()
+        assumeTrue("the API is reachable directly: the block is not in force", !directly.ok)
+        listOf("", ".masque", ".edge", ".edges", ".delivered").forEach { File(shippedAccountFile.path + it).delete() }
+        withContext(Dispatchers.IO) { container.subscriptionFetcher.fetch(SubscriptionSource(url)) }
+        val masque = File(shippedAccountFile.path + ".masque")
+        val edges = WarpEdges.fileFor(shippedAccountFile)
+        assertTrue(
+            "the subscription did not deliver the account: wireguard=${shippedAccountFile.exists()} masque=${masque.exists()} edges=${edges.exists()}",
+            shippedAccountFile.length() > 200 && masque.length() > 200,
+        )
+        assertTrue("the subscription did not deliver the edge list", edges.exists() && edges.length() > 20)
+        val servers = servers("vless_subscription_url").map { ManagedProfileFactory.subscription(listOf(it)) }
+        val echo = resolveEchoAddress()
+        val direct = egressIp(echo)
+        assertTrue("no direct internet to compare with", direct.isNotEmpty())
+        container.appSelectionStore.replaceAllowlist(setOf(SHELL_PACKAGE))
+        container.uiSettingsStore.setWarpEntryHop(false)
+        var working: String? = null
+        for (raw in servers.take(5)) {
+            if (answers(raw, echo, direct)) {
+                working = raw
+                break
+            }
+        }
+        assumeTrue("no real server answers from this device even without the hop: unproven here", working != null)
+        container.uiSettingsStore.setWarpEntryHop(true)
+        container.vpnController.setDiagnosticsVisible(true)
+        container.profileStore.initialize()
+        profile = container.profileStore.create(name = "WARP delivered", rawJson = working!!, source = ProfileSource.RawJson)
+        assertTrue("the connect did not come up", tryStart(timeoutMillis = 120_000))
+        val deadline = System.currentTimeMillis() + 120_000
+        var viaHop = false
+        while (System.currentTimeMillis() < deadline && !viaHop) {
+            delay(3_000)
+            egressIp(echo)
+            viaHop = coreMessages().any { "warp[kvn-warp-entry]" in it && "outbound" in it && "connection to" in it }
+        }
+        assertTrue("the delivered account did not carry the hop${hopLog()}", viaHop)
     }
 
     /**
