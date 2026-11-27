@@ -849,6 +849,31 @@ class ImportParserTest {
     }
 
     @Test
+    fun `refresh keeps the selected server when a rename leaves two lines on the same host and port`() {
+        // Линии одного входа: тот же хост и порт, разные ключи (owner 2026-11-28: строки входов переименовывают в «Выход · Вход»).
+        // Раньше выбор по адресу был неоднозначен и сбрасывался на первую строку; теперь совпадает всё содержимое outbound.
+        fun entry(name: String, uuid: String) = ProtocolOutboundBuilders.vless(
+            displayName = name,
+            server = "entry.example",
+            serverPort = 443,
+            uuid = uuid,
+            tls = TlsSettings(enabled = true, serverName = "entry.example"),
+        )
+        val first = entry("🇳🇱 Tinaveve", "11111111-1111-4111-8111-111111111111")
+        val second = entry("🇳🇱 Tinanana", "22222222-2222-4222-8222-222222222222")
+        val original = ManagedProfileFactory.subscription(listOf(first, second))
+        val selected = ConfigAnalyzer.selectServer(original, ConfigAnalyzer.MANAGED_SELECTOR_TAG, "🇳🇱 Tinanana")
+
+        val refreshed = ManagedProfileEditor.refreshServers(
+            selected,
+            listOf(entry("🇳🇱 Tinaveve · Timentry", "11111111-1111-4111-8111-111111111111"), entry("🇳🇱 Tinanana · Timentry", "22222222-2222-4222-8222-222222222222")),
+        )
+
+        assertEquals("🇳🇱 Tinanana · Timentry", refreshed.selectedTag)
+        assertFalse(refreshed.selectionChanged)
+    }
+
+    @Test
     fun `single server append changes only managed outbound list`() {
         val original = ManagedProfileFactory.single(server("One", "one.example"))
         val rootBefore = JsonConfig.parse(original) as JsonObject

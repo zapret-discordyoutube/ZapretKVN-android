@@ -118,9 +118,18 @@ object ManagedProfileEditor {
         fresh.firstOrNull { it.tag == oldSelected }?.let { return it.tag }
         val legacy = ManagedProfileFactory.legacyStableTags(servers).indexOf(oldSelected)
         if (legacy >= 0) return fresh[legacy].tag
+        // Тот же сервер под другим именем: совпадает всё содержимое outbound, кроме тега (имя сервера и есть тег).
+        // Так выбор переживает переименование и тогда, когда несколько строк делят один адрес и порт (как source_key
+        // на Windows, который не зависит от имени). Совпало ровно с одной строкой — это она; иначе по адресу ниже.
+        val content = oldOutbound?.withoutTag()
+        if (content != null) {
+            fresh.filter { it.outbound.withoutTag() == content }.singleOrNull()?.let { return it.tag }
+        }
         val address = oldOutbound?.serverAddress() ?: return null
         return fresh.singleOrNull { it.outbound.serverAddress() == address }?.tag
     }
+
+    private fun JsonObject.withoutTag(): JsonObject = JsonObject(filterKeys { it != "tag" })
 
     private fun JsonObject.serverAddress(): String? {
         val server = string("server")?.takeIf(String::isNotBlank) ?: return null
