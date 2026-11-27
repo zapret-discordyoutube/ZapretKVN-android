@@ -1,0 +1,142 @@
+diff --git a/protocol/naivecore/outbound.go b/protocol/naivecore/outbound.go
+index 45f8e9d2..5631bf6d 100644
+--- a/protocol/naivecore/outbound.go
++++ b/protocol/naivecore/outbound.go
+@@ -16,6 +16,7 @@ import (
+ 	"context"
+ 	"crypto/rand"
+ 	"encoding/hex"
++	"io"
+ 	"net"
+ 	"os"
+ 	"os/exec"
+@@ -241,18 +242,7 @@ func (o *Outbound) start(ctx context.Context) (*process, error) {
+ 	started := &process{cmd: cmd, done: make(chan struct{}), forwarder: forwarder}
+ 	go o.serveForwarder(forwarder)
+ 	secrets := []string{o.options.Username, o.options.Password, user, pass}
+-	go func() {
+-		scanner := bufio.NewScanner(stderr)
+-		for scanner.Scan() {
+-			line := scanner.Text()
+-			for _, secret := range secrets {
+-				if len(secret) >= 4 {
+-					line = strings.ReplaceAll(line, secret, "<hidden>")
+-				}
+-			}
+-			o.logger.Debug("naive: ", line)
+-		}
+-	}()
++	go logChildOutput(stderr, secrets, o.logger.Info, o.logger.Debug)
+ 	go func() {
+ 		_ = cmd.Wait()
+ 		close(started.done)
+@@ -266,6 +256,37 @@ func (o *Outbound) start(ctx context.Context) (*process, error) {
+ 	return started, nil
+ }
+ 
++// childInfoLines is how many lines of one naive process are logged at info level.
++const childInfoLines = 200
++
++// logChildOutput logs the stock client's own messages (a refused proxy login, a certificate error, a failed resolve):
++// they are the only evidence when a naive key does not connect, so the first lines of every process go to the info log
++// and show in the app. The rest go to debug, so a noisy session cannot flood the log. The credentials are masked.
++func logChildOutput(reader io.Reader, secrets []string, info, debug func(args ...any)) {
++	shown := 0
++	scanner := bufio.NewScanner(reader)
++	for scanner.Scan() {
++		line := strings.TrimSpace(scanner.Text())
++		if line == "" {
++			continue
++		}
++		for _, secret := range secrets {
++			if len(secret) >= 4 {
++				line = strings.ReplaceAll(line, secret, "<hidden>")
++			}
++		}
++		if shown < childInfoLines {
++			shown++
++			info("naive: ", line)
++			if shown == childInfoLines {
++				info("naive: the next messages of this process are logged at debug level")
++			}
++			continue
++		}
++		debug("naive: ", line)
++	}
++}
++
+ // serveForwarder hands every connection naive opens to "the server" to sing-box's own dialer for the real server.
+ func (o *Outbound) serveForwarder(listener net.Listener) {
+ 	destination := M.ParseSocksaddrHostPort(o.options.Server, o.options.ServerPort)
+diff --git a/protocol/naivecore/output_test.go b/protocol/naivecore/output_test.go
+new file mode 100644
+index 00000000..98881250
+--- /dev/null
++++ b/protocol/naivecore/output_test.go
+@@ -0,0 +1,66 @@
++package naivecore
++
++import (
++	"fmt"
++	"strings"
++	"testing"
++)
++
++// Lines of a real naive session (the shapes the stock client prints), with the credentials the outbound passes to it.
++const sampleOutput = `[1127/101500.123:ERROR:ssl_client_socket_impl.cc(878)] handshake failed; returned -1, SSL error code 1, net_error -202
++[1127/101500.456:WARNING:network_change_notifier_linux.cc(12)] no network interfaces
++
++[1127/101500.789:ERROR:proxy_client_socket.cc(77)] proxy login failed for user alice-secret with password hunter2-secret
++`
++
++func TestLogChildOutputMasksCredentialsAndSkipsBlankLines(t *testing.T) {
++	var info, debug []string
++	logChildOutput(strings.NewReader(sampleOutput), []string{"alice-secret", "hunter2-secret", "ab"},
++		func(args ...any) { info = append(info, fmt.Sprint(args...)) },
++		func(args ...any) { debug = append(debug, fmt.Sprint(args...)) })
++	if len(info) != 3 || len(debug) != 0 {
++		t.Fatalf("want 3 info lines and no debug lines, got %d and %d: %v", len(info), len(debug), info)
++	}
++	for _, line := range info {
++		if strings.Contains(line, "alice-secret") || strings.Contains(line, "hunter2-secret") {
++			t.Fatalf("a credential reached the log: %q", line)
++		}
++		if !strings.HasPrefix(line, "naive: ") {
++			t.Fatalf("line without the naive prefix: %q", line)
++		}
++	}
++	if !strings.Contains(info[2], "user <hidden> with password <hidden>") {
++		t.Fatalf("credentials are not masked: %q", info[2])
++	}
++}
++
++func TestLogChildOutputShortSecretsAreNotMasked(t *testing.T) {
++	// a 2-character "secret" would eat ordinary words, so it is left alone (the outbound's own secrets are longer)
++	var info []string
++	logChildOutput(strings.NewReader("abc ab abc\n"), []string{"ab"},
++		func(args ...any) { info = append(info, fmt.Sprint(args...)) }, func(args ...any) {})
++	if len(info) != 1 || info[0] != "naive: abc ab abc" {
++		t.Fatalf("got %v", info)
++	}
++}
++
++func TestLogChildOutputCapsTheInfoLinesPerProcess(t *testing.T) {
++	var text strings.Builder
++	for i := 0; i < childInfoLines+50; i++ {
++		fmt.Fprintf(&text, "message %d\n", i)
++	}
++	var info, debug []string
++	logChildOutput(strings.NewReader(text.String()), nil,
++		func(args ...any) { info = append(info, fmt.Sprint(args...)) },
++		func(args ...any) { debug = append(debug, fmt.Sprint(args...)) })
++	// the cap, plus the one notice that the rest goes to debug
++	if len(info) != childInfoLines+1 || len(debug) != 50 {
++		t.Fatalf("info %d, debug %d", len(info), len(debug))
++	}
++	if !strings.Contains(info[len(info)-1], "logged at debug level") {
++		t.Fatalf("no notice after the cap: %q", info[len(info)-1])
++	}
++	if debug[0] != fmt.Sprintf("naive: message %d", childInfoLines) {
++		t.Fatalf("the first debug line is %q", debug[0])
++	}
++}
