@@ -18,7 +18,7 @@ import org.junit.Test
 /**
  * The WARP account delivered in the subscription header (owner 2026-11-27, `windows/docs/WARP_ACCOUNT_DELIVERY.md`).
  *
- * The payload is a REAL one (`testdata/real_warp_delivery_payload.json`): the service's provisioning script registered two
+ * The payload is a REAL one (`app/src/test/resources/real_warp_delivery_payload.json`; not in `testdata/`: its fixture set is fixed by verify-fixtures.sh): the service's provisioning script registered two
  * devices at the real Cloudflare API, the app code wrote the files from it and the real core accepted both (WireGuard
  * handshake and MASQUE over HTTP/2, `warp=on` on Cloudflare's trace page); the devices were deleted afterwards, so the keys
  * in the fixture open nothing and only keep the real shape of the data.
@@ -30,8 +30,8 @@ class WarpAccountDeliveryTest {
     @Before
     fun setUp() {
         directory = Files.createTempDirectory("kvn-delivery").toFile()
-        val fixture = listOf(File("../testdata"), File("testdata")).map { File(it, "real_warp_delivery_payload.json") }.first(File::isFile)
-        payload = Json.parseToJsonElement(fixture.readText()).jsonObject
+        val text = checkNotNull(javaClass.classLoader.getResourceAsStream("real_warp_delivery_payload.json")).use { String(it.readBytes()) }
+        payload = Json.parseToJsonElement(text).jsonObject
     }
 
     @After
