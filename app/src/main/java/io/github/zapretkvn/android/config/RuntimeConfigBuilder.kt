@@ -133,7 +133,7 @@ data class RuntimeConfigOptions(
 )
 
 /** [profilePath] закрытый файл аккаунта WARP в каталоге приложения: перезапуск берёт его, а не регистрирует устройство заново. */
-data class EntryHopOptions(val profilePath: String)
+data class EntryHopOptions(val profilePath: String, val extraEdges: List<kotlinx.serialization.json.JsonObject> = emptyList())
 
 /**
  * Резолвер strict Private DNS: имя из настроек Android и его адреса, полученные
@@ -376,7 +376,7 @@ object RuntimeConfigBuilder {
         options.entryHop?.let { hop ->
             // After masking and IPv6-first: those passes see the servers as they are, and the hop is only a detour on top.
             val resolver = ANDROID_DNS_TAG.takeIf { options.dnsMode in MANAGED_DNS_MODES }
-            val chained = WarpEntryHop.apply(runtimeOutbounds, runtimeEndpoints, hop.profilePath, resolver)
+            val chained = WarpEntryHop.apply(runtimeOutbounds, runtimeEndpoints, hop.profilePath, resolver, hop.extraEdges)
             runtimeOutbounds = chained.outbounds
             runtimeEndpoints = chained.endpoints
             hopChained = chained.chained

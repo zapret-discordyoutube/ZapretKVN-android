@@ -145,6 +145,23 @@ class StartupFallbackPolicyTest {
         assertEquals(18_000, budget.remainingMillis())
     }
 
+    /**
+     * The numbers of the field report of Android 0.6.68 (2026-11-27): the start with the WARP entry gets a short budget, the
+     * registration of the account took 19 s and failed, the plain connect that followed had 16 s of 35 and timed out. A start
+     * whose entry was not used gets its whole budget back.
+     */
+    @Test
+    fun `a start whose entry was not used gets its whole budget back`() {
+        var now = 0L
+        val budget = StartupBudget({ now }, baseMillis = 35_000)
+        now = 19_000
+        assertEquals(16_000, budget.remainingMillis())
+        budget.restart(45_000)
+        assertEquals(45_000, budget.remainingMillis())
+        now += 10_000
+        assertEquals(35_000, budget.remainingMillis())
+    }
+
     @Test
     fun `startup budget returns the result, rethrows failures and cancels on expiry`() = runBlocking {
         assertEquals("ok", StartupBudget(System::currentTimeMillis, baseMillis = 5_000).run { "ok" })

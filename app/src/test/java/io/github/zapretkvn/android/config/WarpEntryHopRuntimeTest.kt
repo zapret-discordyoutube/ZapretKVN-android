@@ -103,4 +103,22 @@ class WarpEntryHopRuntimeTest {
         assertTrue(result.toString().take(200), result is RuntimeConfigResult.Invalid)
         assertTrue((result as RuntimeConfigResult.Invalid).message, result.message.contains("WARP"))
     }
+
+    /** Edges the service sent land in the hop endpoint's `extra_edges` (core patch 0031, proven on the real edge: up in 6 s). */
+    @Test
+    fun `the edges the service sent go into the hop endpoint on the real servers`() {
+        val edges = WarpEdges.valid(
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """[{"transport":"masque-http2","address":"162.159.198.7","sni":"www.cloudflare.com"},
+                    {"transport":"wireguard","address":"188.114.97.5","port":2408}]""",
+            ) as JsonArray,
+        )
+        for (raw in profiles) {
+            val withEdges = root(build(raw, hop.copy(extraEdges = edges)))
+            val endpoint = withEdges.list("endpoints").single { it.string("tag") == WarpEntryHop.TAG }
+            assertEquals(edges, (endpoint["extra_edges"] as JsonArray).map { it as JsonObject })
+            val without = root(build(raw))
+            assertNull("no edges, no option", without.list("endpoints").single { it.string("tag") == WarpEntryHop.TAG }["extra_edges"])
+        }
+    }
 }

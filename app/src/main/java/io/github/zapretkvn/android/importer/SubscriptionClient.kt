@@ -61,7 +61,7 @@ class HttpSubscriptionFetcher(
     // Ответ подписки получен: заголовок id серверов каталога ([SERVER_IDS_HEADER]) для отчётов о подключениях.
     private val onServerIds: (url: String, serviceReply: Boolean, value: String?) -> Unit = { _, _, _ -> },
     // Ответ подписки получен: аккаунт WARP, который сервис отдаёт в заголовке [WARP_ACCOUNT_HEADER] (владелец 2026-11-27).
-    private val onWarpAccount: (url: String, serviceReply: Boolean, value: String?) -> Unit = { _, _, _ -> },
+    private val onWarpAccount: (url: String, serviceReply: Boolean, value: String?, edges: String?) -> Unit = { _, _, _, _ -> },
     // Подписка не получена после попытки по сети: HTTP-статус ответа (null — ответа не было), ошибка и путь
     // последней попытки (direct | tunnel) — для отчёта об ошибке приложения (ни адреса, ни ссылки).
     private val onFailure: (url: String, status: Int?, error: Throwable, route: String) -> Unit = { _, _, _, _ -> },
@@ -189,7 +189,7 @@ class HttpSubscriptionFetcher(
             val serviceReply = isServiceReply(reply.headerNames)
             onServiceMarker(source.url, serviceReply)
             onServerIds(source.url, serviceReply, reply.serverIds)
-            onWarpAccount(source.url, serviceReply, reply.warpAccount)
+            onWarpAccount(source.url, serviceReply, reply.warpAccount, reply.warpEdges)
             return body.toString(Charsets.UTF_8)
         }
         throw ImportException("Не удалось получить подписку.")
@@ -205,6 +205,8 @@ class HttpSubscriptionFetcher(
         val serverIds: String? = null,
         /** Значение заголовка [WARP_ACCOUNT_HEADER] (аккаунт WARP, который отдаёт сервис) или null. */
         val warpAccount: String? = null,
+        /** Значение заголовка [WARP_EDGES_HEADER] (другие края WARP от сервиса) или null. */
+        val warpEdges: String? = null,
     )
 
     /**
@@ -242,6 +244,7 @@ class HttpSubscriptionFetcher(
                     status, names, null, output.toByteArray(),
                     connection.getHeaderField(SERVER_IDS_HEADER),
                     connection.getHeaderField(WARP_ACCOUNT_HEADER),
+                    connection.getHeaderField(WARP_EDGES_HEADER),
                 )
             }
         } finally {
@@ -288,6 +291,9 @@ class HttpSubscriptionFetcher(
 
         /** Аккаунт WARP, который сервис отдаёт подписке (`windows/docs/WARP_ACCOUNT_DELIVERY.md`). */
         const val WARP_ACCOUNT_HEADER = io.github.zapretkvn.android.config.WarpAccountDelivery.HEADER
+
+        /** Другие адреса, порты и имена WARP от сервиса (`WarpEdges`). */
+        const val WARP_EDGES_HEADER = io.github.zapretkvn.android.config.WarpEdges.HEADER
 
         fun isServiceReply(headerNames: Collection<String>): Boolean =
             headerNames.any { it.equals(SERVICE_HEADER, ignoreCase = true) }

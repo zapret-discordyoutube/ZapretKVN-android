@@ -115,6 +115,16 @@ internal class StartupBudget(private val now: () -> Long, baseMillis: Long) {
 
     fun remainingMillis(): Long = deadline - now()
 
+    /**
+     * Срок считается заново от сейчас. Запуск со входом через WARP получает короткий срок (35-50 с: вход должен подняться
+     * быстро, иначе запуск повторяется без него), а когда вход не пригодился (регистрация аккаунта заблокирована, диагностика
+     * 0.6.68: 19 с ушло на регистрацию и подключение без входа получило 16 с вместо 45), для обычного подключения срок
+     * восстанавливается целиком.
+     */
+    fun restart(baseMillis: Long) {
+        deadline = now() + baseMillis
+    }
+
     suspend fun <T> apart(capMillis: Long, block: suspend () -> T): T {
         val left = remainingMillis()
         deadline = now() + capMillis

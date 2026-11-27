@@ -1,6 +1,7 @@
 package io.github.zapretkvn.android
 
 import io.github.zapretkvn.android.config.WarpAccountDelivery
+import io.github.zapretkvn.android.config.WarpEdges
 import io.github.zapretkvn.android.masking.MaskingActions
 import io.github.zapretkvn.android.masking.MaskingSettingsStore
 import io.github.zapretkvn.android.masking.MaskingTransferProbe
@@ -184,12 +185,18 @@ class AppContainer(
         onServerIds = { url, serviceReply, value -> runCatching { clientReporter.serverIds.update(url, serviceReply, value) } },
         // Аккаунт WARP из подписки сервиса: заполняется только недостающий, сбой не роняет загрузку подписки, в журнал
         // идёт только итог.
-        onWarpAccount = { _, serviceReply, value ->
+        onWarpAccount = { _, serviceReply, value, edges ->
             if (serviceReply) {
                 runCatching { WarpAccountDelivery.apply(value, appContext.filesDir) }.onSuccess { outcome ->
                     when (outcome.status) {
                         "written" -> subscriptionFetchJournal.add("warp: аккаунт WARP получен из подписки")
                         "invalid" -> subscriptionFetchJournal.add("warp: аккаунт WARP из подписки не принят (${outcome.detail})")
+                    }
+                }
+                runCatching { WarpEdges.apply(edges, appContext.filesDir) }.onSuccess { outcome ->
+                    when (outcome.status) {
+                        "written" -> subscriptionFetchJournal.add("warp: список краёв WARP из подписки обновлён")
+                        "invalid" -> subscriptionFetchJournal.add("warp: список краёв WARP из подписки не принят (${outcome.detail})")
                     }
                 }
             }
@@ -527,6 +534,7 @@ private fun browserSubscriptionReply(url: String, headers: Map<String, String>):
         body = response.body.takeIf { !response.truncated && it.size <= limit },
         serverIds = response.header(HttpSubscriptionFetcher.SERVER_IDS_HEADER),
         warpAccount = response.header(HttpSubscriptionFetcher.WARP_ACCOUNT_HEADER),
+        warpEdges = response.header(HttpSubscriptionFetcher.WARP_EDGES_HEADER),
     )
 }
 

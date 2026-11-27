@@ -19,6 +19,7 @@ import io.github.zapretkvn.android.config.EntryHopOptions
 import io.github.zapretkvn.android.config.WarpAccountRegistration
 import io.github.zapretkvn.android.config.WarpMasqueAccount
 import io.github.zapretkvn.android.config.WarpEntryHop
+import io.github.zapretkvn.android.config.WarpEdges
 import io.github.zapretkvn.android.config.WarpHopFacts
 import io.github.zapretkvn.android.config.WarpHopSuspension
 import io.github.zapretkvn.android.config.ForcedProxyDomains
@@ -592,6 +593,10 @@ internal class SessionStarter(
                 )
             }
         }
+        // The start got the short budget of a start with the entry, and the entry was not used (the registration is blocked:
+        // field report 0.6.68, 19 s went to the registration and the plain connect had 16 s left instead of 45): a plain
+        // connect gets its whole budget back.
+        if (uiSettings.warpEntryHop && !hopOn && !hopPaused) budget.restart(CONNECTION_START_TIMEOUT_MILLIS)
         val keysStartedAt = SystemClock.elapsedRealtime()
         val maskingKeys = MaskingServerKeys.of(profileId, effectiveConfig.root, foreignServers)
         val keysMillis = SystemClock.elapsedRealtime() - keysStartedAt
@@ -605,7 +610,11 @@ internal class SessionStarter(
                     proxyIpv4Only = uiSettings.proxyIpv4Only,
                     blockQuic = uiSettings.blockQuic,
                     serverIpv6First = serverIpv6First,
-                    entryHop = EntryHopOptions(java.io.File(service.filesDir, "warp-entry-profile.json").absolutePath)
+                    entryHop = EntryHopOptions(
+                        java.io.File(service.filesDir, "warp-entry-profile.json").absolutePath,
+                        // other WARP edges the service sent (header zapret-warp-edges), tried right after the account's own
+                        extraEdges = WarpEdges.load(java.io.File(service.filesDir, "warp-entry-profile.json")),
+                    )
                         .takeIf { hopOn },
                     // The stock naive client ships as libnaive.so in the native library directory (the only place an app
                     // may exec from); a build without it leaves null and a profile with a naive server is refused clearly.

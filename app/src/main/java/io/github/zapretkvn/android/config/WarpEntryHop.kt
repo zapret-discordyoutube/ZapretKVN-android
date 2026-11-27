@@ -80,6 +80,7 @@ object WarpEntryHop {
         endpoints: JsonArray?,
         profilePath: String,
         resolver: String?,
+        extraEdges: List<JsonObject> = emptyList(),
     ): Result {
         var chained = 0
         val chainedOutbounds = outbounds?.let { list ->
@@ -122,7 +123,7 @@ object WarpEntryHop {
                 "profile" to JsonObject(
                     mapOf("cache_path" to JsonPrimitive(profilePath), "detour" to JsonPrimitive(API_TAG)),
                 ),
-            ),
+            ) + if (extraEdges.isEmpty()) emptyMap() else mapOf("extra_edges" to JsonArray(extraEdges)),
         )
         val allEndpoints = JsonArray((chainedEndpoints?.toList() ?: emptyList()) + hop)
         return Result(JsonArray((chainedOutbounds?.toList() ?: emptyList()) + api), allEndpoints, chained)
