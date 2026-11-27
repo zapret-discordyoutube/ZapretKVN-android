@@ -159,6 +159,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             },
             onSort = { sort -> deps.profiles.settings.setServerSort(sort.name) },
             onCompact = { enabled -> deps.profiles.settings.setCompactServerRows(enabled) },
+            onGrouping = { mode -> deps.profiles.settings.setServerGrouping(mode) },
         )
     }
     var addSheetOpen by remember { mutableStateOf(false) }
@@ -172,6 +173,7 @@ fun ServersRoute(deps: AppDependencies, nav: AppNavigation, padding: PaddingValu
             scrollToTop = nav.navigator.reselections(AppTab.Servers),
             savedSort = ServerSort.entries.firstOrNull { it.name == state.settings.serverSort } ?: ServerSort.Subscription,
             compactRows = state.settings.compactServerRows,
+            savedGrouping = state.settings.serverGrouping,
         )
         // Always on screen: with hundreds of servers the key or subscription used to be reachable only through
         // «Профили» → «Добавить» (owner report 2026-11-27, "very hard to paste a regular key or subscription").

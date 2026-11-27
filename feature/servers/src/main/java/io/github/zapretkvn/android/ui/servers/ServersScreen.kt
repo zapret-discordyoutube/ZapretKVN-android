@@ -64,6 +64,8 @@ class ServersScreenActions(
     val onSort: (ServerSort) -> Unit = {},
     /** Переключён «Компактные строки»: сохраняется в настройках. */
     val onCompact: (Boolean) -> Unit = {},
+    /** Выбрана группировка («auto», «none» или уровни через «+»): сохраняется в настройках. */
+    val onGrouping: (String) -> Unit = {},
 )
 
 /**
@@ -87,8 +89,12 @@ fun ServersScreen(
     savedSort: ServerSort = ServerSort.Subscription,
     /** Сохранённый вид строк: компактные или обычные. */
     compactRows: Boolean = false,
+    /** Сохранённая группировка списка; настройки читаются асинхронно, поэтому может прийти позже. */
+    savedGrouping: String = ServerGrouping.AUTO,
 ) {
     var sort by rememberSaveable(savedSort) { mutableStateOf(savedSort) }
+    var grouping by rememberSaveable(savedGrouping) { mutableStateOf(savedGrouping) }
+    var groupingOpen by rememberSaveable { mutableStateOf(false) }
     // Порядок фиксируется в момент выбора сортировки: замеры строку не переставляют.
     var order by rememberSaveable { mutableStateOf(ArrayList<String>()) }
     val content = ui as? ServersUi.Content
@@ -132,6 +138,8 @@ fun ServersScreen(
                             current = sort,
                             compact = compactRows,
                             onCompact = actions.onCompact,
+                            grouping = grouping,
+                            onGrouping = { groupingOpen = true },
                         ) { chosen ->
                             sort = chosen
                             order = ArrayList(frozenOrder(content.groups, chosen))
@@ -188,9 +196,20 @@ fun ServersScreen(
                 }
             }
             is ServersUi.Content -> key(ui.profileId) {
-                ServersBody(ui, order, sort, filter, { filter = it }, actions, scrollToTop, compactRows)
+                ServersBody(ui, order, sort, filter, { filter = it }, actions, scrollToTop, compactRows, grouping)
             }
         }
+    }
+    if (groupingOpen) {
+        GroupingDialog(
+            current = grouping,
+            onChoose = { mode ->
+                groupingOpen = false
+                grouping = mode
+                actions.onGrouping(mode)
+            },
+            onDismiss = { groupingOpen = false },
+        )
     }
 }
 
@@ -241,6 +260,8 @@ private fun SortMenu(
     current: ServerSort,
     compact: Boolean,
     onCompact: (Boolean) -> Unit,
+    grouping: String,
+    onGrouping: () -> Unit,
     onChoose: (ServerSort) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
@@ -265,6 +286,14 @@ private fun SortMenu(
         }
         HorizontalDivider()
         DropdownMenuItem(
+            text = { Text("Группировка: ${ServerGrouping.title(grouping)}") },
+            onClick = {
+                open = false
+                onGrouping()
+            },
+            modifier = Modifier.testTag("servers-grouping-open"),
+        )
+        DropdownMenuItem(
             text = { Text("Компактные строки") },
             onClick = {
                 open = false
@@ -288,15 +317,17 @@ private fun ServersBody(
     actions: ServersScreenActions,
     scrollToTop: Int,
     compact: Boolean,
+    grouping: String,
 ) {
+    val levels = remember(grouping) { ServerGrouping.levels(grouping) }
     var toggled by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
     var sections by rememberSaveable(stateSaver = SectionStateSaver) { mutableStateOf(SectionState()) }
     val pinned = rememberPinnedTags(content.groups)
     val chips = remember(content.groups) { serverChips(content.groups) }
-    val model = remember(content.groups, content.header, filter, order, toggled, sections, sort, pinned) {
+    val model = remember(content.groups, content.header, filter, order, toggled, sections, sort, pinned, levels) {
         buildServerList(
             content.groups, content.header, filter, order, toggled,
-            sections = sections, sort = sort, pinnedTags = pinned,
+            sections = sections, sort = sort, pinnedTags = pinned, grouping = levels,
         )
     }
     val currentFilter by rememberUpdatedState(filter)

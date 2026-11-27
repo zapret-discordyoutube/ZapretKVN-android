@@ -40,6 +40,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import io.github.zapretkvn.core.designsystem.FlagAwareText
 import io.github.zapretkvn.core.designsystem.FlagBadge
 import io.github.zapretkvn.core.designsystem.FlagSmall
@@ -109,6 +110,9 @@ fun ServerList(
     }
 }
 
+/** Сдвиг вправо на каждый уровень вложенной папки. */
+private val FOLDER_INDENT = 14.dp
+
 private fun LazyListScope.serverItems(
     list: List<ServerListItem>,
     actions: ServerListActions,
@@ -122,6 +126,7 @@ private fun LazyListScope.serverItems(
             is ServerListItem.Group -> GroupCard(item, actions)
             is ServerListItem.Section -> SectionRow(
                 item = item,
+                modifier = Modifier.padding(start = FOLDER_INDENT * item.depth),
                 onToggle = actions.onToggleSection,
                 onMeasure = actions.onMeasure?.takeIf { item.measurable }?.let { measure ->
                     { measure(item.groupTag, item.section.rows.map { it.tag }) }
@@ -134,7 +139,8 @@ private fun LazyListScope.serverItems(
                     { actions.onSelect(item.row.groupTag, item.row.tag) }
                 },
                 onFavorite = actions.onFavorite?.let { toggle -> { toggle(item.row.tag, !item.row.favorite) } },
-                modifier = if (item.animate) Modifier.animateItem(fadeInSpec = tween(Motion.QUICK), placementSpec = null) else Modifier,
+                modifier = (if (item.animate) Modifier.animateItem(fadeInSpec = tween(Motion.QUICK), placementSpec = null) else Modifier)
+                    .padding(start = FOLDER_INDENT * (item.depth - 1).coerceAtLeast(0)),
                 compact = compact,
             )
             is ServerListItem.FoundProbe -> FoundProbeBar(item, actions)

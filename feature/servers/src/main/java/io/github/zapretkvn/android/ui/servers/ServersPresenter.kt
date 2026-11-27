@@ -14,6 +14,7 @@ import io.github.zapretkvn.core.designsystem.Tone
 import io.github.zapretkvn.core.uimodel.LATENCY_OLD_MILLIS
 import io.github.zapretkvn.core.uimodel.LatencyBand
 import io.github.zapretkvn.core.uimodel.CountryGuess
+import io.github.zapretkvn.core.uimodel.ProviderName
 import io.github.zapretkvn.core.uimodel.ScreenshotPrivacy
 import io.github.zapretkvn.core.uimodel.ServerName
 import io.github.zapretkvn.core.uimodel.inferCountries
@@ -165,6 +166,8 @@ data class ServerRowUi(
     val a11y: String,
     /** В избранном: звёздочка в строке, чип «★ Избранные», секция наверху длинной группы. */
     val favorite: Boolean = false,
+    /** Сервер по имени провайдера («4stok», «Hosfinano»): папка уровня «Сервер»; при скрытых адресах — маска. */
+    val server: String = "",
 )
 
 /** Строки с отметкой избранного; озвучка тоже говорит «в избранном». */
@@ -241,6 +244,7 @@ fun serverRowUi(
         badge = null,
         searchText = search,
         a11y = a11y,
+        server = if (labelHidden) masked else ProviderName.parse(tag).server,
     )
 }
 
@@ -701,6 +705,8 @@ sealed interface ServerListItem {
         /** Идёт проверка этой группы: кнопка секции недоступна. */
         val measuring: Boolean = false,
         val groupTag: String = "",
+        /** Вложенность папки при группировке по уровням: 0 — верхняя. */
+        val depth: Int = 0,
     ) : ServerListItem {
         override val key get() = section.key
         override val contentType get() = "section"
@@ -720,6 +726,8 @@ sealed interface ServerListItem {
         val animate: Boolean = false,
         /** Копия строки в секции «Избранные»: ключ отличается от основной строки. */
         val inFavorites: Boolean = false,
+        /** Вложенность строки: число папок над ней (сдвиг вправо). */
+        val depth: Int = 0,
     ) : ServerListItem {
         override val key get() = if (inFavorites) "fav:${row.key}" else row.key
         override val contentType get() = "server"
@@ -861,6 +869,52 @@ fun countrySections(
     return ordered + other
 }
 
+/** Папка как секция списка: те же заголовок, счётчик и «проверить только её», что у секции страны. */
+private fun ServerFolder.asSection() = CountrySection(
+    key = key, code = code, flag = flag, title = title, rows = rows, bestMillis = bestMillis,
+)
+
+/**
+ * Разворачивает дерево папок в плоский список для LazyColumn: заголовок папки, под ним (если раскрыта) вложенные папки
+ * и строки. По умолчанию раскрыта папка с выбранным сервером или с серверами, где был выбор при открытии экрана.
+ * Возвращает true, если в список попала хотя бы одна строка.
+ */
+private fun addFolders(
+    items: MutableList<ServerListItem>,
+    folders: List<ServerFolder>,
+    group: ServerGroupUi,
+    sections: SectionState,
+    pinnedTags: Set<String>,
+    measurable: Boolean,
+): Boolean {
+    var any = false
+    for (folder in folders) {
+        val hasSelected = folder.rows.any { it.selected }
+        val byDefault = hasSelected || folder.rows.any { it.tag in pinnedTags }
+        val open = sections.expanded(folder.key, byDefault = byDefault)
+        items += ServerListItem.Section(
+            folder.asSection(),
+            expanded = open,
+            hasSelected = hasSelected,
+            measurable = measurable,
+            measuring = group.measuring,
+            groupTag = group.tag,
+            depth = folder.depth,
+        )
+        if (!open) continue
+        if (addFolders(items, folder.children, group, sections, pinnedTags, measurable)) any = true
+        val animate = folder.rows.size <= ANIMATE_SECTION_MAX
+        folder.leaves.forEachIndexed { index, row ->
+            val pos = if (index == folder.leaves.lastIndex) RowPosition.Last else RowPosition.Middle
+            items += ServerListItem.Server(
+                row, pos, readOnly = !group.selectable, animate = animate, depth = folder.depth + 1,
+            )
+            any = true
+        }
+    }
+    return any
+}
+
 fun buildServerList(
     groups: List<ServerGroupUi>,
     header: ProfileHeaderUi?,
@@ -873,6 +927,8 @@ fun buildServerList(
     sort: ServerSort = ServerSort.Subscription,
     /** Серверы, чьи секции раскрыты по умолчанию кроме выбранного (где был выбор при открытии экрана). */
     pinnedTags: Set<String> = emptySet(),
+    /** Уровни папок, выбранные пользователем; null — «авто» (страны в длинной группе), пустой список — без групп. */
+    grouping: List<GroupLevel>? = null,
 ): ServerListModel {
     val uniqueServers = groups.flatMap { it.rows }.distinctBy { it.tag }.size
     val single = uniqueServers == 1
@@ -919,12 +975,38 @@ fun buildServerList(
             items += ServerListItem.Note("auto-${group.tag}", "Сервер выбирается автоматически. Менять не нужно")
         }
         if (!expanded) continue
-        val countrySections = if (!activeFilter.active && group.rows.size > SECTION_THRESHOLD) {
+        // Свой порядок папок: поиск и фильтр показывают результаты плоско, как и раньше.
+        val folders = grouping?.takeIf { it.isNotEmpty() && !activeFilter.active && rows.isNotEmpty() }
+            ?.let { buildFolders(group.tag, rows, it, sort) }
+        val countrySections = if (grouping == null && !activeFilter.active && group.rows.size > SECTION_THRESHOLD) {
             countrySections(group.tag, rows, sort)
         } else {
             null
         }
-        if (countrySections == null) {
+        if (folders != null) {
+            val measurable = group.live && groupCards
+            favoritesSection(group.tag, rows)?.let { section ->
+                items += ServerListItem.Section(
+                    section,
+                    expanded = sections.expanded(section.key, byDefault = true),
+                    hasSelected = section.rows.any { it.selected },
+                    measurable = measurable,
+                    measuring = group.measuring,
+                    groupTag = group.tag,
+                )
+                if (sections.expanded(section.key, byDefault = true)) {
+                    section.rows.forEachIndexed { index, row ->
+                        val pos = if (index == section.rows.lastIndex) RowPosition.Last else RowPosition.Middle
+                        items += ServerListItem.Server(
+                            row, pos, readOnly = !group.selectable, animate = section.rows.size <= ANIMATE_SECTION_MAX,
+                            inFavorites = true, depth = 1,
+                        )
+                        anyRows = true
+                    }
+                }
+            }
+            if (addFolders(items, folders, group, sections, pinnedTags, measurable)) anyRows = true
+        } else if (countrySections == null) {
             rows.forEachIndexed { index, row ->
                 val pos = when {
                     rows.size == 1 -> RowPosition.Only

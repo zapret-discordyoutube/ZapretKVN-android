@@ -35,6 +35,8 @@ class ProfileSettingsActions internal constructor(
 
     fun setServerSort(name: String) = apply { settingsStore.setServerSort(name) }
 
+    fun setServerGrouping(mode: String) = apply { settingsStore.setServerGrouping(mode) }
+
     fun setCompactServerRows(enabled: Boolean) = apply { settingsStore.setCompactServerRows(enabled) }
 
     fun setFavoriteServer(profileId: String, tag: String, favorite: Boolean) =

@@ -77,6 +77,8 @@ data class UiSettings(
     val subscriptionAutoUpdateHours: Int = SubscriptionAutoUpdate.DEFAULT_HOURS,
     /** Сортировка вкладки «Серверы» (имя варианта ServerSort); переживает перезапуск. */
     val serverSort: String = "Subscription",
+    /** Группировка вкладки «Серверы»: «auto», «none» или уровни через «+» (country, server, protocol); переживает перезапуск. */
+    val serverGrouping: String = "auto",
     /** Компактные строки на вкладке «Серверы»: одна строка с названием и задержкой, без протокола и адреса. */
     val compactServerRows: Boolean = false,
 )
