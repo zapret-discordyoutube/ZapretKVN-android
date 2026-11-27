@@ -79,26 +79,28 @@ object WarpAccountRegistration {
         timeoutMs: Int = 8000,
         budgetMs: Int = 20_000,
         exchanger: (String?, ByteArray, Boolean, Int) -> ByteArray = ::exchange,
+        viaVpn: Boolean = false,
     ): Outcome {
         if (accountFileReady(file)) return Outcome(true, "cached", "account file is there")
         val started = System.nanoTime()
         fun took() = (System.nanoTime() - started) / 1_000_000
         val failedAt = directFailedAt
-        if (failedAt != 0L && started - failedAt < DIRECT_RETRY_MS * 1_000_000L) {
+        // Through the VPN the provider cannot see the name, so there is one plain route and no back-off to honour.
+        if (!viaVpn && failedAt != 0L && started - failedAt < DIRECT_RETRY_MS * 1_000_000L) {
             return Outcome(false, "skipped", "the direct routes failed a moment ago", 0)
         }
         val keys = newKey()
         val body = registrationBody(keys.second)
-        val found = runCatching(addresses).getOrDefault(emptyList())
+        val found = if (viaVpn) emptyList() else runCatching(addresses).getOrDefault(emptyList())
         val targets = ArrayList<String?>().apply { add(null) }
-        for (address in found + KNOWN_ADDRESSES) if (address !in targets) targets.add(address)
+        if (!viaVpn) for (address in found + KNOWN_ADDRESSES) if (address !in targets) targets.add(address)
         var last = Outcome(false, "none", "no route tried", 0)
         for ((index, target) in targets.withIndex()) {
-            for (fragmented in listOf(false, true)) {
-                val name = (if (index == 0) "api" else "api-$index") + if (fragmented) "-fragmented" else ""
+            for (fragmented in if (viaVpn) listOf(false) else listOf(false, true)) {
+                val name = if (viaVpn) "vpn" else (if (index == 0) "api" else "api-$index") + if (fragmented) "-fragmented" else ""
                 val remaining = budgetMs - took()
                 if (remaining < 2_000) {
-                    directFailedAt = System.nanoTime()
+                    if (!viaVpn) directFailedAt = System.nanoTime()
                     return Outcome(false, name, "time budget of ${budgetMs / 1000} s is used up", took())
                 }
                 last = try {
@@ -111,7 +113,7 @@ object WarpAccountRegistration {
                 }
             }
         }
-        directFailedAt = System.nanoTime()
+        if (!viaVpn) directFailedAt = System.nanoTime()
         return last
     }
 

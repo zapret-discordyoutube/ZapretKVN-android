@@ -511,37 +511,45 @@ internal class SessionStarter(
         // The entry is used by this launch only when the account is there; a provider that blocks the registration must not
         // stop the connect (owner 2026-11-26, "fix both completely"): this launch goes on without it and says so.
         var hopOn = uiSettings.warpEntryHop
+        // Both accounts must be there before the entry is used (owner 2026-11-27: "try to break through at least once and then
+        // reuse that account"). When the provider blocks the registration, this launch goes on without the entry and the
+        // accounts are registered through the VPN as soon as it is up; the connect then restarts with the entry.
+        var accountsViaVpn = false
         if (uiSettings.warpEntryHop) {
-            // The account is registered by the app, over several routes, before the core needs it: a provider may reset the
+            // The accounts are registered by the app, over several routes, before the core needs them: a provider may reset the
             // core's own request to the Cloudflare API (field report on Windows, 2026-11-25). Only the route is logged.
             val accountFile = java.io.File(service.filesDir, "warp-entry-profile.json")
             val registration = withContext(Dispatchers.IO) { WarpAccountRegistration.ensureAccount(accountFile) }
             WarpHopFacts.record(true, registration)
-            if (!registration.ok) {
-                hopOn = false
-                controller.publishDiagnosticWarning(
-                    "Не удалось зарегистрировать аккаунт WARP: провайдер блокирует запрос. Это подключение идёт без входа " +
-                        "через WARP, адрес сервера на этот раз виден провайдеру. Новая попытка будет позже.",
-                )
-            }
             RuntimeLog.app(
                 4,
                 if (registration.ok) "вход через WARP: аккаунт готов (${registration.route}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)"
                 else "вход через WARP: аккаунт не зарегистрирован (${registration.route}: ${registration.detail}, ${SystemClock.elapsedRealtime() - hopStartedAt} мс)",
             )
+            var accountsReady = registration.ok
             if (registration.ok) {
-                // The second account, for the MASQUE tunnel the core falls back to where WireGuard is cut: registered here over the
-                // same routes as the first, beside the connect (it only matters if the tunnel has to change), never waited for.
-                scope.launch(Dispatchers.IO) {
-                    val masque = WarpMasqueAccount.ensure(accountFile)
-                    if (masque.route != "cached") {
-                        RuntimeLog.app(
-                            4,
-                            if (masque.ok) "вход через WARP: аккаунт MASQUE готов (${masque.route}, ${masque.elapsedMs} мс)"
-                            else "вход через WARP: аккаунт MASQUE не зарегистрирован (${masque.route}: ${masque.detail}, ${masque.elapsedMs} мс)",
-                        )
-                    }
+                // The second account, for the MASQUE tunnel the core falls back to where WireGuard is cut (field report
+                // 2026-11-27, 0.6.64 on mobile data: WireGuard answered the handshake and then carried nothing, MASQUE had no
+                // account, the connect was refused). A short wait here, never a long one: a blocked API is told by the budget.
+                val masqueStartedAt = SystemClock.elapsedRealtime()
+                val masque = withContext(Dispatchers.IO) { WarpMasqueAccount.ensure(accountFile, budgetMs = MASQUE_ACCOUNT_BUDGET_MS) }
+                if (masque.route != "cached") {
+                    RuntimeLog.app(
+                        4,
+                        if (masque.ok) "вход через WARP: аккаунт MASQUE готов (${masque.route}, ${masque.elapsedMs} мс)"
+                        else "вход через WARP: аккаунт MASQUE не зарегистрирован (${masque.route}: ${masque.detail}, ${SystemClock.elapsedRealtime() - masqueStartedAt} мс)",
+                    )
                 }
+                accountsReady = masque.ok
+            }
+            if (!accountsReady) {
+                hopOn = false
+                accountsViaVpn = true
+                controller.publishDiagnosticWarning(
+                    "Не удалось зарегистрировать аккаунт WARP: провайдер блокирует запрос. Это подключение идёт без входа " +
+                        "через WARP, адрес сервера на этот раз виден провайдеру. После подключения аккаунт будет " +
+                        "зарегистрирован через VPN, и вход через WARP включится сам.",
+                )
             }
         }
         val keysStartedAt = SystemClock.elapsedRealtime()
@@ -789,6 +797,7 @@ internal class SessionStarter(
                 ),
             )
             foreground(ForegroundState.Connected)
+            if (accountsViaVpn) registerAccountsThroughVpn(token, java.io.File(service.filesDir, "warp-entry-profile.json"))
             if (VpnTestHooks.consumeHysteriaFailureObserverDisconnect()) {
                 scope.launch {
                     yield()
@@ -797,6 +806,33 @@ internal class SessionStarter(
             }
             VpnTestHooks.consumeHysteriaFailure()?.let { code -> events.onInjectedFailure(session, code) }
             VpnTestHooks.consumeCoreHint()?.let { code -> events.onInjectedHint(session, code) }
+        }
+    }
+
+    /**
+     * The connect that runs without the WARP entry (the provider blocks the registration): the accounts are registered through
+     * the VPN itself (the app's own traffic goes through the selected server), and the connect restarts with the entry.
+     * Registered once, reused for good: the files stay. A failure is logged and said once; the next connect tries again.
+     */
+    private fun registerAccountsThroughVpn(token: Long, accountFile: java.io.File) {
+        scope.launch(Dispatchers.IO) {
+            val startedAt = SystemClock.elapsedRealtime()
+            val wireGuard = WarpAccountRegistration.ensureAccount(accountFile, timeoutMs = 10_000, budgetMs = 30_000, viaVpn = true)
+            val masque = if (wireGuard.ok) WarpMasqueAccount.ensure(accountFile, timeoutMs = 10_000, budgetMs = 30_000, viaVpn = true) else null
+            val ok = wireGuard.ok && masque?.ok == true
+            RuntimeLog.app(
+                4,
+                if (ok) "вход через WARP: аккаунты зарегистрированы через VPN (${SystemClock.elapsedRealtime() - startedAt} мс), перезапуск со входом через WARP"
+                else "вход через WARP: аккаунты через VPN не зарегистрированы (WireGuard ${wireGuard.ok}: ${wireGuard.detail}; MASQUE ${masque?.ok}: ${masque?.detail}, ${SystemClock.elapsedRealtime() - startedAt} мс)",
+            )
+            if (ok) {
+                if (token == controller.currentGeneration()) controller.restartIfConnected("Аккаунт WARP зарегистрирован")
+            } else {
+                controller.publishDiagnosticWarning(
+                    "Аккаунт WARP не удалось зарегистрировать и через VPN: подключение работает без входа через WARP. " +
+                        "Попытка повторится при следующем подключении.",
+                )
+            }
         }
     }
 
@@ -997,6 +1033,9 @@ internal class SessionStarter(
 
     internal companion object {
         const val CONNECTION_START_TIMEOUT_MILLIS = 45_000L
+
+        /** The MASQUE account is waited for this long at most; a blocked API is told by the budget, the connect goes on without the entry. */
+        private const val MASQUE_ACCOUNT_BUDGET_MS = 12_000
 
         private const val CONFIG_CHECK_STAGE = "check_config"
         private const val CONFIG_CHECK_LABEL = "Проверка конфигурации ядром"

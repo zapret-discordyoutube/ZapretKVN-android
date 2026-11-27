@@ -107,4 +107,28 @@ class WarpMasqueAccountTest {
             directory.deleteRecursively()
         }
     }
+
+    /**
+     * The route of a connect that runs through the VPN (owner 2026-11-27): one plain route named "vpn", no back-off. Here the
+     * host reaches the API directly, which is what the tunnel does for the phone, so this proves the request shape and the
+     * file, not the provider; that part is proven only on the owner's phone.
+     */
+    @Test
+    fun `the real API registers both accounts over the plain route of the VPN`() {
+        assumeTrue("set KVN_REAL_WARP=1 to register a real device", System.getenv("KVN_REAL_WARP") == "1")
+        val directory = Files.createTempDirectory("kvn-masque-vpn").toFile()
+        try {
+            WarpMasqueAccount.forgetFailure()
+            val account = File(directory, "warp-entry-profile.json")
+            val wireGuard = WarpAccountRegistration.ensureAccount(account, viaVpn = true)
+            assertTrue("${wireGuard.route}: ${wireGuard.detail}", wireGuard.ok)
+            assertEquals("vpn", wireGuard.route)
+            val masque = WarpMasqueAccount.ensure(account, viaVpn = true)
+            assertTrue("${masque.route}: ${masque.detail}", masque.ok)
+            assertEquals("vpn", masque.route)
+            assertTrue(WarpMasqueAccount.ready(WarpMasqueAccount.fileFor(account)))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
 }

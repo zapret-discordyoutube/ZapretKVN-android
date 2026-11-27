@@ -25,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import io.github.zapretkvn.android.config.WarpAccountRegistration
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -90,6 +91,56 @@ class WarpEntryRealServersInstrumentedTest {
         val conf = JSONObject(subscription()!!).getString("awg_conf")
         val candidate = ImportParser.parse(conf, ProfileSource.Link) as ImportCandidate.WireGuard
         assertAnyAnswersThroughTheHop(listOf(candidate.json))
+    }
+
+    /**
+     * The owner's field case (2026-11-27, 0.6.64 on mobile data): the provider blocks the registration at the Cloudflare API,
+     * so no account can be made directly. The connect must go on without the hop, register both accounts THROUGH the VPN and
+     * restart with the hop, by itself. The host drops TCP 443 to the API addresses for this run (`android-viavpn-e2e.sh`),
+     * which is what the provider does; the VPN server reaches the API from its own network. The test proves the whole chain
+     * on real servers and the real API; that a real provider behaves like the drop is proven only on the owner's phone.
+     */
+    @Test
+    fun theAccountsAreRegisteredThroughTheVpnWhenTheApiIsBlocked() = runBlocking {
+        assumeTrue("the host must drop the API (run through android-viavpn-e2e.sh)", System.getenv("KVN_API_BLOCKED") == "1" || shell("cat /data/local/tmp/kvn-api-blocked") == "1")
+        val servers = servers("vless_subscription_url").map { ManagedProfileFactory.subscription(listOf(it)) }
+        val echo = resolveEchoAddress()
+        val direct = egressIp(echo)
+        assertTrue("no direct internet to compare with", direct.isNotEmpty())
+        container.appSelectionStore.replaceAllowlist(setOf(SHELL_PACKAGE))
+        // the precondition: the API really is unreachable from here
+        val probe = File(context.cacheDir, "warp-probe-account.json").also { it.delete() }
+        val directly = WarpAccountRegistration.ensureAccount(probe, timeoutMs = 4_000, budgetMs = 10_000)
+        probe.delete()
+        assumeTrue("the API is reachable directly: the block is not in force", !directly.ok)
+        container.uiSettingsStore.setWarpEntryHop(false)
+        var working: String? = null
+        for (raw in servers.take(5)) {
+            if (answers(raw, echo, direct)) {
+                working = raw
+                break
+            }
+        }
+        assumeTrue("no real server answers from this device even without the hop: unproven here", working != null)
+        listOf("", ".masque", ".edge").forEach { File(shippedAccountFile.path + it).delete() }
+        container.uiSettingsStore.setWarpEntryHop(true)
+        container.vpnController.setDiagnosticsVisible(true)
+        container.profileStore.initialize()
+        profile = container.profileStore.create(name = "WARP api blocked", rawJson = working!!, source = ProfileSource.RawJson)
+        assertTrue("the connect without the hop did not come up", tryStart())
+        val masque = File(shippedAccountFile.path + ".masque")
+        val deadline = System.currentTimeMillis() + 150_000
+        var viaHop = false
+        while (System.currentTimeMillis() < deadline && !viaHop) {
+            delay(3_000)
+            egressIp(echo)
+            viaHop = shippedAccountFile.exists() && masque.exists() &&
+                coreMessages().any { "warp[kvn-warp-entry]" in it && "outbound" in it && "connection to" in it }
+        }
+        assertTrue(
+            "accounts: wireguard=${shippedAccountFile.exists()} masque=${masque.exists()}; the connect did not restart through the hop${hopLog()}",
+            viaHop,
+        )
     }
 
     private fun servers(key: String) = (ImportParser.parse(

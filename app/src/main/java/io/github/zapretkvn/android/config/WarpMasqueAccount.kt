@@ -66,16 +66,18 @@ object WarpMasqueAccount {
         timeoutMs: Int = 8000,
         budgetMs: Int = 25_000,
         requester: Requester = systemRequester,
+        viaVpn: Boolean = false,
     ): WarpAccountRegistration.Outcome {
         val file = fileFor(wireGuardAccount)
         if (ready(file)) return WarpAccountRegistration.Outcome(true, "cached", "account file is there")
         val started = System.nanoTime()
         fun took() = (System.nanoTime() - started) / 1_000_000
         val before = failedAt
-        if (before != 0L && started - before < RETRY_MS * 1_000_000L) {
+        if (!viaVpn && before != 0L && started - before < RETRY_MS * 1_000_000L) {
             return WarpAccountRegistration.Outcome(false, "skipped", "the routes failed a moment ago", 0)
         }
-        val routes = WarpAccountRegistration.routes(addresses)
+        // Through the VPN (the connect that runs without the entry because the provider blocks the API): one plain route.
+        val routes = if (viaVpn) listOf(WarpAccountRegistration.Route("vpn", null, false)) else WarpAccountRegistration.routes(addresses)
 
         fun <T> overRoutes(first: WarpAccountRegistration.Route?, step: (WarpAccountRegistration.Route, Int) -> T): Pair<WarpAccountRegistration.Route, T>? {
             val ordered = listOfNotNull(first) + routes.filter { it != first }
@@ -102,7 +104,7 @@ object WarpMasqueAccount {
             }
         }
         if (registered == null) {
-            failedAt = System.nanoTime()
+            if (!viaVpn) failedAt = System.nanoTime()
             return WarpAccountRegistration.Outcome(false, "none", "no route registered the device in ${budgetMs / 1000} s", took())
         }
         val device = registered.second
@@ -123,7 +125,7 @@ object WarpMasqueAccount {
             Json.parseToJsonElement(String(requester.send(route, "PATCH", "/v0a4471/reg/$id", token, body, timeout))).jsonObject
         }
         if (enrolled == null) {
-            failedAt = System.nanoTime()
+            if (!viaVpn) failedAt = System.nanoTime()
             return WarpAccountRegistration.Outcome(false, registered.first.name, "the MASQUE key was not accepted in ${budgetMs / 1000} s", took())
         }
         return try {
