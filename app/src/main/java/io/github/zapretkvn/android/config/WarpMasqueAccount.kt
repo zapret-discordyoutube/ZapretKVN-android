@@ -79,6 +79,8 @@ object WarpMasqueAccount {
         // Through the VPN (the connect that runs without the entry because the provider blocks the API): one plain route.
         val routes = if (viaVpn) listOf(WarpAccountRegistration.Route("vpn", null, false)) else WarpAccountRegistration.routes(addresses)
 
+        var lastError = ""
+
         fun <T> overRoutes(first: WarpAccountRegistration.Route?, step: (WarpAccountRegistration.Route, Int) -> T): Pair<WarpAccountRegistration.Route, T>? {
             val ordered = listOfNotNull(first) + routes.filter { it != first }
             for (route in ordered) {
@@ -86,7 +88,9 @@ object WarpMasqueAccount {
                 if (remaining < 2_000) return null
                 try {
                     return route to step(route, minOf(timeoutMs.toLong(), remaining / 2).toInt())
-                } catch (_: Exception) {
+                } catch (error: Exception) {
+                    // the reason of the last failure goes to the log (field report 2026-11-27: three tries failed, the cause was not visible)
+                    lastError = "${error.javaClass.simpleName}: ${error.message}".take(100)
                     continue
                 }
             }
@@ -105,7 +109,7 @@ object WarpMasqueAccount {
         }
         if (registered == null) {
             if (!viaVpn) failedAt = System.nanoTime()
-            return WarpAccountRegistration.Outcome(false, "none", "no route registered the device in ${budgetMs / 1000} s", took())
+            return WarpAccountRegistration.Outcome(false, "none", "no route registered the device in ${budgetMs / 1000} s (last: $lastError)", took())
         }
         val device = registered.second
         val id = device.getValue("id").jsonPrimitive.content
@@ -126,7 +130,7 @@ object WarpMasqueAccount {
         }
         if (enrolled == null) {
             if (!viaVpn) failedAt = System.nanoTime()
-            return WarpAccountRegistration.Outcome(false, registered.first.name, "the MASQUE key was not accepted in ${budgetMs / 1000} s", took())
+            return WarpAccountRegistration.Outcome(false, registered.first.name, "the MASQUE key was not accepted in ${budgetMs / 1000} s (last: $lastError)", took())
         }
         return try {
             write(file, keys.privateSec1, id, token, enrolled.second)

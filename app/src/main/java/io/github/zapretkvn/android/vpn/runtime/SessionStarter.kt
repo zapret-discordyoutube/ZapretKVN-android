@@ -20,6 +20,7 @@ import io.github.zapretkvn.android.config.WarpAccountRegistration
 import io.github.zapretkvn.android.config.WarpMasqueAccount
 import io.github.zapretkvn.android.config.WarpEntryHop
 import io.github.zapretkvn.android.config.WarpHopFacts
+import io.github.zapretkvn.android.config.WarpHopSuspension
 import io.github.zapretkvn.android.config.ForcedProxyDomains
 import io.github.zapretkvn.android.config.ParsedConfig
 import io.github.zapretkvn.android.config.RuntimeConfigBuilder
@@ -144,6 +145,10 @@ internal class SessionStarter(
     private val healthVerifier = SessionHealthVerifier(container)
     private val fallbackAllowance = StartupFallbackAllowance(SystemClock::elapsedRealtime)
 
+    /** Эта попытка запуска поставила серверы за вход через WARP: её отказ может быть отказом входа. */
+    @Volatile
+    private var hopActedInAttempt = false
+
     /**
      * Ожидание физической сети вынесено за пределы бюджета подключения: он не
      * должен тратиться на то, что Android ещё поднимает Wi-Fi. Сначала ждём
@@ -170,9 +175,40 @@ internal class SessionStarter(
         return monitor.current.identity
     }
 
-    /** Запуск с перебором DNS-кандидатов в общем бюджете [CONNECTION_START_TIMEOUT_MILLIS]. */
+    /**
+     * Запуск со входом через WARP, а если вход не заработал, без него (владелец 2026-11-27: VPN не должен падать из-за входа).
+     * Вход нужен, чтобы скрыть адрес сервера, а не ценой подключения: когда запуск со входом не прошёл проверку, второй
+     * запуск идёт без входа, а на этой сети вход не пробуется [WarpHopSuspension.PAUSE_MILLIS] мс.
+     */
     suspend fun startWithDeadline(request: StartRequest) {
-        val budget = StartupBudget(SystemClock::elapsedRealtime, CONNECTION_START_TIMEOUT_MILLIS)
+        hopActedInAttempt = false
+        val hopWanted = container.uiSettingsStore.settings.first().warpEntryHop &&
+            !WarpHopSuspension.active(networkMonitor().current.identity)
+        try {
+            startBudgeted(request, if (hopWanted) HOP_START_TIMEOUT_MILLIS else CONNECTION_START_TIMEOUT_MILLIS)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (!hopActedInAttempt) throw error
+            WarpHopSuspension.suspend(networkMonitor().current.identity)
+            RuntimeLog.app(
+                4,
+                "вход через WARP: запуск со входом не прошёл проверку (${error.javaClass.simpleName}), " +
+                    "подключаюсь без входа, вход приостановлен на ${WarpHopSuspension.PAUSE_MILLIS / 60_000} мин на этой сети",
+            )
+            controller.publishDiagnosticWarning(
+                "Вход через WARP не заработал в этой сети: туннель WARP не пропускает трафик. Подключаюсь без входа, " +
+                    "адрес сервера виден провайдеру. Вход снова будет пробоваться через ${WarpHopSuspension.PAUSE_MILLIS / 60_000} мин " +
+                    "или в другой сети.",
+            )
+            hopActedInAttempt = false
+            startBudgeted(request, CONNECTION_START_TIMEOUT_MILLIS)
+        }
+    }
+
+    /** Запуск с перебором DNS-кандидатов в общем бюджете [budgetMillis]. */
+    private suspend fun startBudgeted(request: StartRequest, budgetMillis: Long) {
+        val budget = StartupBudget(SystemClock::elapsedRealtime, budgetMillis)
         val completed = budget.run {
             val configuredMode = container.uiSettingsStore.settings.first().dnsMode
             container.profileStore.initialize()
@@ -220,7 +256,7 @@ internal class SessionStarter(
                 },
             )
         } == true
-        if (!completed) throw ConnectionStartupTimeoutException(CONNECTION_START_TIMEOUT_MILLIS)
+        if (!completed) throw ConnectionStartupTimeoutException(budgetMillis)
     }
 
     /**
@@ -510,12 +546,16 @@ internal class SessionStarter(
         val hopStartedAt = SystemClock.elapsedRealtime()
         // The entry is used by this launch only when the account is there; a provider that blocks the registration must not
         // stop the connect (owner 2026-11-26, "fix both completely"): this launch goes on without it and says so.
-        var hopOn = uiSettings.warpEntryHop
+        val hopPaused = uiSettings.warpEntryHop && WarpHopSuspension.active(networkMonitor().current.identity)
+        if (hopPaused) {
+            RuntimeLog.app(4, "вход через WARP: приостановлен после отказа, ещё ${WarpHopSuspension.remainingMillis() / 1000} с")
+        }
+        var hopOn = uiSettings.warpEntryHop && !hopPaused
         // Both accounts must be there before the entry is used (owner 2026-11-27: "try to break through at least once and then
         // reuse that account"). When the provider blocks the registration, this launch goes on without the entry and the
         // accounts are registered through the VPN as soon as it is up; the connect then restarts with the entry.
         var accountsViaVpn = false
-        if (uiSettings.warpEntryHop) {
+        if (hopOn) {
             // The accounts are registered by the app, over several routes, before the core needs them: a provider may reset the
             // core's own request to the Cloudflare API (field report on Windows, 2026-11-25). Only the route is logged.
             val accountFile = java.io.File(service.filesDir, "warp-entry-profile.json")
@@ -600,6 +640,7 @@ internal class SessionStarter(
         val buildMillis = SystemClock.elapsedRealtime() - buildStartedAt
         MaskingServerKeys.logLine(masking.enabled, runtimeReady.masking)?.let { RuntimeLog.app(4, it) }
         if (hopOn) {
+            hopActedInAttempt = runtimeReady.hopChained > 0
             // The line that shows the hop acted: how many servers dial through WARP (0 = no server to enter, hop not added).
             // The builder counts them as it chains them: scanning the finished text for the detours cost 5.4 s on a phone.
             RuntimeLog.app(4, "вход через WARP: серверов через вход=${runtimeReady.hopChained}")
@@ -830,6 +871,7 @@ internal class SessionStarter(
                 else "вход через WARP: аккаунты через VPN не зарегистрированы (WireGuard ${wireGuard.ok}: ${wireGuard.detail}; MASQUE ${masque?.ok}: ${masque?.detail}, ${SystemClock.elapsedRealtime() - startedAt} мс)",
             )
             if (ok) {
+                WarpHopSuspension.clear()
                 if (token == controller.currentGeneration()) controller.restartIfConnected("Аккаунт WARP зарегистрирован")
             } else {
                 controller.publishDiagnosticWarning(
@@ -917,6 +959,9 @@ internal class SessionStarter(
         val token = session.generation
         val evidence = RuntimeErrors.bestEvidence(controller.runtimeErrors.forGeneration(token))
         val original = RuntimeStartupFailure(failure, evidence)
+        // Through the WARP entry every candidate goes through the same entry: a dead entry kills them all, so the other
+        // servers are tried by the second start, without the entry (`startWithDeadline`).
+        if (hopActedInAttempt) throw original
         val plan = FailoverPlanner.plan(session.profileConfig, session.runtimeSelections(), session.primaryGroupTag)
         val code = StartupFallbackPolicy.deadServerCode(failure, evidence, plan) ?: throw original
         checkNotNull(plan)
@@ -1037,6 +1082,9 @@ internal class SessionStarter(
 
     internal companion object {
         const val CONNECTION_START_TIMEOUT_MILLIS = 45_000L
+
+        /** A start with the WARP entry that is not up by then falls back to a start without it. */
+        const val HOP_START_TIMEOUT_MILLIS = 35_000L
 
         /** The MASQUE account is waited for this long at most; a blocked API is told by the budget, the connect goes on without the entry. */
         private const val MASQUE_ACCOUNT_BUDGET_MS = 12_000

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import io.github.zapretkvn.android.config.WarpAccountRegistration
+import io.github.zapretkvn.android.config.WarpHopSuspension
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertTrue
@@ -143,6 +144,40 @@ class WarpEntryRealServersInstrumentedTest {
         )
     }
 
+    /**
+     * The owner's second field case (2026-11-27, 0.6.65 on mobile data): the accounts exist, but the WARP tunnel carries
+     * nothing (WireGuard dies after its handshake, every MASQUE candidate is silent) and the connect was refused although the
+     * server is reachable without the entry. The host drops every WARP path for this run (`android-deadhop-e2e.sh`): the
+     * connect must come up WITHOUT the entry by itself, say so, and pause the entry on this network.
+     */
+    @Test
+    fun aDeadHopFallsBackToTheServerWithoutIt() = runBlocking {
+        assumeTrue("the host must drop the WARP paths (run through android-deadhop-e2e.sh)", shell("cat /data/local/tmp/kvn-hop-dead") == "1")
+        val servers = servers("vless_subscription_url").map { ManagedProfileFactory.subscription(listOf(it)) }
+        val echo = resolveEchoAddress()
+        val direct = egressIp(echo)
+        assertTrue("no direct internet to compare with", direct.isNotEmpty())
+        container.appSelectionStore.replaceAllowlist(setOf(SHELL_PACKAGE))
+        container.uiSettingsStore.setWarpEntryHop(false)
+        var working: String? = null
+        for (raw in servers.take(5)) {
+            if (answers(raw, echo, direct)) {
+                working = raw
+                break
+            }
+        }
+        assumeTrue("no real server answers from this device even without the hop: unproven here", working != null)
+        WarpHopSuspension.clear()
+        container.uiSettingsStore.setWarpEntryHop(true)
+        container.vpnController.setDiagnosticsVisible(true)
+        container.profileStore.initialize()
+        profile = container.profileStore.create(name = "WARP dead hop", rawJson = working!!, source = ProfileSource.RawJson)
+        assertTrue("the connect did not come up at all with a dead hop", tryStart(timeoutMillis = 150_000))
+        val seen = awaitEgressChange(echo, direct)
+        assertTrue("the connect is up but the internet does not see our server${hopLog()}", seen.isNotEmpty())
+        assertTrue("the entry was not paused after the fallback", WarpHopSuspension.active(null))
+    }
+
     private fun servers(key: String) = (ImportParser.parse(
         fetch(JSONObject(subscription()!!).getString(key)),
         ProfileSource.Url,
@@ -194,11 +229,11 @@ class WarpEntryRealServersInstrumentedTest {
         }
     }
 
-    private suspend fun tryStart(): Boolean {
+    private suspend fun tryStart(timeoutMillis: Long = 30_000): Boolean {
         VpnTestHooks.succeedNextHealthCheck()
         val before = container.vpnController.state.value
         container.vpnController.start(checkNotNull(profile).id)
-        val state = withTimeout(30_000) {
+        val state = withTimeout(timeoutMillis) {
             container.vpnController.state.first {
                 it != before && (it is VpnConnectionState.Connected || it is VpnConnectionState.Error)
             }
