@@ -70,20 +70,25 @@ object ProtocolCards {
     const val SUBSCRIPTION_ID = "subscription"
 
     val all: List<ProtocolCardSpec> = listOf(
-        ProtocolCardSpec(SUBSCRIPTION_ID, "Подписка", "Адрес https://…", emptyList(), null, "URL"),
-        ProtocolCardSpec("vless", "VLESS", "vless://…", listOf("vless://"), DesignR.drawable.ic_proto_xray, "VL"),
-        ProtocolCardSpec("vmess", "VMess", "vmess://…", listOf("vmess://"), null, "VM"),
-        ProtocolCardSpec("trojan", "Trojan", "trojan://…", listOf("trojan://"), null, "TR"),
-        ProtocolCardSpec("shadowsocks", "Shadowsocks", "ss://…", listOf("ss://"), null, "SS"),
+        ProtocolCardSpec(SUBSCRIPTION_ID, "Подписка", "Адрес https://…", emptyList(), DesignR.drawable.ic_glyph_list, "URL"),
+        ProtocolCardSpec("vless", "VLESS / Xray", "vless://…", listOf("vless://"), DesignR.drawable.ic_proto_xray, "VL"),
+        // VMess and Trojan run on the same Xray core as VLESS, so they carry its mark (owner request 2026-11-27: no empty logos).
+        ProtocolCardSpec("vmess", "VMess", "vmess://…", listOf("vmess://"), DesignR.drawable.ic_proto_xray, "VM"),
+        ProtocolCardSpec("trojan", "Trojan", "trojan://…", listOf("trojan://"), DesignR.drawable.ic_proto_xray, "TR"),
+        ProtocolCardSpec("shadowsocks", "Shadowsocks", "ss://…", listOf("ss://"), DesignR.drawable.ic_glyph_shield, "SS"),
         ProtocolCardSpec(
             "hysteria2", "Hysteria 2", "hysteria2://… или hy2://…",
             listOf("hysteria2://", "hy2://"), DesignR.drawable.ic_proto_hysteria, "HY",
         ),
-        ProtocolCardSpec("tuic", "TUIC", "tuic://…", listOf("tuic://"), null, "TU"),
-        ProtocolCardSpec("naive", "NaiveProxy", "naive+https://…", listOf("naive+https://"), null, "NP"),
+        ProtocolCardSpec("tuic", "TUIC", "tuic://…", listOf("tuic://"), DesignR.drawable.ic_glyph_bolt, "TU"),
+        ProtocolCardSpec("naive", "NaiveProxy", "naive+https://…", listOf("naive+https://"), DesignR.drawable.ic_glyph_globe, "NP"),
         ProtocolCardSpec(
-            "wireguard", "WireGuard / AmneziaWG", "Текст файла .conf", emptyList(),
+            "wireguard", "WireGuard", "Текст файла .conf", emptyList(),
             DesignR.drawable.ic_proto_wireguard, "WG", config = true,
+        ),
+        ProtocolCardSpec(
+            "amneziawg", "AmneziaWG", "Текст файла .conf", emptyList(),
+            DesignR.drawable.ic_proto_amnezia, "AWG", config = true,
         ),
     )
 
@@ -201,31 +206,25 @@ private fun ProtocolCard(card: ProtocolCardSpec, enabled: Boolean, onClick: () -
     }
 }
 
-/** Логотип в светлом круге: официальные знаки чёрные, на тёмной теме без подложки их не видно. */
+/** Логотип в светлой плитке: чёрные знаки на тёмной теме без подложки не видно; цветные (Hysteria, Amnezia) остаются цветными. */
 @Composable
 private fun ProtocolLogo(card: ProtocolCardSpec) {
     val logo = card.logo
     if (logo != null) {
-        // Most official marks are wordmarks (Hysteria, WireGuard): a wide light tile lets them use the whole card width.
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.White)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(Color.White),
             contentAlignment = Alignment.Center,
         ) {
             Image(
                 painter = painterResource(logo),
                 contentDescription = null,
                 contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.size(32.dp),
             )
         }
     } else {
         Box(
-            modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
+            modifier = Modifier.size(52.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center,
         ) {
             Text(

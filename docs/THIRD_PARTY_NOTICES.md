@@ -165,17 +165,19 @@ text is retained in the APK under `META-INF` together with the notices here.
 
 ## Protocol logos on the «Добавить сервер» sheet
 
-The cards of the add-server sheet show the logo of the protocol's project. The files are converted to Android vector
-drawables (`core/designsystem/src/main/res/drawable/ic_proto_*.xml`) without redrawing.
+The cards of the add-server sheet show the logo of the protocol's project. The files are the ones the owner's own site
+(<https://lk.zapret.moe/static/logos/>) serves for the same protocols, converted to Android vector drawables
+(`core/designsystem/src/main/res/drawable/ic_proto_*.xml`, the Amnezia mark as PNG) without redrawing; the Hysteria
+emblem is tinted with the project's own yellow.
 
-- Hysteria wordmark: <https://github.com/apernet/hysteria> (`logo.svg`), MIT License.
-- Xray logo, used for VLESS: <https://github.com/XTLS/Xray-docs-next> (`docs/public/logo-light.svg`), CC BY-SA 4.0.
-  Used unmodified; attribution is this notice.
-- WireGuard wordmark: <https://www.wireguard.com/img/wireguard.svg>. "WireGuard" and the WireGuard logo are registered
-  trademarks of Jason A. Donenfeld. The logo is shown only to name the protocol and implies no endorsement. No
-  license for the artwork was found; taken from the project's website by the owner's decision of 2026-11-27 and
-  removable at any time.
-- NaiveProxy, Trojan, TUIC, Shadowsocks, VMess and AmneziaWG have no logo in the app: their cards show a monogram.
+- Hysteria emblem: <https://github.com/apernet/hysteria>, MIT License.
+- Xray mark, used for VLESS, VMess and Trojan (they run on the Xray core): <https://github.com/XTLS/Xray-docs-next>,
+  CC BY-SA 4.0, unmodified; attribution is this notice.
+- AmneziaWG mark: <https://github.com/amnezia-vpn/amnezia-client>, GPL-3.0.
+- WireGuard mark: "WireGuard" and the WireGuard logo are registered trademarks of Jason A. Donenfeld. Shown only to name
+  the protocol, implying no endorsement; no license for the artwork was found. Removable at any time.
+- NaiveProxy, Shadowsocks, TUIC and the subscription card use simple stroke glyphs drawn for this app in the style of the
+  owner's site (`ic_glyph_*.xml`), licensed with the app (GPL-3.0-or-later). No official logo is claimed.
 
 ## Gradle Wrapper
 

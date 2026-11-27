@@ -41,11 +41,18 @@ class ProtocolCardsTest {
     }
 
     @Test
-    fun `the WireGuard card takes a config with an Interface section, not a link`() {
-        val wg = card("wireguard")
-        assertTrue(ProtocolCards.accepts(wg, "[Interface]\nPrivateKey = x\n[Peer]\nPublicKey = y"))
-        assertFalse(ProtocolCards.accepts(wg, "vless://uuid@host:443#n"))
-        assertEquals("Нужен текст конфигурации с разделом [Interface].", ProtocolCards.mismatchMessage(wg))
+    fun `the WireGuard and AmneziaWG cards take a config with an Interface section, not a link`() {
+        for (id in listOf("wireguard", "amneziawg")) {
+            val wg = card(id)
+            assertTrue(id, ProtocolCards.accepts(wg, "[Interface]\nPrivateKey = x\n[Peer]\nPublicKey = y"))
+            assertFalse(id, ProtocolCards.accepts(wg, "vless://uuid@host:443#n"))
+            assertEquals("Нужен текст конфигурации с разделом [Interface].", ProtocolCards.mismatchMessage(wg))
+        }
+    }
+
+    @Test
+    fun `no card is left without a logo`() {
+        assertTrue(ProtocolCards.all.all { it.logo != null })
     }
 
     @Test
