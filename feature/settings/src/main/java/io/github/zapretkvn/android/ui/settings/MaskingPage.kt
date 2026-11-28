@@ -21,15 +21,20 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import io.github.zapretkvn.core.designsystem.CardTitle
 import io.github.zapretkvn.core.designsystem.SettingsRow
 import io.github.zapretkvn.core.designsystem.Spacing
@@ -52,8 +57,9 @@ import io.github.zapretkvn.masking.wireguard.DnsSignature
 
 /**
  * «Маскировка»: общий набор для всех серверов. Экран только показывает и редактирует черновик
- * ([MaskingForm]); проверка и перевод в настройки — в модуле :masking. Сохраняется кнопкой
- * «Применить» целиком: каждое нажатие клавиши не перезапускает VPN.
+ * ([MaskingForm]); проверка и перевод в настройки — в модуле :masking. Сохраняется целиком, а не по
+ * нажатию клавиши (каждое нажатие перезапускало бы VPN): кнопкой «Применить» и сам при уходе с экрана
+ * (назад, другая вкладка, сворачивание приложения). Черновик с ошибкой не сохраняется.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -70,6 +76,27 @@ fun MaskingScreen(
     var dnsDomain by remember { mutableStateOf(DnsSignature.DOMAINS.first()) }
     val result = form.toMasking()
     val changed = result.masking != settings.global
+
+    // Leaving the screen saves a valid draft: the switch above is written at once, so a draft that is
+    // silently dropped on exit looked like a bug (owner report 2026-11-28).
+    val pending by rememberUpdatedState(if (changed && !result.hasErrors) result.masking else null)
+    val onApplyNow by rememberUpdatedState(onApply)
+    val saved = remember { SavedDraft() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        fun flush() {
+            val draft = pending ?: return
+            if (saved.last == draft) return
+            saved.last = draft
+            onApplyNow(draft)
+        }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) flush() }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            flush()
+        }
+    }
 
     SettingsPageList(contentPadding, tag = "settings-page-masking") {
         item(key = "intro", contentType = "card") {
@@ -260,7 +287,10 @@ fun MaskingScreen(
 
         item(key = "apply", contentType = "card") {
             Button(
-                onClick = { onApply(result.masking) },
+                onClick = {
+                    saved.last = result.masking
+                    onApply(result.masking)
+                },
                 enabled = changed && !result.hasErrors,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -269,10 +299,15 @@ fun MaskingScreen(
             ) { Text("Применить") }
             HintText(
                 if (result.hasErrors) "Исправьте ошибки выше: настройки с ошибкой ядру не передаются."
-                else "Подключённый VPN перезапустится. Сохранённые профили не переписываются.",
+                else "Изменения сохраняются и при выходе с экрана. Подключённый VPN перезапустится. Сохранённые профили не переписываются.",
             )
         }
     }
+}
+
+/** The last draft handed to the store from this screen, so «Применить» followed by leaving does not write twice. */
+private class SavedDraft {
+    var last: Masking? = null
 }
 
 /** «Подобрать»: the runner's state and its actions; [canStart] is true while the VPN is connected. */
