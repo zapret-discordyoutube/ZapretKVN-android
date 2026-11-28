@@ -60,4 +60,38 @@ class RenameCarryRealInstrumentedTest {
         }
         assertTrue("checked every shared line", checked == shared.size && checked >= 2)
     }
+
+    /**
+     * The live check of the production rename (2026-11-28, «Exit · Entry»): the live body already carries the NEW names; the
+     * profile a person stored before the rename is rebuilt from the same lines with the OLD names (the new name without the
+     * « · Timentry» / « · Timama» / « · Bebepf» entry part, which the service also names in zapret-server-ids). Every line that
+     * shares a host and port must keep its chosen server through the refresh.
+     */
+    @Test
+    fun anOldNameProfileKeepsItsChoiceWhenTheLiveRenamedBodyArrives() = runBlocking {
+        val file = shell("cat /data/local/tmp/kvn-test-subscription-shared").takeIf { it.startsWith("{") }
+        assumeTrue("no real test subscription with shared addresses on the device", file != null)
+        val url = JSONObject(file!!).getString("vless_subscription_url")
+        val live = withContext(Dispatchers.IO) {
+            val body = container.subscriptionFetcher.fetch(SubscriptionSource(url))
+            (ImportParser.parse(body, ProfileSource.Url) as ImportCandidate.Managed).servers
+        }
+        val entryPart = Regex(" · (Timentry|Timama|Bebepf|Bebebera)")
+        assumeTrue("the live body has no renamed «Exit · Entry» lines", live.any { entryPart.containsMatchIn(it.displayName) })
+        val old = live.map { it.copy(displayName = it.displayName.replaceFirst(entryPart, "")) }
+        fun address(list: List<io.github.zapretkvn.android.profiles.ManagedServer>, i: Int) =
+            "${list[i].outbound["server"]}:${list[i].outbound["server_port"]}"
+        val shared = old.indices.filter { i -> old.indices.count { address(old, it) == address(old, i) } > 1 }
+        assumeTrue("no lines share a host and port", shared.isNotEmpty())
+        val oldTags = ManagedProfileFactory.stableTags(old)
+        val liveTags = ManagedProfileFactory.stableTags(live)
+        val stored = ManagedProfileFactory.subscription(old)
+        for (index in shared) {
+            val selected = ConfigAnalyzer.selectServer(stored, ConfigAnalyzer.MANAGED_SELECTOR_TAG, oldTags[index])
+            val refreshed = ManagedProfileEditor.refreshServers(selected, live)
+            assertEquals("the choice must follow line #$index from its old name to the new one", liveTags[index], refreshed.selectedTag)
+            assertFalse("a renamed line is not a changed selection (#$index)", refreshed.selectionChanged)
+        }
+        assertTrue("checked at least two shared lines", shared.size >= 2)
+    }
 }
